@@ -14,14 +14,14 @@ use objc2_foundation::{
     NSDistributedNotificationCenter, NSNotification, NSNotificationCenter,
     NSNotificationSuspensionBehavior, NSObject, NSProcessInfo, NSString,
 };
-use tracing::{debug, info_span, trace, warn};
-
-use crate::app::power::{init_power_state, set_low_power_mode_state};
-use crate::app::hotkeys::{self as wm_controller, WmEvent};
-use crate::displays::platform::spaces;
-use crate::windows::platform::app::NSRunningApplicationExt;
 use rini_runloop::dispatch::DispatchExt;
 use rini_skylight_sys::{CGDisplayRegisterReconfigurationCallback, DisplayReconfigFlags};
+use tracing::{debug, info_span, trace, warn};
+
+use crate::app::hotkeys::{self as wm_controller, WmEvent};
+use crate::app::power::{init_power_state, set_low_power_mode_state};
+use crate::displays::platform::spaces;
+use crate::windows::platform::app::NSRunningApplicationExt;
 
 #[repr(C)]
 struct Instance {
@@ -252,13 +252,9 @@ impl NotificationCenterInner {
         )
     }
 
-    fn send_event(&self, event: WmEvent) {
-        _ = self.ivars().events_tx.send(event);
-    }
+    fn send_event(&self, event: WmEvent) { _ = self.ivars().events_tx.send(event); }
 
-    fn send_space_event(&self, event: spaces::Notification) {
-        self.ivars().spaces_tx.send(event);
-    }
+    fn send_space_event(&self, event: spaces::Notification) { self.ivars().spaces_tx.send(event); }
 
     fn running_application(
         &self,
@@ -299,14 +295,10 @@ impl NotificationCenterInner {
         }
         let handler_ptr = user_info as *mut NotificationCenterInner;
         let parsed = DisplayReconfigFlags::from_bits_truncate(flags);
-        queue::main().after_f_s(
-            Time::NOW,
-            (handler_ptr, parsed),
-            |(handler_ptr, flags)| unsafe {
-                let handler = &*handler_ptr;
-                handler.send_space_event(spaces::Notification::DisplayReconfigured { flags });
-            },
-        );
+        queue::main().after_f_s(Time::NOW, (handler_ptr, parsed), |(handler_ptr, flags)| unsafe {
+            let handler = &*handler_ptr;
+            handler.send_space_event(spaces::Notification::DisplayReconfigured { flags });
+        });
     }
 }
 

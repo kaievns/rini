@@ -6,17 +6,16 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::CGPoint;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace, warn};
-
+use rini_core::ids::{WindowId, pid_t};
 use rini_runloop::channel;
 use rini_runloop::timer::Timer;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, trace, warn};
 
 use crate::windows::domain::raise_order::AppBatch;
 use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use crate::windows::event::{Event as WindowsEvent, EventSink};
-use rini_core::ids::{WindowId, pid_t};
 
 /// Messages that can be sent to the raise manager
 #[derive(Debug)]
@@ -959,14 +958,11 @@ mod tests {
             // The focus_window should have been moved to the end.
             assert_eq!(requests.len(), 1);
             if let Request::Raise(wids, _, seq_id, quiet) = &requests[0] {
-                assert_eq!(
-                    *wids,
-                    vec![
-                        WindowId::new(1, 1),
-                        WindowId::new(1, 2),
-                        WindowId::new(1, 7),
-                    ]
-                );
+                assert_eq!(*wids, vec![
+                    WindowId::new(1, 1),
+                    WindowId::new(1, 2),
+                    WindowId::new(1, 7),
+                ]);
                 assert_eq!(*seq_id, 1);
                 assert_eq!(*quiet, Quiet::No);
             } else {

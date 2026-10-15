@@ -1,13 +1,13 @@
 //! What the engine tells the application it did.
 
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_core::ids::WindowServerId;
 
 use super::*;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::state::WindowState;
 use crate::workspaces::LayoutEvent;
-use rini_core::ids::WindowServerId;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 
 /// The maximize toggle has to report `changed`, because that is the only thing that routes it into
 /// `update_layout` and so into `AnimationManager::animate_layout`. A response of `default()` here
@@ -32,30 +32,27 @@ fn maximizing_reports_a_geometry_change_so_the_move_is_animated() {
     let stacked = [WindowId::new(500, 1), WindowId::new(500, 2)];
     for window in stacked {
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
-        store.insert_window(
-            window,
-            WindowState {
-                info: WindowInfo {
-                    is_standard: true,
-                    is_root: true,
-                    is_minimized: false,
-                    is_resizable: true,
-                    min_size: None,
-                    max_size: None,
-                    title: "term".into(),
-                    frame,
-                    sys_id: Some(WindowServerId::new(window.idx.get())),
-                    bundle_id: Some("com.mitchellh.ghostty".into()),
-                    path: None,
-                    ax_role: None,
-                    ax_subrole: None,
-                    is_modal: false,
-                },
-                frame_monotonic: frame,
-                is_manageable: true,
-                ignore_app_rule: false,
+        store.insert_window(window, WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "term".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(window.idx.get())),
+                bundle_id: Some("com.mitchellh.ghostty".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+                is_modal: false,
             },
-        );
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
+        });
         let _ =
             engine.handle_event(&mut store, &mut memory, LayoutEvent::WindowAdded(space, window));
     }

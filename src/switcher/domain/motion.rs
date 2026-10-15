@@ -20,9 +20,7 @@ pub const GLIDE_SECONDS: f64 = 0.13;
 /// Travel only when the panel is already up with the same number of rows. A panel that is appearing
 /// has no previous positions to travel FROM, and rows that were just rebuilt are new layers sitting at
 /// the origin — so animating either one flies the strip in from the corner.
-pub fn glides(showing: Option<usize>, rows: usize) -> bool {
-    showing == Some(rows)
-}
+pub fn glides(showing: Option<usize>, rows: usize) -> bool { showing == Some(rows) }
 
 #[cfg(test)]
 mod tests {

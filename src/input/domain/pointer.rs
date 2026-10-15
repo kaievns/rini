@@ -62,9 +62,7 @@ pub fn pointer_window(cache: PointerCache, hint: Option<WindowServerId>) -> Poin
 /// in the delivery path — the window server holds each matching event until the callback answers —
 /// so asking for keys nobody is listening for puts rini between the user and every keystroke for
 /// nothing.
-pub fn wants_keyboard_events(bound_hotkeys: usize) -> bool {
-    bound_hotkeys > 0
-}
+pub fn wants_keyboard_events(bound_hotkeys: usize) -> bool { bound_hotkeys > 0 }
 
 /// Whether the tap should ask for mouse-move events.
 ///
@@ -83,9 +81,7 @@ pub fn wants_mouse_move_events(
 /// `click_state` is the event's `kCGMouseEventClickState`: 1 for a lone click, counting up while
 /// clicks follow within the double-click interval. Only the second counts, because what it stands
 /// for is one zoom, and a third click in the same run must not stand for another.
-pub fn is_double_click(click_state: i64) -> bool {
-    click_state == 2
-}
+pub fn is_double_click(click_state: i64) -> bool { click_state == 2 }
 
 /// The machine's tick length, as `mach_timebase_info` gives it: `numer / denom` nanoseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

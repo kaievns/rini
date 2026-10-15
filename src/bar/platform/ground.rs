@@ -5,8 +5,8 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
-    CGBitmapContextCreateImage, CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGColorSpace,
-    CGContext, CGImage, kCGColorSpaceSRGB,
+    CGBitmapContextCreateImage, CGBitmapContextGetBytesPerRow, CGBitmapContextGetData,
+    CGColorSpace, CGContext, CGImage, kCGColorSpaceSRGB,
 };
 use rini_geometry::space::{FromCg, ScreenRect};
 

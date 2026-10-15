@@ -6,13 +6,12 @@
 
 use rini_ipc::protocol::LayoutCommand;
 
+use super::Reactor;
+use super::events::EventOutcome;
 use crate::bar::domain::model::{
     self, Action, BarInput, BarModel, DisplayInput, FocusInput, WindowInput,
 };
 use crate::bar::platform::actor::{Event as BarEvent, Sender};
-
-use super::Reactor;
-use super::events::EventOutcome;
 
 /// Where the bars are drawn, and the model they were last sent.
 #[derive(Default)]

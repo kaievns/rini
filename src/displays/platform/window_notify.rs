@@ -8,21 +8,18 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::CGRect;
+use rini_core::ids::{SpaceId, WindowServerId};
+use rini_skylight_sys::KnownCGSEvent;
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, trace};
-
-use crate::windows::platform::window_server;
-use rini_core::ids::WindowServerId;
-use rini_skylight_sys::KnownCGSEvent;
 
 use crate::displays::domain::frames;
 use crate::displays::event::{
     Event, EventSink, Following, OnServerRead, OrderChange, ServerFrame, ServerIntro, ServerOrder,
     ServerRead, StackLevel, ToRead,
 };
-use crate::displays::platform::cgs_notify;
-use crate::displays::platform::spaces;
-use rini_core::ids::SpaceId;
+use crate::displays::platform::{cgs_notify, spaces};
+use crate::windows::platform::window_server;
 
 const FOCUS_WAKE_DEBOUNCE: Duration = Duration::from_millis(1);
 
@@ -32,9 +29,7 @@ struct FocusWakeSender {
 }
 
 impl FocusWakeSender {
-    fn notify(&self) {
-        let _ = self.wake.try_send(());
-    }
+    fn notify(&self) { let _ = self.wake.try_send(()); }
 }
 
 pub struct WindowNotify {
@@ -146,11 +141,11 @@ impl WindowNotify {
                         focus_wake.notify();
                         note(&following, event, evt.window_id);
                     }
-                    KnownCGSEvent::WindowClosed => {
-                        note(&following, event, evt.window_id)
-                    }
+                    KnownCGSEvent::WindowClosed => note(&following, event, evt.window_id),
                     KnownCGSEvent::WindowManagerSpaceFrontConnectionChanged
-                    | KnownCGSEvent::WindowManagerGlobalFrontConnectionChanged => focus_wake.notify(),
+                    | KnownCGSEvent::WindowManagerGlobalFrontConnectionChanged => {
+                        focus_wake.notify()
+                    }
                     KnownCGSEvent::WindowMoved | KnownCGSEvent::WindowResized => {
                         note(&following, event, evt.window_id)
                     }
@@ -211,7 +206,9 @@ impl WindowNotify {
 /// Queues for the frames thread what the window server's `event` asks of `window`, while
 /// `following`: its frame after a move or a resize, its order otherwise.
 fn note(following: &Following, event: KnownCGSEvent, window: Option<u32>) {
-    let Some(window) = window.map(WindowServerId::new) else { return };
+    let Some(window) = window.map(WindowServerId::new) else {
+        return;
+    };
     let read = match event {
         KnownCGSEvent::WindowMoved | KnownCGSEvent::WindowResized => ToRead::Frame(window),
         KnownCGSEvent::WindowReordered => ToRead::Order(window, OrderChange::Reordered),
@@ -259,7 +256,12 @@ fn read_burst(read: &Reader, burst: &[ToRead]) -> Vec<ServerRead> {
     let frames: Vec<ServerFrame> = frames::latest(&moved)
         .into_iter()
         .map(WindowServerId::new)
-        .filter_map(|window| Some(ServerFrame { window, frame: (read.frame)(window)? }))
+        .filter_map(|window| {
+            Some(ServerFrame {
+                window,
+                frame: (read.frame)(window)?,
+            })
+        })
         .collect();
     let mut levels: HashMap<WindowServerId, StackLevel> = HashMap::default();
     let mut level = |window| *levels.entry(window).or_insert_with(|| (read.level)(window));
@@ -272,7 +274,11 @@ fn read_burst(read: &Reader, burst: &[ToRead]) -> Vec<ServerRead> {
             ToRead::Frame(_) => {}
             ToRead::Order(window, change) => {
                 let leveled = matches!(change, OrderChange::Reordered | OrderChange::Unhidden);
-                out.push(ServerRead::Order(ServerOrder { window, change, level: leveled.then(|| level(window)) }));
+                out.push(ServerRead::Order(ServerOrder {
+                    window,
+                    change,
+                    level: leveled.then(|| level(window)),
+                }));
             }
             ToRead::Intro(window) => out.push(ServerRead::Intro(ServerIntro {
                 window,
@@ -317,13 +323,12 @@ mod tests {
 
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
     use rini_core::ids::WindowServerId;
-
     use rini_skylight_sys::KnownCGSEvent;
 
     use super::{FocusWakeSender, Reader, note, read_burst, spawn_frame_reader};
     use crate::displays::event::{
-        Following, OnServerRead, OrderChange, ServerFrame, ServerIntro, ServerOrder, ServerRead, StackLevel,
-        ToRead,
+        Following, OnServerRead, OrderChange, ServerFrame, ServerIntro, ServerOrder, ServerRead,
+        StackLevel, ToRead,
     };
 
     fn following() -> (Following, mpsc::Receiver<ToRead>) {
@@ -335,21 +340,30 @@ mod tests {
     fn ws(id: u32) -> WindowServerId { WindowServerId::new(id) }
 
     const AT: CGRect = CGRect::new(CGPoint::new(10., 20.), CGSize::new(300., 400.));
-    const LEVEL: StackLevel = StackLevel { level: Some(3), sub_level: Some(1) };
+    const LEVEL: StackLevel = StackLevel {
+        level: Some(3),
+        sub_level: Some(1),
+    };
 
     fn bounds(_: WindowServerId) -> Option<CGRect> { Some(AT) }
     fn level(_: WindowServerId) -> StackLevel { LEVEL }
     fn ordered_in(_: WindowServerId) -> Option<bool> { Some(false) }
     fn radius(_: WindowServerId) -> Option<f64> { Some(16.0) }
 
-    const STUB: Reader = Reader { frame: bounds, level, ordered_in, radius };
+    const STUB: Reader = Reader {
+        frame: bounds,
+        level,
+        ordered_in,
+        radius,
+    };
 
     /// The reader on its own thread over `queued`, run to the queue's end, and everything it
     /// handed on.
     fn run(read: Reader, queued: mpsc::Receiver<ToRead>) -> Vec<ServerRead> {
         let published = Arc::new(Mutex::new(Vec::new()));
         let sink = published.clone();
-        let on_read: Vec<OnServerRead> = vec![Box::new(move |read| sink.lock().unwrap().push(read))];
+        let on_read: Vec<OnServerRead> =
+            vec![Box::new(move |read| sink.lock().unwrap().push(read))];
         spawn_frame_reader(read, on_read, queued).join().unwrap();
         Arc::try_unwrap(published).unwrap().into_inner().unwrap()
     }
@@ -394,11 +408,15 @@ mod tests {
         note(&off, KnownCGSEvent::WindowReordered, Some(56));
         note(&off, KnownCGSEvent::WindowMoved, Some(56));
         on.ask(ToRead::Intro(ws(56)));
-        assert_eq!(reads.try_iter().collect::<Vec<_>>(), vec![
-            ToRead::Order(ws(56), OrderChange::Reordered),
-            ToRead::Frame(ws(56)),
-            ToRead::Intro(ws(56)),
-        ], "one queue");
+        assert_eq!(
+            reads.try_iter().collect::<Vec<_>>(),
+            vec![
+                ToRead::Order(ws(56), OrderChange::Reordered),
+                ToRead::Frame(ws(56)),
+                ToRead::Intro(ws(56)),
+            ],
+            "one queue"
+        );
     }
 
     static FRAME_READS: AtomicUsize = AtomicUsize::new(0);
@@ -415,7 +433,10 @@ mod tests {
         note(&following, KnownCGSEvent::WindowResized, Some(7));
         drop(following);
         let published = run(Reader { frame: counted, ..STUB }, reads);
-        assert_eq!(published, vec![ServerRead::Frames(vec![ServerFrame { window: ws(7), frame: AT }])]);
+        assert_eq!(published, vec![ServerRead::Frames(vec![ServerFrame {
+            window: ws(7),
+            frame: AT
+        }])]);
         assert_eq!(FRAME_READS.load(Ordering::SeqCst), 1, "one read for the two");
     }
 
@@ -463,7 +484,13 @@ mod tests {
                 ServerRead::Frames(_) => None,
             })
             .collect();
-        assert_eq!(levels, vec![Some(LEVEL), Some(LEVEL), None, Some(LEVEL), Some(LEVEL)]);
+        assert_eq!(levels, vec![
+            Some(LEVEL),
+            Some(LEVEL),
+            None,
+            Some(LEVEL),
+            Some(LEVEL)
+        ]);
         assert_eq!(LEVEL_READS.load(Ordering::SeqCst), 2, "once a window a burst");
     }
 

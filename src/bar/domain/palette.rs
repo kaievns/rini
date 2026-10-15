@@ -15,9 +15,7 @@ impl Colour {
     }
 }
 
-const fn channel(rgb: u32, shift: u32) -> f64 {
-    ((rgb >> shift) & 0xff) as f64 / 255.0
-}
+const fn channel(rgb: u32, shift: u32) -> f64 { ((rgb >> shift) & 0xff) as f64 / 255.0 }
 
 /// Void.
 pub const N0: Colour = Colour(0x0f1113);

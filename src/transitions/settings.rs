@@ -13,7 +13,12 @@ pub struct JournalSettings {
 }
 
 impl Default for JournalSettings {
-    fn default() -> Self { JournalSettings { write: false, measure_handover: false } }
+    fn default() -> Self {
+        JournalSettings {
+            write: false,
+            measure_handover: false,
+        }
+    }
 }
 
 #[cfg(test)]

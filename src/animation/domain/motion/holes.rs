@@ -20,7 +20,10 @@ pub fn hole_in(end: OverlayRect) -> OverlayRect {
 pub fn band_hole_in(end: OverlayRect, outset: f64) -> OverlayRect {
     let side = outset.min(1.0);
     OverlayRect::new(
-        Point::new(end.origin.x - (outset + side) / 2.0, end.origin.y + end.size.height / 2.0),
+        Point::new(
+            end.origin.x - (outset + side) / 2.0,
+            end.origin.y + end.size.height / 2.0,
+        ),
         Size::new(side, 1.0),
     )
 }
@@ -55,7 +58,10 @@ mod tests {
             let hole = band_hole_in(end, outset);
             let band = rect(end.origin.x - outset, end.origin.y, outset, end.size.height);
             assert!(inside(hole, band), "{outset}: {hole:?}");
-            assert!(hole.origin.x + hole.size.width <= end.origin.x, "{outset}: outside the window");
+            assert!(
+                hole.origin.x + hole.size.width <= end.origin.x,
+                "{outset}: outside the window"
+            );
         }
         assert_eq!(band_hole_in(end, 4.0), rect(865.5, 572.5, 1.0, 1.0));
     }

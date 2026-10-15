@@ -167,9 +167,7 @@ mod tests {
     use super::*;
     use crate::windows::domain::raise_order::StackGroup::{Floating, Tiled};
 
-    fn wid(pid: i32, idx: u32) -> WindowId {
-        WindowId::new(pid, idx)
-    }
+    fn wid(pid: i32, idx: u32) -> WindowId { WindowId::new(pid, idx) }
 
     fn strip(window: WindowId, order: Option<usize>) -> Stacked {
         Stacked {
@@ -381,5 +379,4 @@ mod tests {
         assert!(!focus_is_off_strip(&windows, Some(wid(99, 9))));
         assert!(!focus_is_off_strip(&windows, None));
     }
-
 }

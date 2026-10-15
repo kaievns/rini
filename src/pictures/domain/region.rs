@@ -131,7 +131,10 @@ mod tests {
     fn a_crop_must_lie_inside_its_composite_but_for_half_a_pixel() {
         let composite = size(3440.0, 2162.0);
         assert!(contains(composite, rect(0.0, 0.0, 3440.0, 2162.0)));
-        assert!(contains(composite, rect(1721.0, 0.0, 1719.5, 2162.5)), "rounding");
+        assert!(
+            contains(composite, rect(1721.0, 0.0, 1719.5, 2162.5)),
+            "rounding"
+        );
         assert!(
             !contains(composite, rect(1721.0, 0.0, 1720.0, 2162.0)),
             "a pixel past the edge"
@@ -179,7 +182,11 @@ mod tests {
             None,
             "shorter than wide"
         );
-        assert_eq!(composite_scale(union, size(2580.0, 1621.5)), None, "a scale of 1.5");
+        assert_eq!(
+            composite_scale(union, size(2580.0, 1621.5)),
+            None,
+            "a scale of 1.5"
+        );
         assert_eq!(
             composite_scale(union, size(3480.0, 2187.0)),
             None,
@@ -190,7 +197,10 @@ mod tests {
             Some(3460.0 / 1720.0),
             "2.01: rounding"
         );
-        assert_eq!(composite_scale(rect(0.0, 0.0, 0.0, 10.0), size(10.0, 10.0)), None);
+        assert_eq!(
+            composite_scale(rect(0.0, 0.0, 0.0, 10.0), size(10.0, 10.0)),
+            None
+        );
     }
 
     /// The baked call lists the desktop after the windows, and its wallpaper spans the display: the

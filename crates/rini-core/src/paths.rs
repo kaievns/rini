@@ -4,14 +4,10 @@
 use std::path::PathBuf;
 
 /// `~/.rini`: saved layout state, written by the daemon.
-pub fn data_dir() -> PathBuf {
-    dirs::home_dir().unwrap().join(".rini")
-}
+pub fn data_dir() -> PathBuf { dirs::home_dir().unwrap().join(".rini") }
 
 /// `~/.rini/layout.ron`: the layout snapshot rini saves as it runs and at quit, and restores at start.
-pub fn restore_file() -> PathBuf {
-    data_dir().join("layout.ron")
-}
+pub fn restore_file() -> PathBuf { data_dir().join("layout.ron") }
 
 /// `~/.config/rini/config.kdl`: the user's config, watched for reload.
 pub fn config_file() -> PathBuf {
@@ -21,7 +17,12 @@ pub fn config_file() -> PathBuf {
 /// `~/Library/Logs/rini/transitions.jsonl`: the transitions journal, one JSON object a line, written
 /// by the daemon after each transition settles.
 pub fn journal_file() -> PathBuf {
-    dirs::home_dir().unwrap().join("Library").join("Logs").join("rini").join("transitions.jsonl")
+    dirs::home_dir()
+        .unwrap()
+        .join("Library")
+        .join("Logs")
+        .join("rini")
+        .join("transitions.jsonl")
 }
 
 #[cfg(test)]

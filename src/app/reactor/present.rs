@@ -6,13 +6,13 @@
 //! does not fly sends one application.
 
 use objc2_core_foundation::{CGPoint, CGRect};
+use rini_core::ids::{WindowId, WindowServerId};
 
+use crate::windows::domain::request::Request;
 #[cfg(test)]
 use crate::windows::domain::transaction::WindowTxStore;
-use crate::windows::domain::request::Request;
 use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 use crate::workspaces::WindowStore;
-use rini_core::ids::{WindowId, WindowServerId};
 
 /// The frame-writing capability: record a destination, and number the write.
 pub(crate) struct Present<'a> {
@@ -127,37 +127,32 @@ mod tests {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
     }
 
-    fn frame(x: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, 0.0), CGSize::new(100.0, 100.0))
-    }
+    fn frame(x: f64) -> CGRect { CGRect::new(CGPoint::new(x, 0.0), CGSize::new(100.0, 100.0)) }
 
     fn store_with(windows: &[(WindowId, Option<WindowServerId>)]) -> WindowStore {
         let mut store = WindowStore::default();
         for &(window, sys_id) in windows {
-            store.insert_window(
-                window,
-                WindowState {
-                    info: WindowInfo {
-                        is_standard: true,
-                        is_root: true,
-                        is_minimized: false,
-                        is_resizable: true,
-                        min_size: None,
-                        max_size: None,
-                        title: String::new(),
-                        frame: frame(0.0),
-                        sys_id,
-                        bundle_id: None,
-                        path: None,
-                        ax_role: None,
-                        ax_subrole: None,
-                        is_modal: false,
-                    },
-                    frame_monotonic: frame(0.0),
-                    is_manageable: true,
-                    ignore_app_rule: false,
+            store.insert_window(window, WindowState {
+                info: WindowInfo {
+                    is_standard: true,
+                    is_root: true,
+                    is_minimized: false,
+                    is_resizable: true,
+                    min_size: None,
+                    max_size: None,
+                    title: String::new(),
+                    frame: frame(0.0),
+                    sys_id,
+                    bundle_id: None,
+                    path: None,
+                    ax_role: None,
+                    ax_subrole: None,
+                    is_modal: false,
                 },
-            );
+                frame_monotonic: frame(0.0),
+                is_manageable: true,
+                ignore_app_rule: false,
+            });
         }
         store
     }

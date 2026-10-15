@@ -12,7 +12,6 @@
 //! what stops the list reshuffling between two presses of the same key.
 
 use objc2_core_foundation::CGSize;
-
 use rini_core::ids::{SpaceId, WindowId, pid_t};
 
 use crate::windows::domain::focus_order::FocusOrder;
@@ -60,9 +59,7 @@ pub enum Scope {
 
 impl Scope {
     /// Whether a switch over this scope steps between application stacks rather than windows.
-    pub fn stacks(self) -> bool {
-        matches!(self, Self::Everything)
-    }
+    pub fn stacks(self) -> bool { matches!(self, Self::Everything) }
 
     fn admits(self, candidate: &Candidate) -> bool {
         match self {
@@ -129,9 +126,7 @@ pub fn opening_selection<T>(list: &[T]) -> Option<usize> {
 mod tests {
     use super::*;
 
-    fn win(pid: rini_core::ids::pid_t, idx: u32) -> WindowId {
-        WindowId::new(pid, idx)
-    }
+    fn win(pid: rini_core::ids::pid_t, idx: u32) -> WindowId { WindowId::new(pid, idx) }
 
     /// Workspace `n` in the canonical order. Ids are slotmap keys, so a test makes its own.
     fn workspace(n: usize) -> VirtualWorkspaceId {
@@ -235,10 +230,10 @@ mod tests {
         order.touch(win(1, 1));
         order.touch(win(1, 2));
         let switched = switch_list(list, &order, Scope::Workspace(workspace(0)));
-        assert_eq!(
-            switched.iter().map(|c| c.window).collect::<Vec<_>>(),
-            vec![win(1, 2), win(1, 1)]
-        );
+        assert_eq!(switched.iter().map(|c| c.window).collect::<Vec<_>>(), vec![
+            win(1, 2),
+            win(1, 1)
+        ]);
     }
 
     #[test]
@@ -249,10 +244,10 @@ mod tests {
             candidate(7, 3, 99, 2),
         ];
         let switched = switch_list(list, &FocusOrder::default(), Scope::App(7));
-        assert_eq!(
-            switched.iter().map(|c| c.window).collect::<Vec<_>>(),
-            vec![win(7, 1), win(7, 3)]
-        );
+        assert_eq!(switched.iter().map(|c| c.window).collect::<Vec<_>>(), vec![
+            win(7, 1),
+            win(7, 3)
+        ]);
     }
 
     /// Three Ghostty windows, two sharing a workspace and one elsewhere. By recency, like the other two
@@ -295,10 +290,9 @@ mod tests {
 
         let switched = switch_list(vec![candidate(1, 1, 1, 0)], &order, Scope::Everything);
 
-        assert_eq!(
-            switched.iter().map(|c| c.window).collect::<Vec<_>>(),
-            vec![win(1, 1)]
-        );
+        assert_eq!(switched.iter().map(|c| c.window).collect::<Vec<_>>(), vec![win(
+            1, 1
+        )]);
     }
 
     /// The whole point of a tap: it takes you to the window you were in before this one.

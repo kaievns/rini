@@ -150,7 +150,6 @@ fn main() {
 
     execute_startup_commands(&config.settings.run_on_start);
 
-
     // Restore is ON by default, so a restart or redeploy keeps window sizes, workspaces
     // and strip positions.
     //

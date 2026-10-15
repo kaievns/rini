@@ -58,10 +58,7 @@ mod tests {
         assert!(!stands_in(Some(spawned), display));
         assert!(!stands_in(None, display), "no server frame at all");
         assert!(
-            !stands_in(
-                Some(rect(1727.0, 1085.0, 0.0, 0.0)),
-                display
-            ),
+            !stands_in(Some(rect(1727.0, 1085.0, 0.0, 0.0)), display),
             "a zero frame is not a window to stand in for"
         );
     }

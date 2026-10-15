@@ -25,9 +25,7 @@ pub enum Route {
 impl Route {
     /// Whether the overlay clips a picture taken this way to its tile's corner: the stand-in has no
     /// corners of its own, and a baked picture has the wallpaper in its corners.
-    pub fn clips(self) -> bool {
-        matches!(self, Self::StandIn | Self::Baked)
-    }
+    pub fn clips(self) -> bool { matches!(self, Self::StandIn | Self::Baked) }
 }
 
 #[cfg(test)]

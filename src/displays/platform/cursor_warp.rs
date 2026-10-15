@@ -70,12 +70,11 @@ use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::{CGDisplayBounds, CGError, CGEvent};
-use tracing::{debug, info};
-
 use rini_core::ids::ScreenId;
 use rini_geometry::CGRectExt;
 use rini_runloop::channel;
 use serde::Serialize;
+use tracing::{debug, info};
 
 use crate::displays::domain::screen::ScreenInfo;
 
@@ -786,10 +785,10 @@ mod tests {
     /// bounds rather than the frame windows are kept in.
     #[test]
     fn a_banded_screen_warps_over_its_whole_bounds() {
-        assert_eq!(
-            warp_screens(&banded(), bounds, height_mm),
-            vec![built_in(), external()]
-        );
+        assert_eq!(warp_screens(&banded(), bounds, height_mm), vec![
+            built_in(),
+            external()
+        ]);
     }
 
     /// With whole bounds the built-in's top row, y = 0, is also the external's bottom edge. It is

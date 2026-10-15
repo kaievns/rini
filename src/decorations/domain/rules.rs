@@ -10,7 +10,7 @@ use crate::decorations::domain::paint::Paint;
 use crate::decorations::domain::shape;
 use crate::decorations::domain::style::{Band, Decoration};
 use crate::decorations::settings::{BandSetting, DecorationSettings};
-use crate::windows::domain::rules::{RuleMatch, WindowRuleContext, RuleState, applies};
+use crate::windows::domain::rules::{RuleMatch, RuleState, WindowRuleContext, applies};
 
 /// What one rule says of a band: each part it leaves out keeps what came before it. A paint it
 /// writes, colour or gradient, replaces the one before whole, so a colour clears a gradient, as
@@ -53,12 +53,20 @@ pub struct DecorationRule {
 impl DecorationRule {
     /// Whether it says anything of what a window wears.
     pub fn decorates(&self) -> bool {
-        *self != DecorationRule { matches: self.matches.clone(), excludes: self.excludes.clone(), ..DecorationRule::default() }
+        *self
+            != DecorationRule {
+                matches: self.matches.clone(),
+                excludes: self.excludes.clone(),
+                ..DecorationRule::default()
+            }
     }
 
     /// Whether it applies to a window by whether the window holds focus or is drawn urgent.
     pub fn follows_focus_or_attention(&self) -> bool {
-        self.matches.iter().chain(&self.excludes).any(RuleMatch::follows_focus_or_attention)
+        self.matches
+            .iter()
+            .chain(&self.excludes)
+            .any(RuleMatch::follows_focus_or_attention)
     }
 }
 
@@ -66,12 +74,21 @@ impl DecorationRule {
 /// that applies laid over them in file order.
 pub fn fold(settings: &DecorationSettings, context: WindowRuleContext<'_>) -> Decoration {
     let (mut ring, mut border, mut radius) = (settings.focus_ring, settings.border, None);
-    for rule in settings.rules.iter().filter(|rule| applies(&rule.matches, &rule.excludes, context)) {
+    for rule in settings
+        .rules
+        .iter()
+        .filter(|rule| applies(&rule.matches, &rule.excludes, context))
+    {
         rule.focus_ring.over(&mut ring);
         rule.border.over(&mut border);
         radius = rule.corner_radius.or(radius);
     }
-    Decoration { ring: ring.worn(), border: border.worn(), radius, urgent: context.state.urgent }
+    Decoration {
+        ring: ring.worn(),
+        border: border.worn(),
+        radius,
+        urgent: context.state.urgent,
+    }
 }
 
 /// What `context`'s window wears whether it holds focus or not: each band's active paint as the
@@ -80,10 +97,18 @@ pub fn fold(settings: &DecorationSettings, context: WindowRuleContext<'_>) -> De
 /// refuses the rest), so this one value is painted right on either side of a focus turn
 /// (`Style::of`).
 pub fn decoration(settings: &DecorationSettings, context: WindowRuleContext<'_>) -> Decoration {
-    let at = |focused| fold(settings, WindowRuleContext { state: RuleState { focused, ..context.state }, ..context });
+    let at = |focused| {
+        fold(settings, WindowRuleContext {
+            state: RuleState { focused, ..context.state },
+            ..context
+        })
+    };
     let (resting, holding) = (at(false), at(true));
     let active = |band: Option<Band>, held: Option<Band>| {
-        band.map(|band| Band { active: held.map_or(band.active, |held| held.active), ..band })
+        band.map(|band| Band {
+            active: held.map_or(band.active, |held| held.active),
+            ..band
+        })
     };
     Decoration {
         ring: active(resting.ring, holding.ring),
@@ -95,13 +120,24 @@ pub fn decoration(settings: &DecorationSettings, context: WindowRuleContext<'_>)
 /// The width `context`'s window gives its border out of its slot while it is tiled on a display of
 /// `scale`: the band's width as it is drawn there, in whole device pixels (`shape::device_width`), 0
 /// while it wears none. No rule that follows focus or attention sets it, so it holds as either turns.
-pub fn border_width(settings: &DecorationSettings, context: WindowRuleContext<'_>, scale: f64) -> f64 {
-    let tiled = WindowRuleContext { state: RuleState::default(), ..context };
-    fold(settings, tiled).border.map_or(0.0, |band| shape::device_width(band.width, scale))
+pub fn border_width(
+    settings: &DecorationSettings,
+    context: WindowRuleContext<'_>,
+    scale: f64,
+) -> f64 {
+    let tiled = WindowRuleContext {
+        state: RuleState::default(),
+        ..context
+    };
+    fold(settings, tiled)
+        .border
+        .map_or(0.0, |band| shape::device_width(band.width, scale))
 }
 
 /// Whether any rule can give a window a border width other than the layout's.
-pub fn shape_borders(settings: &DecorationSettings) -> bool { settings.rules.iter().any(|rule| rule.border.shapes()) }
+pub fn shape_borders(settings: &DecorationSettings) -> bool {
+    settings.rules.iter().any(|rule| rule.border.shapes())
+}
 
 #[cfg(test)]
 mod tests {
@@ -116,24 +152,62 @@ mod tests {
     fn app(bundle_id: &str) -> RuleMatch { RuleMatch::app(bundle_id) }
 
     fn window(bundle_id: &str) -> WindowRuleContext<'_> {
-        WindowRuleContext { app_bundle_id: Some(bundle_id), ..WindowRuleContext::default() }
+        WindowRuleContext {
+            app_bundle_id: Some(bundle_id),
+            ..WindowRuleContext::default()
+        }
     }
 
-    fn rule(line: RuleMatch) -> DecorationRule { DecorationRule { matches: vec![line], ..DecorationRule::default() } }
+    fn rule(line: RuleMatch) -> DecorationRule {
+        DecorationRule {
+            matches: vec![line],
+            ..DecorationRule::default()
+        }
+    }
 
-    fn with(rules: Vec<DecorationRule>) -> DecorationSettings { DecorationSettings { rules, ..DecorationSettings::default() } }
+    fn with(rules: Vec<DecorationRule>) -> DecorationSettings {
+        DecorationSettings {
+            rules,
+            ..DecorationSettings::default()
+        }
+    }
 
     #[test]
     fn a_later_rule_overrides_an_earlier_one() {
         let settings = with(vec![
-            DecorationRule { focus_ring: BandRule { width: Some(6.0), active: Some(RED), ..BandRule::default() }, ..rule(app("com.example.Editor")) },
-            DecorationRule { focus_ring: BandRule { active: Some(GREEN), ..BandRule::default() }, ..DecorationRule::default() },
+            DecorationRule {
+                focus_ring: BandRule {
+                    width: Some(6.0),
+                    active: Some(RED),
+                    ..BandRule::default()
+                },
+                ..rule(app("com.example.Editor"))
+            },
+            DecorationRule {
+                focus_ring: BandRule {
+                    active: Some(GREEN),
+                    ..BandRule::default()
+                },
+                ..DecorationRule::default()
+            },
         ]);
-        let ring = fold(&settings, window("com.example.Editor")).ring.expect("on, as the layout has it");
-        assert_eq!((ring.width, ring.active), (6.0, GREEN), "the width the first left, the colour the second wrote");
-        assert_eq!(ring.inactive, settings.focus_ring.band.inactive, "what neither wrote is the layout's");
+        let ring = fold(&settings, window("com.example.Editor"))
+            .ring
+            .expect("on, as the layout has it");
+        assert_eq!(
+            (ring.width, ring.active),
+            (6.0, GREEN),
+            "the width the first left, the colour the second wrote"
+        );
+        assert_eq!(
+            ring.inactive, settings.focus_ring.band.inactive,
+            "what neither wrote is the layout's"
+        );
         let other = fold(&settings, window("com.example.Other")).ring.expect("on");
-        assert_eq!((other.width, other.active), (settings.focus_ring.band.width, GREEN));
+        assert_eq!(
+            (other.width, other.active),
+            (settings.focus_ring.band.width, GREEN)
+        );
     }
 
     #[test]
@@ -147,25 +221,70 @@ mod tests {
         let mut layout = DecorationSettings::default();
         layout.focus_ring.band.active = sunset;
         let settings = DecorationSettings {
-            rules: vec![DecorationRule { focus_ring: BandRule { active: Some(RED), ..BandRule::default() }, ..rule(app("com.example.Editor")) }],
+            rules: vec![DecorationRule {
+                focus_ring: BandRule {
+                    active: Some(RED),
+                    ..BandRule::default()
+                },
+                ..rule(app("com.example.Editor"))
+            }],
             ..layout
         };
-        assert_eq!(fold(&settings, window("com.example.Editor")).ring.map(|band| band.active), Some(RED));
-        assert_eq!(fold(&settings, window("com.example.Other")).ring.map(|band| band.active), Some(sunset), "the layout's gradient elsewhere");
-        let regraded = DecorationRule { focus_ring: BandRule { active: Some(sunset), ..BandRule::default() }, ..DecorationRule::default() };
-        let again = DecorationSettings { rules: vec![settings.rules[0].clone(), regraded], ..settings };
-        assert_eq!(fold(&again, window("com.example.Editor")).ring.map(|band| band.active), Some(sunset), "and a later gradient the colour");
+        assert_eq!(
+            fold(&settings, window("com.example.Editor")).ring.map(|band| band.active),
+            Some(RED)
+        );
+        assert_eq!(
+            fold(&settings, window("com.example.Other")).ring.map(|band| band.active),
+            Some(sunset),
+            "the layout's gradient elsewhere"
+        );
+        let regraded = DecorationRule {
+            focus_ring: BandRule {
+                active: Some(sunset),
+                ..BandRule::default()
+            },
+            ..DecorationRule::default()
+        };
+        let again = DecorationSettings {
+            rules: vec![settings.rules[0].clone(), regraded],
+            ..settings
+        };
+        assert_eq!(
+            fold(&again, window("com.example.Editor")).ring.map(|band| band.active),
+            Some(sunset),
+            "and a later gradient the colour"
+        );
     }
 
     #[test]
     fn a_later_off_beats_an_earlier_on_across_rules() {
-        let on = DecorationRule { border: BandRule { on: Some(true), ..BandRule::default() }, ..DecorationRule::default() };
-        let off = DecorationRule { border: BandRule { on: Some(false), ..BandRule::default() }, ..rule(app("com.example.Editor")) };
+        let on = DecorationRule {
+            border: BandRule {
+                on: Some(true),
+                ..BandRule::default()
+            },
+            ..DecorationRule::default()
+        };
+        let off = DecorationRule {
+            border: BandRule {
+                on: Some(false),
+                ..BandRule::default()
+            },
+            ..rule(app("com.example.Editor"))
+        };
         let settings = with(vec![on.clone(), off.clone()]);
         assert_eq!(fold(&settings, window("com.example.Editor")).border, None);
-        assert_eq!(fold(&settings, window("com.example.Other")).border, Some(settings.border.band), "the first rule turned it on");
+        assert_eq!(
+            fold(&settings, window("com.example.Other")).border,
+            Some(settings.border.band),
+            "the first rule turned it on"
+        );
         let reversed = with(vec![off, on]);
-        assert!(fold(&reversed, window("com.example.Editor")).border.is_some(), "and a later on beats an earlier off");
+        assert!(
+            fold(&reversed, window("com.example.Editor")).border.is_some(),
+            "and a later on beats an earlier off"
+        );
     }
 
     /// niri's `match is-active=true` recolours the window wearing the active paint: as focus moves,
@@ -173,30 +292,65 @@ mod tests {
     #[test]
     fn a_rule_for_the_active_window_recolours_it_as_focus_moves() {
         let settings = with(vec![DecorationRule {
-            focus_ring: BandRule { active: Some(RED), inactive: Some(GREEN), ..BandRule::default() },
-            ..rule(RuleMatch { is_active: Some(true), ..RuleMatch::default() })
+            focus_ring: BandRule {
+                active: Some(RED),
+                inactive: Some(GREEN),
+                ..BandRule::default()
+            },
+            ..rule(RuleMatch {
+                is_active: Some(true),
+                ..RuleMatch::default()
+            })
         }]);
         let decoration = decoration(&settings, window("com.example.Editor"));
         let paint = |focused| {
-            let ring = if focused { Ring::Active } else { Ring::Inactive };
+            let ring = if focused {
+                Ring::Active
+            } else {
+                Ring::Inactive
+            };
             crate::decorations::domain::style::Style::of(focused, ring, &decoration).ring
         };
         assert_eq!(paint(true), Some(RED), "holding focus, the rule's active colour");
-        assert_eq!(paint(false), Some(settings.focus_ring.band.inactive), "not holding it, the rule does not apply");
+        assert_eq!(
+            paint(false),
+            Some(settings.focus_ring.band.inactive),
+            "not holding it, the rule does not apply"
+        );
         let ring = fold(&settings, window("x")).ring.expect("on");
-        assert_eq!(ring.active, settings.focus_ring.band.active, "a window as it opens holds no focus");
+        assert_eq!(
+            ring.active, settings.focus_ring.band.active,
+            "a window as it opens holds no focus"
+        );
     }
 
     #[test]
     fn the_corner_radius_rule_overrides_the_measured_one() {
         let settings = with(vec![
-            DecorationRule { corner_radius: Some(8.0), ..DecorationRule::default() },
-            DecorationRule { corner_radius: Some(12.0), ..rule(app("com.example.Editor")) },
+            DecorationRule {
+                corner_radius: Some(8.0),
+                ..DecorationRule::default()
+            },
+            DecorationRule {
+                corner_radius: Some(12.0),
+                ..rule(app("com.example.Editor"))
+            },
         ]);
         let editor = decoration(&settings, window("com.example.Editor"));
-        assert_eq!(editor.corner(|| Some(26.0)), Some(12.0), "the later rule's, ahead of the window server's");
-        assert_eq!(decoration(&settings, window("com.example.Other")).corner(|| Some(26.0)), Some(8.0));
-        assert_eq!(decoration(&with(Vec::new()), window("x")).corner(|| Some(26.0)), Some(26.0), "no rule, the server's");
+        assert_eq!(
+            editor.corner(|| Some(26.0)),
+            Some(12.0),
+            "the later rule's, ahead of the window server's"
+        );
+        assert_eq!(
+            decoration(&settings, window("com.example.Other")).corner(|| Some(26.0)),
+            Some(8.0)
+        );
+        assert_eq!(
+            decoration(&with(Vec::new()), window("x")).corner(|| Some(26.0)),
+            Some(26.0),
+            "no rule, the server's"
+        );
     }
 
     /// A floating window keeps its frame, so only a tiled window gives a border width out of a slot,
@@ -204,55 +358,166 @@ mod tests {
     #[test]
     fn a_border_width_is_the_tiled_windows_whatever_a_floating_rule_says() {
         let settings = with(vec![
-            DecorationRule { border: BandRule { on: Some(true), width: Some(2.0), ..BandRule::default() }, ..rule(app("com.example.Editor")) },
             DecorationRule {
-                border: BandRule { width: Some(9.0), ..BandRule::default() },
-                ..rule(RuleMatch { is_floating: Some(true), ..RuleMatch::default() })
+                border: BandRule {
+                    on: Some(true),
+                    width: Some(2.0),
+                    ..BandRule::default()
+                },
+                ..rule(app("com.example.Editor"))
+            },
+            DecorationRule {
+                border: BandRule {
+                    width: Some(9.0),
+                    ..BandRule::default()
+                },
+                ..rule(RuleMatch {
+                    is_floating: Some(true),
+                    ..RuleMatch::default()
+                })
             },
         ]);
-        let floating = WindowRuleContext { state: RuleState { floating: true, ..RuleState::default() }, ..window("com.example.Editor") };
+        let floating = WindowRuleContext {
+            state: RuleState {
+                floating: true,
+                ..RuleState::default()
+            },
+            ..window("com.example.Editor")
+        };
         assert_eq!(border_width(&settings, floating, 2.0), 2.0);
-        assert_eq!(fold(&settings, floating).border.map(|band| band.width), Some(9.0), "drawn at the floating rule's");
-        assert_eq!(border_width(&settings, window("com.example.Other"), 2.0), 0.0, "borders off for the rest");
-        assert!(shape_borders(&settings) && !shape_borders(&with(vec![DecorationRule { corner_radius: Some(4.0), ..DecorationRule::default() }])));
+        assert_eq!(
+            fold(&settings, floating).border.map(|band| band.width),
+            Some(9.0),
+            "drawn at the floating rule's"
+        );
+        assert_eq!(
+            border_width(&settings, window("com.example.Other"), 2.0),
+            0.0,
+            "borders off for the rest"
+        );
+        assert!(
+            shape_borders(&settings)
+                && !shape_borders(&with(vec![DecorationRule {
+                    corner_radius: Some(4.0),
+                    ..DecorationRule::default()
+                }]))
+        );
     }
 
     /// The band is drawn in whole device pixels, so the slot gives up the width it is drawn at, and
     /// the band covers nothing beside its window at any width.
     #[test]
     fn a_tiled_window_gives_its_border_out_of_its_slot_as_the_band_is_drawn() {
-        let border = |width| BandSetting { on: true, band: Band { width, ..DecorationSettings::default().border.band } };
-        let at = |width, scale| border_width(&DecorationSettings { border: border(width), ..with(Vec::new()) }, window("x"), scale);
-        assert_eq!((at(1.3, 2.0), at(1.5, 1.0), at(4.0, 2.0), at(4.0, 1.0)), (1.5, 2.0, 4.0, 4.0));
-        assert_eq!(border_width(&with(Vec::new()), window("x"), 2.0), 0.0, "the border off gives up nothing");
+        let border = |width| BandSetting {
+            on: true,
+            band: Band {
+                width,
+                ..DecorationSettings::default().border.band
+            },
+        };
+        let at = |width, scale| {
+            border_width(
+                &DecorationSettings {
+                    border: border(width),
+                    ..with(Vec::new())
+                },
+                window("x"),
+                scale,
+            )
+        };
+        assert_eq!(
+            (at(1.3, 2.0), at(1.5, 1.0), at(4.0, 2.0), at(4.0, 1.0)),
+            (1.5, 2.0, 4.0, 4.0)
+        );
+        assert_eq!(
+            border_width(&with(Vec::new()), window("x"), 2.0),
+            0.0,
+            "the border off gives up nothing"
+        );
     }
 
     /// An open-time rule and a decoration rule written as one `window-rule` apply to the same windows.
     #[test]
     fn open_time_and_decoration_rules_match_through_one_matcher() {
         let matches = vec![app("com.example.Editor"), RuleMatch::title("^Prefs$")];
-        let excludes = vec![RuleMatch { is_modal: Some(true), ..RuleMatch::default() }];
-        let opening = WindowRule { matches: matches.clone(), excludes: excludes.clone(), open_floating: Some(true), ..WindowRule::default() };
-        let decorating = DecorationRule { matches, excludes, corner_radius: Some(4.0), ..DecorationRule::default() };
+        let excludes = vec![RuleMatch {
+            is_modal: Some(true),
+            ..RuleMatch::default()
+        }];
+        let opening = WindowRule {
+            matches: matches.clone(),
+            excludes: excludes.clone(),
+            open_floating: Some(true),
+            ..WindowRule::default()
+        };
+        let decorating = DecorationRule {
+            matches,
+            excludes,
+            corner_radius: Some(4.0),
+            ..DecorationRule::default()
+        };
         let engine = crate::windows::domain::rules::AppRuleEngine::new(&[opening]);
         let settings = with(vec![decorating]);
-        let titled = WindowRuleContext { window_title: Some("Prefs"), ..window("com.example.Other") };
-        let modal = WindowRuleContext { is_modal: true, ..window("com.example.Editor") };
-        for context in [window("com.example.Editor"), titled, modal, window("com.example.Other")] {
-            let opens = engine.evaluate(context) != crate::windows::domain::rules::AppRuleDecision::NoMatch;
+        let titled = WindowRuleContext {
+            window_title: Some("Prefs"),
+            ..window("com.example.Other")
+        };
+        let modal = WindowRuleContext {
+            is_modal: true,
+            ..window("com.example.Editor")
+        };
+        for context in [
+            window("com.example.Editor"),
+            titled,
+            modal,
+            window("com.example.Other"),
+        ] {
+            let opens =
+                engine.evaluate(context) != crate::windows::domain::rules::AppRuleDecision::NoMatch;
             assert_eq!(opens, fold(&settings, context).radius.is_some(), "{context:?}");
         }
     }
 
     #[test]
     fn a_rule_that_only_colours_by_focus_follows_focus_and_decorates() {
-        let focused = rule(RuleMatch { is_focused: Some(false), ..RuleMatch::default() });
+        let focused = rule(RuleMatch {
+            is_focused: Some(false),
+            ..RuleMatch::default()
+        });
         assert!(focused.follows_focus_or_attention() && !focused.decorates());
-        let excluded = DecorationRule { excludes: vec![RuleMatch { is_active: Some(true), ..RuleMatch::default() }], ..DecorationRule::default() };
-        assert!(excluded.follows_focus_or_attention(), "an exclude line turns with focus too");
-        assert!(rule(RuleMatch { is_urgent: Some(true), ..RuleMatch::default() }).follows_focus_or_attention(), "and with attention");
-        assert!(DecorationRule { corner_radius: Some(4.0), ..rule(app("x")) }.decorates());
-        assert!(!rule(RuleMatch { is_floating: Some(true), ..RuleMatch::default() }).follows_focus_or_attention());
+        let excluded = DecorationRule {
+            excludes: vec![RuleMatch {
+                is_active: Some(true),
+                ..RuleMatch::default()
+            }],
+            ..DecorationRule::default()
+        };
+        assert!(
+            excluded.follows_focus_or_attention(),
+            "an exclude line turns with focus too"
+        );
+        assert!(
+            rule(RuleMatch {
+                is_urgent: Some(true),
+                ..RuleMatch::default()
+            })
+            .follows_focus_or_attention(),
+            "and with attention"
+        );
+        assert!(
+            DecorationRule {
+                corner_radius: Some(4.0),
+                ..rule(app("x"))
+            }
+            .decorates()
+        );
+        assert!(
+            !rule(RuleMatch {
+                is_floating: Some(true),
+                ..RuleMatch::default()
+            })
+            .follows_focus_or_attention()
+        );
     }
 
     /// niri's `match is-urgent=true` recolours a window while it is drawn urgent, in the urgent
@@ -260,16 +525,35 @@ mod tests {
     #[test]
     fn is_urgent_matches_an_app_wanting_attention() {
         let mut settings = with(vec![DecorationRule {
-            border: BandRule { urgent: Some(RED), ..BandRule::default() },
-            ..rule(RuleMatch { is_urgent: Some(true), ..RuleMatch::default() })
+            border: BandRule {
+                urgent: Some(RED),
+                ..BandRule::default()
+            },
+            ..rule(RuleMatch {
+                is_urgent: Some(true),
+                ..RuleMatch::default()
+            })
         }]);
         settings.border.on = true;
-        let urgent = WindowRuleContext { state: RuleState { urgent: true, ..RuleState::default() }, ..window("x") };
+        let urgent = WindowRuleContext {
+            state: RuleState {
+                urgent: true,
+                ..RuleState::default()
+            },
+            ..window("x")
+        };
         let drawn = decoration(&settings, urgent);
         assert!(drawn.urgent);
-        assert_eq!(crate::decorations::domain::style::Style::of(false, Ring::None, &drawn).border, Some(RED));
+        assert_eq!(
+            crate::decorations::domain::style::Style::of(false, Ring::None, &drawn).border,
+            Some(RED)
+        );
         let calm = decoration(&settings, window("x"));
         assert!(!calm.urgent);
-        assert_eq!(calm.border.map(|band| band.urgent), Some(settings.border.band.urgent), "the layout's while it does not ask");
+        assert_eq!(
+            calm.border.map(|band| band.urgent),
+            Some(settings.border.band.urgent),
+            "the layout's while it does not ask"
+        );
     }
 }

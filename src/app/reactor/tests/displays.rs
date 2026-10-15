@@ -51,10 +51,10 @@ fn layout_commands_follow_active_display_space_across_active_displays() {
         (target_b, WindowServerId::new(103), right_space, right),
     ];
 
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(left_space), Some(right_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(left_space),
+        Some(right_space),
+    ]));
 
     reactor.add_test_app(1);
 
@@ -101,10 +101,10 @@ fn active_display_update_only_changes_command_context() {
     let left_space = SpaceId::new(1);
     let right_space = SpaceId::new(2);
 
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(left_space), Some(right_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(left_space),
+        Some(right_space),
+    ]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(1));
     assert!(apps.requests().is_empty());
 
@@ -368,10 +368,10 @@ fn hidden_window_can_move_to_another_native_space_without_staying_pinned_to_old_
     let wid = WindowId::new(pid, 1);
     let wsid = WindowServerId::new(121);
 
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(space1), Some(space2)],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(space1),
+        Some(space2),
+    ]));
 
     reactor.add_test_app(pid);
 
@@ -624,10 +624,10 @@ fn it_keeps_discovered_windows_on_their_initial_screen() {
     let (mut apps, mut reactor) = test_context();
     let screen1 = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let screen2 = CGRect::new(CGPoint::new(1000., 0.), CGSize::new(1000., 1000.));
-    reactor.handle_event(space_state_event(
-        vec![screen1, screen2],
-        vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
-    ));
+    reactor.handle_event(space_state_event(vec![screen1, screen2], vec![
+        Some(SpaceId::new(1)),
+        Some(SpaceId::new(2)),
+    ]));
 
     let mut windows = make_windows(2);
     windows[1].frame.origin = CGPoint::new(1100., 100.);
@@ -660,10 +660,10 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
     reactor.communication_manager.raise_manager_tx = raise_manager_tx;
     let screen1 = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let screen2 = CGRect::new(CGPoint::new(1000., 0.), CGSize::new(1000., 1000.));
-    reactor.handle_event(space_state_event(
-        vec![screen1, screen2],
-        vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
-    ));
+    reactor.handle_event(space_state_event(vec![screen1, screen2], vec![
+        Some(SpaceId::new(1)),
+        Some(SpaceId::new(2)),
+    ]));
 
     reactor.handle_events(apps.make_app(1, make_windows(1)));
 
@@ -695,11 +695,9 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
         }) => {
             let raise_windows: HashSet<Vec<WindowId>> =
                 raise_windows.into_iter().map(AppBatch::into_windows).collect();
-            let expected = [
-                vec![WindowId::new(1, 1)],
-                vec![WindowId::new(2, 1)],
-                vec![WindowId::new(2, 2)],
-            ]
+            let expected = [vec![WindowId::new(1, 1)], vec![WindowId::new(2, 1)], vec![
+                WindowId::new(2, 2),
+            ]]
             .into_iter()
             .collect();
             assert_eq!(raise_windows, expected);
@@ -741,10 +739,10 @@ fn display_index_selector_uses_physical_left_to_right_order() {
     let mut reactor = test_reactor();
     let right = CGRect::new(CGPoint::new(200000., 0.), CGSize::new(1000., 1000.));
     let left = CGRect::new(CGPoint::new(100000., 0.), CGSize::new(1000., 1000.));
-    reactor.handle_event(space_state_event(
-        vec![right, left],
-        vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
-    ));
+    reactor.handle_event(space_state_event(vec![right, left], vec![
+        Some(SpaceId::new(1)),
+        Some(SpaceId::new(2)),
+    ]));
 
     let selected = reactor
         .screen_for_selector(&DisplaySelector::Index(0), None)
@@ -758,10 +756,10 @@ fn moving_tiled_window_to_display_applies_destination_layout_after_transfer_fram
     let (mut apps, mut reactor) = test_context();
     let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let right = CGRect::new(CGPoint::new(1000., 0.), CGSize::new(1000., 1000.));
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(SpaceId::new(1)),
+        Some(SpaceId::new(2)),
+    ]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
 
     let moved = WindowId::new(1, 1);
@@ -1036,14 +1034,14 @@ fn normal_macos_space_switch_does_not_arm_topology_relayout() {
     let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1280., 800.));
     let right = CGRect::new(CGPoint::new(1280., 0.), CGSize::new(1280., 800.));
 
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(SpaceId::new(11)), Some(SpaceId::new(22))],
-    ));
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(SpaceId::new(111)), Some(SpaceId::new(222))],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(SpaceId::new(11)),
+        Some(SpaceId::new(22)),
+    ]));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(SpaceId::new(111)),
+        Some(SpaceId::new(222)),
+    ]));
     assert_eq!(
         reactor.raw_spaces_for_current_screens(),
         vec![Some(SpaceId::new(111)), Some(SpaceId::new(222))],
@@ -1092,17 +1090,26 @@ fn each_quarantine_event_sets_its_quarantine_flag_and_moves_no_focus() {
 
     reactor.handle_event(Event::DisplayChurnBegin);
     assert!(reactor.refresh_quarantine_manager.display_churn_active);
-    assert_eq!(reactor.refresh_quarantine_state(), RefreshQuarantineState::DisplayChurn);
+    assert_eq!(
+        reactor.refresh_quarantine_state(),
+        RefreshQuarantineState::DisplayChurn
+    );
 
     reactor.handle_event(Event::SessionDidResignActive);
     assert!(reactor.refresh_quarantine_manager.session_inactive);
     assert!(!reactor.refresh_quarantine_manager.awaiting_post_session_snapshot);
-    assert_eq!(reactor.refresh_quarantine_state(), RefreshQuarantineState::SessionInactive);
+    assert_eq!(
+        reactor.refresh_quarantine_state(),
+        RefreshQuarantineState::SessionInactive
+    );
 
     reactor.handle_event(Event::SystemWillSleep);
     assert!(reactor.refresh_quarantine_manager.sleeping);
     assert!(!reactor.refresh_quarantine_manager.awaiting_post_wake_snapshot);
-    assert_eq!(reactor.refresh_quarantine_state(), RefreshQuarantineState::Sleeping);
+    assert_eq!(
+        reactor.refresh_quarantine_state(),
+        RefreshQuarantineState::Sleeping
+    );
 
     reactor.handle_event(Event::SystemWoke);
     assert!(reactor.refresh_quarantine_manager.sleeping);
@@ -1135,9 +1142,13 @@ fn display_churn_end_refresh_is_idempotent_without_topology_change() {
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
 
     reactor.handle_event(Event::DisplayChurnBegin);
-    reactor.handle_event(space_state_event_with(vec![screen], vec![Some(space)], |state| {
-        state.releases_display_churn_refresh_quarantine = true;
-    }));
+    reactor.handle_event(space_state_event_with(
+        vec![screen],
+        vec![Some(space)],
+        |state| {
+            state.releases_display_churn_refresh_quarantine = true;
+        },
+    ));
     apps.simulate_until_quiet(&mut reactor);
 
     assert!(
@@ -1357,10 +1368,10 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
     // macOS mints a new id on reconnect.
     let replugged_space = SpaceId::new(484);
 
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
 
     let pid = 1;
     reactor.add_test_app(pid);
@@ -1435,10 +1446,10 @@ fn replug_returns_the_windows_that_were_on_that_display() {
     let slack = WindowId::new(1, 3);
     set_space_membership(&[(builtin_space, &[903]), (external_space, &[901, 902])]);
 
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     reactor.add_test_app(1);
     let external_workspace = reactor.test_workspace(external_space, 0);
     let builtin_workspace = reactor.test_workspace(builtin_space, 0);
@@ -1785,10 +1796,10 @@ fn replug_leaves_the_other_display_group_order_untouched() {
     let resident = WindowId::new(1, 9);
     set_space_membership(&[(builtin_space, &[801, 802, 803]), (external_space, &[909])]);
 
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     reactor.add_test_app(1);
     let builtin_workspace = reactor.test_workspace(builtin_space, 0);
     let external_workspace = reactor.test_workspace(external_space, 0);
@@ -1856,19 +1867,19 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
     let exile = WindowId::new(1, 1);
 
     set_space_membership(&[(builtin_space, &[]), (external_space, &[901])]);
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     reactor.add_test_app(1);
     let external_workspace = reactor.test_workspace(external_space, 0);
     reactor.add_test_window(exile, WindowServerId::new(901), Some(external_space), external);
     assert!(reactor.assign_test_window_to_workspace(external_space, exile, external_workspace));
     reactor.send_layout_event(LayoutEvent::WindowAdded(external_space, exile));
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     assert_eq!(
         reactor.state.display_memory.affinity.window_home(exile),
         Some("test-display-1")
@@ -1897,10 +1908,10 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
         vec![Some(builtin_space), Some(external_space)],
         |state| state.display_set_changed = true,
     ));
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
 
     assert_eq!(
         reactor.state.display_memory.affinity.window_home(exile),
@@ -1940,10 +1951,10 @@ fn replug_rebuilds_strip_adjacency() {
         (builtin_space, &[]),
         (external_space, &[901, 902, 908, 909]),
     ]);
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     reactor.add_test_app(1);
     let external_workspace = reactor.test_workspace(external_space, 0);
     for (window, server_id) in ids {
@@ -1963,10 +1974,10 @@ fn replug_rebuilds_strip_adjacency() {
     for window in [chrome, terminal_a, terminal_b, editor] {
         reactor.send_layout_event(LayoutEvent::WindowAdded(external_space, window));
     }
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     let strip_before = reactor
         .layout_manager
         .layout_engine
@@ -2027,10 +2038,10 @@ fn closed_windows_do_not_keep_their_display_affinity() {
     let survivor = WindowId::new(1, 2);
 
     set_space_membership(&[(builtin_space, &[]), (external_space, &[901, 902])]);
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     reactor.add_test_app(1);
     let external_workspace = reactor.test_workspace(external_space, 0);
     for (window, wsid) in [(doomed, 901u32), (survivor, 902)] {
@@ -2042,10 +2053,10 @@ fn closed_windows_do_not_keep_their_display_affinity() {
         ));
         reactor.send_layout_event(LayoutEvent::WindowAdded(external_space, window));
     }
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     assert_eq!(
         reactor.state.display_memory.affinity.window_home(doomed),
         Some("test-display-1"),
@@ -2059,10 +2070,10 @@ fn closed_windows_do_not_keep_their_display_affinity() {
 
     // Any settled topology is enough to notice.
     set_space_membership(&[(builtin_space, &[]), (external_space, &[902])]);
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
 
     assert_eq!(
         reactor.state.display_memory.affinity.window_home(doomed),
@@ -2102,10 +2113,10 @@ fn diagnostics_report_every_display_not_just_the_default_space() {
     let on_external = WindowId::new(1, 2);
 
     set_space_membership(&[(builtin_space, &[901]), (external_space, &[902])]);
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     reactor.add_test_app(1);
     for (window, wsid, space, frame) in [
         (on_builtin, 901u32, builtin_space, builtin),
@@ -2171,10 +2182,10 @@ fn a_parked_window_is_not_claimed_by_the_display_it_is_parked_over() {
     let wsid = WindowServerId::new(901);
 
     set_space_membership(&[(builtin_space, &[901]), (external_space, &[])]);
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     reactor.add_test_app(1);
 
     // The window belongs to workspace 1 while the built-in shows workspace 0, so rini parks
@@ -2226,10 +2237,10 @@ fn redistribute_returns_windows_to_their_home_display_only() {
     let settled = WindowId::new(1, 2);
 
     set_space_membership(&[(builtin_space, &[901, 902]), (external_space, &[])]);
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     reactor.add_test_app(1);
     let workspaces = reactor.test_workspace_ids(builtin_space);
 
@@ -2296,10 +2307,10 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
     let built_in_space = SpaceId::new(1);
     let external_space = SpaceId::new(519);
 
-    reactor.handle_event(space_state_event(
-        vec![built_in, external],
-        vec![Some(built_in_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![built_in, external], vec![
+        Some(built_in_space),
+        Some(external_space),
+    ]));
     // The cursor is on the external display, which is what used to decide this.
     reactor.handle_event(Event::ActiveDisplayChanged {
         menu_bar_space: Some(external_space),

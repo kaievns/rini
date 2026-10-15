@@ -115,9 +115,7 @@ impl std::fmt::Debug for CarbonListener {
 
 impl CarbonListener {
     pub fn application<F>(types: &[EventType], callback: F) -> Result<Self, String>
-    where
-        F: FnMut(Event) -> OSStatus + Send + 'static,
-    {
+    where F: FnMut(Event) -> OSStatus + Send + 'static {
         let target = unsafe { GetApplicationEventTarget() };
         if target.is_null() {
             return Err("GetApplicationEventTarget returned null".to_string());
@@ -163,7 +161,5 @@ impl CarbonListener {
 }
 
 impl Drop for CarbonListener {
-    fn drop(&mut self) {
-        let _ = self.remove();
-    }
+    fn drop(&mut self) { let _ = self.remove(); }
 }

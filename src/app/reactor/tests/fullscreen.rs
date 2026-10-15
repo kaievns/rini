@@ -8,9 +8,9 @@ use rini_geometry::SameAs;
 use test_log::test;
 
 use super::fixtures::*;
-use crate::layout::settings::Edges;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
+use crate::layout::settings::Edges;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::request::{AppThreadHandle, Request};
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
@@ -102,16 +102,13 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
     reactor.handle_event(space_state_event(vec![screen], vec![Some(user_space)]));
 
     let (app_tx, mut app_rx) = crate::app::channels::channel();
-    reactor.app_manager.apps.insert(
-        pid,
-        AppState {
-            info: AppInfo {
-                bundle_id: Some("com.test.pending-fullscreen".to_string()),
-                localized_name: Some("Pending Fullscreen".to_string()),
-            },
-            handle: AppThreadHandle::from_sender(app_tx),
+    reactor.app_manager.apps.insert(pid, AppState {
+        info: AppInfo {
+            bundle_id: Some("com.test.pending-fullscreen".to_string()),
+            localized_name: Some("Pending Fullscreen".to_string()),
         },
-    );
+        handle: AppThreadHandle::from_sender(app_tx),
+    });
 
     reactor.track_test_window_server_info(wsid, pid, frame);
 
@@ -399,16 +396,16 @@ fn fullscreen_transition_preserves_other_display_space() {
     let right_space_1 = SpaceId::new(21);
     let right_fullscreen = SpaceId::new(0x400000000 + right_space_1.get());
 
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(left_space_2), Some(right_space_1)],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(left_space_2),
+        Some(right_space_1),
+    ]));
     reactor.space_state.fullscreen_spaces.insert(right_fullscreen);
 
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(left_space_2), None],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(left_space_2),
+        None,
+    ]));
 
     assert_eq!(
         reactor.raw_spaces_for_current_screens(),
@@ -428,20 +425,20 @@ fn user_space_switch_is_allowed_while_other_display_already_fullscreen() {
     let right_space_1 = SpaceId::new(21);
     let right_fullscreen = SpaceId::new(0x400000000 + right_space_1.get());
 
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(left_space_2), Some(right_space_1)],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(left_space_2),
+        Some(right_space_1),
+    ]));
     reactor.space_state.fullscreen_spaces.insert(right_fullscreen);
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(left_space_2), None],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(left_space_2),
+        None,
+    ]));
 
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(left_space_1), None],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(left_space_1),
+        None,
+    ]));
 
     assert_eq!(
         reactor.raw_spaces_for_current_screens(),

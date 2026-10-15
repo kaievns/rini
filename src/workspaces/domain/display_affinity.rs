@@ -19,11 +19,9 @@
 //! which display owns which native space is a fact about this session's hardware, not about one
 //! arrangement, and it is retained for unplugged displays too.
 
-use serde::{Deserialize, Serialize};
-
-use rini_core::ids::SpaceId;
-use rini_core::ids::{WindowId, pid_t};
+use rini_core::ids::{SpaceId, WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use serde::{Deserialize, Serialize};
 
 use crate::workspaces::domain::display_setup::{Setup, SetupId};
 
@@ -67,7 +65,11 @@ pub enum ColumnWidth {
 impl ColumnWidth {
     /// The record of a column's offset, by whether it is unbounded.
     pub fn from_offset(offset: f64, unbounded: bool) -> Self {
-        if unbounded { Self::Unbounded(offset) } else { Self::Offset(offset) }
+        if unbounded {
+            Self::Unbounded(offset)
+        } else {
+            Self::Offset(offset)
+        }
     }
 
     /// The width as a file holds it, and whether it is unbounded.
@@ -207,9 +209,7 @@ impl DisplayAffinity {
     }
 
     /// The arrangement in force.
-    pub fn current_setup(&self) -> &SetupId {
-        &self.current
-    }
+    pub fn current_setup(&self) -> &SetupId { &self.current }
 
     /// Records written before any arrangement was named, ready to be adopted by the first one.
     ///
@@ -226,9 +226,7 @@ impl DisplayAffinity {
         self.setups.get(&self.current).unwrap_or(&EMPTY)
     }
 
-    fn setup_mut(&mut self) -> &mut Setup {
-        self.setups.entry(self.current.clone()).or_default()
-    }
+    fn setup_mut(&mut self) -> &mut Setup { self.setups.entry(self.current.clone()).or_default() }
 
     /// Record that `display` currently owns `space`, evicting any other claimant: a native space
     /// has one display, and two claimants make the affinity pass move windows forever.
@@ -402,17 +400,11 @@ impl DisplayAffinity {
 mod tests {
     use super::*;
 
-    fn win(idx: u32) -> WindowId {
-        WindowId::new(1, idx)
-    }
+    fn win(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
-    fn docked() -> Vec<String> {
-        vec!["builtin".to_owned(), "studio".to_owned()]
-    }
+    fn docked() -> Vec<String> { vec!["builtin".to_owned(), "studio".to_owned()] }
 
-    fn laptop() -> Vec<String> {
-        vec!["builtin".to_owned()]
-    }
+    fn laptop() -> Vec<String> { vec!["builtin".to_owned()] }
 
     /// The reported requirement. A window arranged one way while docked must not disturb how the
     /// laptop looks alone, and coming back must find the docked arrangement intact.
@@ -718,10 +710,12 @@ mod tests {
         }
         affinity.set_display_strip("external", vec![win(1), win(8), win(9), win(2)]);
 
-        assert_eq!(
-            affinity.windows_homed_to("external"),
-            vec![win(1), win(8), win(9), win(2)]
-        );
+        assert_eq!(affinity.windows_homed_to("external"), vec![
+            win(1),
+            win(8),
+            win(9),
+            win(2)
+        ]);
     }
 
     /// The point of keying width by display: one window, two displays, two answers.
@@ -762,7 +756,10 @@ mod tests {
             read.window_width("built-in", win(1)),
             Some(ColumnWidth::Unbounded(0.33797))
         );
-        assert_eq!(read.window_width("built-in", win(2)), Some(ColumnWidth::Offset(0.25)));
+        assert_eq!(
+            read.window_width("built-in", win(2)),
+            Some(ColumnWidth::Offset(0.25))
+        );
     }
 
     /// Clearing must forget, not freeze the last value: toggling a deliberate width off is an
@@ -853,9 +850,7 @@ mod observation_tests {
     const BUILT_IN: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     const EXTERNAL: &str = "B5E7ECDB-94D9-4565-949D-5F22F78D104A";
 
-    fn win(idx: u32) -> WindowId {
-        WindowId::new(500, idx)
-    }
+    fn win(idx: u32) -> WindowId { WindowId::new(500, idx) }
 
     /// The bug behind "windows teleport between displays". A window homed to the built-in is SEEN on
     /// the external — because rini parked it there, or evacuated it, or laid it out there — and the

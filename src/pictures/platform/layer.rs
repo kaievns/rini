@@ -99,7 +99,12 @@ mod tests {
     fn a_layer_is_filled_with_its_pictures_ground() {
         let layer = CALayer::layer();
         let mut picture = test_picture(ScreenSize::new(1.0, 1.0));
-        picture.ground = LazyGround::known(Ground { r: 0.1, g: 0.2, b: 0.3, a: 0.95 });
+        picture.ground = LazyGround::known(Ground {
+            r: 0.1,
+            g: 0.2,
+            b: 0.3,
+            a: 0.95,
+        });
         set_layer_ground(&layer, &picture);
         let colour = layer.backgroundColor().expect("filled");
         assert_eq!(CGColor::number_of_components(Some(&colour)), 4);
@@ -130,7 +135,11 @@ mod tests {
         set_layer_ground(&layer, &picture);
         let colour = layer.backgroundColor().expect("filled");
         let filled_in = CGColor::color_space(Some(&colour)).expect("a space");
-        assert_eq!(CGColorSpace::name(Some(&filled_in)).as_deref(), Some(p3), "in P3");
+        assert_eq!(
+            CGColorSpace::name(Some(&filled_in)).as_deref(),
+            Some(p3),
+            "in P3"
+        );
         // SAFETY: the colour's own four components, read while it is held.
         let got = unsafe { std::slice::from_raw_parts(CGColor::components(Some(&colour)), 4) };
         assert_eq!(got, [0.2, 0.5, 0.8, 1.0]);
@@ -187,14 +196,21 @@ mod tests {
             (8.0, 0.0, (1.0, 1.0, 1.0)),
         ] {
             CGContext::set_rgb_fill_color(Some(&ctx), r, g, b, 1.0);
-            CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(x, y), CGSize::new(8.0, 4.0)));
+            CGContext::fill_rect(
+                Some(&ctx),
+                CGRect::new(CGPoint::new(x, y), CGSize::new(8.0, 4.0)),
+            );
         }
         objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx)).expect("an image")
     }
 
     /// Every pixel of `width` x `height`, RGBA, top row first, of whatever `draw` puts in a fresh
     /// context.
-    fn drawn(width: usize, height: usize, draw: impl Fn(&objc2_core_graphics::CGContext)) -> Vec<u8> {
+    fn drawn(
+        width: usize,
+        height: usize,
+        draw: impl Fn(&objc2_core_graphics::CGContext),
+    ) -> Vec<u8> {
         let ctx = rgba_bitmap_context(width, height).expect("a context");
         draw(&ctx);
         let data = objc2_core_graphics::CGBitmapContextGetData(Some(&ctx)) as *const u8;
@@ -234,9 +250,15 @@ mod tests {
             shown
         };
         for (rect, colour) in [
-            (CGRect::new(CGPoint::new(8.0, 0.0), CGSize::new(8.0, 4.0)), [0, 255, 0, 255]),
-            (CGRect::new(CGPoint::new(0.0, 4.0), CGSize::new(8.0, 4.0)), [0, 0, 255, 255]),
-            (CGRect::new(CGPoint::new(4.0, 2.0), CGSize::new(8.0, 4.0)), [255, 0, 0, 255]),
+            (CGRect::new(CGPoint::new(8.0, 0.0), CGSize::new(8.0, 4.0)), [
+                0, 255, 0, 255,
+            ]),
+            (CGRect::new(CGPoint::new(0.0, 4.0), CGSize::new(8.0, 4.0)), [
+                0, 0, 255, 255,
+            ]),
+            (CGRect::new(CGPoint::new(4.0, 2.0), CGSize::new(8.0, 4.0)), [
+                255, 0, 0, 255,
+            ]),
         ] {
             let region = Picture {
                 image: Pixels::Region {
@@ -279,7 +301,11 @@ mod tests {
         layer.setBounds(CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(8.0, 4.0)));
         layer.setContentsScale(1.0);
         set_layer_contents(&layer, &top_right);
-        assert_eq!(&render(false, &layer)[..4], &[255, 255, 255, 255], "unflipped: the quadrant below");
+        assert_eq!(
+            &render(false, &layer)[..4],
+            &[255, 255, 255, 255],
+            "unflipped: the quadrant below"
+        );
     }
 
     /// A layer that last showed a region shows the next picture whole: layers are pooled.

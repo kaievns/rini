@@ -13,12 +13,15 @@ use rini_geometry::space::{OverlayRect, ScreenRect, SurfacePoint};
 use rini_geometry::{is_off_screen, shows_on, to_overlay_space};
 use serde::Serialize;
 
+use super::request::SurfaceWindow;
+use super::timing::{
+    BURST_HOLD_CAP, COALESCE_WINDOW, ELSEWHERE_HOLD_CAP, FRAME_INTERVAL, HOLD_CAP, LIFT_GRACE,
+};
 use crate::animation::domain::motion::holes::hole_in;
 use crate::animation::domain::motion::tile::snap_to;
-use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, Client, END_SLACK, Tag, Why, near, wholly_on};
-
-use super::request::SurfaceWindow;
-use super::timing::{BURST_HOLD_CAP, COALESCE_WINDOW, ELSEWHERE_HOLD_CAP, FRAME_INTERVAL, HOLD_CAP, LIFT_GRACE};
+use crate::pictures::domain::watch::{
+    Accept, CHANGE_EVERY, Client, END_SLACK, Tag, Why, near, wholly_on,
+};
 
 /// How long the overlay waits for its frame-zero pictures before showing what the cache holds.
 pub const FRAME_ZERO_PATIENCE: Duration = Duration::from_millis(80);
@@ -76,14 +79,10 @@ impl Kind {
     }
 
     /// Whether the real windows are written to new frames.
-    pub fn writes(self) -> bool {
-        !matches!(self, Kind::Bounce)
-    }
+    pub fn writes(self) -> bool { !matches!(self, Kind::Bounce) }
 
     /// Whether the end state is watched and recaptured as it lands. Nothing lands in a bounce.
-    pub fn watches_end(self) -> bool {
-        !matches!(self, Kind::Bounce)
-    }
+    pub fn watches_end(self) -> bool { !matches!(self, Kind::Bounce) }
 }
 
 /// When the motion starts once the overlay is up.
@@ -104,9 +103,7 @@ pub struct TileSummary {
 }
 
 impl TileSummary {
-    fn moves(&self) -> bool {
-        !near(self.start, self.end, 0.5)
-    }
+    fn moves(&self) -> bool { !near(self.start, self.end, 0.5) }
 }
 
 /// What a kind staged, as far as the lifecycle needs to know.
@@ -154,7 +151,11 @@ pub struct StageSummary {
 /// begins, and the focus target only when focus is not moving to it. What frame zero pictures
 /// of either shows the same, unless another application's panel had the keys (`frame_zero_look`). A
 /// focus target flying its focused look (`StageSummary::parked_focus`) is drawn focused with it.
-pub fn drawn_focused(window: WindowId, focus: Option<WindowId>, losing_focus: Option<WindowId>) -> bool {
+pub fn drawn_focused(
+    window: WindowId,
+    focus: Option<WindowId>,
+    losing_focus: Option<WindowId>,
+) -> bool {
     losing_focus == Some(window) || focus == Some(window) && losing_focus.is_none()
 }
 
@@ -201,9 +202,10 @@ impl StageSummary {
     /// behind a single opaque strip window at its start cannot be seen until the strip moves.
     fn background_at_frame_zero(&self) -> (Vec<(WindowId, ScreenRect)>, bool) {
         let strip = self.frame_zero_strip();
-        let (seen, hidden): (Vec<_>, Vec<_>) = self.background().into_iter().partition(|(_, frame)| {
-            !strip.iter().any(|(w, s)| wholly_on(*frame, *s) && self.opaque.contains(w))
-        });
+        let (seen, hidden): (Vec<_>, Vec<_>) =
+            self.background().into_iter().partition(|(_, frame)| {
+                !strip.iter().any(|(w, s)| wholly_on(*frame, *s) && self.opaque.contains(w))
+            });
         (seen, !hidden.is_empty())
     }
 
@@ -256,16 +258,27 @@ pub enum Event {
     /// pass while one is held. `writes` is where it sends the real windows. The coordinator says when
     /// it merges (`Command::Retarget`): once the grows it can see repaint have repainted there, at
     /// once when there are none.
-    HoldMerge { grows: Vec<(WindowId, ScreenRect)>, writes: Vec<(WindowId, ScreenRect)> },
+    HoldMerge {
+        grows: Vec<(WindowId, ScreenRect)>,
+        writes: Vec<(WindowId, ScreenRect)>,
+    },
     /// The frame-zero pictures arrived (or the service has nothing more to give).
     FrameZero(Generation),
     /// One picture, taken with the window at `frame`: an end-state one, or one of frame zero's that
     /// came after the overlay went up without it. Frame zero's in time come as `FrameZero`.
-    Picture { generation: Generation, window: WindowId, frame: ScreenRect, why: Why },
+    Picture {
+        generation: Generation,
+        window: WindowId,
+        frame: ScreenRect,
+        why: Why,
+    },
     /// The end window watched under `generation` whose picture will not come: it was not where it ends
     /// by the watch's deadline, it never settled, or the cache refused its capture. For the window
     /// losing focus, its turn will not be seen either.
-    Lost { generation: Generation, window: WindowId },
+    Lost {
+        generation: Generation,
+        window: WindowId,
+    },
     /// The score plays this much longer from now: composed as the motion starts, or added to by a
     /// push or a merge that moves nothing. The clock runs on to cover it.
     Extend(Duration),
@@ -311,28 +324,48 @@ pub enum Command {
     /// Merge the passes held since the motion ran (`Event::HoldMerge`), oldest first, from where each
     /// tile is drawn now, telling it `Event::Merge` for each: `held` is how long since the latest of
     /// them held for a grow arrived, a pass growing nothing that merges them at once included.
-    Retarget { held: Duration },
+    Retarget {
+        held: Duration,
+    },
     /// One more capture of every end window, before the lift.
-    AskFinal { generation: Generation, windows: Vec<(WindowId, ScreenRect)>, behind: Vec<WindowId> },
+    AskFinal {
+        generation: Generation,
+        windows: Vec<(WindowId, ScreenRect)>,
+        behind: Vec<WindowId>,
+    },
     /// Draw the delivered picture on its window's tile.
-    Swap { generation: Generation, window: WindowId },
+    Swap {
+        generation: Generation,
+        window: WindowId,
+    },
     /// Move the tile onto its window's real frame.
-    Snap { window: WindowId, frame: OverlayRect },
+    Snap {
+        window: WindowId,
+        frame: OverlayRect,
+    },
     /// The picture just swapped in shows the window focused: keep it as its focused look.
-    KeepFocusedLook { generation: Generation, window: WindowId },
+    KeepFocusedLook {
+        generation: Generation,
+        window: WindowId,
+    },
     /// Draw `window`'s tile focused or not, its hairline and its shadow, as its turned picture comes
     /// in: the window focus leaves unfocused, and the focus target focused, which is focus handing
     /// over. Until then the tiles are drawn focused where frame zero pictured focus: on the window
     /// focus leaves, and on the target only when it flies its focused look
     /// (`StageSummary::parked_focus`).
-    Focus { window: WindowId, focused: bool },
+    Focus {
+        window: WindowId,
+        focused: bool,
+    },
     /// What is drawn at rest on the overlay's display put where its windows are, under the overlay:
     /// once a flight end, at the first tick from `FRAME_INTERVAL` before it with the real windows
     /// landed, or with the lift when none came sooner. Never while nothing is drawn at rest
     /// (`StageSummary::rests`).
     PlaceRest,
     /// Overlay down. The quiet that follows ends with `Event::Quiet(generation)`.
-    Lift { generation: Generation },
+    Lift {
+        generation: Generation,
+    },
     /// Pictures for the next transition of every window the flight drew, at the frame each ended at.
     Warm(Vec<(WindowId, ScreenRect)>),
     /// Fresh pictures of windows whose look turned with the key window, whatever the cache holds of
@@ -379,19 +412,27 @@ pub struct EndWatch {
 #[derive(Clone, Debug, PartialEq)]
 enum Phase {
     /// Waiting for the frame-zero pictures, overlay not up.
-    Preparing { deadline: Instant },
+    Preparing {
+        deadline: Instant,
+    },
     /// Overlay up, waiting for the follow-up passes.
-    Coalescing { until: Instant },
+    Coalescing {
+        until: Instant,
+    },
     /// Overlay up, waiting for the awaited windows' first pictures, or to hear they will not come:
     /// each pass holding for one holds its windows' `hold_cap` from its arrival, `BURST_HOLD_CAP` from
     /// the overlay going up at most.
-    Holding { deadline: Instant },
+    Holding {
+        deadline: Instant,
+    },
     /// The motion playing what it played before a pass that grows windows reached it, its tiles going
     /// on to where they ended and resting there, until those windows have repainted where the pass
     /// sends them, or the coordinator hears they will not: no last capture, no place, no lift.
     /// The latest pass held's grows' `hold_cap` from its arrival, `BURST_HOLD_CAP` from the first at
     /// most.
-    MergeHeld { deadline: Instant },
+    MergeHeld {
+        deadline: Instant,
+    },
     Playing,
     /// The clock is done; waiting for the tiles and the windows to be where they end.
     Landing,
@@ -529,7 +570,8 @@ impl Flight {
     /// focused look, and focus handed over, if it still fits. One that no longer does is dropped: its
     /// hairline turns with the next picture of it that fits, or at the last capture's ask.
     fn swap_held_change(&mut self, out: &mut Vec<Command>) {
-        let (Some((generation, frame, _)), Some(to)) = (self.held_change.take(), self.stage.focus) else {
+        let (Some((generation, frame, _)), Some(to)) = (self.held_change.take(), self.stage.focus)
+        else {
             return;
         };
         if !self.takes(generation, to, frame) {
@@ -545,7 +587,8 @@ impl Flight {
     /// Whether focus moves in this flight: away from a window drawn focused, or back to one drawn
     /// unfocused.
     fn focus_moving(&self) -> bool {
-        self.stage.losing_focus.is_some() || self.unfocused.is_some() && self.unfocused == self.stage.focus
+        self.stage.losing_focus.is_some()
+            || self.unfocused.is_some() && self.unfocused == self.stage.focus
     }
 
     /// The windows watched until they repaint, and the end windows watched only until they are there.
@@ -559,19 +602,32 @@ impl Flight {
             .into_iter()
             .filter(|(w, _)| !self.awaiting.contains(w) && elsewhere(w))
             .collect();
-        let mut awaited: Vec<_> = self.stage.awaited_ends(&self.awaiting).into_iter().filter(|(w, _)| elsewhere(w)).collect();
+        let mut awaited: Vec<_> = self
+            .stage
+            .awaited_ends(&self.awaiting)
+            .into_iter()
+            .filter(|(w, _)| elsewhere(w))
+            .collect();
         awaited.extend_from_slice(held);
         (awaited, landing)
     }
 
     /// The windows the overlay can hold for: those a pass holds for that a watch can see repaint.
     fn holdable(&self) -> Vec<WindowId> {
-        self.end_windows().0.into_iter().map(|(w, _)| w).filter(|w| self.holds_for.contains(w)).collect()
+        self.end_windows()
+            .0
+            .into_iter()
+            .map(|(w, _)| w)
+            .filter(|w| self.holds_for.contains(w))
+            .collect()
     }
 
     /// How long a hold for `windows` runs, from where each is watched to repaint.
     fn hold_cap(&self, windows: &[WindowId]) -> Duration {
-        hold_cap(self.end_windows().0.iter().filter(|(w, _)| windows.contains(w)), self.stage.display)
+        hold_cap(
+            self.end_windows().0.iter().filter(|(w, _)| windows.contains(w)),
+            self.stage.display,
+        )
     }
 
     /// The end windows the last capture before the lift pictures: never one resized or opened that
@@ -588,9 +644,7 @@ impl Flight {
 
     /// Whether `window`'s tile flies the picture it starts with to the lift, no picture of it where it
     /// ends swapped on: a shrink whose picture covers its start, and so every frame of the shrink.
-    fn keeps(&self, window: WindowId) -> bool {
-        self.kept.contains(&window)
-    }
+    fn keeps(&self, window: WindowId) -> bool { self.kept.contains(&window) }
 
     /// Snaps `window`'s tile onto `frame` once per generation, once the motion has started: until
     /// then its container stands where frame zero put it, and the start would move it again.
@@ -602,7 +656,10 @@ impl Flight {
         if let Some(frame) = snap_to(tile.end, frame)
             && self.snapped.insert(window)
         {
-            out.push(Command::Snap { window, frame: to_overlay_space(frame, self.stage.display) });
+            out.push(Command::Snap {
+                window,
+                frame: to_overlay_space(frame, self.stage.display),
+            });
         }
     }
 
@@ -610,7 +667,8 @@ impl Flight {
     /// can have placed it back on its model. A window no longer ending there is forgotten.
     fn snap_landed(&mut self, out: &mut Vec<Command>) {
         let stage = &self.stage;
-        self.landed.retain(|(w, frame)| stage.tile(*w).is_some_and(|t| near(*frame, t.end, END_SLACK)));
+        self.landed
+            .retain(|(w, frame)| stage.tile(*w).is_some_and(|t| near(*frame, t.end, END_SLACK)));
         for (window, frame) in self.landed.clone() {
             self.snap(window, frame, out);
         }
@@ -623,7 +681,11 @@ enum State {
     Idle,
     Flying(Box<Flight>),
     /// `owed` is warmed at the quiet, and `turned` pictured afresh then (`Flight::turned`).
-    Settling { generation: Generation, owed: Vec<(WindowId, ScreenRect)>, turned: Vec<(WindowId, ScreenRect)> },
+    Settling {
+        generation: Generation,
+        owed: Vec<(WindowId, ScreenRect)>,
+        turned: Vec<(WindowId, ScreenRect)>,
+    },
 }
 
 /// The lifecycle. One per overlay.
@@ -634,14 +696,10 @@ pub struct Coordinator {
 }
 
 impl Coordinator {
-    pub fn generation(&self) -> Generation {
-        self.generation
-    }
+    pub fn generation(&self) -> Generation { self.generation }
 
     /// Whether a transition is running: a pass now merges into it rather than starting one.
-    pub fn is_flying(&self) -> bool {
-        matches!(self.state, State::Flying(_))
-    }
+    pub fn is_flying(&self) -> bool { matches!(self.state, State::Flying(_)) }
 
     /// Whether the running flight holds the picture of `window` delivered under `generation` at `frame`
     /// to swap in later: the focus target's change waiting for the window losing focus to turn, its
@@ -654,7 +712,10 @@ impl Coordinator {
                 || f.held_back.is_some_and(|(held, at)| held == generation && at == frame));
         targets
             || f.held_merge.as_ref().is_some_and(|merge| {
-                merge.repainted.iter().any(|(held, w, at, _)| *held == generation && *w == window && *at == frame)
+                merge
+                    .repainted
+                    .iter()
+                    .any(|(held, w, at, _)| *held == generation && *w == window && *at == frame)
             })
     }
 
@@ -665,9 +726,7 @@ impl Coordinator {
 
     /// Whether the motion clock runs.
     #[cfg(test)]
-    pub fn is_moving(&self) -> bool {
-        matches!(&self.state, State::Flying(f) if f.clock.is_some())
-    }
+    pub fn is_moving(&self) -> bool { matches!(&self.state, State::Flying(f) if f.clock.is_some()) }
 
     /// What is left of the motion's clock at `now`: what a tile joining it travels for. `None` before
     /// it starts.
@@ -686,7 +745,11 @@ impl Coordinator {
         if matches!(f.phase, Phase::MergeHeld { .. }) {
             return false;
         }
-        let ahead = if f.stage.rests { FRAME_INTERVAL } else { Duration::ZERO };
+        let ahead = if f.stage.rests {
+            FRAME_INTERVAL
+        } else {
+            Duration::ZERO
+        };
         self.remaining(now).is_some_and(|left| left <= ahead)
     }
 
@@ -715,7 +778,9 @@ impl Coordinator {
                     show(f, now, &mut out);
                 }
             }
-            Event::Picture { generation, window, frame, why } => self.picture(generation, window, frame, why, now, &mut out),
+            Event::Picture { generation, window, frame, why } => {
+                self.picture(generation, window, frame, why, now, &mut out)
+            }
             // A merge's retarget watches the window again, or reports the window losing focus given up on
             // lost again under the new generation: one lost under the generation before is dropped.
             Event::Lost { generation, window } => {
@@ -794,7 +859,12 @@ impl Coordinator {
         let strip = stage.frame_zero_strip();
         let asked = strip.iter().chain(&background).copied().collect();
         out.push(Command::Hold);
-        out.push(Command::AskFrameZero { generation, strip, background, behind: stage.behind() });
+        out.push(Command::AskFrameZero {
+            generation,
+            strip,
+            background,
+            behind: stage.behind(),
+        });
         let mut animated = owed;
         extend_latest(&mut animated, stage.ends());
         let mut awaiting = stage.awaiting.clone();
@@ -808,7 +878,9 @@ impl Coordinator {
             holds_for: stage.awaiting.clone(),
             kept: stage.kept.clone(),
             stage,
-            phase: Phase::Preparing { deadline: now + FRAME_ZERO_PATIENCE },
+            phase: Phase::Preparing {
+                deadline: now + FRAME_ZERO_PATIENCE,
+            },
             shown: None,
             clock: None,
             background_later,
@@ -840,7 +912,10 @@ impl Coordinator {
             return;
         };
         extend_latest(&mut f.animated, stage.ends());
-        extend_unique(&mut f.awaiting, stage.awaiting.iter().chain(&stage.repainting).copied());
+        extend_unique(
+            &mut f.awaiting,
+            stage.awaiting.iter().chain(&stage.repainting).copied(),
+        );
         extend_unique(&mut f.repainting, stage.repainting.iter().copied());
         let resized = |w: &WindowId| stage.awaiting.contains(w) || stage.repainting.contains(w);
         f.holds_for.retain(|w| !resized(w));
@@ -851,7 +926,11 @@ impl Coordinator {
         // Every held pass was written as it was held: an earlier one's merge writes nothing, and keeps
         // the frames written for the latest one's to be compared with.
         let overtaken = held.is_none() && f.held_merge.is_some();
-        let changed = if overtaken { Vec::new() } else { changed_frames(&f.stage.final_frames, &stage.final_frames) };
+        let changed = if overtaken {
+            Vec::new()
+        } else {
+            changed_frames(&f.stage.final_frames, &stage.final_frames)
+        };
         let focus_moved = f.stage.focus != stage.focus;
         let newcomers = stage.awaiting.clone();
         let before = std::mem::replace(&mut f.stage, stage);
@@ -907,12 +986,21 @@ impl Coordinator {
             hold_no_longer(f, window, now, out);
         }
         f.snap_landed(out);
-        for (generation, window, frame, why) in held.map(|held| held.repainted).unwrap_or_default() {
+        for (generation, window, frame, why) in held.map(|held| held.repainted).unwrap_or_default()
+        {
             self.picture(generation, window, frame, why, now, out);
         }
     }
 
-    fn picture(&mut self, generation: Generation, window: WindowId, frame: ScreenRect, why: Why, now: Instant, out: &mut Vec<Command>) {
+    fn picture(
+        &mut self,
+        generation: Generation,
+        window: WindowId,
+        frame: ScreenRect,
+        why: Why,
+        now: Instant,
+        out: &mut Vec<Command>,
+    ) {
         let State::Flying(f) = &mut self.state else { return };
         // Every delivery is in the cache, so the window's look now is too; frame zero's was taken at
         // the press, before any turn.
@@ -932,7 +1020,10 @@ impl Coordinator {
         if why == Why::FrameZero {
             // Taken at the press: the cache's picture it replaces is older, wherever the tile ends
             // now, and a landing swapped on is newer.
-            if generation == f.began && !matches!(f.phase, Phase::Preparing { .. }) && near(frame, tile.start, END_SLACK) {
+            if generation == f.began
+                && !matches!(f.phase, Phase::Preparing { .. })
+                && near(frame, tile.start, END_SLACK)
+            {
                 let landed = f.landed.iter().any(|(w, _)| *w == window);
                 if !landed || f.keeps(window) {
                     out.push(Command::Swap { generation, window });
@@ -1024,7 +1115,10 @@ impl Coordinator {
             Phase::Playing | Phase::Landing => {
                 let Some((started, duration)) = f.clock else { return };
                 let end = started + duration;
-                if !f.final_asked && f.stage.kind.watches_end() && now >= final_at(started, duration) {
+                if !f.final_asked
+                    && f.stage.kind.watches_end()
+                    && now >= final_at(started, duration)
+                {
                     f.final_asked = true;
                     out.push(Command::AskFinal {
                         generation: f.generation,
@@ -1042,7 +1136,10 @@ impl Coordinator {
                     }
                 }
                 let lifts = now >= end && ((settled && landed) || now >= end + LIFT_GRACE);
-                if f.stage.rests && f.placed != Some(end) && (lifts || (landed && now + FRAME_INTERVAL >= end)) {
+                if f.stage.rests
+                    && f.placed != Some(end)
+                    && (lifts || (landed && now + FRAME_INTERVAL >= end))
+                {
                     f.placed = Some(end);
                     out.push(Command::PlaceRest);
                 }
@@ -1068,11 +1165,15 @@ impl Coordinator {
 /// expected there: the show waits for that ask too, up to the patience the begin set.
 fn ask_frame_zero_again(f: &mut Flight, out: &mut Vec<Command>) {
     let display = f.stage.display;
-    let unasked = |windows: Vec<(WindowId, ScreenRect)>, asked: &[(WindowId, ScreenRect)]| -> Vec<(WindowId, ScreenRect)> {
+    let unasked = |windows: Vec<(WindowId, ScreenRect)>,
+                   asked: &[(WindowId, ScreenRect)]|
+     -> Vec<(WindowId, ScreenRect)> {
         windows
             .into_iter()
             .filter(|(w, start)| {
-                !asked.iter().any(|(a, at)| a == w && Accept::Origin { at: at.origin }.accepts(*start, display))
+                !asked.iter().any(|(a, at)| {
+                    a == w && Accept::Origin { at: at.origin }.accepts(*start, display)
+                })
             })
             .collect()
     };
@@ -1081,10 +1182,16 @@ fn ask_frame_zero_again(f: &mut Flight, out: &mut Vec<Command>) {
     if !strip.is_empty() || !background.is_empty() {
         f.asked.extend(strip.iter().chain(&background).copied());
         f.frame_zero_owed += 1;
-        out.push(Command::AskFrameZero { generation: f.began, strip, background, behind: f.stage.behind() });
+        out.push(Command::AskFrameZero {
+            generation: f.began,
+            strip,
+            background,
+            behind: f.stage.behind(),
+        });
     }
     let asked = &f.asked;
-    f.background_later = f.stage.background().iter().any(|(w, _)| !asked.iter().any(|(a, _)| a == w));
+    f.background_later =
+        f.stage.background().iter().any(|(w, _)| !asked.iter().any(|(a, _)| a == w));
 }
 
 /// The overlay goes up: the real windows are written behind it, and the end state is watched.
@@ -1118,7 +1225,9 @@ fn hold_or_move(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
     if f.held.is_empty() {
         start_moving(f, now, out);
     } else {
-        f.phase = Phase::Holding { deadline: now + f.hold_cap(&f.held) };
+        f.phase = Phase::Holding {
+            deadline: now + f.hold_cap(&f.held),
+        };
     }
 }
 
@@ -1135,8 +1244,15 @@ fn hold_again(f: &mut Flight, newcomers: &[WindowId], now: Instant) {
 /// How long a hold for windows ending at `ends`, each on `display`, and a watch for them to repaint
 /// there run: `ELSEWHERE_HOLD_CAP` once any is cut by its edge, captured through ScreenCaptureKit,
 /// else `HOLD_CAP`.
-fn hold_cap<'a>(ends: impl IntoIterator<Item = &'a (WindowId, ScreenRect)>, display: ScreenRect) -> Duration {
-    if ends.into_iter().any(|(_, end)| !wholly_on(*end, display)) { ELSEWHERE_HOLD_CAP } else { HOLD_CAP }
+fn hold_cap<'a>(
+    ends: impl IntoIterator<Item = &'a (WindowId, ScreenRect)>,
+    display: ScreenRect,
+) -> Duration {
+    if ends.into_iter().any(|(_, end)| !wholly_on(*end, display)) {
+        ELSEWHERE_HOLD_CAP
+    } else {
+        HOLD_CAP
+    }
 }
 
 /// `window` is held for no longer, its picture in or never to come: once the hold waits for nothing,
@@ -1176,9 +1292,14 @@ fn hold_merge(
         return;
     }
     let generation = f.generation;
-    let held = f
-        .held_merge
-        .get_or_insert_with(|| HeldMerge { passes: 0, first: now, since: now, generation, ends: Vec::new(), repainted: Vec::new() });
+    let held = f.held_merge.get_or_insert_with(|| HeldMerge {
+        passes: 0,
+        first: now,
+        since: now,
+        generation,
+        ends: Vec::new(),
+        repainted: Vec::new(),
+    });
     held.passes += 1;
     held.since = now;
     for (window, end) in held.ends.iter_mut() {
@@ -1207,7 +1328,9 @@ fn retarget(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
         f.held.clear();
         f.phase = Phase::Playing;
     }
-    let held = f.held_merge.as_ref().map_or(Duration::ZERO, |merge| now.saturating_duration_since(merge.since));
+    let held = f.held_merge.as_ref().map_or(Duration::ZERO, |merge| {
+        now.saturating_duration_since(merge.since)
+    });
     out.push(Command::Retarget { held });
 }
 
@@ -1223,7 +1346,9 @@ fn latest_held(held: &mut Option<HeldMerge>) -> Option<HeldMerge> {
 /// generation it was watched under: its repaint, delivered before the merge, is taken.
 fn watched_since(since: &mut [(WindowId, Generation)], stage: &StageSummary, held: &HeldMerge) {
     for (window, at) in since.iter_mut() {
-        let watched = held.ends.iter().any(|(w, end)| w == window && stage.tile(*w).is_some_and(|tile| near(tile.end, *end, 0.5)));
+        let watched = held.ends.iter().any(|(w, end)| {
+            w == window && stage.tile(*w).is_some_and(|tile| near(tile.end, *end, 0.5))
+        });
         if watched {
             *at = held.generation;
         }
@@ -1242,7 +1367,12 @@ fn start_moving(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
 
 fn end_watch(f: &Flight, now: Instant) -> EndWatch {
     let (awaiting, landing) = f.end_windows();
-    let compared = landing.iter().chain(&awaiting).filter(|(_, end)| wholly_inside(*end, f.stage.display)).copied().collect();
+    let compared = landing
+        .iter()
+        .chain(&awaiting)
+        .filter(|(_, end)| wholly_inside(*end, f.stage.display))
+        .copied()
+        .collect();
     let awaiting_until = now + hold_cap(&awaiting, f.stage.display);
     EndWatch {
         generation: f.generation,
@@ -1262,7 +1392,10 @@ fn end_watch(f: &Flight, now: Instant) -> EndWatch {
 /// The focus target and its end, while a focus report is coming and its focused look is not in. A
 /// watch armed by a report that never comes would hold the background back for the whole flight.
 fn watched_focus(f: &Flight) -> Option<(WindowId, ScreenRect)> {
-    let window = f.stage.focus.filter(|w| f.focus_moving() && !f.focus_in && !f.awaiting.contains(w))?;
+    let window = f
+        .stage
+        .focus
+        .filter(|w| f.focus_moving() && !f.focus_in && !f.awaiting.contains(w))?;
     let end = f.stage.tile(window)?.end;
     (!is_off_screen(f.stage.display, end)).then_some((window, end))
 }
@@ -1282,7 +1415,10 @@ fn watched_losing(f: &Flight) -> Option<(WindowId, ScreenRect)> {
 }
 
 fn final_at(started: Instant, duration: Duration) -> Instant {
-    (started + duration).checked_sub(FINAL_BEFORE_END).unwrap_or(started).max(started + FINAL_NOT_BEFORE)
+    (started + duration)
+        .checked_sub(FINAL_BEFORE_END)
+        .unwrap_or(started)
+        .max(started + FINAL_NOT_BEFORE)
 }
 
 /// Over every end window watched where its hole lands on the display (`hole_in`): those that land,
@@ -1322,7 +1458,10 @@ fn ended_since(
         .collect()
 }
 
-fn changed_frames(before: &[(WindowId, ScreenRect)], after: &[(WindowId, ScreenRect)]) -> Vec<(WindowId, ScreenRect)> {
+fn changed_frames(
+    before: &[(WindowId, ScreenRect)],
+    after: &[(WindowId, ScreenRect)],
+) -> Vec<(WindowId, ScreenRect)> {
     after
         .iter()
         .filter(|(w, f)| !before.iter().any(|(b, g)| b == w && near(*f, *g, 0.5)))
@@ -1354,7 +1493,11 @@ pub(in crate::transitions) fn extend_latest(
 
 /// Whether frame zero pictures a window fresh where its tile starts, at `start`: a strip window
 /// wholly on `display` there.
-pub(in crate::transitions) fn frame_zero_pictures(start: ScreenRect, floating: bool, display: ScreenRect) -> bool {
+pub(in crate::transitions) fn frame_zero_pictures(
+    start: ScreenRect,
+    floating: bool,
+    display: ScreenRect,
+) -> bool {
     !floating && wholly_inside(start, display)
 }
 
@@ -1377,32 +1520,56 @@ mod tests {
     use crate::transitions::domain::request::AnimationRequest;
     use crate::transitions::domain::timing::SETTLE_BEFORE_CAPTURES;
 
-    fn has(out: &[Command], f: impl Fn(&Command) -> bool) -> bool {
-        out.iter().any(f)
-    }
+    fn has(out: &[Command], f: impl Fn(&Command) -> bool) -> bool { out.iter().any(f) }
 
     fn writes(out: &[Command]) -> Vec<(WindowId, ScreenRect)> {
-        out.iter().filter_map(|c| if let Command::Write(f) = c { Some(f.clone()) } else { None }).flatten().collect()
+        out.iter()
+            .filter_map(|c| {
+                if let Command::Write(f) = c {
+                    Some(f.clone())
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect()
     }
 
     fn watch(out: &[Command]) -> Option<EndWatch> {
-        out.iter().find_map(|c| if let Command::Watch(w) = c { Some(w.clone()) } else { None })
+        out.iter().find_map(|c| {
+            if let Command::Watch(w) = c {
+                Some(w.clone())
+            } else {
+                None
+            }
+        })
     }
 
     /// Each tile drawn focused or not, in the order commanded.
     fn focus(out: &[Command]) -> Vec<(WindowId, bool)> {
-        out.iter().filter_map(|c| if let Command::Focus { window, focused } = c { Some((*window, *focused)) } else { None }).collect()
+        out.iter()
+            .filter_map(|c| {
+                if let Command::Focus { window, focused } = c {
+                    Some((*window, *focused))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// The pan's window 1 drawn unfocused, then window 2 focused.
-    fn handed_over() -> Vec<(WindowId, bool)> {
-        vec![(w(1), false), (w(2), true)]
-    }
+    fn handed_over() -> Vec<(WindowId, bool)> { vec![(w(1), false), (w(2), true)] }
 
     /// The swaps, kept looks and focus drawn, in order.
     fn turns(out: &[Command]) -> Vec<Command> {
         out.iter()
-            .filter(|c| matches!(c, Command::Swap { .. } | Command::KeepFocusedLook { .. } | Command::Focus { .. }))
+            .filter(|c| {
+                matches!(
+                    c,
+                    Command::Swap { .. } | Command::KeepFocusedLook { .. } | Command::Focus { .. }
+                )
+            })
             .cloned()
             .collect()
     }
@@ -1413,13 +1580,36 @@ mod tests {
         let mut c = Coordinator::default();
         let out = c.on(Event::Begin(pan()), now);
         assert_eq!(out[0], Command::Hold);
-        let Command::AskFrameZero { generation, strip, background, behind } = &out[1] else { panic!("{out:?}") };
+        let Command::AskFrameZero {
+            generation,
+            strip,
+            background,
+            behind,
+        } = &out[1]
+        else {
+            panic!("{out:?}")
+        };
         assert_eq!(*generation, Generation(1));
-        assert_eq!(strip, &vec![(w(1), r(3.0, 35.0, 860.0, 1079.0))], "the window parked off screen is not asked for");
-        assert_eq!(background.len(), 1, "the floating window is seen through the strip's gaps");
-        assert_eq!(behind, &vec![w(9)], "and composited behind the strip, which may blur it");
+        assert_eq!(
+            strip,
+            &vec![(w(1), r(3.0, 35.0, 860.0, 1079.0))],
+            "the window parked off screen is not asked for"
+        );
+        assert_eq!(
+            background.len(),
+            1,
+            "the floating window is seen through the strip's gaps"
+        );
+        assert_eq!(
+            behind,
+            &vec![w(9)],
+            "and composited behind the strip, which may blur it"
+        );
         assert!(has(&out, |c| *c == Command::ReportUp));
-        assert!(!has(&out, |c| matches!(c, Command::Show | Command::Write(_))), "nothing shows or moves before frame zero");
+        assert!(
+            !has(&out, |c| matches!(c, Command::Show | Command::Write(_))),
+            "nothing shows or moves before frame zero"
+        );
     }
 
     #[test]
@@ -1431,7 +1621,9 @@ mod tests {
         stage.opaque = vec![w(1)];
         let mut c = Coordinator::default();
         let out = c.on(Event::Begin(stage.clone()), now);
-        let Command::AskFrameZero { background, .. } = &out[1] else { panic!() };
+        let Command::AskFrameZero { background, .. } = &out[1] else {
+            panic!()
+        };
         assert!(background.is_empty());
         let out = c.on(Event::FrameZero(c.generation()), now);
         let watch = watch(&out).unwrap();
@@ -1442,7 +1634,9 @@ mod tests {
         stage.opaque.clear();
         let mut c = Coordinator::default();
         let out = c.on(Event::Begin(stage), now);
-        let Command::AskFrameZero { background, .. } = &out[1] else { panic!() };
+        let Command::AskFrameZero { background, .. } = &out[1] else {
+            panic!()
+        };
         assert_eq!(background.len(), 1);
     }
 
@@ -1451,10 +1645,16 @@ mod tests {
         let now = Instant::now();
         let mut c = Coordinator::default();
         c.on(Event::Begin(pan()), now);
-        let out = c.on(Event::Tick { settled: true, landed: true }, now + Duration::from_millis(79));
+        let out = c.on(
+            Event::Tick { settled: true, landed: true },
+            now + Duration::from_millis(79),
+        );
         assert!(out.is_empty());
         assert!(!c.is_shown());
-        let out = c.on(Event::Tick { settled: true, landed: true }, now + FRAME_ZERO_PATIENCE);
+        let out = c.on(
+            Event::Tick { settled: true, landed: true },
+            now + FRAME_ZERO_PATIENCE,
+        );
         assert_eq!(out.first(), Some(&Command::Show));
         assert!(c.is_shown() && c.is_moving());
     }
@@ -1468,25 +1668,90 @@ mod tests {
         let mut c = Coordinator::default();
         c.on(Event::Begin(pan()), now);
         let g = c.generation();
-        assert_eq!(c.on(Event::Tick { settled: false, landed: false }, now + FRAME_ZERO_PATIENCE).first(), Some(&Command::Show));
+        assert_eq!(
+            c.on(
+                Event::Tick { settled: false, landed: false },
+                now + FRAME_ZERO_PATIENCE
+            )
+            .first(),
+            Some(&Command::Show)
+        );
         let late = now + FRAME_ZERO_PATIENCE + Duration::from_millis(10);
         let start = pan().tiles[0].start;
-        let out = c.on(Event::Picture { generation: g, window: w(1), frame: start, why: Why::FrameZero }, late);
-        assert_eq!(out, vec![Command::Swap { generation: g, window: w(1) }, Command::KeepFocusedLook { generation: g, window: w(1) }]);
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: start,
+                why: Why::FrameZero,
+            },
+            late,
+        );
+        assert_eq!(out, vec![
+            Command::Swap { generation: g, window: w(1) },
+            Command::KeepFocusedLook { generation: g, window: w(1) }
+        ]);
         let mut resized = start;
         resized.size.width -= 21.0;
-        assert!(c.on(Event::Picture { generation: g, window: w(1), frame: resized, why: Why::FrameZero }, late).is_empty(),
-            "not where its tile starts");
-        assert!(c.on(Event::Picture { generation: g, window: w(9), frame: pan().tiles[2].start, why: Why::FrameZero }, late)
-            == vec![Command::Swap { generation: g, window: w(9) }]);
-        assert!(c.on(Event::FrameZero(g), late).is_empty(), "the show is not run again");
+        assert!(
+            c.on(
+                Event::Picture {
+                    generation: g,
+                    window: w(1),
+                    frame: resized,
+                    why: Why::FrameZero
+                },
+                late
+            )
+            .is_empty(),
+            "not where its tile starts"
+        );
+        assert!(
+            c.on(
+                Event::Picture {
+                    generation: g,
+                    window: w(9),
+                    frame: pan().tiles[2].start,
+                    why: Why::FrameZero
+                },
+                late
+            ) == vec![Command::Swap { generation: g, window: w(9) }]
+        );
+        assert!(
+            c.on(Event::FrameZero(g), late).is_empty(),
+            "the show is not run again"
+        );
         let mut moved = pan();
         moved.tiles[0].end.origin.x -= 400.0;
         c.on(Event::Merge { stage: moved, moved: true }, late);
-        assert!(has(&c.on(Event::Picture { generation: g, window: w(1), frame: start, why: Why::FrameZero }, late),
-            |c| matches!(c, Command::Swap { .. })), "wherever its tile ends now");
-        assert!(c.on(Event::Picture { generation: Generation(g.0 - 1), window: w(1), frame: start, why: Why::FrameZero }, late).is_empty(),
-            "another flight's");
+        assert!(
+            has(
+                &c.on(
+                    Event::Picture {
+                        generation: g,
+                        window: w(1),
+                        frame: start,
+                        why: Why::FrameZero
+                    },
+                    late
+                ),
+                |c| matches!(c, Command::Swap { .. })
+            ),
+            "wherever its tile ends now"
+        );
+        assert!(
+            c.on(
+                Event::Picture {
+                    generation: Generation(g.0 - 1),
+                    window: w(1),
+                    frame: start,
+                    why: Why::FrameZero
+                },
+                late
+            )
+            .is_empty(),
+            "another flight's"
+        );
     }
 
     /// Frame zero's picture of the window focus leaves is kept as its focused look only if that window
@@ -1495,7 +1760,11 @@ mod tests {
     #[test]
     fn frame_zero_keeps_the_window_focus_leaves_as_its_focused_look_only_if_it_was_key() {
         assert_eq!(frame_zero_look(Some(w(1)), Some(w(1))), Some(w(1)));
-        assert_eq!(frame_zero_look(Some(w(1)), Some(w(2))), None, "the click's target is key");
+        assert_eq!(
+            frame_zero_look(Some(w(1)), Some(w(2))),
+            None,
+            "the click's target is key"
+        );
         assert_eq!(frame_zero_look(Some(w(1)), None), None, "a panel has the keys");
         assert_eq!(frame_zero_look(None, Some(w(1))), None, "focus moves nowhere");
 
@@ -1506,14 +1775,29 @@ mod tests {
         c.on(Event::Begin(panel.clone()), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
         assert!(has(&out, |c| *c == Command::Show));
-        assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })), "{out:?}");
+        assert!(
+            !has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })),
+            "{out:?}"
+        );
 
         let mut c = Coordinator::default();
         c.on(Event::Begin(panel), now);
         let g = c.generation();
-        c.on(Event::Tick { settled: false, landed: false }, now + FRAME_ZERO_PATIENCE);
-        let late = Event::Picture { generation: g, window: w(1), frame: pan().tiles[0].start, why: Why::FrameZero };
-        assert_eq!(c.on(late, now + FRAME_ZERO_PATIENCE), vec![Command::Swap { generation: g, window: w(1) }], "swapped in, not kept");
+        c.on(
+            Event::Tick { settled: false, landed: false },
+            now + FRAME_ZERO_PATIENCE,
+        );
+        let late = Event::Picture {
+            generation: g,
+            window: w(1),
+            frame: pan().tiles[0].start,
+            why: Why::FrameZero,
+        };
+        assert_eq!(
+            c.on(late, now + FRAME_ZERO_PATIENCE),
+            vec![Command::Swap { generation: g, window: w(1) }],
+            "swapped in, not kept"
+        );
     }
 
     /// A pass merged while frame zero is out that brings a window on screen where its tile starts: frame
@@ -1527,12 +1811,39 @@ mod tests {
         let g = c.generation();
         let mut more = pan();
         more.tiles.push(tile(w(3), third, third));
-        let out = c.on(Event::Merge { stage: more.clone(), moved: false }, now + Duration::from_millis(5));
-        assert_eq!(out, vec![Command::AskFrameZero { generation: g, strip: vec![(w(3), third)], background: Vec::new(), behind: vec![w(9)] }]);
-        assert!(c.on(Event::Merge { stage: more.clone(), moved: false }, now + Duration::from_millis(6)).is_empty(), "asked once");
-        assert!(c.on(Event::FrameZero(g), now + Duration::from_millis(30)).is_empty(), "one ask still out");
+        let out = c.on(
+            Event::Merge {
+                stage: more.clone(),
+                moved: false,
+            },
+            now + Duration::from_millis(5),
+        );
+        assert_eq!(out, vec![Command::AskFrameZero {
+            generation: g,
+            strip: vec![(w(3), third)],
+            background: Vec::new(),
+            behind: vec![w(9)]
+        }]);
+        assert!(
+            c.on(
+                Event::Merge {
+                    stage: more.clone(),
+                    moved: false
+                },
+                now + Duration::from_millis(6)
+            )
+            .is_empty(),
+            "asked once"
+        );
+        assert!(
+            c.on(Event::FrameZero(g), now + Duration::from_millis(30)).is_empty(),
+            "one ask still out"
+        );
         assert!(!c.is_shown());
-        assert_eq!(c.on(Event::FrameZero(g), now + Duration::from_millis(40)).first(), Some(&Command::KeepFocusedLook { generation: g, window: w(1) }));
+        assert_eq!(
+            c.on(Event::FrameZero(g), now + Duration::from_millis(40)).first(),
+            Some(&Command::KeepFocusedLook { generation: g, window: w(1) })
+        );
         assert!(c.is_shown());
 
         let mut c = Coordinator::default();
@@ -1540,10 +1851,20 @@ mod tests {
         let mut moved = pan();
         moved.tiles[0].start.origin.x += 3.0;
         let out = c.on(Event::Merge { stage: moved, moved: false }, now);
-        assert!(matches!(out.as_slice(), [Command::AskFrameZero { strip, .. }] if strip.len() == 1), "a start no ask expected: {out:?}");
+        assert!(
+            matches!(out.as_slice(), [Command::AskFrameZero { strip, .. }] if strip.len() == 1),
+            "a start no ask expected: {out:?}"
+        );
         c.on(Event::FrameZero(c.generation()), now);
-        assert_eq!(c.on(Event::Tick { settled: false, landed: false }, now + FRAME_ZERO_PATIENCE).first(), Some(&Command::Show),
-            "the patience is the begin's");
+        assert_eq!(
+            c.on(
+                Event::Tick { settled: false, landed: false },
+                now + FRAME_ZERO_PATIENCE
+            )
+            .first(),
+            Some(&Command::Show),
+            "the patience is the begin's"
+        );
     }
 
     #[test]
@@ -1562,10 +1883,17 @@ mod tests {
         c.on(Event::Begin(pan()), now);
         let mut merged = pan();
         merged.final_frames[1].1.origin.x = 10.0;
-        let out = c.on(Event::Merge { stage: merged, moved: true }, now + Duration::from_millis(5));
+        let out = c.on(
+            Event::Merge { stage: merged, moved: true },
+            now + Duration::from_millis(5),
+        );
         assert!(writes(&out).is_empty(), "{out:?}");
         let out = c.on(Event::FrameZero(c.generation()), now + Duration::from_millis(30));
-        assert_eq!(writes(&out)[1].1.origin.x, 10.0, "the show writes the merged frames");
+        assert_eq!(
+            writes(&out)[1].1.origin.x,
+            10.0,
+            "the show writes the merged frames"
+        );
     }
 
     #[test]
@@ -1575,7 +1903,16 @@ mod tests {
         c.on(Event::Begin(pan()), now);
         let out = c.on(Event::FrameZero(Generation(1)), now);
         assert_eq!(writes(&out), pan().final_frames);
-        let holes = out.iter().find_map(|c| if let Command::Holes(h) = c { Some(h.clone()) } else { None }).unwrap();
+        let holes = out
+            .iter()
+            .find_map(|c| {
+                if let Command::Holes(h) = c {
+                    Some(h.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap();
         assert_eq!(holes.len(), 2);
         let watch = watch(&out).unwrap();
         assert_eq!(watch.landing.len(), 2);
@@ -1584,8 +1921,14 @@ mod tests {
         assert_eq!(watch.focus, Some((w(2), pan().tiles[1].end)));
         assert_eq!(watch.behind, vec![w(9)]);
         assert!(has(&out, |c| *c == Command::StartMoving));
-        assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: Generation(1), window: w(1) }),
-            "the window losing focus is still drawn focused at frame zero");
+        assert!(
+            has(&out, |c| *c
+                == Command::KeepFocusedLook {
+                    generation: Generation(1),
+                    window: w(1)
+                }),
+            "the window losing focus is still drawn focused at frame zero"
+        );
     }
 
     #[test]
@@ -1596,14 +1939,37 @@ mod tests {
         stage.start = Start::Coalesced;
         let mut c = running(stage.clone(), now);
         assert!(!c.is_moving());
-        assert!(c.on(Event::Tick { settled: true, landed: true }, now + Duration::from_millis(24)).is_empty());
-        assert_eq!(c.on(Event::Tick { settled: true, landed: true }, now + COALESCE_WINDOW), vec![Command::StartMoving]);
+        assert!(
+            c.on(
+                Event::Tick { settled: true, landed: true },
+                now + Duration::from_millis(24)
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            c.on(
+                Event::Tick { settled: true, landed: true },
+                now + COALESCE_WINDOW
+            ),
+            vec![Command::StartMoving]
+        );
 
         stage.awaiting = vec![w(2)];
         let mut c = running(stage.clone(), now);
         assert!(!c.is_moving());
-        let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: stage.tiles[1].end, why: Why::Landed }, now);
-        assert!(has(&out, |c| *c == Command::StartMoving), "the awaited picture releases the hold");
+        let out = c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(2),
+                frame: stage.tiles[1].end,
+                why: Why::Landed,
+            },
+            now,
+        );
+        assert!(
+            has(&out, |c| *c == Command::StartMoving),
+            "the awaited picture releases the hold"
+        );
 
         let mut c = running(stage, now);
         let out = c.on(Event::Tick { settled: true, landed: true }, now + HOLD_CAP);
@@ -1620,14 +1986,29 @@ mod tests {
         let shown = watch(&c.on(Event::FrameZero(c.generation()), now)).unwrap();
         assert_eq!(shown.landing, vec![(w(1), stage.tiles[0].end)]);
         assert_eq!(shown.awaiting, vec![(w(2), stage.tiles[1].end)]);
-        assert_eq!(shown.awaiting_until, now + HOLD_CAP, "watched as long as it is held for");
-        c.on(Event::Picture { generation: c.generation(), window: w(2), frame: stage.tiles[1].end, why: Why::Landed }, now);
+        assert_eq!(
+            shown.awaiting_until,
+            now + HOLD_CAP,
+            "watched as long as it is held for"
+        );
+        c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(2),
+                frame: stage.tiles[1].end,
+                why: Why::Landed,
+            },
+            now,
+        );
         assert!(c.is_moving());
 
         // A window drawn as a stand-in by a pass merged in flight repaints too, and joins as it lands.
         let mut stand_in = stage.clone();
         stand_in.awaiting = vec![w(1)];
-        let out = c.on(Event::Merge { stage: stand_in, moved: false }, now + Duration::from_millis(50));
+        let out = c.on(
+            Event::Merge { stage: stand_in, moved: false },
+            now + Duration::from_millis(50),
+        );
         let merged = watch(&out).unwrap();
         assert!(merged.landing.is_empty());
         assert_eq!(merged.awaiting.len(), 2, "{merged:?}");
@@ -1645,7 +2026,10 @@ mod tests {
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
-        assert!(has(&out, |c| *c == Command::StartMoving), "a window ending off the display never lands");
+        assert!(
+            has(&out, |c| *c == Command::StartMoving),
+            "a window ending off the display never lands"
+        );
         assert!(watch(&out).unwrap().awaiting.is_empty());
     }
 
@@ -1671,7 +2055,14 @@ mod tests {
             strip_before: Some(before),
             strip_after: Some(after),
         };
-        let left_park = |frame: ScreenRect| r(1.0 - frame.size.width, 1079.0, frame.size.width, frame.size.height);
+        let left_park = |frame: ScreenRect| {
+            r(
+                1.0 - frame.size.width,
+                1079.0,
+                frame.size.width,
+                frame.size.height,
+            )
+        };
         let row = |rows: u32, i: u32, x: f64| {
             let height = (1074.0 - 6.0 * f64::from(rows - 1)) / f64::from(rows);
             r(x, 3.0 + f64::from(i) * (height + 6.0), 860.0, height)
@@ -1684,17 +2075,32 @@ mod tests {
                 let mut requests = vec![window(1, a, left_park(a_after), a, a_after)];
                 for i in 0..rows {
                     let at = row(rows, i, 866.0);
-                    let after = if i == maximized_row { maximized } else { row(rows - 1, i - u32::from(i > maximized_row), -860.0) };
-                    let to = if i == maximized_row { maximized } else { left_park(after) };
+                    let after = if i == maximized_row {
+                        maximized
+                    } else {
+                        row(rows - 1, i - u32::from(i > maximized_row), -860.0)
+                    };
+                    let to = if i == maximized_row {
+                        maximized
+                    } else {
+                        left_park(after)
+                    };
                     requests.push(window(2 + i, at, to, at, after));
                 }
                 let mut waits = Waits::default();
                 for request in &requests {
-                    let flies = FliesOn::Picture { source: Route::SkyLight, covered: request.from.size };
+                    let flies = FliesOn::Picture {
+                        source: Route::SkyLight,
+                        covered: request.from.size,
+                    };
                     waits.push_request(request, flies, None, request.from, screen);
                 }
                 let Waits { awaiting, repainting, kept } = waits;
-                assert_eq!(awaiting.len(), rows as usize, "{case}: the stack's windows all grow");
+                assert_eq!(
+                    awaiting.len(),
+                    rows as usize,
+                    "{case}: the stack's windows all grow"
+                );
                 let tiles: Vec<TileSummary> = (0..requests.len())
                     .filter_map(|i| {
                         let path = tile_path(None, &requests, i, screen)?;
@@ -1719,7 +2125,15 @@ mod tests {
                 c.on(Event::Begin(stage), now);
                 let shown = watch(&c.on(Event::FrameZero(c.generation()), now)).unwrap();
                 assert_eq!(shown.awaiting, vec![(w(2 + maximized_row), maximized)], "{case}");
-                let out = c.on(Event::Picture { generation: c.generation(), window: w(2 + maximized_row), frame: maximized, why: Why::Landed }, now);
+                let out = c.on(
+                    Event::Picture {
+                        generation: c.generation(),
+                        window: w(2 + maximized_row),
+                        frame: maximized,
+                        why: Why::Landed,
+                    },
+                    now,
+                );
                 assert!(has(&out, |c| *c == Command::StartMoving), "{case}: {out:?}");
             }
         }
@@ -1734,10 +2148,27 @@ mod tests {
         let mut c = running(stage.clone(), now);
         let mut opened = stage.clone();
         opened.awaiting = vec![w(2)];
-        c.on(Event::Merge { stage: opened, moved: true }, now + Duration::from_millis(10));
-        assert!(c.on(Event::Tick { settled: true, landed: true }, now + COALESCE_WINDOW).is_empty());
+        c.on(
+            Event::Merge { stage: opened, moved: true },
+            now + Duration::from_millis(10),
+        );
+        assert!(
+            c.on(
+                Event::Tick { settled: true, landed: true },
+                now + COALESCE_WINDOW
+            )
+            .is_empty()
+        );
         assert!(!c.is_moving());
-        let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: stage.tiles[1].end, why: Why::Landed }, now + COALESCE_WINDOW);
+        let out = c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(2),
+                frame: stage.tiles[1].end,
+                why: Why::Landed,
+            },
+            now + COALESCE_WINDOW,
+        );
         assert!(has(&out, |c| *c == Command::StartMoving));
     }
 
@@ -1753,14 +2184,32 @@ mod tests {
         opened.awaiting = vec![w(2)];
         for lost in [false, true] {
             let mut c = running(stage.clone(), now);
-            c.on(Event::Merge { stage: opened.clone(), moved: true }, now + Duration::from_millis(10));
+            c.on(
+                Event::Merge {
+                    stage: opened.clone(),
+                    moved: true,
+                },
+                now + Duration::from_millis(10),
+            );
             let (generation, window) = (c.generation(), w(2));
             let event = match lost {
                 true => Event::Lost { generation, window },
-                false => Event::Picture { generation, window, frame: stage.tiles[1].end, why: Why::Landed },
+                false => Event::Picture {
+                    generation,
+                    window,
+                    frame: stage.tiles[1].end,
+                    why: Why::Landed,
+                },
             };
-            assert!(!has(&c.on(event, now + Duration::from_millis(20)), |c| *c == Command::StartMoving), "still coalescing");
-            let out = c.on(Event::Tick { settled: true, landed: true }, now + COALESCE_WINDOW);
+            assert!(
+                !has(&c.on(event, now + Duration::from_millis(20)), |c| *c
+                    == Command::StartMoving),
+                "still coalescing"
+            );
+            let out = c.on(
+                Event::Tick { settled: true, landed: true },
+                now + COALESCE_WINDOW,
+            );
             assert_eq!(out, vec![Command::StartMoving], "lost: {lost}");
         }
     }
@@ -1776,17 +2225,44 @@ mod tests {
         stage.awaiting = vec![w(2)];
         let mut c = running(stage.clone(), now);
         assert!(!c.is_moving());
-        let out = c.on(Event::Lost { generation: c.generation(), window: w(2) }, now);
+        let out = c.on(
+            Event::Lost {
+                generation: c.generation(),
+                window: w(2),
+            },
+            now,
+        );
         assert_eq!(out, vec![Command::StartMoving]);
-        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
-        assert!(matches!(out.as_slice(), [Command::AskFinal { .. }, Command::Focus { .. }, Command::Focus { .. }]), "{out:?}");
+        let out = c.on(
+            Event::Tick { settled: false, landed: false },
+            now + Duration::from_millis(240),
+        );
+        assert!(
+            matches!(out.as_slice(), [
+                Command::AskFinal { .. },
+                Command::Focus { .. },
+                Command::Focus { .. }
+            ]),
+            "{out:?}"
+        );
         assert_eq!(focus(&out), handed_over());
 
         stage.awaiting = vec![w(1), w(2)];
         let mut c = running(stage.clone(), now);
         let g = c.generation();
-        assert!(c.on(Event::Lost { generation: g, window: w(2) }, now).is_empty(), "window 1 is still held for");
-        let out = c.on(Event::Picture { generation: g, window: w(1), frame: stage.tiles[0].end, why: Why::Landed }, now);
+        assert!(
+            c.on(Event::Lost { generation: g, window: w(2) }, now).is_empty(),
+            "window 1 is still held for"
+        );
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: stage.tiles[0].end,
+                why: Why::Landed,
+            },
+            now,
+        );
         assert!(has(&out, |c| *c == Command::StartMoving));
     }
 
@@ -1802,7 +2278,10 @@ mod tests {
         let off = r(1727.0, 35.0, 860.0, 1079.0);
         stage.tiles[1].end = off;
         stage.final_frames[1].1 = off;
-        let out = c.on(Event::Merge { stage, moved: true }, now + Duration::from_millis(10));
+        let out = c.on(
+            Event::Merge { stage, moved: true },
+            now + Duration::from_millis(10),
+        );
         assert!(watch(&out).unwrap().awaiting.is_empty(), "no watch sees it");
         assert!(has(&out, |c| *c == Command::StartMoving), "{out:?}");
         assert!(c.is_moving());
@@ -1817,10 +2296,28 @@ mod tests {
         stage.awaiting = vec![w(2)];
         let mut c = running(stage.clone(), now);
         let before = c.generation();
-        c.on(Event::Merge { stage, moved: false }, now + Duration::from_millis(10));
-        assert!(c.on(Event::Lost { generation: before, window: w(2) }, now + Duration::from_millis(11)).is_empty());
+        c.on(
+            Event::Merge { stage, moved: false },
+            now + Duration::from_millis(10),
+        );
+        assert!(
+            c.on(
+                Event::Lost {
+                    generation: before,
+                    window: w(2)
+                },
+                now + Duration::from_millis(11)
+            )
+            .is_empty()
+        );
         assert!(!c.is_moving());
-        let out = c.on(Event::Lost { generation: c.generation(), window: w(2) }, now + Duration::from_millis(12));
+        let out = c.on(
+            Event::Lost {
+                generation: c.generation(),
+                window: w(2),
+            },
+            now + Duration::from_millis(12),
+        );
         assert!(has(&out, |c| *c == Command::StartMoving));
     }
 
@@ -1835,8 +2332,14 @@ mod tests {
             assert!(c.on(Event::Lost { generation: g, window }, now + LANDING_PATIENCE).is_empty());
         }
         let end = now + PLAYS;
-        assert!(!has(&c.on(Event::Tick { settled: true, landed: false }, end), |c| matches!(c, Command::Lift { .. })));
-        let out = c.on(Event::Tick { settled: true, landed: true }, end + Duration::from_millis(16));
+        assert!(!has(
+            &c.on(Event::Tick { settled: true, landed: false }, end),
+            |c| matches!(c, Command::Lift { .. })
+        ));
+        let out = c.on(
+            Event::Tick { settled: true, landed: true },
+            end + Duration::from_millis(16),
+        );
         assert!(has(&out, |c| matches!(c, Command::Lift { .. })));
     }
 
@@ -1845,8 +2348,24 @@ mod tests {
         let now = Instant::now();
         let end = pan().tiles[1].end;
         let mut c = running(pan(), now);
-        c.on(Event::Picture { generation: c.generation(), window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now);
-        c.on(Event::Picture { generation: c.generation(), window: w(2), frame: end, why: Why::FocusChanged }, now);
+        c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(1),
+                frame: pan().tiles[0].end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(2),
+                frame: end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
         let out = c.on(Event::Merge { stage: pan(), moved: false }, now);
         assert_eq!(watch(&out).unwrap().focus, None, "its look is in");
 
@@ -1861,13 +2380,20 @@ mod tests {
         assert_eq!(focus_of(staying), None, "no focus report comes to arm it");
         let mut opened = pan();
         opened.awaiting = vec![w(2)];
-        assert_eq!(focus_of(opened), None, "its repainted picture is watched already");
+        assert_eq!(
+            focus_of(opened),
+            None,
+            "its repainted picture is watched already"
+        );
         let mut elsewhere = pan();
         elsewhere.tiles[1].end = r(-900.0, 35.0, 860.0, 1079.0);
         assert_eq!(focus_of(elsewhere), None, "nothing can picture it");
         let mut clipped = pan();
         clipped.tiles[1].end = r(-200.0, 35.0, 860.0, 1079.0);
-        assert!(focus_of(clipped).is_some(), "a clipped end takes its one capture");
+        assert!(
+            focus_of(clipped).is_some(),
+            "a clipped end takes its one capture"
+        );
     }
 
     #[test]
@@ -1885,15 +2411,31 @@ mod tests {
         assert_eq!(losing_of(opened), None, "only beside a watched target");
         let mut clipped = pan();
         clipped.tiles[0].end = r(1300.0, 35.0, 860.0, 1079.0);
-        assert_eq!(losing_of(clipped), None, "SkyLight pictures it only whole, and ScreenCaptureKit's capture is the target's");
+        assert_eq!(
+            losing_of(clipped),
+            None,
+            "SkyLight pictures it only whole, and ScreenCaptureKit's capture is the target's"
+        );
         let mut parked = pan();
         parked.tiles[0].end = r(1727.0, 35.0, 860.0, 1079.0);
         assert_eq!(losing_of(parked), None);
 
         let mut c = running(pan(), now);
-        c.on(Event::Picture { generation: c.generation(), window: w(1), frame: end, why: Why::FocusChanged }, now);
+        c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(1),
+                frame: end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
         let watched = watch(&c.on(Event::Merge { stage: pan(), moved: false }, now)).unwrap();
-        assert_eq!((watched.focus.map(|(window, _)| window), watched.losing_focus), (Some(w(2)), None), "its turn is in");
+        assert_eq!(
+            (watched.focus.map(|(window, _)| window), watched.losing_focus),
+            (Some(w(2)), None),
+            "its turn is in"
+        );
     }
 
     /// macOS turns the window focus leaves before the one gaining it. The target's change waits for
@@ -1904,23 +2446,47 @@ mod tests {
         let (old, new) = (pan().tiles[0].end, pan().tiles[1].end);
         let mut c = running(pan(), now);
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now);
-        assert_eq!(turns(&out), Vec::new(), "waits for the old window: {out:?}");
-        let out = c.on(Event::Picture { generation: g, window: w(1), frame: old, why: Why::FocusChanged }, now + Duration::from_millis(5));
-        assert_eq!(
-            turns(&out),
-            vec![
-                Command::Swap { generation: g, window: w(1) },
-                Command::Focus { window: w(1), focused: false },
-                Command::Swap { generation: g, window: w(2) },
-                Command::KeepFocusedLook { generation: g, window: w(2) },
-                Command::Focus { window: w(2), focused: true },
-            ]
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: new,
+                why: Why::FocusChanged,
+            },
+            now,
         );
+        assert_eq!(turns(&out), Vec::new(), "waits for the old window: {out:?}");
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: old,
+                why: Why::FocusChanged,
+            },
+            now + Duration::from_millis(5),
+        );
+        assert_eq!(turns(&out), vec![
+            Command::Swap { generation: g, window: w(1) },
+            Command::Focus { window: w(1), focused: false },
+            Command::Swap { generation: g, window: w(2) },
+            Command::KeepFocusedLook { generation: g, window: w(2) },
+            Command::Focus { window: w(2), focused: true },
+        ]);
 
         let mut c = running(pan(), now);
-        c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now);
-        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(14));
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: new,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        let out = c.on(
+            Event::Tick { settled: false, landed: false },
+            now + Duration::from_millis(14),
+        );
         assert_eq!(turns(&out), Vec::new());
         let out = c.on(Event::Tick { settled: false, landed: false }, now + CHANGE_EVERY);
         assert_eq!(
@@ -1933,28 +2499,89 @@ mod tests {
             ],
             "15ms at most, the old window turning unfocused just before"
         );
-        let out = c.on(Event::Picture { generation: g, window: w(1), frame: old, why: Why::FocusChanged }, now + Duration::from_millis(20));
-        assert_eq!(turns(&out), vec![Command::Swap { generation: g, window: w(1) }], "drawn unfocused once");
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: old,
+                why: Why::FocusChanged,
+            },
+            now + Duration::from_millis(20),
+        );
+        assert_eq!(
+            turns(&out),
+            vec![Command::Swap { generation: g, window: w(1) }],
+            "drawn unfocused once"
+        );
 
         let mut c = running(pan(), now);
-        let out = c.on(Event::Picture { generation: g, window: w(1), frame: old, why: Why::FocusChanged }, now);
-        assert_eq!(focus(&out), vec![(w(1), false)], "the old window first, with its own picture");
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now);
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "nothing left to wait for");
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: old,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        assert_eq!(
+            focus(&out),
+            vec![(w(1), false)],
+            "the old window first, with its own picture"
+        );
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: new,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }),
+            "nothing left to wait for"
+        );
         assert_eq!(focus(&out), vec![(w(2), true)]);
 
         let mut clipped = pan();
         clipped.tiles[0].end = r(1300.0, 35.0, 860.0, 1079.0);
         let mut c = running(clipped, now);
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now);
-        assert_eq!(focus(&out), handed_over(), "an old window no watch sees turns just before the target");
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: new,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        assert_eq!(
+            focus(&out),
+            handed_over(),
+            "an old window no watch sees turns just before the target"
+        );
         assert_eq!(turns(&out)[1], Command::Swap { generation: g, window: w(2) });
 
         let mut c = running(pan(), now);
-        c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now + Duration::from_millis(230));
-        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: new,
+                why: Why::FocusChanged,
+            },
+            now + Duration::from_millis(230),
+        );
+        let out = c.on(
+            Event::Tick { settled: false, landed: false },
+            now + Duration::from_millis(240),
+        );
         assert!(matches!(out[0], Command::AskFinal { .. }), "{out:?}");
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "swapped as the last capture is asked");
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }),
+            "swapped as the last capture is asked"
+        );
         assert_eq!(focus(&out), handed_over());
     }
 
@@ -1968,26 +2595,51 @@ mod tests {
         let new = pan().tiles[1].end;
         let mut c = running(pan(), now);
         let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now);
-        let out = c.on(Event::Lost { generation: Generation(g.0 - 1), window: w(1) }, now + Duration::from_millis(2));
-        assert_eq!(turns(&out), Vec::new());
-        let out = c.on(Event::Lost { generation: g, window: w(1) }, now + Duration::from_millis(3));
-        assert_eq!(
-            turns(&out),
-            vec![
-                Command::Focus { window: w(1), focused: false },
-                Command::Swap { generation: g, window: w(2) },
-                Command::KeepFocusedLook { generation: g, window: w(2) },
-                Command::Focus { window: w(2), focused: true },
-            ]
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: new,
+                why: Why::FocusChanged,
+            },
+            now,
         );
+        let out = c.on(
+            Event::Lost {
+                generation: Generation(g.0 - 1),
+                window: w(1),
+            },
+            now + Duration::from_millis(2),
+        );
+        assert_eq!(turns(&out), Vec::new());
+        let out = c.on(
+            Event::Lost { generation: g, window: w(1) },
+            now + Duration::from_millis(3),
+        );
+        assert_eq!(turns(&out), vec![
+            Command::Focus { window: w(1), focused: false },
+            Command::Swap { generation: g, window: w(2) },
+            Command::KeepFocusedLook { generation: g, window: w(2) },
+            Command::Focus { window: w(2), focused: true },
+        ]);
 
         let mut c = running(pan(), now);
         c.on(Event::Lost { generation: g, window: w(1) }, now);
-        let out = c.on(Event::Merge { stage: pan(), moved: false }, now + Duration::from_millis(2));
+        let out = c.on(
+            Event::Merge { stage: pan(), moved: false },
+            now + Duration::from_millis(2),
+        );
         assert_eq!(watch(&out).unwrap().losing_focus, None, "watched no more");
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now + Duration::from_millis(4));
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: new,
+                why: Why::FocusChanged,
+            },
+            now + Duration::from_millis(4),
+        );
         assert_eq!(focus(&out), handed_over(), "nothing to wait for");
 
         let mut resized = pan();
@@ -1997,21 +2649,42 @@ mod tests {
         let g = c.generation();
         let watched = watch(&c.on(Event::FrameZero(g), now)).unwrap();
         assert_eq!(watched.losing_focus, None, "watched to repaint instead");
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now + Duration::from_millis(4));
-        assert_eq!(focus(&out), handed_over(), "drawn unfocused just before the target");
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: new,
+                why: Why::FocusChanged,
+            },
+            now + Duration::from_millis(4),
+        );
+        assert_eq!(
+            focus(&out),
+            handed_over(),
+            "drawn unfocused just before the target"
+        );
     }
 
     /// A rapid switch, 1 to 2 and back before 2 turns: window 1, drawn unfocused with its own
     /// picture, is the target again, watched and handed focus with its focused picture. On to 3
     /// before then, it stays drawn unfocused and is not turned again; on to 3 after, it turns again.
     #[test]
-    fn focus_moved_back_to_a_window_already_turned_unfocused_turns_it_again_only_with_its_picture() {
+    fn focus_moved_back_to_a_window_already_turned_unfocused_turns_it_again_only_with_its_picture()
+    {
         let now = Instant::now();
         let old = pan().tiles[0].end;
         let third = r(3.0, 35.0, 860.0, 1079.0);
-        let back = StageSummary { focus: Some(w(1)), losing_focus: None, ..pan() };
+        let back = StageSummary {
+            focus: Some(w(1)),
+            losing_focus: None,
+            ..pan()
+        };
         let on = || {
-            let mut stage = StageSummary { focus: Some(w(3)), losing_focus: Some(w(1)), ..pan() };
+            let mut stage = StageSummary {
+                focus: Some(w(3)),
+                losing_focus: Some(w(1)),
+                ..pan()
+            };
             stage.tiles.push(tile(w(3), r(-1723.0, 35.0, 860.0, 1079.0), third));
             stage.final_frames.push((w(3), third));
             stage
@@ -2019,39 +2692,103 @@ mod tests {
         let turned_and_back = || {
             let mut c = running(pan(), now);
             let g = c.generation();
-            let out = c.on(Event::Picture { generation: g, window: w(1), frame: old, why: Why::FocusChanged }, now);
+            let out = c.on(
+                Event::Picture {
+                    generation: g,
+                    window: w(1),
+                    frame: old,
+                    why: Why::FocusChanged,
+                },
+                now,
+            );
             assert_eq!(focus(&out), vec![(w(1), false)]);
-            let out = c.on(Event::Merge { stage: back.clone(), moved: false }, now + Duration::from_millis(10));
-            assert_eq!(focus(&out), Vec::new(), "drawn unfocused until its focused picture: {out:?}");
+            let out = c.on(
+                Event::Merge {
+                    stage: back.clone(),
+                    moved: false,
+                },
+                now + Duration::from_millis(10),
+            );
+            assert_eq!(
+                focus(&out),
+                Vec::new(),
+                "drawn unfocused until its focused picture: {out:?}"
+            );
             let watched = watch(&out).unwrap();
-            assert_eq!((watched.focus, watched.losing_focus), (Some((w(1), old)), None), "focus moves back to it");
+            assert_eq!(
+                (watched.focus, watched.losing_focus),
+                (Some((w(1), old)), None),
+                "focus moves back to it"
+            );
             c
         };
 
         let mut c = turned_and_back();
-        let out = c.on(Event::Merge { stage: on(), moved: false }, now + Duration::from_millis(20));
-        assert_eq!(watch(&out).unwrap().losing_focus, None, "already drawn unfocused");
+        let out = c.on(
+            Event::Merge { stage: on(), moved: false },
+            now + Duration::from_millis(20),
+        );
+        assert_eq!(
+            watch(&out).unwrap().losing_focus,
+            None,
+            "already drawn unfocused"
+        );
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(3), frame: third, why: Why::FocusChanged }, now + Duration::from_millis(30));
-        assert_eq!(focus(&out), vec![(w(3), true)], "nothing waits for it, nothing turns it again");
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(3),
+                frame: third,
+                why: Why::FocusChanged,
+            },
+            now + Duration::from_millis(30),
+        );
+        assert_eq!(
+            focus(&out),
+            vec![(w(3), true)],
+            "nothing waits for it, nothing turns it again"
+        );
 
         let mut c = turned_and_back();
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(1), frame: old, why: Why::FocusChanged }, now + Duration::from_millis(20));
-        assert_eq!(
-            turns(&out),
-            vec![
-                Command::Swap { generation: g, window: w(1) },
-                Command::KeepFocusedLook { generation: g, window: w(1) },
-                Command::Focus { window: w(1), focused: true },
-            ]
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: old,
+                why: Why::FocusChanged,
+            },
+            now + Duration::from_millis(20),
         );
-        let out = c.on(Event::Merge { stage: on(), moved: false }, now + Duration::from_millis(30));
-        assert_eq!(watch(&out).unwrap().losing_focus, Some((w(1), old)), "drawn focused again, it turns again");
+        assert_eq!(turns(&out), vec![
+            Command::Swap { generation: g, window: w(1) },
+            Command::KeepFocusedLook { generation: g, window: w(1) },
+            Command::Focus { window: w(1), focused: true },
+        ]);
+        let out = c.on(
+            Event::Merge { stage: on(), moved: false },
+            now + Duration::from_millis(30),
+        );
+        assert_eq!(
+            watch(&out).unwrap().losing_focus,
+            Some((w(1), old)),
+            "drawn focused again, it turns again"
+        );
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(3), frame: third, why: Why::FocusChanged }, now + Duration::from_millis(40));
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(3),
+                frame: third,
+                why: Why::FocusChanged,
+            },
+            now + Duration::from_millis(40),
+        );
         assert_eq!(focus(&out), Vec::new(), "waits for it");
-        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(40) + CHANGE_EVERY);
+        let out = c.on(
+            Event::Tick { settled: false, landed: false },
+            now + Duration::from_millis(40) + CHANGE_EVERY,
+        );
         assert_eq!(focus(&out), vec![(w(1), false), (w(3), true)]);
     }
 
@@ -2059,7 +2796,8 @@ mod tests {
     /// which flies its focused look and so is drawn focused again; on to 3 before 2 is handed focus:
     /// 2 is the window losing focus again, watched and turned unfocused before 3 is handed focus.
     #[test]
-    fn a_window_turned_unfocused_and_back_with_its_focused_look_turns_unfocused_again_as_focus_leaves() {
+    fn a_window_turned_unfocused_and_back_with_its_focused_look_turns_unfocused_again_as_focus_leaves()
+     {
         let now = Instant::now();
         let ms = Duration::from_millis;
         let (old, mid) = (pan().tiles[0].end, pan().tiles[1].end);
@@ -2077,21 +2815,84 @@ mod tests {
             stage.final_frames.push((w(3), third));
             stage
         };
-        let mut c = running(StageSummary { focused_look: Some(w(2)), ..pan() }, now);
+        let mut c = running(
+            StageSummary {
+                focused_look: Some(w(2)),
+                ..pan()
+            },
+            now,
+        );
         let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(1), frame: old, why: Why::FocusChanged }, now);
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: mid, why: Why::FocusChanged }, now + ms(5));
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: old,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: mid,
+                why: Why::FocusChanged,
+            },
+            now + ms(5),
+        );
         assert_eq!(focus(&out), vec![(w(2), true)]);
-        c.on(Event::Merge { stage: to(3, Some(2)), moved: false }, now + ms(10));
-        let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: mid, why: Why::FocusChanged }, now + ms(15));
+        c.on(
+            Event::Merge {
+                stage: to(3, Some(2)),
+                moved: false,
+            },
+            now + ms(10),
+        );
+        let out = c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(2),
+                frame: mid,
+                why: Why::FocusChanged,
+            },
+            now + ms(15),
+        );
         assert_eq!(focus(&out), vec![(w(2), false)]);
-        c.on(Event::Merge { stage: to(2, None), moved: false }, now + ms(20));
-        let out = c.on(Event::Merge { stage: to(3, Some(2)), moved: false }, now + ms(25));
-        assert_eq!(watch(&out).unwrap().losing_focus, Some((w(2), mid)), "drawn focused again, it turns again");
+        c.on(
+            Event::Merge {
+                stage: to(2, None),
+                moved: false,
+            },
+            now + ms(20),
+        );
+        let out = c.on(
+            Event::Merge {
+                stage: to(3, Some(2)),
+                moved: false,
+            },
+            now + ms(25),
+        );
+        assert_eq!(
+            watch(&out).unwrap().losing_focus,
+            Some((w(2), mid)),
+            "drawn focused again, it turns again"
+        );
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(3), frame: third, why: Why::FocusChanged }, now + ms(30));
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(3),
+                frame: third,
+                why: Why::FocusChanged,
+            },
+            now + ms(30),
+        );
         assert_eq!(focus(&out), Vec::new(), "waits for it");
-        let out = c.on(Event::Tick { settled: false, landed: false }, now + ms(30) + CHANGE_EVERY);
+        let out = c.on(
+            Event::Tick { settled: false, landed: false },
+            now + ms(30) + CHANGE_EVERY,
+        );
         assert_eq!(focus(&out), vec![(w(2), false), (w(3), true)]);
     }
 
@@ -2105,21 +2906,35 @@ mod tests {
         let new = pan().tiles[1].end;
         let mut c = running(pan(), now);
         let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(2), frame: new, why: Why::FocusChanged }, now);
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: new,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
         let out = c.on(Event::Merge { stage: pan(), moved: false }, now + ms(2));
-        assert_eq!(watch(&out).unwrap().losing_focus.map(|(window, _)| window), Some(w(1)));
+        assert_eq!(
+            watch(&out).unwrap().losing_focus.map(|(window, _)| window),
+            Some(w(1))
+        );
         let out = c.on(Event::Lost { generation: g, window: w(1) }, now + ms(3));
         assert_eq!(turns(&out), Vec::new(), "of the generation before");
-        let out = c.on(Event::Lost { generation: c.generation(), window: w(1) }, now + ms(4));
-        assert_eq!(
-            turns(&out),
-            vec![
-                Command::Focus { window: w(1), focused: false },
-                Command::Swap { generation: g, window: w(2) },
-                Command::KeepFocusedLook { generation: g, window: w(2) },
-                Command::Focus { window: w(2), focused: true },
-            ]
+        let out = c.on(
+            Event::Lost {
+                generation: c.generation(),
+                window: w(1),
+            },
+            now + ms(4),
         );
+        assert_eq!(turns(&out), vec![
+            Command::Focus { window: w(1), focused: false },
+            Command::Swap { generation: g, window: w(2) },
+            Command::KeepFocusedLook { generation: g, window: w(2) },
+            Command::Focus { window: w(2), focused: true },
+        ]);
     }
 
     /// Only the target's change waiting for the old window and its landing held back over its focused
@@ -2130,20 +2945,53 @@ mod tests {
         let end = pan().tiles[1].end;
         let mut c = running(pan(), now);
         let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::FocusChanged }, now);
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
         assert!(c.holds(w(2), g, end), "waits for the old window");
         let mut elsewhere = end;
         elsewhere.origin.x += 400.0;
         assert!(!c.holds(w(2), g, elsewhere), "another picture of it");
-        c.on(Event::Picture { generation: g, window: w(1), frame: pan().tiles[0].end, why: Why::Landed }, now);
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: pan().tiles[0].end,
+                why: Why::Landed,
+            },
+            now,
+        );
         assert!(!c.holds(w(1), g, pan().tiles[0].end), "swapped in as it came");
         c.on(Event::Tick { settled: false, landed: false }, now + CHANGE_EVERY);
         assert!(!c.holds(w(2), g, end), "swapped in at last");
 
-        let mut c = running(StageSummary { focused_look: Some(w(2)), ..pan() }, now);
+        let mut c = running(
+            StageSummary {
+                focused_look: Some(w(2)),
+                ..pan()
+            },
+            now,
+        );
         let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
-        assert!(c.holds(w(2), g, end), "over its focused look until focus hands over");
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: end,
+                why: Why::Landed,
+            },
+            now,
+        );
+        assert!(
+            c.holds(w(2), g, end),
+            "over its focused look until focus hands over"
+        );
         c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
         assert!(!c.holds(w(2), g, end), "lifted");
     }
@@ -2154,15 +3002,48 @@ mod tests {
     fn a_held_change_is_dropped_when_a_press_moves_focus_on() {
         let now = Instant::now();
         let mut three = pan();
-        three.tiles.push(tile(w(3), r(-1723.0, 35.0, 860.0, 1079.0), pan().tiles[1].end));
+        three
+            .tiles
+            .push(tile(w(3), r(-1723.0, 35.0, 860.0, 1079.0), pan().tiles[1].end));
         let mut c = running(three.clone(), now);
         let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::FocusChanged }, now);
-        c.on(Event::Merge { stage: StageSummary { focus: Some(w(3)), ..three }, moved: false }, now + Duration::from_millis(5));
-        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(5) + CHANGE_EVERY);
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: pan().tiles[1].end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        c.on(
+            Event::Merge {
+                stage: StageSummary { focus: Some(w(3)), ..three },
+                moved: false,
+            },
+            now + Duration::from_millis(5),
+        );
+        let out = c.on(
+            Event::Tick { settled: false, landed: false },
+            now + Duration::from_millis(5) + CHANGE_EVERY,
+        );
         assert_eq!(turns(&out), Vec::new(), "{out:?}");
-        let out = c.on(Event::Picture { generation: c.generation(), window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now + Duration::from_millis(30));
-        assert_eq!(turns(&out), vec![Command::Swap { generation: c.generation(), window: w(1) }, Command::Focus { window: w(1), focused: false }]);
+        let out = c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(1),
+                frame: pan().tiles[0].end,
+                why: Why::FocusChanged,
+            },
+            now + Duration::from_millis(30),
+        );
+        assert_eq!(turns(&out), vec![
+            Command::Swap {
+                generation: c.generation(),
+                window: w(1)
+            },
+            Command::Focus { window: w(1), focused: false }
+        ]);
     }
 
     /// A held change no longer fitting its tile, a press resizing the target meanwhile, turns nothing:
@@ -2172,25 +3053,49 @@ mod tests {
         let now = Instant::now();
         let mut c = running(pan(), now);
         let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::FocusChanged }, now);
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: pan().tiles[1].end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
         let mut wider = pan();
         wider.tiles[1].end.size.width = 1200.0;
         wider.final_frames[1].1.size.width = 1200.0;
         let end = wider.tiles[1].end;
-        c.on(Event::Merge { stage: wider, moved: true }, now + Duration::from_millis(5));
+        c.on(
+            Event::Merge { stage: wider, moved: true },
+            now + Duration::from_millis(5),
+        );
         let out = c.on(Event::Tick { settled: false, landed: false }, now + CHANGE_EVERY);
         assert_eq!(turns(&out), Vec::new(), "{out:?}");
         let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now + Duration::from_millis(20));
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::FocusChanged }, now + Duration::from_millis(30));
-        assert_eq!(
-            turns(&out),
-            vec![
-                Command::Swap { generation: g, window: w(2) },
-                Command::KeepFocusedLook { generation: g, window: w(2) },
-                Command::Focus { window: w(2), focused: true },
-            ]
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: pan().tiles[0].end,
+                why: Why::FocusChanged,
+            },
+            now + Duration::from_millis(20),
         );
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: end,
+                why: Why::FocusChanged,
+            },
+            now + Duration::from_millis(30),
+        );
+        assert_eq!(turns(&out), vec![
+            Command::Swap { generation: g, window: w(2) },
+            Command::KeepFocusedLook { generation: g, window: w(2) },
+            Command::Focus { window: w(2), focused: true },
+        ]);
     }
 
     #[test]
@@ -2212,13 +3117,20 @@ mod tests {
         next.final_frames[1].1.origin.x = 20.0;
         next.tiles[1].end.origin.x = 20.0;
         next.focus = Some(w(1));
-        let out = c.on(Event::Merge { stage: next, moved: true }, now + Duration::from_millis(100));
+        let out = c.on(
+            Event::Merge { stage: next, moved: true },
+            now + Duration::from_millis(100),
+        );
         assert_eq!(c.generation(), Generation(before.0 + 1));
         assert_eq!(writes(&out), vec![(w(2), r(20.0, 35.0, 860.0, 1079.0))]);
         let watch = watch(&out).unwrap();
         assert_eq!(watch.generation, c.generation());
         assert_eq!(watch.focus.map(|(window, _)| window), Some(w(1)));
-        assert_eq!(c.remaining(now + Duration::from_millis(100)), Some(PLAYS), "a merge that moves restarts the clock");
+        assert_eq!(
+            c.remaining(now + Duration::from_millis(100)),
+            Some(PLAYS),
+            "a merge that moves restarts the clock"
+        );
     }
 
     /// The service decides a delivery under the generation it was asked for, and a pass merged while
@@ -2232,10 +3144,33 @@ mod tests {
         let end = pan().tiles[1].end;
         c.on(Event::Merge { stage: pan(), moved: false }, now);
         assert_ne!(c.generation(), old);
-        c.on(Event::Picture { generation: old, window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now);
-        let out = c.on(Event::Picture { generation: old, window: w(2), frame: end, why: Why::FocusChanged }, now);
-        assert!(has(&out, |c| *c == Command::Swap { generation: old, window: w(2) }), "{out:?}");
-        assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: old, window: w(2) }), "named as it was delivered");
+        c.on(
+            Event::Picture {
+                generation: old,
+                window: w(1),
+                frame: pan().tiles[0].end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        let out = c.on(
+            Event::Picture {
+                generation: old,
+                window: w(2),
+                frame: end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: old, window: w(2) }),
+            "{out:?}"
+        );
+        assert!(
+            has(&out, |c| *c
+                == Command::KeepFocusedLook { generation: old, window: w(2) }),
+            "named as it was delivered"
+        );
         assert_eq!(focus(&out), vec![(w(2), true)]);
     }
 
@@ -2248,19 +3183,82 @@ mod tests {
         let mut moved = pan();
         moved.tiles[1].end.origin.x += 400.0;
         moved.final_frames[1].1.origin.x += 400.0;
-        c.on(Event::Merge { stage: moved.clone(), moved: true }, now);
-        assert!(c.on(Event::Picture { generation: old, window: w(2), frame: moved.tiles[1].end, why: Why::Landed }, now).is_empty(),
-            "taken for the end before, whatever frame it carries");
-        assert!(has(&c.on(Event::Picture { generation: old, window: w(1), frame: pan().tiles[0].end, why: Why::Landed }, now),
-            |c| matches!(c, Command::Swap { .. })), "the window whose end the merge kept");
+        c.on(
+            Event::Merge {
+                stage: moved.clone(),
+                moved: true,
+            },
+            now,
+        );
+        assert!(
+            c.on(
+                Event::Picture {
+                    generation: old,
+                    window: w(2),
+                    frame: moved.tiles[1].end,
+                    why: Why::Landed
+                },
+                now
+            )
+            .is_empty(),
+            "taken for the end before, whatever frame it carries"
+        );
+        assert!(
+            has(
+                &c.on(
+                    Event::Picture {
+                        generation: old,
+                        window: w(1),
+                        frame: pan().tiles[0].end,
+                        why: Why::Landed
+                    },
+                    now
+                ),
+                |c| matches!(c, Command::Swap { .. })
+            ),
+            "the window whose end the merge kept"
+        );
         let g = c.generation();
-        assert!(c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now).is_empty());
+        assert!(
+            c.on(
+                Event::Picture {
+                    generation: g,
+                    window: w(2),
+                    frame: end,
+                    why: Why::Landed
+                },
+                now
+            )
+            .is_empty()
+        );
         let mut far = moved.tiles[1].end;
         far.size.width -= 21.0;
-        assert!(c.on(Event::Picture { generation: g, window: w(2), frame: far, why: Why::Landed }, now).is_empty(),
-            "a picture of the window at another size would be drawn squashed or zoomed");
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: moved.tiles[1].end, why: Why::Landed }, now);
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "{out:?}");
+        assert!(
+            c.on(
+                Event::Picture {
+                    generation: g,
+                    window: w(2),
+                    frame: far,
+                    why: Why::Landed
+                },
+                now
+            )
+            .is_empty(),
+            "a picture of the window at another size would be drawn squashed or zoomed"
+        );
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: moved.tiles[1].end,
+                why: Why::Landed,
+            },
+            now,
+        );
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }),
+            "{out:?}"
+        );
     }
 
     #[test]
@@ -2270,18 +3268,46 @@ mod tests {
         let g = c.generation();
         let mut real = pan().tiles[1].end;
         real.size.width += 1.0;
-        let picture = |c: &mut Coordinator, g, frame| c.on(Event::Picture { generation: g, window: w(2), frame, why: Why::Landed }, now);
-        assert!(has(&picture(&mut c, g, real), |c| matches!(c, Command::Snap { .. })));
-        assert!(!has(&picture(&mut c, g, real), |c| matches!(c, Command::Snap { .. })), "once");
+        let picture = |c: &mut Coordinator, g, frame| {
+            c.on(
+                Event::Picture {
+                    generation: g,
+                    window: w(2),
+                    frame,
+                    why: Why::Landed,
+                },
+                now,
+            )
+        };
+        assert!(has(&picture(&mut c, g, real), |c| matches!(
+            c,
+            Command::Snap { .. }
+        )));
+        assert!(
+            !has(&picture(&mut c, g, real), |c| matches!(c, Command::Snap { .. })),
+            "once"
+        );
         let merged = c.on(Event::Merge { stage: pan(), moved: false }, now);
-        assert!(has(&merged, |c| *c == Command::Snap { window: w(2), frame: to_overlay_space(real, DISPLAY) }),
-            "again with a merge, which may have put the tile back on its model, and no new print will come");
+        assert!(
+            has(&merged, |c| *c
+                == Command::Snap {
+                    window: w(2),
+                    frame: to_overlay_space(real, DISPLAY)
+                }),
+            "again with a merge, which may have put the tile back on its model, and no new print will come"
+        );
         let g = c.generation();
-        assert!(!has(&picture(&mut c, g, real), |c| matches!(c, Command::Snap { .. })), "once a generation");
+        assert!(
+            !has(&picture(&mut c, g, real), |c| matches!(c, Command::Snap { .. })),
+            "once a generation"
+        );
         let mut moved = pan();
         moved.tiles[1].end.origin.x += 400.0;
         let merged = c.on(Event::Merge { stage: moved, moved: true }, now);
-        assert!(!has(&merged, |c| matches!(c, Command::Snap { .. })), "a window ending elsewhere lands again first");
+        assert!(
+            !has(&merged, |c| matches!(c, Command::Snap { .. })),
+            "a window ending elsewhere lands again first"
+        );
     }
 
     /// On a display away from the origin, the holes and the snaps are the overlay's points: the end
@@ -2302,15 +3328,43 @@ mod tests {
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
-        let holes = out.iter().find_map(|c| if let Command::Holes(h) = c { Some(h.clone()) } else { None }).unwrap();
+        let holes = out
+            .iter()
+            .find_map(|c| {
+                if let Command::Holes(h) = c {
+                    Some(h.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap();
         let at_home = |frame: ScreenRect| to_overlay_space(frame, DISPLAY);
-        assert_eq!(holes, pan().final_frames.iter().map(|(window, end)| (*window, at_home(*end))).collect::<Vec<_>>());
+        assert_eq!(
+            holes,
+            pan()
+                .final_frames
+                .iter()
+                .map(|(window, end)| (*window, at_home(*end)))
+                .collect::<Vec<_>>()
+        );
 
         let mut real = pan().tiles[1].end;
         real.size.width += 1.0;
-        let landed = Event::Picture { generation: c.generation(), window: w(2), frame: on_it(real), why: Why::Landed };
+        let landed = Event::Picture {
+            generation: c.generation(),
+            window: w(2),
+            frame: on_it(real),
+            why: Why::Landed,
+        };
         let out = c.on(landed, now);
-        assert!(has(&out, |c| *c == Command::Snap { window: w(2), frame: at_home(real) }), "{out:?}");
+        assert!(
+            has(&out, |c| *c
+                == Command::Snap {
+                    window: w(2),
+                    frame: at_home(real)
+                }),
+            "{out:?}"
+        );
     }
 
     #[test]
@@ -2322,11 +3376,28 @@ mod tests {
         let mut c = running(stage, now);
         let mut real = pan().tiles[1].end;
         real.size.width += 1.0;
-        let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: real, why: Why::Landed }, now);
+        let out = c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(2),
+                frame: real,
+                why: Why::Landed,
+            },
+            now,
+        );
         assert!(has(&out, |c| matches!(c, Command::Swap { .. })));
-        assert!(!has(&out, |c| matches!(c, Command::Snap { .. })), "frame zero still stands; the start would move it back");
-        let out = c.on(Event::Tick { settled: true, landed: true }, now + COALESCE_WINDOW);
-        assert_eq!(out, vec![Command::StartMoving, Command::Snap { window: w(2), frame: to_overlay_space(real, DISPLAY) }]);
+        assert!(
+            !has(&out, |c| matches!(c, Command::Snap { .. })),
+            "frame zero still stands; the start would move it back"
+        );
+        let out = c.on(
+            Event::Tick { settled: true, landed: true },
+            now + COALESCE_WINDOW,
+        );
+        assert_eq!(out, vec![Command::StartMoving, Command::Snap {
+            window: w(2),
+            frame: to_overlay_space(real, DISPLAY)
+        }]);
     }
 
     #[test]
@@ -2339,10 +3410,22 @@ mod tests {
         let out = c.on(Event::FrameZero(c.generation()), now);
         assert!(has(&out, |c| *c == Command::StartMoving), "it flies at once");
         let watch = watch(&out).unwrap();
-        assert_eq!(watch.awaiting, vec![(w(2), stage.tiles[1].end)], "watched until it has repainted");
+        assert_eq!(
+            watch.awaiting,
+            vec![(w(2), stage.tiles[1].end)],
+            "watched until it has repainted"
+        );
         assert_eq!(watch.landing, vec![(w(1), stage.tiles[0].end)]);
         assert_eq!(watch.focus, None, "its repainted picture is the handover");
-        let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: stage.tiles[1].end, why: Why::Landed }, now);
+        let out = c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(2),
+                frame: stage.tiles[1].end,
+                why: Why::Landed,
+            },
+            now,
+        );
         assert_eq!(focus(&out), handed_over());
 
         // Merged in while the overlay holds for another, it does not add to the hold.
@@ -2352,8 +3435,22 @@ mod tests {
         let mut opened = standing_in;
         opened.awaiting.clear();
         opened.repainting = vec![w(2)];
-        c.on(Event::Merge { stage: opened.clone(), moved: false }, now);
-        let out = c.on(Event::Picture { generation: c.generation(), window: w(1), frame: opened.tiles[0].end, why: Why::Landed }, now);
+        c.on(
+            Event::Merge {
+                stage: opened.clone(),
+                moved: false,
+            },
+            now,
+        );
+        let out = c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(1),
+                frame: opened.tiles[0].end,
+                why: Why::Landed,
+            },
+            now,
+        );
         assert!(has(&out, |c| *c == Command::StartMoving));
     }
 
@@ -2373,7 +3470,13 @@ mod tests {
     }
 
     fn asked_final(out: Vec<Command>) -> Option<Vec<(WindowId, ScreenRect)>> {
-        out.into_iter().find_map(|c| if let Command::AskFinal { windows, .. } = c { Some(windows) } else { None })
+        out.into_iter().find_map(|c| {
+            if let Command::AskFinal { windows, .. } = c {
+                Some(windows)
+            } else {
+                None
+            }
+        })
     }
 
     /// A layout pass growing a window holds at frame zero, past its follow-ups, until the window has
@@ -2387,19 +3490,41 @@ mod tests {
         c.on(Event::Begin(stage.clone()), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
         let watched = watch(&out).unwrap();
-        assert_eq!(watched.awaiting, vec![(w(2), grown)], "watched until it repaints");
+        assert_eq!(
+            watched.awaiting,
+            vec![(w(2), grown)],
+            "watched until it repaints"
+        );
         assert_eq!(watched.focus, None, "its look comes with its repainted picture");
         assert!(!has(&out, |c| *c == Command::StartMoving), "held");
         let tick = Event::Tick { settled: false, landed: false };
-        assert!(c.on(tick.clone(), now + COALESCE_WINDOW).is_empty(), "held past the follow-ups");
+        assert!(
+            c.on(tick.clone(), now + COALESCE_WINDOW).is_empty(),
+            "held past the follow-ups"
+        );
 
         let g = c.generation();
         let repainted = now + Duration::from_millis(150);
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed }, repainted);
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: grown,
+                why: Why::Landed,
+            },
+            repainted,
+        );
         let at = |command: Command| out.iter().position(|c| *c == command);
         let swapped = at(Command::Swap { generation: g, window: w(2) }).expect("swapped in");
-        assert!(at(Command::StartMoving).is_some_and(|moved| swapped < moved), "onto frame zero: {out:?}");
-        assert_eq!(asked_final(c.on(tick, repainted + PLAYS - FINAL_BEFORE_END)), Some(stage.final_frames), "pictured");
+        assert!(
+            at(Command::StartMoving).is_some_and(|moved| swapped < moved),
+            "onto frame zero: {out:?}"
+        );
+        assert_eq!(
+            asked_final(c.on(tick, repainted + PLAYS - FINAL_BEFORE_END)),
+            Some(stage.final_frames),
+            "pictured"
+        );
     }
 
     /// A grow whose repaint misses the hold moves at `HOLD_CAP` with the picture it has, is left out of
@@ -2411,18 +3536,44 @@ mod tests {
         let (stage, grown) = grow();
         let mut c = running(stage.clone(), now);
         let tick = Event::Tick { settled: false, landed: false };
-        assert!(c.on(tick.clone(), now + HOLD_CAP - Duration::from_millis(1)).is_empty(), "held");
-        assert_eq!(c.on(tick.clone(), now + HOLD_CAP), vec![Command::StartMoving], "the hold runs out");
+        assert!(
+            c.on(tick.clone(), now + HOLD_CAP - Duration::from_millis(1)).is_empty(),
+            "held"
+        );
+        assert_eq!(
+            c.on(tick.clone(), now + HOLD_CAP),
+            vec![Command::StartMoving],
+            "the hold runs out"
+        );
 
         let last = now + HOLD_CAP + PLAYS - FINAL_BEFORE_END;
         let windows = asked_final(c.clone().on(tick.clone(), last));
-        assert_eq!(windows, Some(vec![stage.final_frames[0]]), "not repainted yet: the lift shows it");
+        assert_eq!(
+            windows,
+            Some(vec![stage.final_frames[0]]),
+            "not repainted yet: the lift shows it"
+        );
 
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed }, now + HOLD_CAP + Duration::from_millis(100));
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "mid-run");
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: grown,
+                why: Why::Landed,
+            },
+            now + HOLD_CAP + Duration::from_millis(100),
+        );
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }),
+            "mid-run"
+        );
         assert!(!has(&out, |c| *c == Command::StartMoving));
-        assert_eq!(asked_final(c.on(tick, last)), Some(stage.final_frames), "and once in, pictured");
+        assert_eq!(
+            asked_final(c.on(tick, last)),
+            Some(stage.final_frames),
+            "and once in, pictured"
+        );
     }
 
     /// fold1's g18 (`docs/data/2026-10-10-fold`): window 2 unfolds from 3,35 1148x538 to end part off
@@ -2449,36 +3600,86 @@ mod tests {
         let out = c.on(Event::FrameZero(c.generation()), now);
         let watched = watch(&out).unwrap();
         assert_eq!(watched.awaiting, vec![(w(2), cut)], "watched where it ends");
-        assert!(!watched.compared.iter().any(|(window, _)| *window == w(2)), "not compared");
-        let holes = out.iter().find_map(|c| if let Command::Holes(holes) = c { Some(holes.clone()) } else { None });
-        assert!(!holes.unwrap().iter().any(|(window, _)| *window == w(2)), "its hole would be off the display");
+        assert!(
+            !watched.compared.iter().any(|(window, _)| *window == w(2)),
+            "not compared"
+        );
+        let holes = out.iter().find_map(|c| {
+            if let Command::Holes(holes) = c {
+                Some(holes.clone())
+            } else {
+                None
+            }
+        });
+        assert!(
+            !holes.unwrap().iter().any(|(window, _)| *window == w(2)),
+            "its hole would be off the display"
+        );
         assert!(c.on(tick.clone(), now + COALESCE_WINDOW).is_empty(), "held");
 
         let g = c.generation();
         let repainted = now + Duration::from_millis(200);
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: cut, why: Why::Landed }, repainted);
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: cut,
+                why: Why::Landed,
+            },
+            repainted,
+        );
         let at = |command: Command| out.iter().position(|c| *c == command);
         let swapped = at(Command::Swap { generation: g, window: w(2) }).expect("swapped in");
-        assert!(at(Command::StartMoving).is_some_and(|moved| swapped < moved), "onto frame zero: {out:?}");
+        assert!(
+            at(Command::StartMoving).is_some_and(|moved| swapped < moved),
+            "onto frame zero: {out:?}"
+        );
         let last = repainted + PLAYS - FINAL_BEFORE_END;
-        assert_eq!(asked_final(c.on(tick.clone(), last)), Some(vec![stage.final_frames[0]]), "SkyLight sees it only whole");
+        assert_eq!(
+            asked_final(c.on(tick.clone(), last)),
+            Some(vec![stage.final_frames[0]]),
+            "SkyLight sees it only whole"
+        );
 
         let right = r(1000.0, 35.0, 1148.0, 1079.0);
         let mut c = Coordinator::default();
         c.on(Event::Begin(unfold(right)), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
         let watched = watch(&out).unwrap();
-        assert_eq!(watched.awaiting, vec![(w(2), right)], "cut by the right edge, watched");
-        assert!(!watched.compared.iter().any(|(window, _)| *window == w(2)), "cut by the right edge, not compared");
-        let holes = out.iter().find_map(|c| if let Command::Holes(holes) = c { Some(holes.clone()) } else { None });
-        assert!(holes.unwrap().iter().any(|(window, _)| *window == w(2)), "cut by the right edge, holed");
+        assert_eq!(
+            watched.awaiting,
+            vec![(w(2), right)],
+            "cut by the right edge, watched"
+        );
+        assert!(
+            !watched.compared.iter().any(|(window, _)| *window == w(2)),
+            "cut by the right edge, not compared"
+        );
+        let holes = out.iter().find_map(|c| {
+            if let Command::Holes(holes) = c {
+                Some(holes.clone())
+            } else {
+                None
+            }
+        });
+        assert!(
+            holes.unwrap().iter().any(|(window, _)| *window == w(2)),
+            "cut by the right edge, holed"
+        );
 
-        for (what, end) in [("wholly off", r(1800.0, 35.0, 1148.0, 1079.0)), ("a sliver", r(1680.0, 35.0, 1148.0, 1079.0))] {
+        for (what, end) in [
+            ("wholly off", r(1800.0, 35.0, 1148.0, 1079.0)),
+            ("a sliver", r(1680.0, 35.0, 1148.0, 1079.0)),
+        ] {
             let mut c = Coordinator::default();
             c.on(Event::Begin(unfold(end)), now);
             let out = c.on(Event::FrameZero(c.generation()), now);
             assert!(watch(&out).unwrap().awaiting.is_empty(), "{what}: {out:?}");
-            assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving], "{what}: not held");
+            assert_eq!(
+                c.on(tick.clone(), now + COALESCE_WINDOW),
+                vec![Command::StartMoving],
+                "{what}: not held"
+            );
         }
     }
 
@@ -2512,15 +3713,40 @@ mod tests {
         let mut c = running(stage, now);
         let g = c.generation();
         let tick = Event::Tick { settled: false, landed: false };
-        let out = c.on(Event::Picture { generation: g, window: w(1), frame: whole, why: Why::Landed }, at(214));
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(1) }), "{out:?}");
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: whole,
+                why: Why::Landed,
+            },
+            at(214),
+        );
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(1) }),
+            "{out:?}"
+        );
         assert!(!has(&out, |c| *c == Command::StartMoving), "window 2 still held");
-        assert!(c.on(tick.clone(), now + HOLD_CAP).is_empty(), "past the SkyLight cap");
+        assert!(
+            c.on(tick.clone(), now + HOLD_CAP).is_empty(),
+            "past the SkyLight cap"
+        );
         assert!(c.on(tick, at(363)).is_empty());
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: cut, why: Why::Landed }, at(364));
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: cut,
+                why: Why::Landed,
+            },
+            at(364),
+        );
         let at = |command: Command| out.iter().position(|c| *c == command);
         let swapped = at(Command::Swap { generation: g, window: w(2) }).expect("swapped in");
-        assert!(at(Command::StartMoving).is_some_and(|moved| swapped < moved), "onto frame zero: {out:?}");
+        assert!(
+            at(Command::StartMoving).is_some_and(|moved| swapped < moved),
+            "onto frame zero: {out:?}"
+        );
     }
 
     /// A hold for a window watched through SkyLight beside one ending cut by the display's edge, and
@@ -2533,11 +3759,25 @@ mod tests {
         c.on(Event::Begin(stage), now);
         let shown = watch(&c.on(Event::FrameZero(c.generation()), now)).unwrap();
         assert_eq!(shown.awaiting.len(), 2);
-        assert_eq!(shown.awaiting_until, now + ELSEWHERE_HOLD_CAP, "watched as long as it is held for");
+        assert_eq!(
+            shown.awaiting_until,
+            now + ELSEWHERE_HOLD_CAP,
+            "watched as long as it is held for"
+        );
         let tick = Event::Tick { settled: false, landed: false };
-        assert!(c.on(tick.clone(), now + HOLD_CAP).is_empty(), "not the SkyLight cap");
-        assert!(c.on(tick.clone(), now + ELSEWHERE_HOLD_CAP - Duration::from_millis(1)).is_empty());
-        assert_eq!(c.on(tick, now + ELSEWHERE_HOLD_CAP), vec![Command::StartMoving], "the hold runs out");
+        assert!(
+            c.on(tick.clone(), now + HOLD_CAP).is_empty(),
+            "not the SkyLight cap"
+        );
+        assert!(
+            c.on(tick.clone(), now + ELSEWHERE_HOLD_CAP - Duration::from_millis(1))
+                .is_empty()
+        );
+        assert_eq!(
+            c.on(tick, now + ELSEWHERE_HOLD_CAP),
+            vec![Command::StartMoving],
+            "the hold runs out"
+        );
     }
 
     /// A pass merged before the motion growing only a window SkyLight watches, 50ms after the show,
@@ -2556,9 +3796,19 @@ mod tests {
         let arrives = now + Duration::from_millis(50);
         c.on(Event::Merge { stage: newcomer, moved: true }, arrives);
         let tick = Event::Tick { settled: false, landed: false };
-        assert!(c.on(tick.clone(), arrives + HOLD_CAP).is_empty(), "the newcomer's own cap");
-        assert!(c.on(tick.clone(), now + ELSEWHERE_HOLD_CAP - Duration::from_millis(1)).is_empty());
-        assert_eq!(c.on(tick, now + ELSEWHERE_HOLD_CAP), vec![Command::StartMoving], "the cut end's, from the show");
+        assert!(
+            c.on(tick.clone(), arrives + HOLD_CAP).is_empty(),
+            "the newcomer's own cap"
+        );
+        assert!(
+            c.on(tick.clone(), now + ELSEWHERE_HOLD_CAP - Duration::from_millis(1))
+                .is_empty()
+        );
+        assert_eq!(
+            c.on(tick, now + ELSEWHERE_HOLD_CAP),
+            vec![Command::StartMoving],
+            "the cut end's, from the show"
+        );
     }
 
     /// A pass merged before the motion growing window 2 to end cut by the display's edge, over a
@@ -2578,9 +3828,16 @@ mod tests {
             newcomer.repainting = vec![w(2)];
             let mut c = running(first, now);
             c.on(Event::Merge { stage: newcomer, moved: true }, at(arrival));
-            assert!(c.on(tick.clone(), at(arrival) + HOLD_CAP).is_empty(), "{arrival}: not the SkyLight cap");
+            assert!(
+                c.on(tick.clone(), at(arrival) + HOLD_CAP).is_empty(),
+                "{arrival}: not the SkyLight cap"
+            );
             assert!(c.on(tick.clone(), at(ends - 1)).is_empty(), "{arrival}");
-            assert_eq!(c.on(tick.clone(), at(ends)), vec![Command::StartMoving], "{arrival}: the hold runs out");
+            assert_eq!(
+                c.on(tick.clone(), at(ends)),
+                vec![Command::StartMoving],
+                "{arrival}: the hold runs out"
+            );
         }
     }
 
@@ -2597,9 +3854,23 @@ mod tests {
         assert!(watched.awaiting.contains(&(w(2), cut)), "{watched:?}");
         assert_eq!(watched.awaiting_until, arrives + ELSEWHERE_HOLD_CAP);
         let tick = Event::Tick { settled: false, landed: false };
-        assert_eq!(retargets(&c.on(tick.clone(), arrives + HOLD_CAP)), None, "not the SkyLight cap");
-        assert_eq!(retargets(&c.on(tick.clone(), arrives + ELSEWHERE_HOLD_CAP - Duration::from_millis(1))), None);
-        assert_eq!(retargets(&c.on(tick, arrives + ELSEWHERE_HOLD_CAP)), Some(ELSEWHERE_HOLD_CAP), "the cap runs out");
+        assert_eq!(
+            retargets(&c.on(tick.clone(), arrives + HOLD_CAP)),
+            None,
+            "not the SkyLight cap"
+        );
+        assert_eq!(
+            retargets(&c.on(
+                tick.clone(),
+                arrives + ELSEWHERE_HOLD_CAP - Duration::from_millis(1)
+            )),
+            None
+        );
+        assert_eq!(
+            retargets(&c.on(tick, arrives + ELSEWHERE_HOLD_CAP)),
+            Some(ELSEWHERE_HOLD_CAP),
+            "the cap runs out"
+        );
     }
 
     /// A pass growing window 2 and shrinking window 1: the shrink is never held for itself, so its
@@ -2617,7 +3888,12 @@ mod tests {
         let tick = Event::Tick { settled: false, landed: false };
         assert!(c.on(tick, now + COALESCE_WINDOW).is_empty(), "held for the grow");
         let g = c.generation();
-        let landed = |window, frame| Event::Picture { generation: g, window, frame, why: Why::Landed };
+        let landed = |window, frame| Event::Picture {
+            generation: g,
+            window,
+            frame,
+            why: Why::Landed,
+        };
         let out = c.on(landed(w(1), shrunk), now + Duration::from_millis(100));
         assert!(!has(&out, |c| *c == Command::StartMoving), "{out:?}");
         let out = c.on(landed(w(2), grown), now + Duration::from_millis(150));
@@ -2648,17 +3924,46 @@ mod tests {
         let (stage, shrunk) = shrink();
         let mut c = running(stage.clone(), now);
         let tick = Event::Tick { settled: false, landed: false };
-        assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving], "never held for");
+        assert_eq!(
+            c.on(tick.clone(), now + COALESCE_WINDOW),
+            vec![Command::StartMoving],
+            "never held for"
+        );
         let last = now + COALESCE_WINDOW + PLAYS - FINAL_BEFORE_END;
         let others = Some(vec![stage.final_frames[0]]);
-        assert_eq!(asked_final(c.clone().on(tick.clone(), last)), others, "not landed");
+        assert_eq!(
+            asked_final(c.clone().on(tick.clone(), last)),
+            others,
+            "not landed"
+        );
 
         let mut real = shrunk;
         real.size.width += 1.0;
         let pictured = |c: &mut Coordinator, why| {
-            let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: real, why }, now + Duration::from_millis(150));
-            assert!(!has(&out, |c| matches!(c, Command::Swap { .. } | Command::KeepFocusedLook { .. })), "{why:?}: {out:?}");
-            assert!(has(&out, |c| *c == Command::Snap { window: w(2), frame: to_overlay_space(real, DISPLAY) }), "{why:?}");
+            let out = c.on(
+                Event::Picture {
+                    generation: c.generation(),
+                    window: w(2),
+                    frame: real,
+                    why,
+                },
+                now + Duration::from_millis(150),
+            );
+            assert!(
+                !has(&out, |c| matches!(
+                    c,
+                    Command::Swap { .. } | Command::KeepFocusedLook { .. }
+                )),
+                "{why:?}: {out:?}"
+            );
+            assert!(
+                has(&out, |c| *c
+                    == Command::Snap {
+                        window: w(2),
+                        frame: to_overlay_space(real, DISPLAY)
+                    }),
+                "{why:?}"
+            );
             assert_eq!(focus(&out), handed_over(), "{why:?}");
         };
         pictured(&mut c.clone(), Why::FocusChanged);
@@ -2680,12 +3985,29 @@ mod tests {
             let mut c = running(first, now);
             c.on(Event::Tick { settled: false, landed: false }, now + HOLD_CAP);
             assert!(c.is_moving());
-            c.on(Event::Merge { stage: then, moved: true }, now + HOLD_CAP + Duration::from_millis(10));
-            let landed = Event::Picture { generation: c.generation(), window: w(2), frame, why: Why::Landed };
-            has(&c.on(landed, now + HOLD_CAP + Duration::from_millis(100)), |c| matches!(c, Command::Swap { window, .. } if *window == w(2)))
+            c.on(
+                Event::Merge { stage: then, moved: true },
+                now + HOLD_CAP + Duration::from_millis(10),
+            );
+            let landed = Event::Picture {
+                generation: c.generation(),
+                window: w(2),
+                frame,
+                why: Why::Landed,
+            };
+            has(
+                &c.on(landed, now + HOLD_CAP + Duration::from_millis(100)),
+                |c| matches!(c, Command::Swap { window, .. } if *window == w(2)),
+            )
         };
-        assert!(swapped(shrinking.clone(), growing.clone(), grown), "shrunk, then grown");
-        assert!(!swapped(growing, shrinking.clone(), shrunk), "grown, then shrunk");
+        assert!(
+            swapped(shrinking.clone(), growing.clone(), grown),
+            "shrunk, then grown"
+        );
+        assert!(
+            !swapped(growing, shrinking.clone(), shrunk),
+            "grown, then shrunk"
+        );
         assert!(!swapped(shrinking, moving, shrunk), "shrunk, then moved");
     }
 
@@ -2697,19 +4019,46 @@ mod tests {
         let ((growing, _), (shrinking, shrunk)) = (grow(), shrink());
         let tick = Event::Tick { settled: false, landed: false };
         let mut holding = running(growing.clone(), now);
-        assert!(holding.on(tick.clone(), now + COALESCE_WINDOW).is_empty(), "held for the grow");
+        assert!(
+            holding.on(tick.clone(), now + COALESCE_WINDOW).is_empty(),
+            "held for the grow"
+        );
         let merged = now + Duration::from_millis(60);
-        let out = holding.on(Event::Merge { stage: shrinking.clone(), moved: true }, merged);
-        assert!(has(&out, |c| *c == Command::StartMoving), "while holding: {out:?}");
-        let landed = Event::Picture { generation: holding.generation(), window: w(2), frame: shrunk, why: Why::Landed };
+        let out = holding.on(
+            Event::Merge {
+                stage: shrinking.clone(),
+                moved: true,
+            },
+            merged,
+        );
+        assert!(
+            has(&out, |c| *c == Command::StartMoving),
+            "while holding: {out:?}"
+        );
+        let landed = Event::Picture {
+            generation: holding.generation(),
+            window: w(2),
+            frame: shrunk,
+            why: Why::Landed,
+        };
         let out = holding.on(landed, merged + Duration::from_millis(100));
-        assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "kept: {out:?}");
+        assert!(
+            !has(&out, |c| matches!(c, Command::Swap { .. })),
+            "kept: {out:?}"
+        );
 
         let mut preparing = Coordinator::default();
         preparing.on(Event::Begin(growing), now);
         preparing.on(Event::Merge { stage: shrinking, moved: true }, now);
-        assert!(!has(&preparing.on(Event::FrameZero(preparing.generation()), now), |c| *c == Command::StartMoving));
-        assert_eq!(preparing.on(tick, now + COALESCE_WINDOW), vec![Command::StartMoving], "before the show");
+        assert!(!has(
+            &preparing.on(Event::FrameZero(preparing.generation()), now),
+            |c| *c == Command::StartMoving
+        ));
+        assert_eq!(
+            preparing.on(tick, now + COALESCE_WINDOW),
+            vec![Command::StartMoving],
+            "before the show"
+        );
     }
 
     /// `grow()` from 572 wide, ending `width` wide.
@@ -2731,17 +4080,45 @@ mod tests {
         let at = |ms| now + Duration::from_millis(ms);
         let mut c = running(grow_to(860.0).0, now);
         let tick = Event::Tick { settled: false, landed: false };
-        c.on(Event::Merge { stage: grow_to(1148.0).0, moved: true }, at(115));
-        let stale = Event::Picture { generation: c.generation(), window: w(2), frame: grow_to(860.0).1, why: Why::Landed };
-        assert!(!has(&c.on(stale, at(140)), |c| *c == Command::StartMoving), "where it no longer ends");
+        c.on(
+            Event::Merge {
+                stage: grow_to(1148.0).0,
+                moved: true,
+            },
+            at(115),
+        );
+        let stale = Event::Picture {
+            generation: c.generation(),
+            window: w(2),
+            frame: grow_to(860.0).1,
+            why: Why::Landed,
+        };
+        assert!(
+            !has(&c.on(stale, at(140)), |c| *c == Command::StartMoving),
+            "where it no longer ends"
+        );
         let (latest, widest) = grow_to(1722.0);
         c.on(Event::Merge { stage: latest, moved: true }, at(230));
-        assert!(!has(&c.on(tick.clone(), at(300)), |c| *c == Command::StartMoving), "past the show's cap");
+        assert!(
+            !has(&c.on(tick.clone(), at(300)), |c| *c == Command::StartMoving),
+            "past the show's cap"
+        );
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: widest, why: Why::Landed }, at(370));
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: widest,
+                why: Why::Landed,
+            },
+            at(370),
+        );
         let swapped = out.iter().position(|c| *c == Command::Swap { generation: g, window: w(2) });
         let moved = out.iter().position(|c| *c == Command::StartMoving);
-        assert!(swapped.is_some_and(|swapped| moved.is_some_and(|moved| swapped < moved)), "{out:?}");
+        assert!(
+            swapped.is_some_and(|swapped| moved.is_some_and(|moved| swapped < moved)),
+            "{out:?}"
+        );
     }
 
     /// Grows merged before the motion every 100ms whose window never repaints hold the overlay at most
@@ -2753,11 +4130,21 @@ mod tests {
         let tick = Event::Tick { settled: false, landed: false };
         for (i, width) in [1148.0, 1436.0, 1722.0, 1148.0, 1436.0].into_iter().enumerate() {
             let arrives = now + Duration::from_millis(100 * (i as u64 + 1));
-            c.on(Event::Merge { stage: grow_to(width).0, moved: true }, arrives);
+            c.on(
+                Event::Merge {
+                    stage: grow_to(width).0,
+                    moved: true,
+                },
+                arrives,
+            );
             assert!(c.on(tick.clone(), arrives).is_empty(), "held at {width}");
         }
         assert!(c.on(tick.clone(), now + BURST_HOLD_CAP - Duration::from_millis(1)).is_empty());
-        assert_eq!(c.on(tick, now + BURST_HOLD_CAP), vec![Command::StartMoving], "its cap runs out");
+        assert_eq!(
+            c.on(tick, now + BURST_HOLD_CAP),
+            vec![Command::StartMoving],
+            "its cap runs out"
+        );
     }
 
     /// A pass merged before the motion holding for no window, one moving window 1 only, leaves the
@@ -2773,9 +4160,19 @@ mod tests {
         moving.final_frames[0].1 = moving.tiles[0].end;
         let mut c = running(growing, now);
         let tick = Event::Tick { settled: false, landed: false };
-        c.on(Event::Merge { stage: moving, moved: true }, now + Duration::from_millis(200));
-        assert!(c.on(tick.clone(), now + HOLD_CAP - Duration::from_millis(1)).is_empty(), "held for the grow");
-        assert_eq!(c.on(tick, now + HOLD_CAP), vec![Command::StartMoving], "from the show");
+        c.on(
+            Event::Merge { stage: moving, moved: true },
+            now + Duration::from_millis(200),
+        );
+        assert!(
+            c.on(tick.clone(), now + HOLD_CAP - Duration::from_millis(1)).is_empty(),
+            "held for the grow"
+        );
+        assert_eq!(
+            c.on(tick, now + HOLD_CAP),
+            vec![Command::StartMoving],
+            "from the show"
+        );
     }
 
     /// fold1's g17 (`docs/data/2026-10-10-fold`): window 2, starting part off the left edge at -285,
@@ -2798,8 +4195,18 @@ mod tests {
             strip_after: None,
         };
         let mut waits = Waits::default();
-        waits.push_request(&request, FliesOn::Picture { source: Route::ScreenCaptureKit, covered: cached }, None, start, DISPLAY);
-        (stage.awaiting, stage.repainting, stage.kept) = (waits.awaiting, waits.repainting, waits.kept);
+        waits.push_request(
+            &request,
+            FliesOn::Picture {
+                source: Route::ScreenCaptureKit,
+                covered: cached,
+            },
+            None,
+            start,
+            DISPLAY,
+        );
+        (stage.awaiting, stage.repainting, stage.kept) =
+            (waits.awaiting, waits.repainting, waits.kept);
         (stage, shrunk)
     }
 
@@ -2813,20 +4220,40 @@ mod tests {
         let mut c = Coordinator::default();
         let out = c.on(Event::Begin(stage.clone()), now);
         assert!(
-            has(&out, |c| matches!(c, Command::AskFrameZero { strip, .. } if !strip.iter().any(|(window, _)| *window == w(2)))),
+            has(
+                &out,
+                |c| matches!(c, Command::AskFrameZero { strip, .. } if !strip.iter().any(|(window, _)| *window == w(2)))
+            ),
             "{out:?}"
         );
         let g = c.generation();
         c.on(Event::FrameZero(g), now);
-        let landed = Event::Picture { generation: g, window: w(2), frame: shrunk, why: Why::Landed };
+        let landed = Event::Picture {
+            generation: g,
+            window: w(2),
+            frame: shrunk,
+            why: Why::Landed,
+        };
         let out = c.clone().on(landed.clone(), now + Duration::from_millis(10));
-        assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "before the motion: {out:?}");
+        assert!(
+            !has(&out, |c| matches!(c, Command::Swap { .. })),
+            "before the motion: {out:?}"
+        );
         let tick = Event::Tick { settled: false, landed: false };
-        assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving]);
+        assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![
+            Command::StartMoving
+        ]);
         let out = c.on(landed, now + Duration::from_millis(150));
-        assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "in motion: {out:?}");
+        assert!(
+            !has(&out, |c| matches!(c, Command::Swap { .. })),
+            "in motion: {out:?}"
+        );
         let last = now + COALESCE_WINDOW + PLAYS - FINAL_BEFORE_END;
-        assert_eq!(asked_final(c.on(tick, last)), Some(vec![stage.final_frames[0]]), "never pictured where it ends");
+        assert_eq!(
+            asked_final(c.on(tick, last)),
+            Some(vec![stage.final_frames[0]]),
+            "never pictured where it ends"
+        );
     }
 
     /// A shrink starting part off the display whose cached picture does not fit its start has no
@@ -2836,15 +4263,35 @@ mod tests {
     fn a_shrink_starting_with_no_picture_covering_its_start_has_its_repaint_swapped_in() {
         let now = Instant::now();
         let (stage, shrunk) = shrink_from_off_the_display(ScreenSize::new(860.0, 1079.0));
-        assert!(stage.kept.is_empty() && stage.repainting == vec![w(2)], "{stage:?}");
+        assert!(
+            stage.kept.is_empty() && stage.repainting == vec![w(2)],
+            "{stage:?}"
+        );
         let mut c = running(stage.clone(), now);
         let tick = Event::Tick { settled: false, landed: false };
-        assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![Command::StartMoving]);
+        assert_eq!(c.on(tick.clone(), now + COALESCE_WINDOW), vec![
+            Command::StartMoving
+        ]);
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: shrunk, why: Why::Landed }, now + Duration::from_millis(150));
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "{out:?}");
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: shrunk,
+                why: Why::Landed,
+            },
+            now + Duration::from_millis(150),
+        );
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }),
+            "{out:?}"
+        );
         let last = now + COALESCE_WINDOW + PLAYS - FINAL_BEFORE_END;
-        assert_eq!(asked_final(c.on(tick, last)), Some(stage.final_frames), "pictured");
+        assert_eq!(
+            asked_final(c.on(tick, last)),
+            Some(stage.final_frames),
+            "pictured"
+        );
     }
 
     /// Frame zero coming after a kept window's landing, which was not swapped on, replaces the cache's
@@ -2856,12 +4303,37 @@ mod tests {
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage.clone()), now);
         let g = c.generation();
-        assert!(has(&c.on(Event::Tick { settled: false, landed: false }, now + FRAME_ZERO_PATIENCE), |c| *c == Command::Show));
+        assert!(has(
+            &c.on(
+                Event::Tick { settled: false, landed: false },
+                now + FRAME_ZERO_PATIENCE
+            ),
+            |c| *c == Command::Show
+        ));
         let at = now + FRAME_ZERO_PATIENCE + Duration::from_millis(60);
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: shrunk, why: Why::Landed }, at);
-        assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "kept: {out:?}");
-        let late = Event::Picture { generation: g, window: w(2), frame: stage.tiles[1].start, why: Why::FrameZero };
-        assert_eq!(c.on(late, at), vec![Command::Swap { generation: g, window: w(2) }]);
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: shrunk,
+                why: Why::Landed,
+            },
+            at,
+        );
+        assert!(
+            !has(&out, |c| matches!(c, Command::Swap { .. })),
+            "kept: {out:?}"
+        );
+        let late = Event::Picture {
+            generation: g,
+            window: w(2),
+            frame: stage.tiles[1].start,
+            why: Why::FrameZero,
+        };
+        assert_eq!(c.on(late, at), vec![Command::Swap {
+            generation: g,
+            window: w(2)
+        }]);
     }
 
     /// Frame zero of the key window losing focus, coming after its landing, is not swapped over it, but
@@ -2873,12 +4345,37 @@ mod tests {
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage.clone()), now);
         let g = c.generation();
-        assert!(has(&c.on(Event::Tick { settled: false, landed: false }, now + FRAME_ZERO_PATIENCE), |c| *c == Command::Show));
+        assert!(has(
+            &c.on(
+                Event::Tick { settled: false, landed: false },
+                now + FRAME_ZERO_PATIENCE
+            ),
+            |c| *c == Command::Show
+        ));
         let at = now + FRAME_ZERO_PATIENCE + Duration::from_millis(60);
-        let out = c.on(Event::Picture { generation: g, window: w(1), frame: stage.tiles[0].end, why: Why::Landed }, at);
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(1) }), "{out:?}");
-        let late = Event::Picture { generation: g, window: w(1), frame: stage.tiles[0].start, why: Why::FrameZero };
-        assert_eq!(c.on(late, at), vec![Command::KeepFocusedLook { generation: g, window: w(1) }]);
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: stage.tiles[0].end,
+                why: Why::Landed,
+            },
+            at,
+        );
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(1) }),
+            "{out:?}"
+        );
+        let late = Event::Picture {
+            generation: g,
+            window: w(1),
+            frame: stage.tiles[0].start,
+            why: Why::FrameZero,
+        };
+        assert_eq!(c.on(late, at), vec![Command::KeepFocusedLook {
+            generation: g,
+            window: w(1)
+        }]);
     }
 
     /// Frame zero delivered after its window's landing would put the picture from the press back over
@@ -2890,11 +4387,32 @@ mod tests {
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage.clone()), now);
         let g = c.generation();
-        assert!(has(&c.on(Event::Tick { settled: false, landed: false }, now + FRAME_ZERO_PATIENCE), |c| *c == Command::Show));
+        assert!(has(
+            &c.on(
+                Event::Tick { settled: false, landed: false },
+                now + FRAME_ZERO_PATIENCE
+            ),
+            |c| *c == Command::Show
+        ));
         let at = now + FRAME_ZERO_PATIENCE + Duration::from_millis(60);
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed }, at);
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }) && c.is_moving());
-        let late = Event::Picture { generation: g, window: w(2), frame: stage.tiles[1].start, why: Why::FrameZero };
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: grown,
+                why: Why::Landed,
+            },
+            at,
+        );
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }) && c.is_moving()
+        );
+        let late = Event::Picture {
+            generation: g,
+            window: w(2),
+            frame: stage.tiles[1].start,
+            why: Why::FrameZero,
+        };
         assert!(c.on(late, at).is_empty());
     }
 
@@ -2914,12 +4432,21 @@ mod tests {
 
     /// A pass reaching a moving flight, growing `grows` and writing them.
     fn hold(grows: &[(WindowId, ScreenRect)]) -> Event {
-        Event::HoldMerge { grows: grows.to_vec(), writes: grows.to_vec() }
+        Event::HoldMerge {
+            grows: grows.to_vec(),
+            writes: grows.to_vec(),
+        }
     }
 
     /// How long the merge `out` says to make waited, if it says to.
     fn retargets(out: &[Command]) -> Option<Duration> {
-        out.iter().find_map(|c| if let Command::Retarget { held } = c { Some(*held) } else { None })
+        out.iter().find_map(|c| {
+            if let Command::Retarget { held } = c {
+                Some(*held)
+            } else {
+                None
+            }
+        })
     }
 
     /// A pass growing a window while the motion runs has its window written and watched to repaint
@@ -2937,20 +4464,37 @@ mod tests {
         assert_eq!(writes(&out), [(w(2), grown)], "written at once, so it repaints");
         let watched = watch(&out).expect("watched");
         assert!(watched.awaiting.contains(&(w(2), grown)), "{watched:?}");
-        assert!(!watched.landing.iter().any(|(window, _)| *window == w(2)), "{watched:?}");
+        assert!(
+            !watched.landing.iter().any(|(window, _)| *window == w(2)),
+            "{watched:?}"
+        );
         assert_eq!(retargets(&out), None, "held");
         assert_eq!(c.generation(), g, "nothing merged yet");
         let tick = Event::Tick { settled: false, landed: false };
-        assert_eq!(retargets(&c.on(tick, arrives + Duration::from_millis(50))), None, "held");
+        assert_eq!(
+            retargets(&c.on(tick, arrives + Duration::from_millis(50))),
+            None,
+            "held"
+        );
 
         let repainted = arrives + Duration::from_millis(140);
-        let landed = Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed };
-        assert_eq!(c.on(landed, repainted), vec![Command::Retarget { held: Duration::from_millis(140) }]);
+        let landed = Event::Picture {
+            generation: g,
+            window: w(2),
+            frame: grown,
+            why: Why::Landed,
+        };
+        assert_eq!(c.on(landed, repainted), vec![Command::Retarget {
+            held: Duration::from_millis(140)
+        }]);
         assert!(c.holds(w(2), g, grown), "kept for the merge");
         let out = c.on(Event::Merge { stage: merged, moved: true }, repainted);
         assert!(c.generation() > g, "the merge starts the next generation");
         assert!(writes(&out).is_empty(), "already written");
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "onto the retargeted tile: {out:?}");
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }),
+            "onto the retargeted tile: {out:?}"
+        );
         assert!(!c.holds(w(2), g, grown));
     }
 
@@ -2963,11 +4507,18 @@ mod tests {
         let parked = r(1800.0, 35.0, 1723.0, 1079.0);
         let moved = vec![(w(1), r(400.0, 35.0, 860.0, 1079.0))];
         for (what, event) in [
-            ("nothing grown", Event::HoldMerge { grows: Vec::new(), writes: moved.clone() }),
+            ("nothing grown", Event::HoldMerge {
+                grows: Vec::new(),
+                writes: moved.clone(),
+            }),
             ("grown off the display", hold(&[(w(2), parked)])),
         ] {
             let mut c = running(flying.clone(), now);
-            assert_eq!(c.on(event, arrives), vec![Command::Retarget { held: Duration::ZERO }], "{what}");
+            assert_eq!(
+                c.on(event, arrives),
+                vec![Command::Retarget { held: Duration::ZERO }],
+                "{what}"
+            );
         }
     }
 
@@ -2984,11 +4535,24 @@ mod tests {
         let out = c.on(hold(&[(w(2), cut)]), arrives);
         assert_eq!(retargets(&out), None, "held");
         assert!(watch(&out).expect("watched").awaiting.contains(&(w(2), cut)));
-        let holes = out.iter().find_map(|c| if let Command::Holes(holes) = c { Some(holes.clone()) } else { None });
+        let holes = out.iter().find_map(|c| {
+            if let Command::Holes(holes) = c {
+                Some(holes.clone())
+            } else {
+                None
+            }
+        });
         assert!(!holes.expect("holes").iter().any(|(window, _)| *window == w(2)));
-        let landed = Event::Picture { generation: g, window: w(2), frame: cut, why: Why::Landed };
+        let landed = Event::Picture {
+            generation: g,
+            window: w(2),
+            frame: cut,
+            why: Why::Landed,
+        };
         let repainted = arrives + Duration::from_millis(150);
-        assert_eq!(c.on(landed, repainted), vec![Command::Retarget { held: Duration::from_millis(150) }]);
+        assert_eq!(c.on(landed, repainted), vec![Command::Retarget {
+            held: Duration::from_millis(150)
+        }]);
     }
 
     /// A pass held after another replaces what the hold waits for, its own grows from its own
@@ -3009,32 +4573,71 @@ mod tests {
         let mut c = running(flying.clone(), now);
         let g = c.generation();
         let watched = watch(&held(&mut c)).expect("watched");
-        assert!(watched.awaiting.contains(&(w(2), grown)) && !watched.awaiting.contains(&(w(2), wider)), "{watched:?}");
-        let at_first = Event::Picture { generation: g, window: w(2), frame: wider, why: Why::Landed };
-        assert_eq!(retargets(&c.on(at_first, later + Duration::from_millis(20))), None, "where the first sent it");
+        assert!(
+            watched.awaiting.contains(&(w(2), grown)) && !watched.awaiting.contains(&(w(2), wider)),
+            "{watched:?}"
+        );
+        let at_first = Event::Picture {
+            generation: g,
+            window: w(2),
+            frame: wider,
+            why: Why::Landed,
+        };
+        assert_eq!(
+            retargets(&c.on(at_first, later + Duration::from_millis(20))),
+            None,
+            "where the first sent it"
+        );
         let tick = Event::Tick { settled: false, landed: false };
         assert_eq!(retargets(&c.on(tick, first + HOLD_CAP)), None, "the first's cap");
-        let at_later = Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed };
-        assert_eq!(retargets(&c.on(at_later, later + Duration::from_millis(140))), Some(Duration::from_millis(140)));
+        let at_later = Event::Picture {
+            generation: g,
+            window: w(2),
+            frame: grown,
+            why: Why::Landed,
+        };
+        assert_eq!(
+            retargets(&c.on(at_later, later + Duration::from_millis(140))),
+            Some(Duration::from_millis(140))
+        );
 
         let mut c = running(flying.clone(), now);
         c.on(hold(&[(w(2), wider)]), first);
         let (moved, neighbour) = (r(103.0, 35.0, 1148.0, 1079.0), r(1260.0, 35.0, 460.0, 1079.0));
-        let watched = watch(&c.on(Event::HoldMerge { grows: vec![(w(1), neighbour)], writes: vec![(w(1), neighbour), (w(2), moved)] }, later));
+        let watched = watch(&c.on(
+            Event::HoldMerge {
+                grows: vec![(w(1), neighbour)],
+                writes: vec![(w(1), neighbour), (w(2), moved)],
+            },
+            later,
+        ));
         let awaiting = watched.expect("watched").awaiting;
-        assert!(awaiting.contains(&(w(2), moved)) && !awaiting.contains(&(w(2), wider)), "where the later one moves it: {awaiting:?}");
+        assert!(
+            awaiting.contains(&(w(2), moved)) && !awaiting.contains(&(w(2), wider)),
+            "where the later one moves it: {awaiting:?}"
+        );
 
         let mut c = running(flying.clone(), now);
         let cut = r(-285.0, 35.0, 1148.0, 1079.0);
         c.on(hold(&[(w(2), cut)]), first);
         let watched = watch(&c.on(hold(&[(w(1), neighbour)]), later));
         let awaiting = watched.expect("watched").awaiting;
-        assert!(awaiting.contains(&(w(2), cut)) && awaiting.contains(&(w(1), neighbour)), "still watched cut by the edge: {awaiting:?}");
+        assert!(
+            awaiting.contains(&(w(2), cut)) && awaiting.contains(&(w(1), neighbour)),
+            "still watched cut by the edge: {awaiting:?}"
+        );
 
         let mut c = running(flying, now);
         held(&mut c);
-        let nothing = Event::HoldMerge { grows: Vec::new(), writes: vec![(w(1), r(400.0, 35.0, 860.0, 1079.0))] };
-        assert_eq!(c.on(nothing, later + Duration::from_millis(30)), vec![Command::Retarget { held: Duration::from_millis(30) }]);
+        let nothing = Event::HoldMerge {
+            grows: Vec::new(),
+            writes: vec![(w(1), r(400.0, 35.0, 860.0, 1079.0))],
+        };
+        assert_eq!(c.on(nothing, later + Duration::from_millis(30)), vec![
+            Command::Retarget {
+                held: Duration::from_millis(30)
+            }
+        ]);
     }
 
     /// Kai's rapid Alt-R on lab-A: a hold for window 2 to 1148 while its tile ends at 860 lets go only
@@ -3048,44 +4651,80 @@ mod tests {
         let (flying, grown, _) = grown_mid_flight();
         let (before, wider) = (flying.tiles[1].end, r(3.0, 35.0, 1148.0, 1079.0));
         let arrives = now + Duration::from_millis(100);
-        let picture = |generation, frame| Event::Picture { generation, window: w(2), frame, why: Why::Landed };
+        let picture = |generation, frame| Event::Picture {
+            generation,
+            window: w(2),
+            frame,
+            why: Why::Landed,
+        };
 
         let mut c = running(flying.clone(), now);
         let g = c.generation();
         c.on(hold(&[(w(2), wider)]), arrives);
         let out = c.on(picture(g, before), arrives + Duration::from_millis(20));
         assert_eq!(retargets(&out), None, "where the flight ended it");
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "{out:?}");
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }),
+            "{out:?}"
+        );
         assert!(!c.holds(w(2), g, before));
         let repainted = arrives + Duration::from_millis(140);
-        assert_eq!(retargets(&c.on(picture(g, wider), repainted)), Some(Duration::from_millis(140)));
+        assert_eq!(
+            retargets(&c.on(picture(g, wider), repainted)),
+            Some(Duration::from_millis(140))
+        );
         assert!(c.holds(w(2), g, wider));
         let mut merged = flying.clone();
         (merged.tiles[1].end, merged.final_frames[1].1) = (wider, wider);
         (merged.awaiting, merged.repainting) = (vec![w(2)], vec![w(2)]);
         let out = c.on(Event::Merge { stage: merged, moved: true }, repainted);
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "{out:?}");
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }),
+            "{out:?}"
+        );
 
         let mut c = running(flying.clone(), now);
         let g = c.generation();
         c.on(hold(&[(w(2), wider)]), arrives);
         c.on(hold(&[(w(2), grown)]), arrives + Duration::from_millis(60));
-        for (what, frame) in [("where the flight ended it", before), ("where the first held pass sent it", wider)] {
-            assert_eq!(retargets(&c.on(picture(g, frame), arrives + Duration::from_millis(80))), None, "{what}");
+        for (what, frame) in [
+            ("where the flight ended it", before),
+            ("where the first held pass sent it", wider),
+        ] {
+            assert_eq!(
+                retargets(&c.on(picture(g, frame), arrives + Duration::from_millis(80))),
+                None,
+                "{what}"
+            );
         }
-        assert!(retargets(&c.on(picture(g, grown), arrives + Duration::from_millis(200))).is_some());
+        assert!(
+            retargets(&c.on(picture(g, grown), arrives + Duration::from_millis(200))).is_some()
+        );
 
         let mut c = running(flying.clone(), now);
         let g = c.generation();
         let mut moved = flying;
         let neighbour = r(1000.0, 35.0, 860.0, 1079.0);
         (moved.tiles[0].end, moved.final_frames[0].1) = (neighbour, neighbour);
-        c.on(Event::Merge { stage: moved, moved: true }, now + Duration::from_millis(50));
+        c.on(
+            Event::Merge { stage: moved, moved: true },
+            now + Duration::from_millis(50),
+        );
         assert!(c.generation() > g);
         c.on(hold(&[(w(2), wider)]), arrives);
-        assert_eq!(retargets(&c.on(picture(g, wider), arrives + Duration::from_millis(20))), None, "under the generation before");
+        assert_eq!(
+            retargets(&c.on(picture(g, wider), arrives + Duration::from_millis(20))),
+            None,
+            "under the generation before"
+        );
         assert!(!c.holds(w(2), g, wider));
-        assert!(retargets(&c.on(picture(c.generation(), wider), arrives + Duration::from_millis(140))).is_some());
+        assert!(
+            retargets(&c.on(
+                picture(c.generation(), wider),
+                arrives + Duration::from_millis(140)
+            ))
+            .is_some()
+        );
     }
 
     /// A pass growing nothing that arrives while two are held merges all three at once: the repaint
@@ -3095,8 +4734,11 @@ mod tests {
     fn a_held_repaint_waits_for_the_latest_of_the_passes_merged_at_once() {
         let now = Instant::now();
         let (flying, _, _) = grown_mid_flight();
-        let (wider, neighbour, moved) =
-            (r(3.0, 35.0, 1148.0, 1079.0), r(580.0, 35.0, 1140.0, 1079.0), r(403.0, 35.0, 1148.0, 1079.0));
+        let (wider, neighbour, moved) = (
+            r(3.0, 35.0, 1148.0, 1079.0),
+            r(580.0, 35.0, 1140.0, 1079.0),
+            r(403.0, 35.0, 1148.0, 1079.0),
+        );
         let mut first = flying.clone();
         (first.tiles[1].end, first.final_frames[1].1) = (wider, wider);
         (first.awaiting, first.repainting) = (vec![w(2)], vec![w(2)]);
@@ -3115,14 +4757,34 @@ mod tests {
             let at = now + Duration::from_millis(100);
             c.on(hold(&[(w(2), wider)]), at);
             c.on(hold(&[(w(1), neighbour)]), at + Duration::from_millis(40));
-            let landed = Event::Picture { generation: g, window: w(2), frame: wider, why: Why::Landed };
-            assert_eq!(retargets(&c.on(landed, at + Duration::from_millis(80))), None, "{what}: held for window 1");
-            let nothing = Event::HoldMerge { grows: Vec::new(), writes: vec![(w(2), ends)] };
-            assert!(retargets(&c.on(nothing, at + Duration::from_millis(100))).is_some(), "{what}: at once");
+            let landed = Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: wider,
+                why: Why::Landed,
+            };
+            assert_eq!(
+                retargets(&c.on(landed, at + Duration::from_millis(80))),
+                None,
+                "{what}: held for window 1"
+            );
+            let nothing = Event::HoldMerge {
+                grows: Vec::new(),
+                writes: vec![(w(2), ends)],
+            };
+            assert!(
+                retargets(&c.on(nothing, at + Duration::from_millis(100))).is_some(),
+                "{what}: at once"
+            );
             let (mut swaps, mut holding) = (Vec::new(), Vec::new());
             for (i, stage) in [first.clone(), second.clone(), third].into_iter().enumerate() {
-                let out = c.on(Event::Merge { stage, moved: true }, at + Duration::from_millis(100));
-                swaps.push(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }));
+                let out = c.on(
+                    Event::Merge { stage, moved: true },
+                    at + Duration::from_millis(100),
+                );
+                swaps.push(has(&out, |c| {
+                    *c == Command::Swap { generation: g, window: w(2) }
+                }));
                 holding.push(c.holds(w(2), g, wider));
                 let expected = if i == 2 { written.clone() } else { Vec::new() };
                 assert_eq!(writes(&out), expected, "{what}: merge {i}");
@@ -3138,16 +4800,31 @@ mod tests {
     fn a_held_grow_a_later_pass_sends_off_the_display_is_watched_no_longer() {
         let now = Instant::now();
         let (flying, _, _) = grown_mid_flight();
-        let (wider, neighbour, off) =
-            (r(3.0, 35.0, 1148.0, 1079.0), r(580.0, 35.0, 1140.0, 1079.0), r(1800.0, 35.0, 1148.0, 1079.0));
+        let (wider, neighbour, off) = (
+            r(3.0, 35.0, 1148.0, 1079.0),
+            r(580.0, 35.0, 1140.0, 1079.0),
+            r(1800.0, 35.0, 1148.0, 1079.0),
+        );
         let mut c = running(flying, now);
         c.on(hold(&[(w(2), wider)]), now + Duration::from_millis(100));
-        let later = Event::HoldMerge { grows: vec![(w(1), neighbour)], writes: vec![(w(1), neighbour), (w(2), off)] };
+        let later = Event::HoldMerge {
+            grows: vec![(w(1), neighbour)],
+            writes: vec![(w(1), neighbour), (w(2), off)],
+        };
         let out = c.on(later, now + Duration::from_millis(160));
         let awaiting = watch(&out).expect("watched").awaiting;
         assert!(awaiting.contains(&(w(1), neighbour)), "{awaiting:?}");
-        assert!(!awaiting.iter().any(|(window, _)| *window == w(2)), "{awaiting:?}");
-        let holes = out.iter().find_map(|c| if let Command::Holes(holes) = c { Some(holes.clone()) } else { None });
+        assert!(
+            !awaiting.iter().any(|(window, _)| *window == w(2)),
+            "{awaiting:?}"
+        );
+        let holes = out.iter().find_map(|c| {
+            if let Command::Holes(holes) = c {
+                Some(holes.clone())
+            } else {
+                None
+            }
+        });
         assert!(!holes.expect("holes").contains(&(w(2), to_overlay_space(off, DISPLAY))));
     }
 
@@ -3162,18 +4839,45 @@ mod tests {
         let g = c.generation();
         c.on(hold(&[(w(2), grown)]), arrives);
         let tick = Event::Tick { settled: false, landed: false };
-        assert_eq!(retargets(&c.on(tick.clone(), now + HOLD_CAP)), None, "not the show's cap");
-        assert_eq!(retargets(&c.on(tick.clone(), arrives + HOLD_CAP - Duration::from_millis(1))), None);
-        assert_eq!(retargets(&c.on(tick, arrives + HOLD_CAP)), Some(HOLD_CAP), "the cap runs out");
+        assert_eq!(
+            retargets(&c.on(tick.clone(), now + HOLD_CAP)),
+            None,
+            "not the show's cap"
+        );
+        assert_eq!(
+            retargets(&c.on(tick.clone(), arrives + HOLD_CAP - Duration::from_millis(1))),
+            None
+        );
+        assert_eq!(
+            retargets(&c.on(tick, arrives + HOLD_CAP)),
+            Some(HOLD_CAP),
+            "the cap runs out"
+        );
         let merged_at = arrives + HOLD_CAP;
         c.on(Event::Merge { stage: merged, moved: true }, merged_at);
-        let late = Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed };
-        assert!(has(&c.on(late, merged_at + Duration::from_millis(50)), |c| *c == Command::Swap { generation: g, window: w(2) }), "mid-run");
+        let late = Event::Picture {
+            generation: g,
+            window: w(2),
+            frame: grown,
+            why: Why::Landed,
+        };
+        assert!(
+            has(&c.on(late, merged_at + Duration::from_millis(50)), |c| *c
+                == Command::Swap { generation: g, window: w(2) }),
+            "mid-run"
+        );
 
         let mut c = running(flying, now);
         c.on(hold(&[(w(2), grown)]), arrives);
-        let lost = Event::Lost { generation: c.generation(), window: w(2) };
-        assert_eq!(c.on(lost, arrives + Duration::from_millis(40)), vec![Command::Retarget { held: Duration::from_millis(40) }]);
+        let lost = Event::Lost {
+            generation: c.generation(),
+            window: w(2),
+        };
+        assert_eq!(c.on(lost, arrives + Duration::from_millis(40)), vec![
+            Command::Retarget {
+                held: Duration::from_millis(40)
+            }
+        ]);
     }
 
     /// Grows held while the motion runs every 100ms whose window never repaints merge at most
@@ -3191,10 +4895,21 @@ mod tests {
             latest = first + Duration::from_millis(100 * i as u64);
             assert_eq!(retargets(&c.on(hold(&[(w(2), end)]), latest)), None, "held");
         }
-        assert_eq!(retargets(&c.on(tick.clone(), first + HOLD_CAP)), None, "the first's own cap");
-        assert_eq!(retargets(&c.on(tick.clone(), first + BURST_HOLD_CAP - Duration::from_millis(1))), None);
+        assert_eq!(
+            retargets(&c.on(tick.clone(), first + HOLD_CAP)),
+            None,
+            "the first's own cap"
+        );
+        assert_eq!(
+            retargets(&c.on(tick.clone(), first + BURST_HOLD_CAP - Duration::from_millis(1))),
+            None
+        );
         let capped = first + BURST_HOLD_CAP;
-        assert_eq!(retargets(&c.on(tick, capped)), Some(capped - latest), "its cap runs out");
+        assert_eq!(
+            retargets(&c.on(tick, capped)),
+            Some(capped - latest),
+            "its cap runs out"
+        );
     }
 
     /// While a merge is held the flight plays on to its tiles' ends and rests there, overlay up: no
@@ -3208,19 +4923,40 @@ mod tests {
         let g = c.generation();
         let arrives = now + PLAYS - Duration::from_millis(150);
         c.on(hold(&[(w(2), grown)]), arrives);
-        for at in [now + PLAYS - FINAL_BEFORE_END, now + PLAYS, now + PLAYS + Duration::from_millis(120)] {
+        for at in [
+            now + PLAYS - FINAL_BEFORE_END,
+            now + PLAYS,
+            now + PLAYS + Duration::from_millis(120),
+        ] {
             assert!(!c.wants_landing(at));
             let out = c.on(Event::Tick { settled: true, landed: true }, at);
-            assert!(!has(&out, |c| matches!(c, Command::AskFinal { .. } | Command::PlaceRest | Command::Lift { .. })), "{out:?}");
+            assert!(
+                !has(&out, |c| matches!(
+                    c,
+                    Command::AskFinal { .. } | Command::PlaceRest | Command::Lift { .. }
+                )),
+                "{out:?}"
+            );
         }
         assert!(c.is_flying());
         let repainted = arrives + Duration::from_millis(280);
-        let landed = Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed };
+        let landed = Event::Picture {
+            generation: g,
+            window: w(2),
+            frame: grown,
+            why: Why::Landed,
+        };
         assert!(retargets(&c.on(landed, repainted)).is_some());
         c.on(Event::Merge { stage: merged, moved: true }, repainted);
         let tick = Event::Tick { settled: true, landed: true };
-        assert!(asked_final(c.on(tick.clone(), repainted + PLAYS - FINAL_BEFORE_END)).is_some(), "its own clock");
-        assert!(has(&c.on(tick, repainted + PLAYS), |c| matches!(c, Command::Lift { .. })));
+        assert!(
+            asked_final(c.on(tick.clone(), repainted + PLAYS - FINAL_BEFORE_END)).is_some(),
+            "its own clock"
+        );
+        assert!(has(&c.on(tick, repainted + PLAYS), |c| matches!(
+            c,
+            Command::Lift { .. }
+        )));
     }
 
     /// The rest placed before a held merge wrote its windows is placed again before the lift, even
@@ -3231,16 +4967,36 @@ mod tests {
         let (flying, grown, merged) = grown_mid_flight();
         let mut c = running(flying, now);
         let g = c.generation();
-        let placed = c.on(Event::Tick { settled: false, landed: true }, now + PLAYS - FRAME_INTERVAL);
+        let placed = c.on(
+            Event::Tick { settled: false, landed: true },
+            now + PLAYS - FRAME_INTERVAL,
+        );
         assert!(has(&placed, |c| *c == Command::PlaceRest));
         let arrives = now + PLAYS - Duration::from_millis(4);
         c.on(hold(&[(w(2), grown)]), arrives);
-        let landed = Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed };
+        let landed = Event::Picture {
+            generation: g,
+            window: w(2),
+            frame: grown,
+            why: Why::Landed,
+        };
         assert!(retargets(&c.on(landed, arrives + Duration::from_millis(60))).is_some());
-        c.on(Event::Merge { stage: merged, moved: false }, arrives + Duration::from_millis(60));
-        let out = c.on(Event::Tick { settled: true, landed: true }, arrives + Duration::from_millis(70));
-        let (place, lift) = (out.iter().position(|c| *c == Command::PlaceRest), out.iter().position(|c| matches!(c, Command::Lift { .. })));
-        assert!(place.is_some_and(|place| lift.is_some_and(|lift| place < lift)), "{out:?}");
+        c.on(
+            Event::Merge { stage: merged, moved: false },
+            arrives + Duration::from_millis(60),
+        );
+        let out = c.on(
+            Event::Tick { settled: true, landed: true },
+            arrives + Duration::from_millis(70),
+        );
+        let (place, lift) = (
+            out.iter().position(|c| *c == Command::PlaceRest),
+            out.iter().position(|c| matches!(c, Command::Lift { .. })),
+        );
+        assert!(
+            place.is_some_and(|place| lift.is_some_and(|lift| place < lift)),
+            "{out:?}"
+        );
     }
 
     /// Kai's rapid Alt-R: a press shrinking window 2 on its own sizes, superseding a held grow whose
@@ -3258,21 +5014,41 @@ mod tests {
         narrowed.final_frames[1].1 = narrower;
         let mut c = running(flying, now);
         let g = c.generation();
-        let (first, later) = (now + Duration::from_millis(100), now + Duration::from_millis(160));
+        let (first, later) = (
+            now + Duration::from_millis(100),
+            now + Duration::from_millis(160),
+        );
         c.on(hold(&[(w(2), grown)]), first);
         let out = c.on(hold(&[(w(2), narrower)]), later);
         assert_eq!(retargets(&out), None, "held");
         assert!(watch(&out).expect("watched").awaiting.contains(&(w(2), narrower)));
         let repainted = later + Duration::from_millis(140);
-        let landed = Event::Picture { generation: g, window: w(2), frame: narrower, why: Why::Landed };
-        assert_eq!(retargets(&c.on(landed, repainted)), Some(Duration::from_millis(140)));
+        let landed = Event::Picture {
+            generation: g,
+            window: w(2),
+            frame: narrower,
+            why: Why::Landed,
+        };
+        assert_eq!(
+            retargets(&c.on(landed, repainted)),
+            Some(Duration::from_millis(140))
+        );
 
         let out = c.on(Event::Merge { stage: merged, moved: true }, repainted);
-        assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "the first ends it elsewhere: {out:?}");
-        assert!(writes(&out).is_empty(), "not written back where the first sent it: {out:?}");
+        assert!(
+            !has(&out, |c| matches!(c, Command::Swap { .. })),
+            "the first ends it elsewhere: {out:?}"
+        );
+        assert!(
+            writes(&out).is_empty(),
+            "not written back where the first sent it: {out:?}"
+        );
         assert!(c.holds(w(2), g, narrower), "kept for the latest");
         let out = c.on(Event::Merge { stage: narrowed, moved: true }, repainted);
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "{out:?}");
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }),
+            "{out:?}"
+        );
         assert!(writes(&out).is_empty(), "written as it was held: {out:?}");
         assert!(!c.holds(w(2), g, narrower));
     }
@@ -3288,13 +5064,20 @@ mod tests {
     #[test]
     fn rapid_resizes_never_fly_a_grown_tile_with_ground_unless_a_hold_runs_out() {
         let widths = [572.0, 860.0, 1148.0, 1722.0];
-        let sequences: [&[usize]; 6] =
-            [&[0, 1, 2, 3, 0], &[2, 3, 0, 1, 2], &[1, 2, 1, 2, 1], &[0, 1, 2, 3], &[0, 1, 2, 3, 0, 1, 2, 3, 0], &[0, 2, 1, 3, 2, 3, 1, 2]];
+        let sequences: [&[usize]; 6] = [
+            &[0, 1, 2, 3, 0],
+            &[2, 3, 0, 1, 2],
+            &[1, 2, 1, 2, 1],
+            &[0, 1, 2, 3],
+            &[0, 1, 2, 3, 0, 1, 2, 3, 0],
+            &[0, 2, 1, 3, 2, 3, 1, 2],
+        ];
         let (mut held, mut together) = (0, 0);
         for sequence in sequences {
             for gap in [80, 115, 150] {
                 for delay in [40, 90, 140] {
-                    let mut presses = Rapid::new(sequence.iter().map(|&i| widths[i]).collect(), gap, delay);
+                    let mut presses =
+                        Rapid::new(sequence.iter().map(|&i| widths[i]).collect(), gap, delay);
                     presses.run();
                     held += presses.held;
                     together += presses.held_together;
@@ -3341,7 +5124,25 @@ mod tests {
         fn new(widths: Vec<f64>, gap: u64, delay: u64) -> Rapid {
             let (end, picture) = (widths[0], widths[0]);
             let c = Coordinator::default();
-            Rapid { widths, gap, delay, c, start: Instant::now(), at: 0, queued: Vec::new(), end, picture, watched: None, delivered: None, shown: 0, grew: 0, first_held: 0, merging_to: None, held: 0, held_together: 0 }
+            Rapid {
+                widths,
+                gap,
+                delay,
+                c,
+                start: Instant::now(),
+                at: 0,
+                queued: Vec::new(),
+                end,
+                picture,
+                watched: None,
+                delivered: None,
+                shown: 0,
+                grew: 0,
+                first_held: 0,
+                merging_to: None,
+                held: 0,
+                held_together: 0,
+            }
         }
 
         fn frame(width: f64) -> ScreenRect { r(3.0, 35.0, width, 1079.0) }
@@ -3372,25 +5173,46 @@ mod tests {
                 held: self.queued.iter().any(Self::grows),
             });
             let mut waits = Waits::default();
-            let flies = FliesOn::Picture { source: Route::SkyLight, covered: request.from.size };
+            let flies = FliesOn::Picture {
+                source: Route::SkyLight,
+                covered: request.from.size,
+            };
             waits.push_request(&request, flies, landing, request.from, DISPLAY);
             let grows = waits.grows().count() > 0;
-            (stage.awaiting, stage.repainting, stage.kept) = (waits.awaiting, waits.repainting, waits.kept);
+            (stage.awaiting, stage.repainting, stage.kept) =
+                (waits.awaiting, waits.repainting, waits.kept);
             (stage, grows)
         }
 
         fn grows(stage: &StageSummary) -> bool {
-            let waits = Waits { awaiting: stage.awaiting.clone(), repainting: stage.repainting.clone(), kept: stage.kept.clone() };
+            let waits = Waits {
+                awaiting: stage.awaiting.clone(),
+                repainting: stage.repainting.clone(),
+                kept: stage.kept.clone(),
+            };
             waits.grows().any(|window| window == w(2))
         }
 
-        fn case(&self) -> String { format!("{:?} every {}ms, repainted after {}ms, at {}ms", self.widths, self.gap, self.delay, self.at) }
+        fn case(&self) -> String {
+            format!(
+                "{:?} every {}ms, repainted after {}ms, at {}ms",
+                self.widths, self.gap, self.delay, self.at
+            )
+        }
 
         /// Whether `cap` has passed since `since`.
-        fn past(&self, since: u64, cap: Duration) -> bool { Duration::from_millis(self.at - since) >= cap }
+        fn past(&self, since: u64, cap: Duration) -> bool {
+            Duration::from_millis(self.at - since) >= cap
+        }
 
         fn sets_off(&self, capped: bool) {
-            assert!(capped || self.picture >= self.end - 1.0, "{}: a tile {} wide sets off for {}", self.case(), self.picture, self.end);
+            assert!(
+                capped || self.picture >= self.end - 1.0,
+                "{}: a tile {} wide sets off for {}",
+                self.case(),
+                self.picture,
+                self.end
+            );
         }
 
         /// `event` taken, `ticked` by the frame clock, and its commands carried out.
@@ -3405,9 +5227,15 @@ mod tests {
             for command in out {
                 match command {
                     Command::Watch(watch) => {
-                        let width = watch.awaiting.iter().find(|(window, _)| *window == w(2)).map(|(_, f)| f.size.width);
+                        let width = watch
+                            .awaiting
+                            .iter()
+                            .find(|(window, _)| *window == w(2))
+                            .map(|(_, f)| f.size.width);
                         self.watched = match (width, self.watched) {
-                            (Some(width), Some((was, since, _))) if was == width => Some((width, since, watch.generation)),
+                            (Some(width), Some((was, since, _))) if was == width => {
+                                Some((width, since, watch.generation))
+                            }
                             (Some(width), _) => Some((width, self.at, watch.generation)),
                             (None, _) => None,
                         };
@@ -3422,21 +5250,33 @@ mod tests {
                     Command::Show => self.shown = self.at,
                     Command::Write(frames) => {
                         if let Some(latest) = self.merging_to {
-                            assert!(frames.iter().all(|(_, f)| f.size.width == latest), "{}: written {frames:?} on the way to {latest}", self.case());
+                            assert!(
+                                frames.iter().all(|(_, f)| f.size.width == latest),
+                                "{}: written {frames:?} on the way to {latest}",
+                                self.case()
+                            );
                         }
                     }
-                    Command::StartMoving => {
-                        self.sets_off(ticked && (self.past(self.grew, HOLD_CAP) || self.past(self.shown, BURST_HOLD_CAP)))
-                    }
+                    Command::StartMoving => self.sets_off(
+                        ticked
+                            && (self.past(self.grew, HOLD_CAP)
+                                || self.past(self.shown, BURST_HOLD_CAP)),
+                    ),
                     Command::Retarget { held } => {
                         self.held += usize::from(!held.is_zero());
-                        self.held_together += usize::from(self.queued.iter().filter(|stage| Self::grows(stage)).count() > 1);
-                        self.merging_to = self.queued.last().map(|stage| stage.tiles[0].end.size.width);
+                        self.held_together += usize::from(
+                            self.queued.iter().filter(|stage| Self::grows(stage)).count() > 1,
+                        );
+                        self.merging_to =
+                            self.queued.last().map(|stage| stage.tiles[0].end.size.width);
                         for stage in std::mem::take(&mut self.queued) {
                             self.on(Event::Merge { stage, moved: true }, false);
                         }
                         self.merging_to = None;
-                        self.sets_off(ticked && (held >= HOLD_CAP || self.past(self.first_held, BURST_HOLD_CAP)));
+                        self.sets_off(
+                            ticked
+                                && (held >= HOLD_CAP || self.past(self.first_held, BURST_HOLD_CAP)),
+                        );
                     }
                     _ => {}
                 }
@@ -3444,8 +5284,12 @@ mod tests {
         }
 
         fn run(&mut self) {
-            let presses: Vec<(u64, f64, f64)> =
-                self.widths.windows(2).enumerate().map(|(i, pair)| (i as u64 * self.gap, pair[0], pair[1])).collect();
+            let presses: Vec<(u64, f64, f64)> = self
+                .widths
+                .windows(2)
+                .enumerate()
+                .map(|(i, pair)| (i as u64 * self.gap, pair[0], pair[1]))
+                .collect();
             let mut next = 0;
             while next < presses.len() || self.c.is_flying() {
                 assert!(self.at < 3000, "{}: never lifts", self.case());
@@ -3464,11 +5308,29 @@ mod tests {
                             self.first_held = self.at;
                         }
                         self.queued.push(stage);
-                        let grows = if grows { vec![(w(2), Self::frame(to))] } else { Vec::new() };
+                        let grows = if grows {
+                            vec![(w(2), Self::frame(to))]
+                        } else {
+                            Vec::new()
+                        };
                         let (generation, end) = (self.c.generation(), self.end);
-                        self.on(Event::HoldMerge { grows, writes: vec![(w(2), Self::frame(to))] }, false);
+                        self.on(
+                            Event::HoldMerge {
+                                grows,
+                                writes: vec![(w(2), Self::frame(to))],
+                            },
+                            false,
+                        );
                         self.delivered = Some((generation, end));
-                        self.on(Event::Picture { generation, window: w(2), frame: Self::frame(end), why: Why::Landed }, false);
+                        self.on(
+                            Event::Picture {
+                                generation,
+                                window: w(2),
+                                frame: Self::frame(end),
+                                why: Why::Landed,
+                            },
+                            false,
+                        );
                     } else {
                         let moving = self.c.is_moving();
                         self.on(Event::Merge { stage, moved: true }, false);
@@ -3482,7 +5344,15 @@ mod tests {
                 {
                     self.watched = None;
                     self.delivered = Some((generation, width));
-                    self.on(Event::Picture { generation, window: w(2), frame: Self::frame(width), why: Why::Landed }, false);
+                    self.on(
+                        Event::Picture {
+                            generation,
+                            window: w(2),
+                            frame: Self::frame(width),
+                            why: Why::Landed,
+                        },
+                        false,
+                    );
                 }
                 self.on(Event::Tick { settled: true, landed: true }, true);
                 self.at += 5;
@@ -3506,14 +5376,38 @@ mod tests {
         let last = now + PLAYS - FINAL_BEFORE_END;
         let tick = Event::Tick { settled: false, landed: false };
         let out = c.clone().on(tick.clone(), last);
-        let windows = out.iter().find_map(|c| if let Command::AskFinal { windows, .. } = c { Some(windows.clone()) } else { None });
-        assert_eq!(windows, Some(vec![stage.final_frames[0]]), "not repainted at its slot yet");
+        let windows = out.iter().find_map(|c| {
+            if let Command::AskFinal { windows, .. } = c {
+                Some(windows.clone())
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            windows,
+            Some(vec![stage.final_frames[0]]),
+            "not repainted at its slot yet"
+        );
         assert_eq!(focus(&out), handed_over());
 
         let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(2), frame: stage.final_frames[1].1, why: Why::Landed }, now + Duration::from_millis(100));
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: stage.final_frames[1].1,
+                why: Why::Landed,
+            },
+            now + Duration::from_millis(100),
+        );
         let out = c.on(tick, last);
-        assert!(has(&out, |c| matches!(c, Command::AskFinal { windows, .. } if *windows == stage.final_frames)), "once in, pictured");
+        assert!(
+            has(
+                &out,
+                |c| matches!(c, Command::AskFinal { windows, .. } if *windows == stage.final_frames)
+            ),
+            "once in, pictured"
+        );
     }
 
     #[test]
@@ -3521,18 +5415,46 @@ mod tests {
         let now = Instant::now();
         let dialog = r(500.0, 300.0, 700.0, 500.0);
         let mut stage = pan();
-        stage.tiles.push(TileSummary { window: w(7), start: dialog, end: dialog, floating: true });
+        stage.tiles.push(TileSummary {
+            window: w(7),
+            start: dialog,
+            end: dialog,
+            floating: true,
+        });
         stage.final_frames.push((w(7), dialog));
         stage.awaiting = vec![w(7)];
         let mut c = Coordinator::default();
         c.on(Event::Begin(stage), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
-        assert!(!has(&out, |c| *c == Command::StartMoving), "held for its first picture");
+        assert!(
+            !has(&out, |c| *c == Command::StartMoving),
+            "held for its first picture"
+        );
         assert_eq!(watch(&out).unwrap().awaiting, vec![(w(7), dialog)]);
-        let holes = out.iter().find_map(|c| if let Command::Holes(h) = c { Some(h.clone()) } else { None }).unwrap();
-        assert!(holes.contains(&(w(7), to_overlay_space(dialog, DISPLAY))), "a window the overlay covers wholly may not paint");
+        let holes = out
+            .iter()
+            .find_map(|c| {
+                if let Command::Holes(h) = c {
+                    Some(h.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        assert!(
+            holes.contains(&(w(7), to_overlay_space(dialog, DISPLAY))),
+            "a window the overlay covers wholly may not paint"
+        );
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(7), frame: dialog, why: Why::Landed }, now);
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(7),
+                frame: dialog,
+                why: Why::Landed,
+            },
+            now,
+        );
         assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(7) }));
         assert!(has(&out, |c| *c == Command::StartMoving));
     }
@@ -3546,11 +5468,20 @@ mod tests {
         let mut c = running(stage, now);
         assert_eq!(c.remaining(now), None, "not moving yet");
         assert!(!c.wants_landing(now + Duration::from_secs(5)));
-        c.on(Event::Tick { settled: false, landed: false }, now + COALESCE_WINDOW);
+        c.on(
+            Event::Tick { settled: false, landed: false },
+            now + COALESCE_WINDOW,
+        );
         let started = now + COALESCE_WINDOW;
-        assert_eq!(c.remaining(started + Duration::from_millis(100)), Some(PLAYS - Duration::from_millis(100)));
+        assert_eq!(
+            c.remaining(started + Duration::from_millis(100)),
+            Some(PLAYS - Duration::from_millis(100))
+        );
         assert!(!c.wants_landing(started + PLAYS - FRAME_INTERVAL - Duration::from_millis(1)));
-        assert!(c.wants_landing(started + PLAYS - FRAME_INTERVAL), "a tick ahead, for the rest windows' place");
+        assert!(
+            c.wants_landing(started + PLAYS - FRAME_INTERVAL),
+            "a tick ahead, for the rest windows' place"
+        );
         assert!(c.wants_landing(started + PLAYS));
         assert_eq!(c.remaining(started + 2 * PLAYS), Some(Duration::ZERO));
         c.on(Event::Extend(Duration::from_millis(200)), started + PLAYS);
@@ -3563,7 +5494,11 @@ mod tests {
         let (from, to) = (Some(w(1)), Some(w(2)));
         assert_eq!(losing_focus(to, from), from);
         assert_eq!(losing_focus(to, to), None, "drawn focused already");
-        assert_eq!(losing_focus(None, from), None, "a pass naming no focus moves none");
+        assert_eq!(
+            losing_focus(None, from),
+            None,
+            "a pass naming no focus moves none"
+        );
         assert!(drawn_focused(w(1), to, from), "frame zero pictures it focused");
         assert!(!drawn_focused(w(2), to, from), "until focus hands over");
         assert!(drawn_focused(w(2), to, None), "focus is not moving: it has it");
@@ -3572,7 +5507,8 @@ mod tests {
     }
 
     #[test]
-    fn a_strip_movement_is_a_move_when_a_column_crosses_it_and_a_switch_when_it_travels_between_rows() {
+    fn a_strip_movement_is_a_move_when_a_column_crosses_it_and_a_switch_when_it_travels_between_rows()
+     {
         let frame = SurfaceRect::new(Point::new(4.0, 32.0), Size::new(859.0, 1081.0));
         let window = |from| SurfaceWindow {
             worn: Default::default(),
@@ -3584,16 +5520,32 @@ mod tests {
             from,
         };
         let rest = SurfacePoint::origin();
-        assert_eq!(Kind::of_surface(&[window(None)], SurfacePoint::new(863.0, 0.0), rest), Kind::Pan);
-        assert_eq!(Kind::of_surface(&[window(None)], SurfacePoint::new(0.0, -1085.0), rest), Kind::Switch);
-        assert_eq!(Kind::of_surface(&[window(Some(frame))], SurfacePoint::new(863.0, 0.0), rest), Kind::Move);
+        assert_eq!(
+            Kind::of_surface(&[window(None)], SurfacePoint::new(863.0, 0.0), rest),
+            Kind::Pan
+        );
+        assert_eq!(
+            Kind::of_surface(&[window(None)], SurfacePoint::new(0.0, -1085.0), rest),
+            Kind::Switch
+        );
+        assert_eq!(
+            Kind::of_surface(&[window(Some(frame))], SurfacePoint::new(863.0, 0.0), rest),
+            Kind::Move
+        );
     }
 
     #[test]
     fn a_delivery_is_a_clients_own_under_the_generation_its_tag_carries() {
-        let tag = Tag { client: Client(1), generation: 5 };
+        let tag = Tag {
+            client: Client(1),
+            generation: 5,
+        };
         assert_eq!(Generation::for_client(tag, Client(1)), Some(Generation(5)));
-        assert_eq!(Generation::for_client(tag, Client(2)), None, "another client's delivery is not drawn");
+        assert_eq!(
+            Generation::for_client(tag, Client(2)),
+            None,
+            "another client's delivery is not drawn"
+        );
     }
 
     #[test]
@@ -3602,7 +5554,11 @@ mod tests {
         extend_latest(&mut frames, [(w(1), r(500., 0., 100., 100.))].into_iter());
         assert_eq!(frames, [(w(1), r(500., 0., 100., 100.))]);
         extend_latest(&mut frames, [(w(1), r(500., 0., 100., 100.))].into_iter());
-        assert_eq!(frames, [(w(1), r(500., 0., 100., 100.))], "a repeat changes nothing");
+        assert_eq!(
+            frames,
+            [(w(1), r(500., 0., 100., 100.))],
+            "a repeat changes nothing"
+        );
     }
 
     #[test]
@@ -3626,20 +5582,60 @@ mod tests {
         let mut c = running(pan(), now);
         let g = c.generation();
         let end = pan().tiles[1].end;
-        let out = c.on(Event::Picture { generation: g, window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now);
-        assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })), "only the focus target's");
-        assert_eq!(focus(&out), vec![(w(1), false)], "the window left turns unfocused with it");
-        let landed = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: pan().tiles[0].end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        assert!(
+            !has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })),
+            "only the focus target's"
+        );
+        assert_eq!(
+            focus(&out),
+            vec![(w(1), false)],
+            "the window left turns unfocused with it"
+        );
+        let landed = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: end,
+                why: Why::Landed,
+            },
+            now,
+        );
         assert_eq!(focus(&landed), Vec::new(), "a landing is not the handover");
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::FocusChanged }, now);
-        assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: g, window: w(2) }));
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        assert!(has(&out, |c| *c
+            == Command::KeepFocusedLook { generation: g, window: w(2) }));
         assert_eq!(focus(&out), vec![(w(2), true)]);
 
         // A window reserved or drawn as a stand-in as the focus target hands over when it has repainted.
         let mut opened = pan();
         opened.awaiting = vec![w(2)];
         let mut c = running(opened, now);
-        let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: end, why: Why::Landed }, now);
+        let out = c.on(
+            Event::Picture {
+                generation: c.generation(),
+                window: w(2),
+                frame: end,
+                why: Why::Landed,
+            },
+            now,
+        );
         assert_eq!(focus(&out), handed_over());
         assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })));
     }
@@ -3649,10 +5645,29 @@ mod tests {
         let now = Instant::now();
         let mut c = running(pan(), now);
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::Final }, now);
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: pan().tiles[1].end,
+                why: Why::Final,
+            },
+            now,
+        );
         assert_eq!(focus(&out), handed_over());
-        assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })), "not known to be its focused look");
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::FocusChanged }, now);
+        assert!(
+            !has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })),
+            "not known to be its focused look"
+        );
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: pan().tiles[1].end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
         assert_eq!(focus(&out), Vec::new(), "handed over once");
     }
 
@@ -3663,19 +5678,56 @@ mod tests {
         let now = Instant::now();
         let mut c = running(pan(), now);
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::Landed }, now);
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: pan().tiles[1].end,
+                why: Why::Landed,
+            },
+            now,
+        );
         assert_eq!(focus(&out), Vec::new());
-        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
-        assert!(matches!(out.as_slice(), [Command::AskFinal { .. }, Command::Focus { .. }, Command::Focus { .. }]), "{out:?}");
-        assert_eq!(focus(&out), handed_over(), "neither turn showed: both flip, the old window first");
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::FocusChanged }, now);
-        assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: g, window: w(2) }), "a change after it is still its look");
+        let out = c.on(
+            Event::Tick { settled: false, landed: false },
+            now + Duration::from_millis(240),
+        );
+        assert!(
+            matches!(out.as_slice(), [
+                Command::AskFinal { .. },
+                Command::Focus { .. },
+                Command::Focus { .. }
+            ]),
+            "{out:?}"
+        );
+        assert_eq!(
+            focus(&out),
+            handed_over(),
+            "neither turn showed: both flip, the old window first"
+        );
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: pan().tiles[1].end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        assert!(
+            has(&out, |c| *c
+                == Command::KeepFocusedLook { generation: g, window: w(2) }),
+            "a change after it is still its look"
+        );
         assert_eq!(focus(&out), Vec::new(), "handed over once");
 
         let mut staying = pan();
         staying.losing_focus = None;
         let mut c = running(staying, now);
-        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
+        let out = c.on(
+            Event::Tick { settled: false, landed: false },
+            now + Duration::from_millis(240),
+        );
         assert_eq!(focus(&out), Vec::new(), "focus moves nowhere");
     }
 
@@ -3690,43 +5742,129 @@ mod tests {
         let end = stage.tiles[1].end;
         let mut c = running(stage.clone(), now);
         let g = c.generation();
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: end,
+                why: Why::Landed,
+            },
+            now,
+        );
         assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "{out:?}");
-        c.on(Event::Picture { generation: g, window: w(1), frame: stage.tiles[0].end, why: Why::FocusChanged }, now);
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::FocusChanged }, now);
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: stage.tiles[0].end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: end,
+                why: Why::FocusChanged,
+            },
+            now,
+        );
         assert_eq!(out[0], Command::Swap { generation: g, window: w(2) });
-        assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: g, window: w(2) }));
+        assert!(has(&out, |c| *c
+            == Command::KeepFocusedLook { generation: g, window: w(2) }));
         assert_eq!(focus(&out), vec![(w(2), true)]);
-        assert_eq!(out.iter().filter(|c| matches!(c, Command::Swap { .. })).count(), 1, "the landing held back is not swapped as well");
+        assert_eq!(
+            out.iter().filter(|c| matches!(c, Command::Swap { .. })).count(),
+            1,
+            "the landing held back is not swapped as well"
+        );
 
         let mut c = running(stage.clone(), now);
         let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
-        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
-        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "swapped in as focus hands over: {out:?}");
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: end,
+                why: Why::Landed,
+            },
+            now,
+        );
+        let out = c.on(
+            Event::Tick { settled: false, landed: false },
+            now + Duration::from_millis(240),
+        );
+        assert!(
+            has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }),
+            "swapped in as focus hands over: {out:?}"
+        );
         assert_eq!(focus(&out), handed_over());
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
-        assert!(has(&out, |c| matches!(c, Command::Swap { .. })), "once handed over, a landing is swapped");
+        let out = c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: end,
+                why: Why::Landed,
+            },
+            now,
+        );
+        assert!(
+            has(&out, |c| matches!(c, Command::Swap { .. })),
+            "once handed over, a landing is swapped"
+        );
 
         let mut c = running(stage, now);
         let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: end,
+                why: Why::Landed,
+            },
+            now,
+        );
         let mut moved = pan();
         moved.focused_look = Some(w(2));
         moved.tiles[1].end.origin.x += 400.0;
         c.on(Event::Merge { stage: moved, moved: true }, now);
-        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
-        assert!(!has(&out, |c| matches!(c, Command::Swap { .. })), "a landing taken for the end before: {out:?}");
+        let out = c.on(
+            Event::Tick { settled: false, landed: false },
+            now + Duration::from_millis(240),
+        );
+        assert!(
+            !has(&out, |c| matches!(c, Command::Swap { .. })),
+            "a landing taken for the end before: {out:?}"
+        );
     }
 
     #[test]
     fn the_last_capture_is_asked_110ms_before_the_end_and_never_in_the_first_40() {
         let now = Instant::now();
         let mut c = running(pan(), now);
-        assert!(c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(239)).is_empty());
-        let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
-        assert!(matches!(out.as_slice(), [Command::AskFinal { windows, behind, .. }, ..] if windows.len() == 2 && *behind == vec![w(9)]));
-        assert!(c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(250)).is_empty(), "once");
+        assert!(
+            c.on(
+                Event::Tick { settled: false, landed: false },
+                now + Duration::from_millis(239)
+            )
+            .is_empty()
+        );
+        let out = c.on(
+            Event::Tick { settled: false, landed: false },
+            now + Duration::from_millis(240),
+        );
+        assert!(
+            matches!(out.as_slice(), [Command::AskFinal { windows, behind, .. }, ..] if windows.len() == 2 && *behind == vec![w(9)])
+        );
+        assert!(
+            c.on(
+                Event::Tick { settled: false, landed: false },
+                now + Duration::from_millis(250)
+            )
+            .is_empty(),
+            "once"
+        );
         assert_eq!(final_at(now, Duration::from_millis(100)), now + FINAL_NOT_BEFORE);
     }
 
@@ -3737,7 +5875,10 @@ mod tests {
         let end = now + PLAYS;
         let out = c.on(Event::Tick { settled: true, landed: false }, end);
         assert!(!has(&out, |c| matches!(c, Command::Lift { .. })));
-        let out = c.on(Event::Tick { settled: true, landed: true }, end + Duration::from_millis(16));
+        let out = c.on(
+            Event::Tick { settled: true, landed: true },
+            end + Duration::from_millis(16),
+        );
         assert!(has(&out, |c| matches!(c, Command::Lift { .. })));
         assert!(!c.is_flying());
 
@@ -3758,11 +5899,31 @@ mod tests {
         let mut c = running(pan(), now);
         let end = now + PLAYS;
         let ms = Duration::from_millis;
-        assert!(has(&c.on(Event::Tick { settled: false, landed: false }, now + ms(250)), |c| matches!(c, Command::AskFinal { .. })));
-        assert_eq!(places(&c.on(Event::Tick { settled: false, landed: true }, end - FRAME_INTERVAL - ms(1))), 0, "two ticks out");
-        assert_eq!(places(&c.on(Event::Tick { settled: false, landed: false }, end - ms(12))), 0, "not landed");
-        assert_eq!(c.on(Event::Tick { settled: false, landed: true }, end - ms(5)), [Command::PlaceRest]);
-        assert!(c.on(Event::Tick { settled: false, landed: true }, end - ms(1)).is_empty(), "once");
+        assert!(has(
+            &c.on(Event::Tick { settled: false, landed: false }, now + ms(250)),
+            |c| matches!(c, Command::AskFinal { .. })
+        ));
+        assert_eq!(
+            places(&c.on(
+                Event::Tick { settled: false, landed: true },
+                end - FRAME_INTERVAL - ms(1)
+            )),
+            0,
+            "two ticks out"
+        );
+        assert_eq!(
+            places(&c.on(Event::Tick { settled: false, landed: false }, end - ms(12))),
+            0,
+            "not landed"
+        );
+        assert_eq!(
+            c.on(Event::Tick { settled: false, landed: true }, end - ms(5)),
+            [Command::PlaceRest]
+        );
+        assert!(
+            c.on(Event::Tick { settled: false, landed: true }, end - ms(1)).is_empty(),
+            "once"
+        );
         let out = c.on(Event::Tick { settled: true, landed: true }, end + ms(11));
         assert!(lifts(&out) && places(&out) == 0, "the lift only hides: {out:?}");
     }
@@ -3779,29 +5940,57 @@ mod tests {
         wider.final_frames[0].1 = r(866.0, 35.0, 600.0, 1079.0);
 
         let mut c = running(pan(), now);
-        assert_eq!(places(&c.on(Event::Tick { settled: false, landed: true }, end - ms(5))), 1);
-        c.on(Event::Merge { stage: wider.clone(), moved: true }, end - ms(2));
+        assert_eq!(
+            places(&c.on(Event::Tick { settled: false, landed: true }, end - ms(5))),
+            1
+        );
+        c.on(
+            Event::Merge {
+                stage: wider.clone(),
+                moved: true,
+            },
+            end - ms(2),
+        );
         let again = end - ms(2) + PLAYS;
         let out = c.on(Event::Tick { settled: true, landed: true }, end + ms(11));
-        assert!(places(&out) == 0 && !lifts(&out), "the clock runs on to {again:?}");
-        assert_eq!(places(&c.on(Event::Tick { settled: false, landed: true }, again - ms(5))), 1, "a tick ahead of the new end");
+        assert!(
+            places(&out) == 0 && !lifts(&out),
+            "the clock runs on to {again:?}"
+        );
+        assert_eq!(
+            places(&c.on(Event::Tick { settled: false, landed: true }, again - ms(5))),
+            1,
+            "a tick ahead of the new end"
+        );
         let out = c.on(Event::Tick { settled: true, landed: true }, again + ms(11));
         assert!(lifts(&out) && places(&out) == 0);
 
         let mut c = running(pan(), now);
-        assert_eq!(places(&c.on(Event::Tick { settled: false, landed: true }, end - ms(5))), 1);
+        assert_eq!(
+            places(&c.on(Event::Tick { settled: false, landed: true }, end - ms(5))),
+            1
+        );
         c.on(Event::Merge { stage: pan(), moved: false }, end - ms(3));
         c.on(Event::Merge { stage: wider, moved: false }, end - ms(2));
         let out = c.on(Event::Tick { settled: true, landed: true }, end + ms(11));
         let place = out.iter().position(|c| *c == Command::PlaceRest);
         let lift = out.iter().position(|c| matches!(c, Command::Lift { .. }));
-        assert!(place.is_some() && place < lift, "frames written since: placed again with the lift, {out:?}");
+        assert!(
+            place.is_some() && place < lift,
+            "frames written since: placed again with the lift, {out:?}"
+        );
 
         let mut c = running(pan(), now);
-        assert_eq!(places(&c.on(Event::Tick { settled: false, landed: true }, end - ms(5))), 1);
+        assert_eq!(
+            places(&c.on(Event::Tick { settled: false, landed: true }, end - ms(5))),
+            1
+        );
         c.on(Event::Merge { stage: pan(), moved: false }, end - ms(2));
         let out = c.on(Event::Tick { settled: true, landed: true }, end + ms(11));
-        assert!(lifts(&out) && places(&out) == 0, "a merge writing nothing keeps the place");
+        assert!(
+            lifts(&out) && places(&out) == 0,
+            "a merge writing nothing keeps the place"
+        );
     }
 
     /// With nothing drawn at rest no tick places it, and none reads the landing before the clock is
@@ -3815,10 +6004,19 @@ mod tests {
         assert!(!c.wants_landing(end - ms(5)) && c.wants_landing(end));
         let ahead = c.on(Event::Tick { settled: false, landed: true }, end - ms(5));
         let lifted = c.on(Event::Tick { settled: true, landed: true }, end + ms(11));
-        assert!(places(&ahead) == 0 && places(&lifted) == 0, "{ahead:?} {lifted:?}");
+        assert!(
+            places(&ahead) == 0 && places(&lifted) == 0,
+            "{ahead:?} {lifted:?}"
+        );
         assert!(lifts(&lifted));
         let mut c = running(pan(), now);
-        c.on(Event::Merge { stage: StageSummary { rests: false, ..pan() }, moved: false }, now + ms(5));
+        c.on(
+            Event::Merge {
+                stage: StageSummary { rests: false, ..pan() },
+                moved: false,
+            },
+            now + ms(5),
+        );
         assert!(!c.wants_landing(end - ms(5)), "turned off by a merge");
     }
 
@@ -3831,15 +6029,25 @@ mod tests {
         let ms = Duration::from_millis;
         let end = now + PLAYS;
         let mut c = running(pan(), now);
-        assert_eq!(places(&c.on(Event::Tick { settled: false, landed: false }, end - ms(5))), 0);
+        assert_eq!(
+            places(&c.on(Event::Tick { settled: false, landed: false }, end - ms(5))),
+            0
+        );
         let out = c.on(Event::Tick { settled: true, landed: true }, end + ms(11));
         let place = out.iter().position(|c| *c == Command::PlaceRest);
-        assert!(place.is_some() && place < out.iter().position(|c| *c == Command::StopWatches), "{out:?}");
+        assert!(
+            place.is_some() && place < out.iter().position(|c| *c == Command::StopWatches),
+            "{out:?}"
+        );
         assert!(lifts(&out));
 
         let mut c = running(pan(), now);
         c.on(Event::Tick { settled: false, landed: false }, now + ms(250));
-        assert_eq!(c.on(Event::Tick { settled: false, landed: true }, end + ms(5)), [Command::PlaceRest], "landed, the tiles not yet");
+        assert_eq!(
+            c.on(Event::Tick { settled: false, landed: true }, end + ms(5)),
+            [Command::PlaceRest],
+            "landed, the tiles not yet"
+        );
         let out = c.on(Event::Tick { settled: true, landed: true }, end + ms(21));
         assert!(lifts(&out) && places(&out) == 0);
 
@@ -3857,8 +6065,14 @@ mod tests {
         let end = now + PLAYS;
         let mut at = end;
         while at < end + LIFT_GRACE {
-            assert!(!has(&c.on(Event::Tick { settled: true, landed: false }, at), |c| matches!(c, Command::Lift { .. })));
-            c.on(Event::Merge { stage: pan(), moved: false }, at + Duration::from_millis(1));
+            assert!(!has(
+                &c.on(Event::Tick { settled: true, landed: false }, at),
+                |c| matches!(c, Command::Lift { .. })
+            ));
+            c.on(
+                Event::Merge { stage: pan(), moved: false },
+                at + Duration::from_millis(1),
+            );
             at += Duration::from_millis(100);
         }
         let out = c.on(Event::Tick { settled: true, landed: false }, end + LIFT_GRACE);
@@ -3873,10 +6087,27 @@ mod tests {
         c.on(Event::FrameZero(c.generation()), now);
         let out = c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
         let generation = c.generation();
-        assert!(out.ends_with(&[Command::StopWatches, Command::Lift { generation }, Command::Settle]), "{out:?}");
-        assert!(!has(&out, |c| *c == Command::Release), "the rest waits for the quiet");
+        assert!(
+            out.ends_with(&[
+                Command::StopWatches,
+                Command::Lift { generation },
+                Command::Settle
+            ]),
+            "{out:?}"
+        );
+        assert!(
+            !has(&out, |c| *c == Command::Release),
+            "the rest waits for the quiet"
+        );
         let out = c.on(Event::Quiet(generation), now + PLAYS + SETTLE_BEFORE_CAPTURES);
-        assert!(matches!(out.as_slice(), [Command::Release, Command::Warm(_), Command::ReportSettled]), "{out:?}");
+        assert!(
+            matches!(out.as_slice(), [
+                Command::Release,
+                Command::Warm(_),
+                Command::ReportSettled
+            ]),
+            "{out:?}"
+        );
     }
 
     /// A press inside the quiet holds the service again before anything is composed; the quiet of
@@ -3885,18 +6116,35 @@ mod tests {
     fn a_press_inside_the_quiet_holds_again_and_only_its_own_quiet_releases() {
         let now = Instant::now();
         let lift = |out: &[Command]| {
-            out.iter().find_map(|c| if let Command::Lift { generation } = c { Some(*generation) } else { None })
+            out.iter().find_map(|c| {
+                if let Command::Lift { generation } = c {
+                    Some(*generation)
+                } else {
+                    None
+                }
+            })
         };
         let mut c = running(pan(), now);
         let first = lift(&c.on(Event::Tick { settled: true, landed: true }, now + PLAYS)).unwrap();
         let pressed = now + PLAYS + Duration::from_millis(100);
         assert_eq!(c.on(Event::Begin(pan()), pressed).first(), Some(&Command::Hold));
-        assert!(c.on(Event::Quiet(first), now + PLAYS + SETTLE_BEFORE_CAPTURES).is_empty(), "the lift before's");
+        assert!(
+            c.on(Event::Quiet(first), now + PLAYS + SETTLE_BEFORE_CAPTURES).is_empty(),
+            "the lift before's"
+        );
         c.on(Event::FrameZero(c.generation()), pressed);
-        let second = lift(&c.on(Event::Tick { settled: true, landed: true }, pressed + PLAYS)).unwrap();
+        let second =
+            lift(&c.on(Event::Tick { settled: true, landed: true }, pressed + PLAYS)).unwrap();
         assert_ne!(first, second);
         let out = c.on(Event::Quiet(second), pressed + PLAYS + SETTLE_BEFORE_CAPTURES);
-        assert!(matches!(out.as_slice(), [Command::Release, Command::Warm(_), Command::ReportSettled]), "{out:?}");
+        assert!(
+            matches!(out.as_slice(), [
+                Command::Release,
+                Command::Warm(_),
+                Command::ReportSettled
+            ]),
+            "{out:?}"
+        );
     }
 
     #[test]
@@ -3909,12 +6157,28 @@ mod tests {
         more.tiles[0].end.size.width = 600.0;
         c.on(Event::Merge { stage: more, moved: false }, now);
         let out = c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
-        let Some(Command::Lift { generation }) = out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned() else { panic!() };
-        assert!(c.on(Event::Quiet(Generation(0)), now).is_empty(), "a stale quiet");
+        let Some(Command::Lift { generation }) =
+            out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned()
+        else {
+            panic!()
+        };
+        assert!(
+            c.on(Event::Quiet(Generation(0)), now).is_empty(),
+            "a stale quiet"
+        );
         let out = c.on(Event::Quiet(generation), now + PLAYS + SETTLE_BEFORE_CAPTURES);
-        let Some(Command::Warm(windows)) = out.iter().find(|c| matches!(c, Command::Warm(_))) else { panic!() };
-        assert!(windows.contains(&(w(5), parked)), "a window only the merged pass drew is warmed too");
-        assert!(windows.contains(&(w(1), r(866.0, 35.0, 600.0, 1079.0))), "at the size the merge left it");
+        let Some(Command::Warm(windows)) = out.iter().find(|c| matches!(c, Command::Warm(_)))
+        else {
+            panic!()
+        };
+        assert!(
+            windows.contains(&(w(5), parked)),
+            "a window only the merged pass drew is warmed too"
+        );
+        assert!(
+            windows.contains(&(w(1), r(866.0, 35.0, 600.0, 1079.0))),
+            "at the size the merge left it"
+        );
         assert_eq!(windows.len(), 4);
     }
 
@@ -3927,12 +6191,28 @@ mod tests {
         next.tiles.retain(|t| t.window != w(9));
         let out = c.on(Event::Begin(next), now + PLAYS + Duration::from_millis(100));
         assert!(!has(&out, |c| *c == Command::ReportUp));
-        c.on(Event::FrameZero(c.generation()), now + PLAYS + Duration::from_millis(100));
-        let out = c.on(Event::Tick { settled: true, landed: true }, now + 2 * PLAYS + Duration::from_millis(100));
-        let Some(Command::Lift { generation }) = out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned() else { panic!() };
+        c.on(
+            Event::FrameZero(c.generation()),
+            now + PLAYS + Duration::from_millis(100),
+        );
+        let out = c.on(
+            Event::Tick { settled: true, landed: true },
+            now + 2 * PLAYS + Duration::from_millis(100),
+        );
+        let Some(Command::Lift { generation }) =
+            out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned()
+        else {
+            panic!()
+        };
         let out = c.on(Event::Quiet(generation), now + Duration::from_secs(2));
-        let Some(Command::Warm(windows)) = out.iter().find(|c| matches!(c, Command::Warm(_))) else { panic!() };
-        assert!(windows.iter().any(|(window, _)| *window == w(9)), "the first flight's windows are still owed");
+        let Some(Command::Warm(windows)) = out.iter().find(|c| matches!(c, Command::Warm(_)))
+        else {
+            panic!()
+        };
+        assert!(
+            windows.iter().any(|(window, _)| *window == w(9)),
+            "the first flight's windows are still owed"
+        );
     }
 
     #[test]
@@ -3947,15 +6227,25 @@ mod tests {
         c.on(Event::Begin(stage), now);
         let out = c.on(Event::FrameZero(c.generation()), now);
         assert!(writes(&out).is_empty() && watch(&out).is_none(), "{out:?}");
-        c.on(Event::Extend(Duration::from_millis(500)), now + Duration::from_millis(300));
+        c.on(
+            Event::Extend(Duration::from_millis(500)),
+            now + Duration::from_millis(300),
+        );
         let out = c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
-        assert!(!has(&out, |c| matches!(c, Command::Lift { .. })), "the clock now runs to 800ms");
-        let out = c.on(Event::Tick { settled: true, landed: true }, now + Duration::from_millis(800));
+        assert!(
+            !has(&out, |c| matches!(c, Command::Lift { .. })),
+            "the clock now runs to 800ms"
+        );
+        let out = c.on(
+            Event::Tick { settled: true, landed: true },
+            now + Duration::from_millis(800),
+        );
         assert!(has(&out, |c| matches!(c, Command::Lift { .. })));
     }
 
     #[test]
-    fn an_abandoned_transition_places_its_windows_pictures_the_looks_it_owed_and_releases_the_hold() {
+    fn an_abandoned_transition_places_its_windows_pictures_the_looks_it_owed_and_releases_the_hold()
+    {
         let now = Instant::now();
         let mut c = Coordinator::default();
         c.on(Event::Begin(pan()), now);
@@ -3963,8 +6253,13 @@ mod tests {
         c.on(Event::LooksTurned(turned.clone()), now);
         let out = c.on(Event::Abandon, now);
         assert_eq!(writes(&out), pan().final_frames);
-        assert!(has(&out, |c| *c == Command::Release) && has(&out, |c| *c == Command::ReportSettled));
-        assert!(has(&out, |c| *c == Command::Refresh(turned.clone())), "nothing flew to picture them");
+        assert!(
+            has(&out, |c| *c == Command::Release) && has(&out, |c| *c == Command::ReportSettled)
+        );
+        assert!(
+            has(&out, |c| *c == Command::Refresh(turned.clone())),
+            "nothing flew to picture them"
+        );
         assert!(!c.is_flying());
         assert!(c.on(Event::Abandon, now).is_empty());
     }
@@ -3975,8 +6270,13 @@ mod tests {
     fn a_look_turned_at_rest_is_pictured_afresh_at_once() {
         let now = Instant::now();
         let mut c = Coordinator::default();
-        let turned = vec![(w(2), r(3.0, 35.0, 860.0, 1079.0)), (w(1), r(866.0, 35.0, 860.0, 1079.0))];
-        assert_eq!(c.on(Event::LooksTurned(turned.clone()), now), vec![Command::Refresh(turned)]);
+        let turned = vec![
+            (w(2), r(3.0, 35.0, 860.0, 1079.0)),
+            (w(1), r(866.0, 35.0, 860.0, 1079.0)),
+        ];
+        assert_eq!(c.on(Event::LooksTurned(turned.clone()), now), vec![
+            Command::Refresh(turned)
+        ]);
         assert!(c.on(Event::LooksTurned(Vec::new()), now).is_empty());
         assert!(!c.is_flying());
     }
@@ -3988,27 +6288,52 @@ mod tests {
     fn a_look_turned_in_flight_is_pictured_at_the_quiet_unless_the_flight_pictured_it_since() {
         let now = Instant::now();
         let stage = pan();
-        let (a_start, a_end, b_end) = (stage.tiles[0].start, stage.tiles[0].end, stage.tiles[1].end);
+        let (a_start, a_end, b_end) =
+            (stage.tiles[0].start, stage.tiles[0].end, stage.tiles[1].end);
         let parked = r(1727.0, 35.0, 860.0, 1079.0);
         let mut c = running(stage, now);
         let turned = vec![(w(2), b_end), (w(1), a_end), (w(5), parked)];
-        assert!(c.on(Event::LooksTurned(turned), now).is_empty(), "nothing is asked behind the overlay");
-        let g = c.generation();
-        c.on(Event::Picture { generation: g, window: w(1), frame: a_start, why: Why::FrameZero }, now);
-        let changed = Duration::from_millis(60);
-        c.on(Event::Picture { generation: g, window: w(2), frame: b_end, why: Why::FocusChanged }, now + changed);
-        let out = c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
-        let Some(Command::Lift { generation }) = out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned() else { panic!("{out:?}") };
-        let out = c.on(Event::Quiet(generation), now + PLAYS + SETTLE_BEFORE_CAPTURES);
-        assert_eq!(
-            out,
-            vec![
-                Command::Release,
-                Command::Warm(vec![(w(1), a_end), (w(2), b_end), (w(9), r(224.0, 95.0, 600.0, 400.0))]),
-                Command::Refresh(vec![(w(1), a_end), (w(5), parked)]),
-                Command::ReportSettled,
-            ]
+        assert!(
+            c.on(Event::LooksTurned(turned), now).is_empty(),
+            "nothing is asked behind the overlay"
         );
+        let g = c.generation();
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(1),
+                frame: a_start,
+                why: Why::FrameZero,
+            },
+            now,
+        );
+        let changed = Duration::from_millis(60);
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: b_end,
+                why: Why::FocusChanged,
+            },
+            now + changed,
+        );
+        let out = c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
+        let Some(Command::Lift { generation }) =
+            out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned()
+        else {
+            panic!("{out:?}")
+        };
+        let out = c.on(Event::Quiet(generation), now + PLAYS + SETTLE_BEFORE_CAPTURES);
+        assert_eq!(out, vec![
+            Command::Release,
+            Command::Warm(vec![
+                (w(1), a_end),
+                (w(2), b_end),
+                (w(9), r(224.0, 95.0, 600.0, 400.0))
+            ]),
+            Command::Refresh(vec![(w(1), a_end), (w(5), parked)]),
+            Command::ReportSettled,
+        ]);
     }
 
     /// A turn reported after the lift waits for the quiet, and a press inside the quiet carries it to
@@ -4018,20 +6343,45 @@ mod tests {
         let now = Instant::now();
         let mut c = running(pan(), now);
         let lifted = c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
-        let Some(Command::Lift { generation: first }) = lifted.iter().find(|c| matches!(c, Command::Lift { .. })).cloned() else { panic!() };
+        let Some(Command::Lift { generation: first }) =
+            lifted.iter().find(|c| matches!(c, Command::Lift { .. })).cloned()
+        else {
+            panic!()
+        };
         let parked = r(1727.0, 35.0, 860.0, 1079.0);
         let after = now + PLAYS + Duration::from_millis(50);
-        assert!(c.on(Event::LooksTurned(vec![(w(5), parked), (w(2), pan().tiles[1].end)]), after).is_empty());
+        assert!(
+            c.on(
+                Event::LooksTurned(vec![(w(5), parked), (w(2), pan().tiles[1].end)]),
+                after
+            )
+            .is_empty()
+        );
         let pressed = after + Duration::from_millis(50);
         c.on(Event::Begin(pan()), pressed);
         assert!(c.on(Event::Quiet(first), now + PLAYS + SETTLE_BEFORE_CAPTURES).is_empty());
         let g = c.generation();
         c.on(Event::FrameZero(g), pressed);
-        c.on(Event::Picture { generation: g, window: w(2), frame: pan().tiles[1].end, why: Why::Landed }, pressed);
+        c.on(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: pan().tiles[1].end,
+                why: Why::Landed,
+            },
+            pressed,
+        );
         let out = c.on(Event::Tick { settled: true, landed: true }, pressed + PLAYS);
-        let Some(Command::Lift { generation: second }) = out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned() else { panic!() };
+        let Some(Command::Lift { generation: second }) =
+            out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned()
+        else {
+            panic!()
+        };
         let out = c.on(Event::Quiet(second), pressed + PLAYS + SETTLE_BEFORE_CAPTURES);
-        assert!(has(&out, |c| *c == Command::Refresh(vec![(w(5), parked)])), "{out:?}");
+        assert!(
+            has(&out, |c| *c == Command::Refresh(vec![(w(5), parked)])),
+            "{out:?}"
+        );
     }
 
     #[test]
@@ -4042,7 +6392,13 @@ mod tests {
         for i in 0..20u64 {
             let at = now + Duration::from_millis(i * 50);
             if c.is_flying() {
-                c.on(Event::Merge { stage: pan(), moved: i % 2 == 0 }, at);
+                c.on(
+                    Event::Merge {
+                        stage: pan(),
+                        moved: i % 2 == 0,
+                    },
+                    at,
+                );
             } else {
                 c.on(Event::Begin(pan()), at);
                 c.on(Event::FrameZero(c.generation()), at);

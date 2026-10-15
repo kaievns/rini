@@ -1,11 +1,10 @@
 //! What a saved file may look like, and what is refused at the load boundary.
 
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::CGSize;
 
 use super::*;
-use crate::workspaces::VirtualWorkspace;
-use crate::workspaces::{LayoutEvent, ScrollingLayoutSystem};
+use crate::workspaces::domain::display_memory::DisplayMemory;
+use crate::workspaces::{LayoutEvent, ScrollingLayoutSystem, VirtualWorkspace};
 
 #[test]
 fn persisted_layout_schema_is_versioned_and_any_other_version_is_refused() {
@@ -230,16 +229,13 @@ fn invalid_persisted_window_geometry_is_rejected() {
     let mut engine = test_engine();
     let memory = DisplayMemory::default();
     let window = WindowId::new(60, 1);
-    engine.persistence.windows.insert(
-        window,
-        WindowFingerprint {
-            window_server_id: Some(6001),
-            title: Some("Invalid geometry".into()),
-            width: -1.0,
-            height: 500.0,
-            app_id: Some("com.example.invalid".into()),
-        },
-    );
+    engine.persistence.windows.insert(window, WindowFingerprint {
+        window_server_id: Some(6001),
+        title: Some("Invalid geometry".into()),
+        width: -1.0,
+        height: 500.0,
+        app_id: Some("com.example.invalid".into()),
+    });
 
     let error = match LayoutEngine::deserialize_from_str(&engine.serialize_to_string(&memory)) {
         Ok(_) => panic!("invalid persisted window geometry should be rejected"),

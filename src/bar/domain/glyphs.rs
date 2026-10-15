@@ -19,9 +19,7 @@ fn table() -> &'static HashMap<&'static str, &'static str> {
 }
 
 /// The ligature token for `app`, by its localised name.
-pub fn token(app: &str) -> &'static str {
-    table().get(app).copied().unwrap_or(DEFAULT)
-}
+pub fn token(app: &str) -> &'static str { table().get(app).copied().unwrap_or(DEFAULT) }
 
 #[cfg(test)]
 mod tests {
@@ -54,7 +52,10 @@ mod tests {
         for line in TABLE.lines() {
             let (name, token) = line.split_once('\t').expect("a tab in every row");
             assert!(!name.is_empty(), "{line:?}");
-            assert!(token.len() > 2 && token.starts_with(':') && token.ends_with(':'), "{line:?}");
+            assert!(
+                token.len() > 2 && token.starts_with(':') && token.ends_with(':'),
+                "{line:?}"
+            );
         }
         assert!(table().len() > 800);
     }

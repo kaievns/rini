@@ -13,7 +13,11 @@ pub struct Attention {
 }
 
 impl Attention {
-    pub fn of(asking: impl IntoIterator<Item = pid_t>) -> Attention { Attention { asking: asking.into_iter().collect() } }
+    pub fn of(asking: impl IntoIterator<Item = pid_t>) -> Attention {
+        Attention {
+            asking: asking.into_iter().collect(),
+        }
+    }
 
     /// Whether the application `pid` asks for attention.
     pub fn asks(&self, pid: pid_t) -> bool { self.asking.contains(&pid) }
@@ -28,7 +32,11 @@ mod tests {
         let attention = Attention::of([42, 7, 42]);
         assert!(attention.asks(42) && attention.asks(7));
         assert!(!attention.asks(9));
-        assert_eq!(attention, Attention::of([7, 42]), "the order it was read in is not part of it");
+        assert_eq!(
+            attention,
+            Attention::of([7, 42]),
+            "the order it was read in is not part of it"
+        );
         assert!(!Attention::default().asks(42));
     }
 }

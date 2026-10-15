@@ -15,9 +15,7 @@ const SETTLED_SPEED: f64 = 20.0;
 /// The retargeting spring's natural frequency for a flight of `duration` seconds. Critically damped,
 /// it is 97% of the way from rest at half the duration, where `MOTION_CURVE` is too, so a chained leg
 /// lands like a fresh one: `(1 + wt)e^-wt = 0.03` at `wt = 5.35`.
-pub fn spring_omega(duration: f64) -> f64 {
-    10.7 / duration.max(0.05)
-}
+pub fn spring_omega(duration: f64) -> f64 { 10.7 / duration.max(0.05) }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Leg {
@@ -225,9 +223,7 @@ mod tests {
         }
     }
 
-    fn close(a: f64, b: f64, within: f64) -> bool {
-        (a - b).abs() <= within
-    }
+    fn close(a: f64, b: f64, within: f64) -> bool { (a - b).abs() <= within }
 
     /// The reported case: each press restarted the curve, which leaves at 6.25x its average speed.
     /// 150ms into a column's travel the strip moves at about 890pt/s, and the restart put it at
@@ -324,7 +320,10 @@ mod tests {
         let leg = Leg::toward(Some(&first), first.position_at(0.1), to, 0.1, 31.0);
         let (points, seconds) = leg.samples(1.0 / 120.0);
         assert!(close(points[0].x, leg.position_at(0.1).x, 1e-9));
-        assert_eq!(points.last().copied(), Some(OverlayPoint::new(-2.0 * COLUMN, 0.0)));
+        assert_eq!(
+            points.last().copied(),
+            Some(OverlayPoint::new(-2.0 * COLUMN, 0.0))
+        );
         assert!(close(seconds, (points.len() - 1) as f64 / 120.0, 1e-9));
     }
 
@@ -474,13 +473,10 @@ mod tests {
         let leg = curve(0.0, -COLUMN);
         let track = leg.track(GroupKey::STILL, STEP);
         assert_eq!(track.curves(), [Curve::Bezier(MOTION_CURVE)]);
-        assert_eq!(
-            track.keys(),
-            [
-                (0.0, Value::Point(OverlayPoint::new(0.0, 0.0))),
-                (1.0, Value::Point(OverlayPoint::new(-COLUMN, 0.0)))
-            ]
-        );
+        assert_eq!(track.keys(), [
+            (0.0, Value::Point(OverlayPoint::new(0.0, 0.0))),
+            (1.0, Value::Point(OverlayPoint::new(-COLUMN, 0.0)))
+        ]);
         for step in 0..350 {
             let at = step as f64 / 1000.0;
             assert!(close(drawn(&leg, at), leg.position_at(at).x, 1e-9), "{at}");

@@ -45,7 +45,9 @@ pub fn face(piece: Piece, bar: &DisplayBar) -> Face {
         Piece::Date => (REGULAR, 13.0),
         Piece::Chevron => (REGULAR, 12.0),
         Piece::ConfigFailed => (MEDIUM, 13.0),
-        Piece::PlaceDivider | Piece::ClockDivider | Piece::Vital(_) | Piece::Tray(_) => (REGULAR, 12.0),
+        Piece::PlaceDivider | Piece::ClockDivider | Piece::Vital(_) | Piece::Tray(_) => {
+            (REGULAR, 12.0)
+        }
     };
     Face { name, size }
 }
@@ -75,9 +77,10 @@ pub const UNDERLINE: Colour = EMBER;
 
 #[cfg(test)]
 mod tests {
+    use rini_core::ids::WindowId;
+
     use super::*;
     use crate::bar::domain::model::Glyph;
-    use rini_core::ids::WindowId;
 
     fn bar() -> DisplayBar {
         DisplayBar {
@@ -86,8 +89,16 @@ mod tests {
             frame: objc2_core_foundation::CGRect::ZERO,
             rows: vec![Row::Occupied, Row::Shown, Row::Empty],
             glyphs: vec![
-                Glyph { app: "Code".into(), window: WindowId::new(1, 1), lit: true },
-                Glyph { app: "Zen".into(), window: WindowId::new(2, 2), lit: false },
+                Glyph {
+                    app: "Code".into(),
+                    window: WindowId::new(1, 1),
+                    lit: true,
+                },
+                Glyph {
+                    app: "Zen".into(),
+                    window: WindowId::new(2, 2),
+                    lit: false,
+                },
             ],
             focus: None,
             config_failed: true,
@@ -117,8 +128,14 @@ mod tests {
     #[test]
     fn the_time_outranks_the_date() {
         let bar = bar();
-        assert_eq!((colour(Piece::Time, &bar), face(Piece::Time, &bar).name), (N11, SEMIBOLD));
-        assert_eq!((colour(Piece::Date, &bar), face(Piece::Date, &bar).name), (N9, REGULAR));
+        assert_eq!(
+            (colour(Piece::Time, &bar), face(Piece::Time, &bar).name),
+            (N11, SEMIBOLD)
+        );
+        assert_eq!(
+            (colour(Piece::Date, &bar), face(Piece::Date, &bar).name),
+            (N9, REGULAR)
+        );
     }
 
     /// The one red thing on the bar: the error colour at a size the design system lets it be read.

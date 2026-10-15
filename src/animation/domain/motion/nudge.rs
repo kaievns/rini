@@ -42,8 +42,9 @@ pub fn nudge_track(
     seconds: f64,
     step: f64,
 ) -> Track {
-    let samples =
-        nudge_samples(offset, seconds, step).into_iter().map(|d| Value::Point(d.to_point()));
+    let samples = nudge_samples(offset, seconds, step)
+        .into_iter()
+        .map(|d| Value::Point(d.to_point()));
     Track::samples(
         Node::Container(container),
         Channel::Nudge,

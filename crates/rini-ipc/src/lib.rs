@@ -5,16 +5,14 @@ pub mod client;
 pub mod mach;
 pub mod protocol;
 
-pub use protocol::*;
-
 use std::ffi::c_char;
-
-use serde::Serialize;
-use tracing::{error, info, trace};
 
 pub use client::RiniMachClient;
 use mach::{is_mach_server_registered, mach_server_run, send_mach_reply};
+pub use protocol::*;
 use rini_mach_sys::mach_msg_header_t;
+use serde::Serialize;
+use tracing::{error, info, trace};
 
 /// What the window manager answers over IPC. The daemon implements it in `src/app/api/backend.rs`;
 /// every method blocks the Mach server thread until the reactor replies.
@@ -224,9 +222,8 @@ fn send_response(original_msg: *mut mach_msg_header_t, response: &RiniResponse) 
 mod tests {
     use std::sync::Mutex;
 
-    use crate::protocol::{LayoutCommand, RiniCommand};
-
     use super::*;
+    use crate::protocol::{LayoutCommand, RiniCommand};
 
     #[derive(Default)]
     struct Fake {
@@ -244,9 +241,9 @@ mod tests {
                 windows: vec![],
             }]
         }
-        fn windows(&self, _: Option<u64>) -> Vec<crate::protocol::WindowData> {
-            vec![]
-        }
+
+        fn windows(&self, _: Option<u64>) -> Vec<crate::protocol::WindowData> { vec![] }
+
         fn window(&self, window: WindowId) -> Option<crate::protocol::WindowData> {
             (window.pid == 1).then(|| crate::protocol::WindowData {
                 id: window.into(),
@@ -262,9 +259,9 @@ mod tests {
                 window_server_id: None,
             })
         }
-        fn displays(&self) -> Vec<crate::protocol::DisplayData> {
-            vec![]
-        }
+
+        fn displays(&self) -> Vec<crate::protocol::DisplayData> { vec![] }
+
         fn layout_state(
             &self,
             _: Option<u64>,
@@ -272,12 +269,11 @@ mod tests {
         ) -> Option<crate::protocol::LayoutStateData> {
             None
         }
-        fn applications(&self) -> Vec<crate::protocol::ApplicationData> {
-            vec![]
-        }
-        fn metrics(&self) -> serde_json::Value {
-            serde_json::json!({ "m": 1 })
-        }
+
+        fn applications(&self) -> Vec<crate::protocol::ApplicationData> { vec![] }
+
+        fn metrics(&self) -> serde_json::Value { serde_json::json!({ "m": 1 }) }
+
         fn diagnostics(&self) -> crate::protocol::DiagnosticsData {
             crate::protocol::DiagnosticsData {
                 spaces: vec![],
@@ -287,13 +283,16 @@ mod tests {
                 windows_managed: 0,
             }
         }
+
         fn execute(&self, command: crate::protocol::Command) -> Result<(), String> {
             self.executed.lock().unwrap().push(command);
             Ok(())
         }
+
         fn config(&self) -> Result<serde_json::Value, String> {
             Ok(serde_json::json!({ "fake": true }))
         }
+
         fn apply_config(&self, _: ConfigCommand) -> Result<Result<(), String>, String> {
             Ok(Ok(()))
         }
@@ -313,8 +312,7 @@ mod tests {
             panic!("expected success")
         };
         assert_eq!(data[0]["name"], "space Some(4)");
-        let RiniResponse::Success { data } = handler.handle_request(RiniRequest::GetMetrics)
-        else {
+        let RiniResponse::Success { data } = handler.handle_request(RiniRequest::GetMetrics) else {
             panic!("expected success")
         };
         assert_eq!(data["m"], 1);
@@ -330,11 +328,9 @@ mod tests {
         ));
         assert!(serde_json::from_str::<crate::protocol::WindowId>(r#"{"pid":1,"idx":0}"#).is_err());
         assert!(matches!(
-            handler.handle_request(
-                RiniRequest::GetWindowInfo {
-                    window_id: crate::protocol::WindowId::new(1, 5).unwrap()
-                }
-            ),
+            handler.handle_request(RiniRequest::GetWindowInfo {
+                window_id: crate::protocol::WindowId::new(1, 5).unwrap()
+            }),
             RiniResponse::Success { .. }
         ));
     }
@@ -342,17 +338,12 @@ mod tests {
     #[test]
     fn layout_commands_reach_the_backend_decoded() {
         let (handler, fake) = handler();
-        let response = handler.handle_request(
-            RiniRequest::ExecuteCommand {
-                command: RiniCommand::Layout(LayoutCommand::SwitchToWorkspace(2)),
-            },
-        );
+        let response = handler.handle_request(RiniRequest::ExecuteCommand {
+            command: RiniCommand::Layout(LayoutCommand::SwitchToWorkspace(2)),
+        });
         assert!(matches!(response, RiniResponse::Success { .. }));
-        assert_eq!(
-            fake.executed.lock().unwrap().as_slice(),
-            [crate::protocol::Command::Layout(
-                LayoutCommand::SwitchToWorkspace(2)
-            )]
-        );
+        assert_eq!(fake.executed.lock().unwrap().as_slice(), [
+            crate::protocol::Command::Layout(LayoutCommand::SwitchToWorkspace(2))
+        ]);
     }
 }

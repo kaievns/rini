@@ -55,28 +55,23 @@ mod tests {
 
     use super::*;
 
-    fn ms(n: u64) -> Duration {
-        Duration::from_millis(n)
-    }
+    fn ms(n: u64) -> Duration { Duration::from_millis(n) }
 
     #[test]
     fn the_wait_doubles_from_20ms_to_1s() {
         let start = Instant::now();
         let mut again = AskAgain::new(start, Duration::from_secs(60));
         let waits: Vec<_> = (0..8).map(|_| again.next_wait(start).unwrap()).collect();
-        assert_eq!(
-            waits,
-            [
-                ms(20),
-                ms(40),
-                ms(80),
-                ms(160),
-                ms(320),
-                ms(640),
-                ms(1000),
-                ms(1000)
-            ]
-        );
+        assert_eq!(waits, [
+            ms(20),
+            ms(40),
+            ms(80),
+            ms(160),
+            ms(320),
+            ms(640),
+            ms(1000),
+            ms(1000)
+        ]);
     }
 
     #[test]

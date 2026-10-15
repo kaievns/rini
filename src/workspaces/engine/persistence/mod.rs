@@ -1,4 +1,3 @@
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -6,16 +5,16 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use objc2_core_foundation::CGSize;
+use rini_core::ids::{SpaceId, WindowId, pid_t};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 
 use super::{FloatingManager, LayoutEngine, WorkspaceLayouts};
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleEngine;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::settings::VirtualWorkspaceSettings;
 use crate::workspaces::{FloatingPositionStore, VirtualWorkspaceId, WindowStore, WorkspaceStore};
-use rini_core::ids::SpaceId;
-use rini_core::ids::{WindowId, pid_t};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 static SAVE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -132,9 +131,7 @@ impl PersistenceState {
         self.windows.remove(&window);
     }
 
-    fn pending_len(&self) -> usize {
-        self.pending_windows.len()
-    }
+    fn pending_len(&self) -> usize { self.pending_windows.len() }
 
     fn set_saved_active_space(&mut self, space: Option<SpaceId>) {
         self.saved_active_space = space.map(|space| space.get());

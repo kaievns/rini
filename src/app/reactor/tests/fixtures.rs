@@ -54,10 +54,10 @@ pub fn reactor_with_window_moved_to_space2()
     let wid = WindowId::new(pid, 1);
     let wsid = WindowServerId::new(111);
 
-    reactor.handle_event(space_state_event(
-        vec![screen1, screen2],
-        vec![Some(space1), Some(space2)],
-    ));
+    reactor.handle_event(space_state_event(vec![screen1, screen2], vec![
+        Some(space1),
+        Some(space2),
+    ]));
 
     reactor.add_test_app(pid);
 
@@ -97,10 +97,10 @@ pub fn reactor_with_window_on_space1_two_displays() -> (
     let wid = WindowId::new(pid, 1);
     let wsid = WindowServerId::new(121);
 
-    reactor.handle_event(space_state_event(
-        vec![screen1, screen2],
-        vec![Some(space1), Some(space2)],
-    ));
+    reactor.handle_event(space_state_event(vec![screen1, screen2], vec![
+        Some(space1),
+        Some(space2),
+    ]));
 
     reactor.add_test_app(pid);
 
@@ -183,7 +183,9 @@ pub fn fullscreen_startup_fixture(
     if with_app_rule {
         workspace_cfg.app_rules = vec![crate::windows::domain::rules::WindowRule {
             open_on_workspace: Some("2".into()),
-            ..crate::windows::domain::rules::WindowRule::when(crate::windows::domain::rules::RuleMatch::app("com.testapp1"))
+            ..crate::windows::domain::rules::WindowRule::when(
+                crate::windows::domain::rules::RuleMatch::app("com.testapp1"),
+            )
         }];
     }
 
@@ -234,13 +236,10 @@ pub fn rekey_window(reactor: &mut Reactor, old_wid: WindowId, new_wid: WindowId)
         .clone();
     reactor.discover_test_windows(
         old_wid.pid,
-        vec![(
-            new_wid,
-            WindowInfo {
-                sys_id: old_info.sys_id,
-                ..old_info
-            },
-        )],
+        vec![(new_wid, WindowInfo {
+            sys_id: old_info.sys_id,
+            ..old_info
+        })],
         vec![new_wid],
     );
 }

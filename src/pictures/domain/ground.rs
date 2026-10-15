@@ -31,7 +31,12 @@ pub fn ground(samples: &[[u8; 4]]) -> Option<Ground> {
     let (count, sums) = counts.into_values().max_by_key(|(count, _)| *count)?;
     let [r, g, b, a] = sums.map(|sum| sum as f64 / count as f64 / 255.0);
     let unpremultiplied = |channel: f64| if a > 0.0 { (channel / a).min(1.0) } else { 0.0 };
-    Some(Ground { r: unpremultiplied(r), g: unpremultiplied(g), b: unpremultiplied(b), a })
+    Some(Ground {
+        r: unpremultiplied(r),
+        g: unpremultiplied(g),
+        b: unpremultiplied(b),
+        a,
+    })
 }
 
 #[cfg(test)]
@@ -39,9 +44,14 @@ mod tests {
     use super::*;
 
     fn close(got: Ground, want: Ground) -> bool {
-        [(got.r, want.r), (got.g, want.g), (got.b, want.b), (got.a, want.a)]
-            .iter()
-            .all(|(got, want)| (got - want).abs() < 1.0 / 255.0)
+        [
+            (got.r, want.r),
+            (got.g, want.g),
+            (got.b, want.b),
+            (got.a, want.a),
+        ]
+        .iter()
+        .all(|(got, want)| (got - want).abs() < 1.0 / 255.0)
     }
 
     /// A terminal: a dark background, a little noisy, under lines of light text and a few coloured
@@ -53,7 +63,12 @@ mod tests {
         samples.extend([[220, 220, 220, 255]; 250]);
         samples.extend([[80, 200, 120, 255]; 50]);
         let got = ground(&samples).expect("a ground");
-        let want = Ground { r: 36.0 / 255.0, g: 36.0 / 255.0, b: 44.0 / 255.0, a: 1.0 };
+        let want = Ground {
+            r: 36.0 / 255.0,
+            g: 36.0 / 255.0,
+            b: 44.0 / 255.0,
+            a: 1.0,
+        };
         assert!(close(got, want), "{got:?}");
     }
 
@@ -63,14 +78,28 @@ mod tests {
     fn a_translucent_window_keeps_its_alpha() {
         let a = 0.95;
         let premultiplied = |c: f64| (c * a * 255.0).round() as u8;
-        let background = [premultiplied(0.1), premultiplied(0.1), premultiplied(0.12), 242];
+        let background = [
+            premultiplied(0.1),
+            premultiplied(0.1),
+            premultiplied(0.12),
+            242,
+        ];
         let mut samples = vec![background; 1500];
         samples.extend(vec![[200, 200, 200, 242]; 100]);
         let got = ground(&samples).expect("a ground");
-        let want = Ground { r: 0.1, g: 0.1, b: 0.12, a: 242.0 / 255.0 };
+        let want = Ground {
+            r: 0.1,
+            g: 0.1,
+            b: 0.12,
+            a: 242.0 / 255.0,
+        };
         assert!(close(got, want), "{got:?}");
         let clear = ground(&[[0, 0, 0, 0]; 4]).expect("a ground");
-        assert_eq!(clear, Ground { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }, "clear stays clear");
+        assert_eq!(
+            clear,
+            Ground { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
+            "clear stays clear"
+        );
     }
 
     #[test]

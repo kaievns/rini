@@ -120,7 +120,12 @@ impl FlightScore {
     /// `window`'s tile's leg added again as it plays, so the renderer installs it with the pictures
     /// the tile carries now; nothing for a tile with no leg. The score is as it was.
     pub fn again(&self, window: WindowId) -> Vec<Edit> {
-        self.score.track(Node::Tile(window), Channel::Base).cloned().map(Edit::Add).into_iter().collect()
+        self.score
+            .track(Node::Tile(window), Channel::Base)
+            .cloned()
+            .map(Edit::Add)
+            .into_iter()
+            .collect()
     }
 
     /// The depths a look's edits are drawn at, appended after them.
@@ -309,21 +314,40 @@ mod tests {
     /// no leg.
     #[test]
     fn a_folds_corner_is_when_its_leg_turns_and_its_leg_plays_again_as_it_was() {
-        let fold = (wid(9), rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0), false);
+        let fold = (
+            wid(9),
+            rect(866.0, 35.0, 860.0, 1079.0),
+            rect(3.0, 576.0, 1148.0, 538.0),
+            false,
+        );
         let mut requests = strip(1, 1, 3.0, -863.0);
         requests.push(fold);
         let mut flight = Flight::posed(&requests);
         flight.start();
-        let track = flight.score.score().track(Node::Tile(wid(9)), Channel::Base).expect("a leg").clone();
+        let track = flight
+            .score
+            .score()
+            .track(Node::Tile(wid(9)), Channel::Base)
+            .expect("a leg")
+            .clone();
         let key = tile::corner_key(&track).expect("two steps");
         assert_eq!(flight.score.corner_at(wid(9)), Some(BEGIN + key * PLAIN));
         assert_eq!(flight.score.again(wid(9)), [Edit::Add(track)]);
         assert_eq!(flight.score.leg_start(wid(9)), Some(Size::new(860.0, 1079.0)));
         let turning = flight.score.drawn_size(wid(9), BEGIN + key * PLAIN).expect("drawn");
-        assert!((turning.width - 860.0).abs() < 1e-6 && (turning.height - 538.0).abs() < 1e-6, "{turning:?}");
+        assert!(
+            (turning.width - 860.0).abs() < 1e-6 && (turning.height - 538.0).abs() < 1e-6,
+            "{turning:?}"
+        );
         assert_eq!(flight.score.corner_at(wid(1)), None, "one movement");
         assert!(flight.score.again(wid(42)).is_empty(), "no tile");
-        assert_eq!((flight.score.leg_start(wid(42)), flight.score.drawn_size(wid(42), BEGIN)), (None, None));
+        assert_eq!(
+            (
+                flight.score.leg_start(wid(42)),
+                flight.score.drawn_size(wid(42), BEGIN)
+            ),
+            (None, None)
+        );
     }
 
     /// A merge bends the flight from its own score: every window is drawn where it was, the strip's
@@ -457,9 +481,17 @@ mod tests {
         let stepped = flight.merge_with(&ReflowPlan::empty(), None, Some(step), PLAIN, now);
         assert!(!stepped.delta.moves_anything(), "{:?}", stepped.delta);
         let left = Duration::from_secs_f64(BEGIN + PLAIN - now);
-        assert!(stepped.edits.iter().any(|e| matches!(e, Edit::Add(t) if t.channel() == Channel::Nudge)));
+        assert!(
+            stepped
+                .edits
+                .iter()
+                .any(|e| matches!(e, Edit::Add(t) if t.channel() == Channel::Nudge))
+        );
         let runs_on = flight.score.outlasting(left, now).expect("the step outlasts the clock");
-        assert!(runs_on.as_secs_f64() >= PLAIN * NUDGE_STRETCH - 1e-9, "{runs_on:?}");
+        assert!(
+            runs_on.as_secs_f64() >= PLAIN * NUDGE_STRETCH - 1e-9,
+            "{runs_on:?}"
+        );
         assert_eq!(runs_on, flight.score.remaining(now));
     }
 
@@ -511,7 +543,10 @@ mod tests {
         let snapped = flight.score.snap(wid(1), real, BEGIN + 0.1);
         flight.played(&snapped);
         let node = Node::Tile(wid(1));
-        assert_eq!(flight.score.score().model(node), Some(Value::Rect(installed(real))));
+        assert_eq!(
+            flight.score.score().model(node),
+            Some(Value::Rect(installed(real)))
+        );
         let now = BEGIN + 0.2;
         let drawn = flight.score.score().sample(node, now).expect("drawn");
         let incoming = reflow_plan(

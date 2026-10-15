@@ -68,7 +68,10 @@ impl Pixels {
 
 /// An image's size.
 pub fn image_size(image: &CGImage) -> PixelSize {
-    PixelSize::new(CGImage::width(Some(image)) as f64, CGImage::height(Some(image)) as f64)
+    PixelSize::new(
+        CGImage::width(Some(image)) as f64,
+        CGImage::height(Some(image)) as f64,
+    )
 }
 
 /// A window's pixels, plus how much of the window they cover and how they were taken.
@@ -95,15 +98,11 @@ pub struct LazyGround(Arc<OnceLock<Ground>>);
 
 impl LazyGround {
     /// A ground known without reading the pixels.
-    pub fn known(ground: Ground) -> Self {
-        Self(Arc::new(OnceLock::from(ground)))
-    }
+    pub fn known(ground: Ground) -> Self { Self(Arc::new(OnceLock::from(ground))) }
 }
 
 impl Picture {
-    pub fn is_usable(&self) -> bool {
-        self.coverage.is_usable()
-    }
+    pub fn is_usable(&self) -> bool { self.coverage.is_usable() }
 
     /// The colour its content sits on: read off its body samples the first time it is asked for, on
     /// the asking thread, in the colour space `ground_space` names, the stand-in's when they cannot
@@ -134,7 +133,12 @@ impl Picture {
 
 /// `--n3`, the raised plane of the Okibi dark theme: the same stand-in the switcher draws for a row
 /// with no picture, and the ground of a picture none could be read off.
-pub const STAND_IN_GROUND: Ground = Ground { r: 0.133, g: 0.145, b: 0.153, a: 1.0 };
+pub const STAND_IN_GROUND: Ground = Ground {
+    r: 0.133,
+    g: 0.145,
+    b: 0.153,
+    a: 1.0,
+};
 
 /// The stand-in for a window of `window` size with no picture.
 ///
@@ -165,14 +169,15 @@ pub fn stand_in_image() -> Option<CFRetained<CGImage>> {
     let ctx = rgba_bitmap_context(1, 1)?;
     let Ground { r, g, b, a } = STAND_IN_GROUND;
     CGContext::set_rgb_fill_color(Some(&ctx), r, g, b, a);
-    CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)));
+    CGContext::fill_rect(
+        Some(&ctx),
+        CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)),
+    );
     objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx))
 }
 
 impl HasCoverage for Picture {
-    fn coverage(&self) -> Coverage {
-        self.coverage
-    }
+    fn coverage(&self) -> Coverage { self.coverage }
 }
 
 impl CarriesOver for Picture {
@@ -190,9 +195,7 @@ impl CarriesOver for Picture {
 
     /// A stand-in is drawn and never kept: cached, the switcher would read it as a picture and the next
     /// flight would take it for one.
-    fn cacheable(&self) -> bool {
-        self.source != Route::StandIn
-    }
+    fn cacheable(&self) -> bool { self.source != Route::StandIn }
 }
 
 /// A 1x1 bitmap for tests that need a real `CGImage` but never read its pixels.
@@ -314,9 +317,15 @@ mod tests {
         use objc2_core_graphics::{CGBitmapContextCreateImage, CGContext};
         let ctx = rgba_bitmap_context(80, 40).expect("a context");
         CGContext::set_rgb_fill_color(Some(&ctx), 1.0, 0.0, 0.0, 1.0);
-        CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(40.0, 40.0)));
+        CGContext::fill_rect(
+            Some(&ctx),
+            CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(40.0, 40.0)),
+        );
         CGContext::set_rgb_fill_color(Some(&ctx), 0.25, 0.25, 0.25, 1.0);
-        CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(40.0, 0.0), CGSize::new(40.0, 40.0)));
+        CGContext::fill_rect(
+            Some(&ctx),
+            CGRect::new(CGPoint::new(40.0, 0.0), CGSize::new(40.0, 40.0)),
+        );
         let composite = CGBitmapContextCreateImage(Some(&ctx)).expect("an image");
         let region = |x: f64| Picture {
             image: Pixels::Region {
@@ -331,12 +340,27 @@ mod tests {
         let copy = right.clone();
         assert!(copy.ground.0.get().is_none(), "not read until asked");
         let Ground { r, g, b, a } = right.ground();
-        assert!([r, g, b].iter().all(|c| (c - grey).abs() < 1e-9) && a == 1.0, "its own half: {r} {g} {b} {a}");
-        assert_eq!(copy.ground.0.get(), Some(&right.ground()), "read once for every copy");
-        assert_eq!(region(0.0).ground(), Ground { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, "the other half");
+        assert!(
+            [r, g, b].iter().all(|c| (c - grey).abs() < 1e-9) && a == 1.0,
+            "its own half: {r} {g} {b} {a}"
+        );
+        assert_eq!(
+            copy.ground.0.get(),
+            Some(&right.ground()),
+            "read once for every copy"
+        );
+        assert_eq!(
+            region(0.0).ground(),
+            Ground { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
+            "the other half"
+        );
 
         let stand_in = stand_in_picture(ScreenSize::new(859.0, 1081.0), test_bitmap());
-        assert_eq!(stand_in.ground.0.get(), Some(&STAND_IN_GROUND), "known, never read");
+        assert_eq!(
+            stand_in.ground.0.get(),
+            Some(&STAND_IN_GROUND),
+            "known, never read"
+        );
         assert_eq!(region(400.0).ground(), STAND_IN_GROUND, "nothing to read");
     }
 
@@ -356,7 +380,10 @@ mod tests {
     fn a_region_is_its_rect_of_the_composite() {
         let region = test_region();
         let crop = region.image.bitmap().expect("a crop");
-        assert_eq!((CGImage::width(Some(&crop)), CGImage::height(Some(&crop))), (2, 2));
+        assert_eq!(
+            (CGImage::width(Some(&crop)), CGImage::height(Some(&crop))),
+            (2, 2)
+        );
         assert_eq!(
             region.image.unit_rect(),
             ContentsRect::new(Point::new(0.5, 0.0), Size::new(0.5, 1.0))

@@ -7,10 +7,9 @@
 use std::fmt::Debug;
 
 use objc2_core_foundation::{CGPoint, CGRect};
+use rini_core::ids::{WindowId, WindowServerId, pid_t};
 use rini_runloop::channel as channels;
 use tokio_util::sync::CancellationToken;
-
-use rini_core::ids::{WindowId, WindowServerId, pid_t};
 
 use crate::windows::domain::transaction::TransactionId;
 
@@ -25,9 +24,7 @@ impl AppThreadHandle {
         AppThreadHandle { requests_tx }
     }
 
-    pub fn send(&self, req: Request) -> anyhow::Result<()> {
-        Ok(self.requests_tx.send(req))
-    }
+    pub fn send(&self, req: Request) -> anyhow::Result<()> { Ok(self.requests_tx.send(req)) }
 }
 
 impl Debug for AppThreadHandle {

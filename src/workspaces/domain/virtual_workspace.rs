@@ -1,3 +1,6 @@
+use rini_core::ids::{SpaceId, WindowId, pid_t};
+use rini_ipc::protocol::WorkspaceSelector;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
 use tracing::{error, warn};
@@ -7,15 +10,9 @@ use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleDecision;
 #[cfg(test)]
 use crate::windows::domain::rules::{RuleMatch, WindowRule};
-use crate::workspaces::Direction;
 use crate::workspaces::domain::app_rules::{AppRuleEffects, AppRuleResult};
 use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
-use crate::workspaces::{WindowStore, WindowWorkspaceInfo};
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowId;
-use rini_core::ids::pid_t;
-use rini_ipc::protocol::WorkspaceSelector;
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::workspaces::{Direction, WindowStore, WindowWorkspaceInfo};
 
 new_key_type! {
     pub struct VirtualWorkspaceId;
@@ -139,9 +136,7 @@ pub struct WorkspaceStore {
 }
 
 impl Default for WorkspaceStore {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 impl WorkspaceStore {
@@ -1008,9 +1003,9 @@ pub struct WorkspaceStats {
 
 #[cfg(test)]
 mod tests {
+    use rini_core::ids::{SpaceId, WindowId};
+
     use super::*;
-    use rini_core::ids::SpaceId;
-    use rini_core::ids::WindowId;
 
     fn expect_managed(result: Result<AppRuleResult, WorkspaceError>) -> AppRuleEffects {
         match result {
@@ -1109,14 +1104,12 @@ mod tests {
             Some(ws2_id)
         );
 
-        assert_eq!(
-            manager.workspace_windows(&window_store, space, ws1_id),
-            vec![window1]
-        );
-        assert_eq!(
-            manager.workspace_windows(&window_store, space, ws2_id),
-            vec![window2]
-        );
+        assert_eq!(manager.workspace_windows(&window_store, space, ws1_id), vec![
+            window1
+        ]);
+        assert_eq!(manager.workspace_windows(&window_store, space, ws2_id), vec![
+            window2
+        ]);
     }
 
     #[test]
@@ -1133,10 +1126,9 @@ mod tests {
             manager.workspace_for_window(&window_store, space, window),
             Some(ws1_id)
         );
-        assert_eq!(
-            manager.workspace_windows(&window_store, space, ws1_id),
-            vec![window]
-        );
+        assert_eq!(manager.workspace_windows(&window_store, space, ws1_id), vec![
+            window
+        ]);
 
         assert!(manager.assign_window_to_workspace(&mut window_store, space, window, ws2_id));
         assert_eq!(
@@ -1144,10 +1136,9 @@ mod tests {
             Some(ws2_id)
         );
         assert!(manager.workspace_windows(&window_store, space, ws1_id).is_empty());
-        assert_eq!(
-            manager.workspace_windows(&window_store, space, ws2_id),
-            vec![window]
-        );
+        assert_eq!(manager.workspace_windows(&window_store, space, ws2_id), vec![
+            window
+        ]);
     }
 
     #[test]
@@ -1691,17 +1682,26 @@ mod tests {
 
         settings.workspace_names[1] = "coding".to_string();
 
-        let floating = |line: RuleMatch| WindowRule { open_floating: Some(true), ..WindowRule::when(line) };
+        let floating = |line: RuleMatch| WindowRule {
+            open_floating: Some(true),
+            ..WindowRule::when(line)
+        };
         let to = |workspace: &str, line: RuleMatch| WindowRule {
             open_on_workspace: Some(workspace.into()),
             ..WindowRule::when(line)
         };
-        let foo_titled = |pattern: &str| RuleMatch { title: Some(pattern.parse().unwrap()), ..RuleMatch::app("com.example.foo") };
+        let foo_titled = |pattern: &str| RuleMatch {
+            title: Some(pattern.parse().unwrap()),
+            ..RuleMatch::app("com.example.foo")
+        };
         // In file order, and every rule that applies is applied, so the general rule for an app comes
         // before the specific one that overrides it.
         settings.app_rules = vec![
             floating(RuleMatch::app("com.example.test")),
-            to("coding", RuleMatch { app_name: Some("Calendar".parse().unwrap()), ..RuleMatch::default() }),
+            to("coding", RuleMatch {
+                app_name: Some("Calendar".parse().unwrap()),
+                ..RuleMatch::default()
+            }),
             to("Main", foo_titled("Preferences")),
             to("Communication", foo_titled(r"Dialog\s+\d+")),
             floating(RuleMatch {
@@ -1711,9 +1711,15 @@ mod tests {
             }),
             to("coding", RuleMatch::app("com.example.name")),
             to("Main", RuleMatch::app("com.example.tie")),
-            to("Communication", RuleMatch { title: Some("Editor".parse().unwrap()), ..RuleMatch::app("com.example.tie") }),
+            to("Communication", RuleMatch {
+                title: Some("Editor".parse().unwrap()),
+                ..RuleMatch::app("com.example.tie")
+            }),
             to("Communication", RuleMatch::app("app.zen-browser.zen")),
-            floating(RuleMatch { title: Some("(?i)bitwarden".parse().unwrap()), ..RuleMatch::app("app.zen-browser.zen") }),
+            floating(RuleMatch {
+                title: Some("(?i)bitwarden".parse().unwrap()),
+                ..RuleMatch::app("app.zen-browser.zen")
+            }),
         ];
 
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());

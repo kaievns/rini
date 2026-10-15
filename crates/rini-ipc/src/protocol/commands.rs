@@ -147,6 +147,12 @@ mod tests {
         impl<'de> Deserializer<'de> for &mut Names {
             type Error = de::value::Error;
 
+            serde::forward_to_deserialize_any! {
+                bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes byte_buf
+                option unit unit_struct newtype_struct seq tuple tuple_struct map struct identifier
+                ignored_any
+            }
+
             fn deserialize_any<V: Visitor<'de>>(self, _: V) -> Result<V::Value, Self::Error> {
                 Err(de::Error::custom("not an enum"))
             }
@@ -159,12 +165,6 @@ mod tests {
             ) -> Result<V::Value, Self::Error> {
                 self.0 = variants;
                 Err(de::Error::custom("read"))
-            }
-
-            serde::forward_to_deserialize_any! {
-                bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes byte_buf
-                option unit unit_struct newtype_struct seq tuple tuple_struct map struct identifier
-                ignored_any
             }
         }
         let mut names = Names(&[]);
@@ -196,7 +196,10 @@ mod tests {
         assert_eq!(named(&LayoutCommand::MoveFocus(Direction::Left)), "move_focus");
         let named = |command: &ReactorCommand| -> &'static str { command.into() };
         let window_id = WindowId { pid: 1, idx: 2 };
-        let focus = ReactorCommand::FocusWindow { window_id, window_server_id: None };
+        let focus = ReactorCommand::FocusWindow {
+            window_id,
+            window_server_id: None,
+        };
         assert_eq!(named(&focus), "focus_window");
     }
 }

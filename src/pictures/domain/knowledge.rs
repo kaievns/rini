@@ -103,9 +103,7 @@ impl Learned {
     }
 
     /// The window server reported `window` focused at `at`.
-    pub fn focused(&mut self, window: WindowId, at: Instant) {
-        self.focused = Some((window, at));
-    }
+    pub fn focused(&mut self, window: WindowId, at: Instant) { self.focused = Some((window, at)); }
 
     /// Whether `window` is drawn active in a capture taken at `taken`: it is the window last reported
     /// focused, `ACTIVE_SETTLED` before, and its application holds the keys, `key` the process that
@@ -113,13 +111,13 @@ impl Learned {
     /// window of its own.
     pub fn active(&self, window: WindowId, key: Option<pid_t>, taken: Instant) -> bool {
         key == Some(window.pid)
-            && self.focused.is_some_and(|(focused, at)| focused == window && taken >= at + ACTIVE_SETTLED)
+            && self
+                .focused
+                .is_some_and(|(focused, at)| focused == window && taken >= at + ACTIVE_SETTLED)
     }
 
     /// A window that is gone: its id may be handed to another.
-    pub fn forget(&mut self, window: WindowServerId) {
-        self.windows.remove(&window);
-    }
+    pub fn forget(&mut self, window: WindowServerId) { self.windows.remove(&window); }
 }
 
 /// The side of the square a picture is drawn into to judge its translucency, and the inset of the grid
@@ -183,9 +181,7 @@ pub fn has_material(alone: &[u8], baked: &[u8], stride: usize) -> bool {
 mod tests {
     use super::*;
 
-    fn id(n: u32) -> WindowServerId {
-        WindowServerId::new(n)
-    }
+    fn id(n: u32) -> WindowServerId { WindowServerId::new(n) }
 
     fn known(translucent: Option<bool>, material: Option<bool>) -> Knowledge {
         Knowledge {
@@ -264,32 +260,48 @@ mod tests {
         learned.saw_material(id(2), false, true);
         assert_eq!(learned.get(id(2)).material, Some(false), "measured active");
         assert_eq!(learned.get(id(2)).after_alpha(false), Call::Alpha);
-        assert_eq!(learned.get(id(2)).after_alpha(true), Call::Alpha, "and never again");
+        assert_eq!(
+            learned.get(id(2)).after_alpha(true),
+            Call::Alpha,
+            "and never again"
+        );
 
         learned.saw_alpha(id(3), false);
         learned.saw_material(id(3), true, false);
-        assert_eq!(learned.get(id(3)).material, Some(true), "a material found inactive is found");
+        assert_eq!(
+            learned.get(id(3)).material,
+            Some(true),
+            "a material found inactive is found"
+        );
     }
 
-    fn wid(idx: u32) -> WindowId {
-        WindowId::new(7, idx)
-    }
+    fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
 
     /// Active is the window last reported focused, `ACTIVE_SETTLED` after the report, with its
     /// application holding the keys: a capture sooner can show its material still flat, and a panel
     /// of another application taking the keys reports no window.
     #[test]
-    fn a_window_is_active_once_settled_after_its_focus_report_while_its_application_holds_the_keys() {
+    fn a_window_is_active_once_settled_after_its_focus_report_while_its_application_holds_the_keys()
+    {
         let at = Instant::now();
         let mut learned = Learned::default();
         let settled = at + ACTIVE_SETTLED;
         assert!(!learned.active(wid(1), Some(7), settled), "no report yet");
         learned.focused(wid(1), at);
         assert!(learned.active(wid(1), Some(7), settled));
-        assert!(!learned.active(wid(1), Some(7), settled - Duration::from_millis(1)), "too soon");
-        assert!(!learned.active(wid(1), Some(8), settled), "another application holds the keys");
+        assert!(
+            !learned.active(wid(1), Some(7), settled - Duration::from_millis(1)),
+            "too soon"
+        );
+        assert!(
+            !learned.active(wid(1), Some(8), settled),
+            "another application holds the keys"
+        );
         assert!(!learned.active(wid(1), None, settled));
-        assert!(!learned.active(wid(2), Some(7), settled), "another window of the application");
+        assert!(
+            !learned.active(wid(2), Some(7), settled),
+            "another window of the application"
+        );
         learned.focused(wid(2), at);
         assert!(!learned.active(wid(1), Some(7), settled), "focus moved on");
     }
@@ -399,9 +411,18 @@ mod tests {
             baked
         };
         let whole = 0..MATERIAL_SIDE;
-        assert!(has_material(&alone, &with(6..17, whole.clone(), [76, 76, 75]), stride), "a sidebar 8 levels off");
-        assert!(!has_material(&alone, &with(6..17, whole, [80, 80, 79]), stride), "4 levels, as Messages' at most");
-        assert!(!has_material(&alone, &with(6..10, 6..11, [76, 76, 75]), stride), "20 samples of 2704");
+        assert!(
+            has_material(&alone, &with(6..17, whole.clone(), [76, 76, 75]), stride),
+            "a sidebar 8 levels off"
+        );
+        assert!(
+            !has_material(&alone, &with(6..17, whole, [80, 80, 79]), stride),
+            "4 levels, as Messages' at most"
+        );
+        assert!(
+            !has_material(&alone, &with(6..10, 6..11, [76, 76, 75]), stride),
+            "20 samples of 2704"
+        );
     }
 
     /// Messages' glass sidebar samples its own content, so its picture alone is the screen and the

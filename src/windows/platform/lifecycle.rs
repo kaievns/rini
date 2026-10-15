@@ -1,13 +1,13 @@
 use std::future;
 
 use objc2_app_kit::NSRunningApplication;
+use rini_core::ids::pid_t;
 use tracing::{debug, warn};
 
 use crate::windows::domain::info::AppInfo;
 use crate::windows::platform::app::NSRunningApplicationExt;
 use crate::windows::platform::carbon::{CarbonListener, Event, event_type};
 use crate::windows::platform::process::{ProcessSerialNumber, pid_for_psn};
-use rini_core::ids::pid_t;
 
 const NO_ERR: i32 = 0;
 
@@ -18,7 +18,6 @@ const K_EVENT_APP_FRONT_SWITCHED: u32 = 7;
 
 const K_EVENT_PARAM_PROCESS_ID: u32 = 1_886_613_024; // 'psn '
 const TYPE_PROCESS_SERIAL_NUMBER: u32 = 1_886_613_024; // 'psn '
-
 
 fn app_info_for_pid(pid: pid_t) -> AppInfo {
     if let Some(app) = NSRunningApplication::with_process_id(pid) {
@@ -94,7 +93,5 @@ impl ProcessActor {
         Self { _listener: listener }
     }
 
-    pub async fn run(self) {
-        future::pending::<()>().await;
-    }
+    pub async fn run(self) { future::pending::<()>().await; }
 }

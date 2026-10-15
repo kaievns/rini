@@ -9,33 +9,23 @@
 //! `super::Reactor::dispatch_workflow` and are not here.
 
 use objc2_core_foundation::CGRect;
+use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
+use tracing::{debug, trace};
 
-use rini_core::ids::{SpaceId, WindowId, WindowServerId};
-
-use crate::displays::domain::topology::SpaceEventKind;
+use super::events::{
+    EventOutcome, app as application_workflow, drag as interaction_workflow,
+    space as topology_workflow, system as system_workflow, window as window_workflow,
+};
+use super::{DragState, Reactor};
+use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
 use crate::input::event::LeftPress;
 use crate::windows::domain::info::AppInfo;
+use crate::windows::domain::request::{Quiet, Request};
 use crate::windows::domain::transaction::{Requested, TransactionId};
 use crate::windows::domain::zoom::{self, Zoom};
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server;
-
-use tracing::{debug, trace};
-
-use rini_core::ids::pid_t;
-
-use crate::displays::domain::topology::ForwardedSpaceState;
-use crate::windows::domain::request::{Quiet, Request};
 use crate::workspaces::LayoutEvent;
-
-use super::DragState;
-use super::events::EventOutcome;
-use super::events::app as application_workflow;
-use super::events::drag as interaction_workflow;
-use super::events::space as topology_workflow;
-use super::events::system as system_workflow;
-use super::events::window as window_workflow;
-use super::Reactor;
 
 /// The five events that move the refresh quarantine: sleep, wake, session activation and display
 /// churn. Wake also has the bars read the clock again. None of them is a focus edge, so focus

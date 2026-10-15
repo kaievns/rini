@@ -3,15 +3,14 @@
 //! One arm per command, lifted out of `handle_command` unchanged. `impl LayoutEngine` across modules
 //! is the pattern `engine/persistence/` already uses.
 
-use rustc_hash::FxHashMap as HashMap;
-
 use objc2_core_foundation::CGPoint;
 use rini_core::ids::SpaceId;
+use rustc_hash::FxHashMap as HashMap;
+use tracing::debug;
 
 use super::CommandTarget;
 use crate::workspaces::domain::workspace_focus;
 use crate::workspaces::engine::{EventResponse, LayoutCommand, LayoutEngine, WindowStore};
-use tracing::debug;
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_focus_command(

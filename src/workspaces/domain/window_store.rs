@@ -4,11 +4,10 @@
 //! the two can never disagree.
 use std::ops::{Deref, DerefMut};
 
+use rini_core::ids::{SpaceId, WindowId, WindowServerId};
+
 use crate::windows::domain::catalogue::{NativeFullscreenRecord, WindowCatalogue};
 use crate::windows::domain::state::WindowState;
-use rini_core::ids::SpaceId;
-use rini_core::ids::{WindowId, WindowServerId};
-
 use crate::workspaces::VirtualWorkspaceId;
 pub use crate::workspaces::domain::assignment::{WindowWorkspaceInfo, WorkspaceAssignments};
 
@@ -20,15 +19,12 @@ pub struct WindowStore {
 
 impl Deref for WindowStore {
     type Target = WindowCatalogue;
-    fn deref(&self) -> &WindowCatalogue {
-        &self.catalogue
-    }
+
+    fn deref(&self) -> &WindowCatalogue { &self.catalogue }
 }
 
 impl DerefMut for WindowStore {
-    fn deref_mut(&mut self) -> &mut WindowCatalogue {
-        &mut self.catalogue
-    }
+    fn deref_mut(&mut self) -> &mut WindowCatalogue { &mut self.catalogue }
 }
 
 impl WindowStore {
@@ -92,13 +88,9 @@ impl WindowStore {
         self.assignments.iter()
     }
 
-    pub fn spaces_with_assignments(&self) -> Vec<SpaceId> {
-        self.assignments.spaces()
-    }
+    pub fn spaces_with_assignments(&self) -> Vec<SpaceId> { self.assignments.spaces() }
 
-    pub fn workspace_assignment_count(&self) -> usize {
-        self.assignments.len()
-    }
+    pub fn workspace_assignment_count(&self) -> usize { self.assignments.len() }
 
     // ---- catalogue operations that must keep the assignment in step
 
@@ -192,20 +184,14 @@ mod tests {
         let from = WindowId::new(1, 1);
         let to = WindowId::new(1, 2);
 
-        window_store.assign_window_to_workspace(
-            from,
-            WindowWorkspaceInfo {
-                space,
-                workspace_id: source_workspace,
-            },
-        );
-        window_store.assign_window_to_workspace(
-            to,
-            WindowWorkspaceInfo {
-                space,
-                workspace_id: target_workspace,
-            },
-        );
+        window_store.assign_window_to_workspace(from, WindowWorkspaceInfo {
+            space,
+            workspace_id: source_workspace,
+        });
+        window_store.assign_window_to_workspace(to, WindowWorkspaceInfo {
+            space,
+            workspace_id: target_workspace,
+        });
 
         window_store.transfer_persistent_window_metadata(from, to);
 

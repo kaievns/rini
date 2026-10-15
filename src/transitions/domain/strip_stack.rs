@@ -80,9 +80,7 @@ mod tests {
         Rect::new(Point::new(x, y), Size::new(w, h))
     }
 
-    fn origin() -> ScreenPoint {
-        ScreenPoint::origin()
-    }
+    fn origin() -> ScreenPoint { ScreenPoint::origin() }
 
     /// The switch is vertical, so the destination row has to arrive already scrolled to the window being
     /// switched to. A target outside this band means a sideways pan has to follow, which is the artefact.

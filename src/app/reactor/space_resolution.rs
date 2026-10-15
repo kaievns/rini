@@ -79,9 +79,7 @@ pub(crate) fn geometry_only(c: &Candidates) -> Option<SpaceId> {
 }
 
 /// The best answer available, for a window that is already tracked.
-pub(crate) fn best(c: &Candidates) -> Option<SpaceId> {
-    authoritative(c).or_else(|| placement(c))
-}
+pub(crate) fn best(c: &Candidates) -> Option<SpaceId> { authoritative(c).or_else(|| placement(c)) }
 
 /// Where a newly discovered window belongs.
 ///
@@ -99,9 +97,7 @@ pub(crate) fn discovery(c: &Candidates) -> Option<SpaceId> {
 mod tests {
     use super::*;
 
-    fn space(n: u64) -> Option<SpaceId> {
-        Some(SpaceId::new(n))
-    }
+    fn space(n: u64) -> Option<SpaceId> { Some(SpaceId::new(n)) }
 
     /// The one answer that is not a precedence. A parked window whose server-reported space differs
     /// has been moved by something else since it was parked, and that move is the newer fact.

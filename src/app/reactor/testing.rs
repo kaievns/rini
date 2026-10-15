@@ -183,7 +183,9 @@ impl Reactor {
     /// Where the active workspace's strip had each window at the last pass.
     pub fn test_strip_layout(&self, space: SpaceId) -> Vec<(WindowId, CGRect)> {
         let workspace = self.layout_manager.layout_engine.active_workspace(space);
-        workspace.and_then(|workspace| self.last_strip_layout.get(&(space, workspace)).cloned()).unwrap_or_default()
+        workspace
+            .and_then(|workspace| self.last_strip_layout.get(&(space, workspace)).cloned())
+            .unwrap_or_default()
     }
 
     /// Wire in the rest windows, returning what they are sent.
@@ -210,16 +212,12 @@ impl Reactor {
     }
 
     pub fn handle_test_layout_command(&mut self, command: LayoutCommand) {
-        self.handle_event(Event::Command(crate::app::reactor::Command::Layout(
-            command,
-        )));
+        self.handle_event(Event::Command(crate::app::reactor::Command::Layout(command)));
     }
 
     pub(crate) fn dispatch_test_layout_command(&mut self, command: LayoutCommand) -> EventOutcome {
-        self.dispatch_workflow(Event::Command(crate::app::reactor::Command::Layout(
-            command,
-        )))
-        .expect("test layout command should dispatch")
+        self.dispatch_workflow(Event::Command(crate::app::reactor::Command::Layout(command)))
+            .expect("test layout command should dispatch")
     }
 
     pub fn mark_test_window_visible_in_space(&mut self, wsid: WindowServerId, space: SpaceId) {
@@ -237,10 +235,7 @@ impl Reactor {
     }
 
     /// Install app rules and rebuild the rule engine, as a config reload does.
-    pub fn set_test_app_rules(
-        &mut self,
-        rules: Vec<crate::windows::domain::rules::WindowRule>,
-    ) {
+    pub fn set_test_app_rules(&mut self, rules: Vec<crate::windows::domain::rules::WindowRule>) {
         self.config.virtual_workspaces.app_rules = rules;
         let settings = self.config.virtual_workspaces.clone();
         self.layout_manager.layout_engine.update_virtual_workspace_settings(&settings);
@@ -252,16 +247,13 @@ impl Reactor {
 
     pub fn add_test_app_with_info(&mut self, pid: pid_t, bundle_id: &str, name: &str) {
         let (app_tx, _app_rx) = channels::channel();
-        self.app_manager.apps.insert(
-            pid,
-            super::AppState {
-                info: AppInfo {
-                    bundle_id: Some(bundle_id.to_string()),
-                    localized_name: Some(name.to_string()),
-                },
-                handle: AppThreadHandle::from_sender(app_tx),
+        self.app_manager.apps.insert(pid, super::AppState {
+            info: AppInfo {
+                bundle_id: Some(bundle_id.to_string()),
+                localized_name: Some(name.to_string()),
             },
-        );
+            handle: AppThreadHandle::from_sender(app_tx),
+        });
     }
 
     pub fn add_test_window(
@@ -323,9 +315,9 @@ impl Reactor {
         sys_id: Option<WindowServerId>,
         is_manageable: bool,
     ) {
-        self.state.windows.insert_window(
-            wid,
-            crate::windows::domain::state::WindowState {
+        self.state
+            .windows
+            .insert_window(wid, crate::windows::domain::state::WindowState {
                 info: WindowInfo {
                     is_standard: true,
                     is_root: true,
@@ -345,8 +337,7 @@ impl Reactor {
                 frame_monotonic: frame,
                 is_manageable,
                 ignore_app_rule: false,
-            },
-        );
+            });
     }
 }
 
@@ -375,7 +366,9 @@ pub fn test_reactor_with_workspace_count(count: usize) -> Reactor {
 pub type PicturesAsked = channels::Receiver<crate::pictures::platform::service::Command>;
 
 /// Everything the test pictures service was asked since it was last read.
-pub fn pictures_asked(asked: &mut PicturesAsked) -> Vec<crate::pictures::platform::service::Command> {
+pub fn pictures_asked(
+    asked: &mut PicturesAsked,
+) -> Vec<crate::pictures::platform::service::Command> {
     std::iter::from_fn(|| asked.try_recv().ok().map(|(_, command)| command)).collect()
 }
 
@@ -535,9 +528,7 @@ pub fn make_window_info(
     }
 }
 
-pub fn make_windows(count: usize) -> Vec<WindowInfo> {
-    (1..=count).map(make_window).collect()
-}
+pub fn make_windows(count: usize) -> Vec<WindowInfo> { (1..=count).map(make_window).collect() }
 
 pub struct Apps {
     tx: channels::Sender<Request>,
@@ -589,13 +580,10 @@ impl Apps {
             .collect();
 
         for (id, info) in (1..).map(|idx| WindowId::new(pid, idx)).zip(&windows) {
-            self.windows.insert(
-                id,
-                TestWindowState {
-                    frame: info.frame,
-                    ..Default::default()
-                },
-            );
+            self.windows.insert(id, TestWindowState {
+                frame: info.frame,
+                ..Default::default()
+            });
         }
         let handle = AppThreadHandle::from_sender(self.tx.clone());
         vec![Event::ApplicationLaunched {
@@ -757,9 +745,7 @@ impl Apps {
     }
 }
 
-pub fn test_context() -> (Apps, Reactor) {
-    (Apps::new(), test_reactor())
-}
+pub fn test_context() -> (Apps, Reactor) { (Apps::new(), test_reactor()) }
 
 pub fn test_context_with_workspace_count(count: usize) -> (Apps, Reactor) {
     let mut settings = crate::app::config::VirtualWorkspaceSettings::default();

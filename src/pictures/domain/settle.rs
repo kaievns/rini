@@ -58,9 +58,18 @@ mod tests {
         for value in half.iter_mut().skip(16) {
             *value = 0; // the old rows at the top of a blank surface
         }
-        assert!(!repaint_settled(None, &half), "a first capture, however it differs from before");
-        assert!(!repaint_settled(Some(&half), &full), "half-painted, then painted");
+        assert!(
+            !repaint_settled(None, &half),
+            "a first capture, however it differs from before"
+        );
+        assert!(
+            !repaint_settled(Some(&half), &full),
+            "half-painted, then painted"
+        );
         assert!(repaint_settled(Some(&full), &full), "painted twice in a row");
-        assert!(repaint_settled(Some(&half), &half), "two alike, whatever they show");
+        assert!(
+            repaint_settled(Some(&half), &half),
+            "two alike, whatever they show"
+        );
     }
 }

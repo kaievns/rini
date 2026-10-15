@@ -7,7 +7,6 @@ pub mod domain;
 pub mod engine;
 pub mod settings;
 
-pub use crate::layout::{LayoutId, ScrollingLayoutSystem};
 pub use domain::app_rules::{AppRuleEffects, AppRuleResult};
 pub use domain::floating::FloatingManager;
 pub use domain::floating_position_store::FloatingPositionStore;
@@ -17,3 +16,5 @@ pub use domain::window_store::{WindowStore, WindowWorkspaceInfo};
 pub use domain::workspaces::WorkspaceLayouts;
 pub use engine::{EventResponse, LayoutCommand, LayoutEngine, LayoutEvent};
 pub use rini_ipc::protocol::Direction;
+
+pub use crate::layout::{LayoutId, ScrollingLayoutSystem};

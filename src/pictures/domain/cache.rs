@@ -64,7 +64,8 @@ impl<T: HasCoverage + CarriesOver> PictureCache<T> {
     pub fn takes(&self, window: WindowId, picture: &T) -> bool {
         picture.cacheable()
             && self.entries.get(&window).is_none_or(|existing| {
-                should_replace(Some(existing.coverage()), picture.coverage()) && !existing.keeps_over(picture)
+                should_replace(Some(existing.coverage()), picture.coverage())
+                    && !existing.keeps_over(picture)
             })
     }
 
@@ -86,7 +87,12 @@ impl<T: HasCoverage + CarriesOver> PictureCache<T> {
 
     /// Puts `with` in place of what is held of `window`, if what is held is still what `still` says:
     /// a copy made off the lock replaces only the picture it was made of, never a newer one.
-    pub fn replace_if(&mut self, window: WindowId, still: impl FnOnce(&T) -> bool, with: T) -> bool {
+    pub fn replace_if(
+        &mut self,
+        window: WindowId,
+        still: impl FnOnce(&T) -> bool,
+        with: T,
+    ) -> bool {
         match self.entries.get_mut(&window) {
             Some(held) if still(held) => {
                 *held = with;
@@ -122,7 +128,12 @@ impl<T: HasCoverage + CarriesOver> PictureCache<T> {
     }
 
     /// Puts `with` in place of `window`'s focused look, if it is still what `still` says.
-    pub fn replace_focused_if(&mut self, window: WindowId, still: impl FnOnce(&T) -> bool, with: T) -> bool {
+    pub fn replace_focused_if(
+        &mut self,
+        window: WindowId,
+        still: impl FnOnce(&T) -> bool,
+        with: T,
+    ) -> bool {
         match self.focused.get_mut(&window) {
             Some(held) if still(held) => {
                 *held = with;
@@ -261,7 +272,10 @@ mod tests {
         let held = coverage((859.0, 1081.0), (859.0, 1081.0));
         cache.insert(wid(1), held);
         let copy = coverage((859.0, 1081.0), (859.5, 1081.0));
-        assert!(!cache.replace_if(wid(1), |now| *now != held, copy), "replaced meanwhile");
+        assert!(
+            !cache.replace_if(wid(1), |now| *now != held, copy),
+            "replaced meanwhile"
+        );
         assert_eq!(cache.get(wid(1)), Some(&held));
         assert!(cache.replace_if(wid(1), |now| *now == held, copy));
         assert_eq!(cache.get(wid(1)), Some(&copy));
@@ -276,7 +290,10 @@ mod tests {
         let look = coverage((859.0, 1081.0), (859.0, 1081.0));
         cache.keep_focused(wid(1), look);
         assert_eq!(cache.focused(wid(1)), Some(&look));
-        assert!(!cache.drop_focused_if(wid(1), |held| *held != look), "not the look checked");
+        assert!(
+            !cache.drop_focused_if(wid(1), |held| *held != look),
+            "not the look checked"
+        );
         assert!(cache.drop_focused_if(wid(1), |held| *held == look));
         assert!(cache.focused(wid(1)).is_none());
 

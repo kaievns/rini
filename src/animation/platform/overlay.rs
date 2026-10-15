@@ -24,8 +24,8 @@ use objc2_quartz_core::{
 };
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
-    ContentsRect, FromCg, GroupRect, OverlayPoint, OverlayRect, Respace, ScreenPoint, ScreenRect, TileSize,
-    TileRect, ToCg,
+    ContentsRect, FromCg, GroupRect, OverlayPoint, OverlayRect, Respace, ScreenPoint, ScreenRect,
+    TileRect, TileSize, ToCg,
 };
 use rini_runloop::turns;
 
@@ -136,9 +136,7 @@ fn container_key(channel: Channel) -> &'static str {
 }
 
 /// The media clock Core Animation's begin times are on.
-fn media_now() -> f64 {
-    objc2_quartz_core::CACurrentMediaTime()
-}
+fn media_now() -> f64 { objc2_quartz_core::CACurrentMediaTime() }
 
 /// A curve in Core Animation form, from the four numbers a `Leg` and the score evaluate, so the
 /// render server runs the same curve.
@@ -219,7 +217,12 @@ fn turning(
         return animation(track, key_path, after);
     };
     let keys = track.keys();
-    let values = [before(keys[0].1), before(keys[1].1), after(keys[1].1), after(keys[2].1)];
+    let values = [
+        before(keys[0].1),
+        before(keys[1].1),
+        after(keys[1].1),
+        after(keys[2].1),
+    ];
     let times = [0.0, corner, corner, 1.0].map(NSNumber::numberWithDouble);
     let curves = [track.curves()[0], Curve::Linear, track.curves()[1]].map(curve_function);
     let keyframes = CAKeyframeAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
@@ -272,9 +275,7 @@ fn number_object(number: f64) -> Retained<AnyObject> {
 /// A Core Foundation value, a path, a picture or a colour, as an object: a `CGPath`, `CGImage` or
 /// `CGColor` pointer handed to `msg_send!` encodes as a struct pointer, which objc2 refuses for
 /// `setFromValue:` and `setValues:` in any build with debug assertions.
-fn cf_object(value: &objc2_core_foundation::CFType) -> Retained<AnyObject> {
-    Retained::from(value)
-}
+fn cf_object(value: &objc2_core_foundation::CFType) -> Retained<AnyObject> { Retained::from(value) }
 
 fn as_point(value: Value) -> OverlayPoint {
     match value {
@@ -376,9 +377,7 @@ const GROUND_COLOUR_KEY: &str = "rini.piece.ground";
 /// A tile's track as the resize its decorations play: each value mapped from the size its key holds.
 struct TileResize<'a>(&'a Track);
 
-fn size_of(value: Value) -> TileSize {
-    as_frame(value).size.respace()
-}
+fn size_of(value: Value) -> TileSize { as_frame(value).size.respace() }
 
 impl Resize for TileResize<'_> {
     fn point(
@@ -413,9 +412,7 @@ impl Resize for TileResize<'_> {
         animation(self.0, key_path, |v| cf_object(&value(size_of(v))))
     }
 
-    fn changes(&self, f: impl Fn(TileSize) -> f64) -> bool {
-        changes(self.0, |v| f(size_of(v)))
-    }
+    fn changes(&self, f: impl Fn(TileSize) -> f64) -> bool { changes(self.0, |v| f(size_of(v))) }
 }
 
 /// Installs a tile's track on every layer that draws the tile, each value mapped from the frame
@@ -437,8 +434,9 @@ fn install_tile_track(tile: &mut Tile, track: &Track, corner: Option<Corner>) ->
         remove_resize(tile);
         return None;
     }
-    let position =
-        animation(track, "position", |value| point_object(as_frame(value).origin.to_cg()));
+    let position = animation(track, "position", |value| {
+        point_object(as_frame(value).origin.to_cg())
+    });
     for layer in tile.layers() {
         add_under(layer, &position, TILE_ANIMATION_KEY);
     }
@@ -460,7 +458,11 @@ fn install_tile_track(tile: &mut Tile, track: &Track, corner: Option<Corner>) ->
     tile.decorations.install_resize(&resize);
     let radius = |size: TileSize| tile.decorations.corner_at(size);
     if resize.changes(radius) {
-        add_under(&tile.picture, &resize.number("cornerRadius", radius), PICTURE_CORNER_KEY);
+        add_under(
+            &tile.picture,
+            &resize.number("cornerRadius", radius),
+            PICTURE_CORNER_KEY,
+        );
     } else {
         remove_under(&tile.picture, &[PICTURE_CORNER_KEY]);
     }
@@ -519,13 +521,21 @@ fn install_crop_grid(tile: &mut Tile, track: &Track, corner: Option<Corner>) -> 
     };
     let after = (picture, tile.region);
     let before = turn.map_or(after, |(corner, _)| {
-        (corner.before.coverage.covered.respace(), corner.before.image.unit_rect())
+        (
+            corner.before.coverage.covered.respace(),
+            corner.before.image.unit_rect(),
+        )
     });
     let laid = |(picture, _): (TileSize, ContentsRect), value: Value| {
         crop(picture, as_frame(value).size.respace(), tile.anchors)
     };
     for (index, layer) in grid.pieces.iter().enumerate() {
-        install_frame(layer, track, |at, value| laid(at, value).pieces[index].frame, (before, after));
+        install_frame(
+            layer,
+            track,
+            |at, value| laid(at, value).pieces[index].frame,
+            (before, after),
+        );
         let contents = |at: (TileSize, ContentsRect)| {
             move |value| rect_object(within(at.1, laid(at, value).pieces[index].contents).to_cg())
         };
@@ -533,7 +543,12 @@ fn install_crop_grid(tile: &mut Tile, track: &Track, corner: Option<Corner>) -> 
         add_under(layer, &contents, PIECE_CONTENTS_KEY);
     }
     for (index, layer) in grid.ground.iter().enumerate() {
-        install_frame(layer, track, |at, value| laid(at, value).ground[index], (before, after));
+        install_frame(
+            layer,
+            track,
+            |at, value| laid(at, value).ground[index],
+            (before, after),
+        );
     }
     let Some((corner, key)) = turn else { return ground };
     let (before, after) = (contents_of(corner.before), contents_of(corner.after));
@@ -547,7 +562,13 @@ fn install_crop_grid(tile: &mut Tile, track: &Track, corner: Option<Corner>) -> 
         return ground;
     };
     for layer in &grid.ground {
-        let cut = switch(track, key, "backgroundColor", cf_object(&before), cf_object(&after));
+        let cut = switch(
+            track,
+            key,
+            "backgroundColor",
+            cf_object(&before),
+            cf_object(&after),
+        );
         add_under(layer, &cut, GROUND_COLOUR_KEY);
     }
     ground
@@ -566,8 +587,15 @@ fn install_frame<P: Copy>(
         let frame = &frame;
         move |value| point_object(frame(at, value).origin.to_cg())
     };
-    add_under(layer, &turning(track, "position", position(before), position(after)), PIECE_MOVE_KEY);
-    let sizes = track.keys().iter().flat_map(|(_, value)| [frame(before, *value), frame(after, *value)]);
+    add_under(
+        layer,
+        &turning(track, "position", position(before), position(after)),
+        PIECE_MOVE_KEY,
+    );
+    let sizes = track
+        .keys()
+        .iter()
+        .flat_map(|(_, value)| [frame(before, *value), frame(after, *value)]);
     let mut sizes = sizes.map(|laid| laid.size);
     let first = sizes.next();
     if sizes.any(|size| Some(size) != first) {
@@ -575,7 +603,11 @@ fn install_frame<P: Copy>(
             let frame = &frame;
             move |value| rect_object(CGRect::new(origin, frame(at, value).size.to_cg()))
         };
-        add_under(layer, &turning(track, "bounds", bounds(before), bounds(after)), PIECE_SIZE_KEY);
+        add_under(
+            layer,
+            &turning(track, "bounds", bounds(before), bounds(after)),
+            PIECE_SIZE_KEY,
+        );
     } else {
         remove_under(layer, &[PIECE_SIZE_KEY]);
     }
@@ -672,7 +704,10 @@ pub struct TileOverlay {
 /// A window's number as the window server's id; `None` for a window it has not numbered, which
 /// AppKit gives as 0 or less.
 fn numbered(number: isize) -> Option<WindowServerId> {
-    u32::try_from(number).ok().filter(|number| *number != 0).map(WindowServerId::new)
+    u32::try_from(number)
+        .ok()
+        .filter(|number| *number != 0)
+        .map(WindowServerId::new)
 }
 
 /// The overlay window's rect: the display below the bar's band. In CoreGraphics coordinates, y grows
@@ -868,7 +903,10 @@ impl TileOverlay {
         self.tree.size = frame.size;
         self.tree.scale = scale;
         if let Some(view) = self.window.contentView() {
-            view.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), window_rect(frame, top_band).size));
+            view.setFrame(CGRect::new(
+                CGPoint::new(0.0, 0.0),
+                window_rect(frame, top_band).size,
+            ));
         }
         self.tree.root.setFrame(canvas_rect(frame, top_band));
         self.tree.root.setContentsScale(scale);
@@ -876,15 +914,11 @@ impl TileOverlay {
 
     /// Frame zero: the tree rebuilt as `score` has it, every tile dressed from `tiles`, and the
     /// replica `score`. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
-    pub fn pose(&mut self, score: &Score, tiles: &[OverlayTile]) {
-        self.tree.pose(score, tiles);
-    }
+    pub fn pose(&mut self, score: &Score, tiles: &[OverlayTile]) { self.tree.pose(score, tiles); }
 
     /// Plays `edits`: each folded into the replica, then carried out on the layers. A tile first seen
     /// is made and dressed from `tiles`.
-    pub fn play(&mut self, edits: &[Edit], tiles: &[OverlayTile]) {
-        self.tree.play(edits, tiles);
-    }
+    pub fn play(&mut self, edits: &[Edit], tiles: &[OverlayTile]) { self.tree.play(edits, tiles); }
 
     /// Swaps a fresh picture into a tile mid-flight, `clipped` to its corner or whole, leaving its
     /// movement alone: a crop-drawn tile on a track of its own has its grid re-keyed along that
@@ -906,9 +940,7 @@ impl TileOverlay {
 
     /// Paints a tile's ring and border as `worn` has them where the flight now ends, a hard cut, on
     /// the bands it was dressed with. For a merge moving focus mid-flight.
-    pub fn set_tile_worn(&mut self, window: WindowId, worn: Worn) {
-        self.tree.wear(window, worn);
-    }
+    pub fn set_tile_worn(&mut self, window: WindowId, worn: Worn) { self.tree.wear(window, worn); }
 
     /// Logs where each container is presented beside where the replica draws it, and the gap
     /// between them, under `TRACE_TARGET` at trace level: the measurement behind "One
@@ -980,7 +1012,8 @@ impl TileOverlay {
         let holes: Vec<CGRect> = ends
             .iter()
             .flat_map(|&(end, outset)| {
-                std::iter::once(hole_in(end)).chain((outset > 0.0).then(|| band_hole_in(end, outset)))
+                std::iter::once(hole_in(end))
+                    .chain((outset > 0.0).then(|| band_hole_in(end, outset)))
             })
             .map(|hole| in_view(hole.to_cg(), self.top_band))
             .collect();
@@ -1008,7 +1041,11 @@ impl TileOverlay {
         if holed == self.clear {
             return;
         }
-        let colour = if holed { NSColor::clearColor() } else { NSColor::blackColor() };
+        let colour = if holed {
+            NSColor::clearColor()
+        } else {
+            NSColor::blackColor()
+        };
         self.window.setBackgroundColor(Some(&colour));
         turns::changed("overlay.background");
         self.clear = holed;
@@ -1335,7 +1372,10 @@ impl Tree {
     /// dressed with: a band's layer is made only as a tile is dressed.
     fn wear(&mut self, window: WindowId, worn: Worn) {
         if let Some(entry) = self.tile_layers.get_mut(&window) {
-            entry.worn = Worn { decoration: entry.worn.decoration, ..worn };
+            entry.worn = Worn {
+                decoration: entry.worn.decoration,
+                ..worn
+            };
             entry.decorations.show(entry.worn.style(entry.focused));
         }
     }
@@ -1353,7 +1393,13 @@ impl Tree {
         let playing =
             self.replica.track(node, Channel::Base).filter(|track| track.at(at).is_some());
         clip_corners(&entry.picture, clipped);
-        self.crops.add(swap_onto(entry, picture, frame.size.respace(), playing, self.scale));
+        self.crops.add(swap_onto(
+            entry,
+            picture,
+            frame.size.respace(),
+            playing,
+            self.scale,
+        ));
     }
 
     /// What the drain played since the last take spent on crop-drawn tiles, counted again from none.
@@ -1362,7 +1408,10 @@ impl Tree {
     /// The desktop drawn behind the tiles, at its own covered size so it stays in register with the
     /// real one.
     fn set_backdrop(&mut self, snapshot: &Picture) {
-        self.backdrop.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), snapshot.coverage.covered.to_cg()));
+        self.backdrop.setFrame(CGRect::new(
+            CGPoint::new(0.0, 0.0),
+            snapshot.coverage.covered.to_cg(),
+        ));
         self.backdrop.setContentsScale(self.scale);
         set_layer_contents(&self.backdrop, snapshot);
         self.backdrop.setHidden(false);
@@ -1474,9 +1523,7 @@ fn cut_onto(entry: &mut Tile, snapshot: &Picture, size: TileSize) -> Option<Dura
 
 /// The bar's picture at the strip's origin, at the size it covers, never stretched. See "The bar
 /// has to be captured on its own" in `src/pictures/docs/capture-research.md`.
-fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
-    CGRect::new(strip.origin, covered)
-}
+fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect { CGRect::new(strip.origin, covered) }
 
 /// A tile: its decorations, then the picture. The picture's contents cannot spill, and it clips
 /// only to round its corners (`clip_corners`).
@@ -1545,9 +1592,7 @@ impl Tile {
 /// Clips `picture`, with the crop pieces under it, to its corner, or not at all. The corner is the
 /// hairline's, laid at every placement (`place_tile`); unclipped it draws nothing, the picture
 /// having no background or border.
-fn clip_corners(picture: &CALayer, clipped: bool) {
-    picture.setMasksToBounds(clipped);
-}
+fn clip_corners(picture: &CALayer, clipped: bool) { picture.setMasksToBounds(clipped); }
 
 /// Puts a tile's layers at `frame`, stacked at `z`, its decorations shaped for its size and its
 /// picture's corner rounded with them. The crop grid is laid again only when the size changes.
@@ -1657,7 +1702,10 @@ fn new_crop_grid(container: &CALayer) -> CropGrid {
         }
         piece
     });
-    CropGrid { pieces, ground: std::array::from_fn(|_| layer()) }
+    CropGrid {
+        pieces,
+        ground: std::array::from_fn(|_| layer()),
+    }
 }
 
 /// An empty container covering the overlay, under `root`.
@@ -1724,9 +1772,18 @@ mod tests {
         let display: ScreenRect = typed(0.0, 0.0, 3008.0, 1692.0);
         let other: ScreenRect = typed(3008.0, 0.0, 1920.0, 1080.0);
         assert!(same_layout((display, 32.0, 2.0), (display, 32.0, 2.0)));
-        assert!(!same_layout((display, 32.0, 2.0), (other, 32.0, 2.0)), "another display");
-        assert!(!same_layout((display, 32.0, 2.0), (display, 0.0, 2.0)), "the bar's band gone");
-        assert!(!same_layout((display, 32.0, 2.0), (display, 32.0, 1.0)), "another scale");
+        assert!(
+            !same_layout((display, 32.0, 2.0), (other, 32.0, 2.0)),
+            "another display"
+        );
+        assert!(
+            !same_layout((display, 32.0, 2.0), (display, 0.0, 2.0)),
+            "the bar's band gone"
+        );
+        assert!(
+            !same_layout((display, 32.0, 2.0), (display, 32.0, 1.0)),
+            "another scale"
+        );
     }
 
     /// A picture of the overlay alone starts where its window does: the display's top-left, a band
@@ -2002,17 +2059,13 @@ mod tests {
         CFRetained::from(&*shadow_mask_path(size, corner) as &objc2_core_graphics::CGPath)
     }
 
-    fn container() -> Node {
-        Node::Container(GroupKey::STILL)
-    }
+    fn container() -> Node { Node::Container(GroupKey::STILL) }
 
     fn container_value(value: &AnyObject) -> Value {
         Value::Point(OverlayPoint::from_cg(point_in(value)))
     }
 
-    fn at(x: f64, y: f64) -> Value {
-        Value::Point(OverlayPoint::new(x, y))
-    }
+    fn at(x: f64, y: f64) -> Value { Value::Point(OverlayPoint::new(x, y)) }
 
     fn tile_track(from: GroupRect, to: GroupRect, begin: f64, seconds: f64) -> Track {
         Track::between(
@@ -2174,7 +2227,11 @@ mod tests {
             );
         }
         assert_eq!(
-            installed(&tile.decorations.hairline, "rini.tile.hairline.corner", number_in),
+            installed(
+                &tile.decorations.hairline,
+                "rini.tile.hairline.corner",
+                number_in
+            ),
             expected(&resizing, corner)
         );
         assert_eq!(
@@ -2182,7 +2239,13 @@ mod tests {
             expected(&resizing, corner)
         );
         assert_eq!(
-            installed(&tile.decorations.hairline, "rini.tile.hairline.corner", number_in).keys[1].1,
+            installed(
+                &tile.decorations.hairline,
+                "rini.tile.hairline.corner",
+                number_in
+            )
+            .keys[1]
+                .1,
             10.0
         );
         assert_eq!(
@@ -2199,9 +2262,12 @@ mod tests {
                 "the resize's keys go"
             );
         }
-        for layer in [&*tile.decorations.shadow_mask as &CALayer, &tile.decorations.outline]
-            .into_iter()
-            .chain(grid.layers())
+        for layer in [
+            &*tile.decorations.shadow_mask as &CALayer,
+            &tile.decorations.outline,
+        ]
+        .into_iter()
+        .chain(grid.layers())
         {
             assert!(animation_keys(layer).is_empty());
         }
@@ -2242,14 +2308,20 @@ mod tests {
         let mut tile = strip_tile(typed(865.0, 32.0, 861.0, 1081.0));
         tile.crop_grid = Some(new_crop_grid(&tile.picture));
         tile.crop_of = Some(TileSize::new(1200.0, 1081.0));
-        let (from, to) = (typed(4.0, 32.0, 1200.0, 1081.0), typed(865.0, 32.0, 861.0, 1081.0));
+        let (from, to) = (
+            typed(4.0, 32.0, 1200.0, 1081.0),
+            typed(865.0, 32.0, 861.0, 1081.0),
+        );
         install_tile_track(&mut tile, &tile_track(from, to, 100.0, 0.35), None);
         install_tile_track(&mut tile, &tile_track(from, to, 100.1, 0.0), None);
         let grid = tile.crop_grid.as_ref().expect("a grid");
         for layer in tile
             .layers()
             .into_iter()
-            .chain([&*tile.decorations.shadow_mask as &CALayer, &tile.decorations.outline])
+            .chain([
+                &*tile.decorations.shadow_mask as &CALayer,
+                &tile.decorations.outline,
+            ])
             .chain(grid.pieces.iter().map(|piece| &**piece))
         {
             assert!(animation_keys(layer).is_empty(), "{:?}", animation_keys(layer));
@@ -2388,14 +2460,11 @@ mod tests {
         let (layer, replica) = accented_container();
         let riding: Vec<Track> = replica.tracks(container()).cloned().collect();
         install_container_track(&layer, &new_leg(5.3), &riding);
-        assert_eq!(
-            animation_keys(&layer),
-            [
-                GROUP_ANIMATION_KEY,
-                BOUNCE_ANIMATION_KEY,
-                NUDGE_ANIMATION_KEY
-            ]
-        );
+        assert_eq!(animation_keys(&layer), [
+            GROUP_ANIMATION_KEY,
+            BOUNCE_ANIMATION_KEY,
+            NUDGE_ANIMATION_KEY
+        ]);
         assert_eq!(playing(&layer, GROUP_ANIMATION_KEY).begin, 5.3);
         let bounce = Playing {
             begin: 5.3,
@@ -2443,25 +2512,19 @@ mod tests {
     fn core_animation_orders_a_layers_animations_by_begin_time() {
         let _core_animation = hold_core_animation();
         let (layer, _) = accented_container();
-        assert_eq!(
-            animation_keys(&layer),
-            [
-                GROUP_ANIMATION_KEY,
-                BOUNCE_ANIMATION_KEY,
-                NUDGE_ANIMATION_KEY
-            ]
-        );
+        assert_eq!(animation_keys(&layer), [
+            GROUP_ANIMATION_KEY,
+            BOUNCE_ANIMATION_KEY,
+            NUDGE_ANIMATION_KEY
+        ]);
         let position = |v: Value| point_object(as_point(v).to_cg());
         let key = NSString::from_str(GROUP_ANIMATION_KEY);
         layer.addAnimation_forKey(&animation(&new_leg(5.3), "position", position), Some(&key));
-        assert_eq!(
-            animation_keys(&layer),
-            [
-                BOUNCE_ANIMATION_KEY,
-                NUDGE_ANIMATION_KEY,
-                GROUP_ANIMATION_KEY
-            ]
-        );
+        assert_eq!(animation_keys(&layer), [
+            BOUNCE_ANIMATION_KEY,
+            NUDGE_ANIMATION_KEY,
+            GROUP_ANIMATION_KEY
+        ]);
         layer.addAnimation_forKey(&animation(&new_leg(5.15), "position", position), Some(&key));
         assert_eq!(
             animation_keys(&layer),
@@ -2535,7 +2598,10 @@ mod tests {
         let picture = TileSize::new(856.0, 1081.0);
         tile.crop_of = Some(picture);
         tile.region = typed(0.5, 0.0, 0.5, 1.0);
-        tile.anchors = Anchors { x: Anchor::End, y: Anchor::Start };
+        tile.anchors = Anchors {
+            x: Anchor::End,
+            y: Anchor::Start,
+        };
         let frame = TileSize::new(600.0, 1081.0);
         layout_crop_grid(&tile, frame);
         let grid = tile.crop_grid.as_ref().unwrap();
@@ -2558,7 +2624,8 @@ mod tests {
         );
         install_crop_grid(&mut tile, &resize, None);
         let grid = tile.crop_grid.as_ref().unwrap();
-        let ends = crop(picture, frame, tile.anchors).pieces
+        let ends = crop(picture, frame, tile.anchors)
+            .pieces
             .into_iter()
             .zip(crop(picture, to, tile.anchors).pieces);
         for (layer, (a, b)) in grid.pieces.iter().zip(ends) {
@@ -2609,8 +2676,10 @@ mod tests {
     fn a_swap_re_keys_a_crop_grid_on_its_tiles_track() {
         let _core_animation = hold_core_animation();
         use crate::pictures::platform::picture::test_picture;
-        let (from, to): (GroupRect, GroupRect) =
-            (typed(263.0, 32.0, 600.0, 1081.0), typed(4.0, 32.0, 859.0, 1081.0));
+        let (from, to): (GroupRect, GroupRect) = (
+            typed(263.0, 32.0, 600.0, 1081.0),
+            typed(4.0, 32.0, 859.0, 1081.0),
+        );
         let stale = test_picture(from.size);
         let landed = TileSize::new(859.0, 1081.0);
         let mut tile = strip_tile(to);
@@ -2619,7 +2688,13 @@ mod tests {
         set_tile_content(&mut tile, &stale, ContentMode::Crop, from.size.respace(), 2.0);
         let track = tile_track(from, to, 100.0, 0.35);
         install_tile_track(&mut tile, &track, None);
-        swap_onto(&mut tile, &test_picture(landed), to.size.respace(), Some(&track), 2.0);
+        swap_onto(
+            &mut tile,
+            &test_picture(landed),
+            to.size.respace(),
+            Some(&track),
+            2.0,
+        );
         assert_eq!(tile.crop_of, Some(landed), "the grid cuts the new picture");
         assert_eq!(tile.anchors, Anchors::of_leg(from, to), "on the leg's anchors");
         let grid = tile.crop_grid.as_ref().expect("a grid");
@@ -2640,7 +2715,11 @@ mod tests {
                 installed(layer, "rini.piece.move", point_in),
                 expected(&track, |v| span(v).origin.to_cg())
             );
-            assert_eq!(layer.frame(), span(Value::Rect(to)).to_cg(), "none where it covers");
+            assert_eq!(
+                layer.frame(),
+                span(Value::Rect(to)).to_cg(),
+                "none where it covers"
+            );
         }
 
         let mut riding = strip_tile(to);
@@ -2665,7 +2744,11 @@ mod tests {
         let column: GroupRect = typed(4.0, 3.0, 859.0, 1074.0);
         for (case, to, anchored_top) in [
             ("a top row shrinking up", typed(4.0, 3.0, 859.0, 535.0), true),
-            ("a bottom row shrinking down", typed(4.0, 542.0, 859.0, 535.0), false),
+            (
+                "a bottom row shrinking down",
+                typed(4.0, 542.0, 859.0, 535.0),
+                false,
+            ),
         ] {
             let mut tile = strip_tile(to);
             tile.anchors = Anchors::of_leg(column, to);
@@ -2676,7 +2759,11 @@ mod tests {
             let landed: TileSize = to.size.respace();
             swap_onto(&mut tile, &test_picture(landed), landed, Some(&track), 2.0);
             assert_eq!(tile.crop_of, Some(landed), "{case}");
-            assert_eq!(tile.anchors, Anchors::of_leg(column, to), "{case}: the leg's anchors");
+            assert_eq!(
+                tile.anchors,
+                Anchors::of_leg(column, to),
+                "{case}: the leg's anchors"
+            );
             let laid = |v: Value| crop(landed, as_frame(v).size.respace(), tile.anchors);
             let grid = tile.crop_grid.as_ref().expect("a grid");
             for (index, layer) in grid.pieces.iter().enumerate() {
@@ -2696,15 +2783,28 @@ mod tests {
             let start = laid(Value::Rect(column));
             let band = start.pieces[0].frame.size.height;
             let (tall, high) = (column.size.height, landed.height);
-            let (top, bottom) =
-                if anchored_top { (high - band, tall - band) } else { (band, tall - high + band) };
+            let (top, bottom) = if anchored_top {
+                (high - band, tall - band)
+            } else {
+                (band, tall - high + band)
+            };
             let bare: f64 = start.ground.iter().map(|g| g.size.width * g.size.height).sum();
-            assert!((bare - column.size.width * (tall - high)).abs() < 1e-6, "{case}: {bare}");
+            assert!(
+                (bare - column.size.width * (tall - high)).abs() < 1e-6,
+                "{case}: {bare}"
+            );
             for span in start.ground.iter().filter(|g| g.size.width * g.size.height > 0.0) {
-                assert_eq!((span.min_y(), span.max_y()), (top, bottom), "{case}: by the moving edge");
+                assert_eq!(
+                    (span.min_y(), span.max_y()),
+                    (top, bottom),
+                    "{case}: by the moving edge"
+                );
             }
             let end = laid(Value::Rect(to));
-            assert!(end.ground.iter().all(|g| g.size.width * g.size.height == 0.0), "{case}: none at the end");
+            assert!(
+                end.ground.iter().all(|g| g.size.width * g.size.height == 0.0),
+                "{case}: none at the end"
+            );
         }
     }
 
@@ -2721,21 +2821,31 @@ mod tests {
         use crate::animation::domain::motion::tile::{Crop, corner_key, leg, two_steps};
         use crate::pictures::domain::ground::Ground;
         use crate::pictures::platform::picture::{LazyGround, Pixels, test_picture};
-        let (from, to): (GroupRect, GroupRect) =
-            (typed(866.0, 35.0, 860.0, 1079.0), typed(3.0, 576.0, 1148.0, 538.0));
+        let (from, to): (GroupRect, GroupRect) = (
+            typed(866.0, 35.0, 860.0, 1079.0),
+            typed(3.0, 576.0, 1148.0, 538.0),
+        );
         let corner = two_steps(from, to).expect("two steps").corner;
         let track = leg(WindowId::new(1, 1), from, to, 100.0, 0.35, MOTION_CURVE);
         let key = corner_key(&track).expect("a corner");
         let picture = |size: GroupRect, ground: f64| {
             let mut picture = test_picture(size.size);
-            picture.ground = LazyGround::known(Ground { r: ground, g: ground, b: ground, a: 1.0 });
+            picture.ground = LazyGround::known(Ground {
+                r: ground,
+                g: ground,
+                b: ground,
+                a: 1.0,
+            });
             picture
         };
         let (pressed, repainted) = (picture(from, 0.1), picture(to, 0.2));
         let mut tile = strip_tile(to);
         tile.anchors = Anchors::of_leg(from, to);
         set_tile_content(&mut tile, &pressed, ContentMode::Crop, from.size.respace(), 2.0);
-        let pictures = Corner { before: &pressed, after: &repainted };
+        let pictures = Corner {
+            before: &pressed,
+            after: &repainted,
+        };
         install_tile_track(&mut tile, &track, Some(pictures));
 
         let (before, after): (TileSize, TileSize) = (from.size.respace(), to.size.respace());
@@ -2758,7 +2868,9 @@ mod tests {
                 (key, frame(laid(after, corner))),
                 (1.0, frame(laid(after, to))),
             ],
-            curves: [track.curves()[0], Curve::Linear, track.curves()[1]].map(bezier_points).to_vec(),
+            curves: [track.curves()[0], Curve::Linear, track.curves()[1]]
+                .map(bezier_points)
+                .to_vec(),
         };
         let switched = |layer: &CALayer, key_path: &str| {
             assert_core_animation_held();
@@ -2767,11 +2879,20 @@ mod tests {
                 .unwrap_or_else(|| panic!("nothing under {key_path}"));
             let cut = animation.downcast::<CAKeyframeAnimation>().expect("keyframes");
             // SAFETY: Core Animation's own calculation mode name.
-            assert_eq!(&*cut.calculationMode(), unsafe { kCAAnimationDiscrete }, "held, then cut");
-            let times: Vec<f64> = cut.keyTimes().expect("times").iter().map(|t| t.doubleValue()).collect();
+            assert_eq!(
+                &*cut.calculationMode(),
+                unsafe { kCAAnimationDiscrete },
+                "held, then cut"
+            );
+            let times: Vec<f64> =
+                cut.keyTimes().expect("times").iter().map(|t| t.doubleValue()).collect();
             assert_eq!(times, [0.0, key, 1.0]);
             assert_eq!((cut.beginTime(), cut.duration()), (100.0, 0.35));
-            cut.values().expect("values").iter().map(|value| Retained::as_ptr(&value) as usize).collect::<Vec<_>>()
+            cut.values()
+                .expect("values")
+                .iter()
+                .map(|value| Retained::as_ptr(&value) as usize)
+                .collect::<Vec<_>>()
         };
         let grid = tile.crop_grid.as_ref().expect("a grid");
         for (index, layer) in grid.pieces.iter().enumerate() {
@@ -2784,7 +2905,11 @@ mod tests {
             assert_eq!(held, [image(&pressed), image(&repainted)], "piece {index}");
             // SAFETY: a read of the layer's own property.
             let shown = unsafe { layer.contents() }.map(|object| address(&object));
-            assert_eq!(shown, Some(image(&repainted)), "piece {index}: the repaint once it ends");
+            assert_eq!(
+                shown,
+                Some(image(&repainted)),
+                "piece {index}: the repaint once it ends"
+            );
             assert_eq!(layer.frame(), laid(after, to).pieces[index].frame.to_cg());
         }
         for (index, layer) in grid.ground.iter().enumerate() {
@@ -2797,11 +2922,16 @@ mod tests {
             let fill = |colour: usize| {
                 let colour = colour as *const objc2_core_graphics::CGColor;
                 // SAFETY: a colour the animation holds, read while the layer holds it.
-                let components = objc2_core_graphics::CGColor::components(Some(unsafe { &*colour }));
+                let components =
+                    objc2_core_graphics::CGColor::components(Some(unsafe { &*colour }));
                 unsafe { std::slice::from_raw_parts(components, 4) }.to_vec()
             };
             let fills: Vec<Vec<f64>> = held.iter().map(|colour| fill(*colour)).collect();
-            assert_eq!(fills, [[0.1, 0.1, 0.1, 1.0], [0.2, 0.2, 0.2, 1.0]], "ground {index}");
+            assert_eq!(
+                fills,
+                [[0.1, 0.1, 0.1, 1.0], [0.2, 0.2, 0.2, 1.0]],
+                "ground {index}"
+            );
         }
 
         let onward = tile_track(to, typed(3.0, 576.0, 1148.0, 600.0), 100.4, 0.35);
@@ -2809,7 +2939,10 @@ mod tests {
         let grid = tile.crop_grid.as_ref().expect("a grid");
         for layer in grid.layers() {
             let keys = animation_keys(layer);
-            assert!(!keys.iter().any(|key| key == PIECE_PICTURE_KEY || key == GROUND_COLOUR_KEY), "{keys:?}");
+            assert!(
+                !keys.iter().any(|key| key == PIECE_PICTURE_KEY || key == GROUND_COLOUR_KEY),
+                "{keys:?}"
+            );
         }
 
         let mut alone = strip_tile(to);
@@ -2821,8 +2954,16 @@ mod tests {
         for (index, layer) in grid.pieces.iter().enumerate() {
             let frame = |at: GroupRect| laid(before, at).pieces[index].frame.origin.to_cg();
             let moved = installed(layer, "rini.piece.move", point_in);
-            assert_eq!(moved.keys, [(0.0, frame(from)), (key, frame(corner)), (key, frame(corner)), (1.0, frame(to))]);
-            assert!(!animation_keys(layer).iter().any(|key| key == PIECE_PICTURE_KEY), "nothing to cut to");
+            assert_eq!(moved.keys, [
+                (0.0, frame(from)),
+                (key, frame(corner)),
+                (key, frame(corner)),
+                (1.0, frame(to))
+            ]);
+            assert!(
+                !animation_keys(layer).iter().any(|key| key == PIECE_PICTURE_KEY),
+                "nothing to cut to"
+            );
         }
     }
 
@@ -2833,17 +2974,25 @@ mod tests {
     fn a_corner_cut_returns_how_long_its_repaints_ground_took_to_read() {
         use crate::animation::domain::motion::tile::leg;
         use crate::pictures::platform::picture::test_picture;
-        let (from, to): (GroupRect, GroupRect) =
-            (typed(866.0, 35.0, 860.0, 1079.0), typed(3.0, 576.0, 1148.0, 538.0));
+        let (from, to): (GroupRect, GroupRect) = (
+            typed(866.0, 35.0, 860.0, 1079.0),
+            typed(3.0, 576.0, 1148.0, 538.0),
+        );
         let track = leg(WindowId::new(1, 1), from, to, 100.0, 0.35, MOTION_CURVE);
         let (pressed, repainted) = (test_picture(from.size), test_picture(to.size));
         let mut tile = strip_tile(to);
         tile.anchors = Anchors::of_leg(from, to);
         set_tile_content(&mut tile, &pressed, ContentMode::Crop, from.size.respace(), 2.0);
 
-        let pictures = Corner { before: &pressed, after: &repainted };
+        let pictures = Corner {
+            before: &pressed,
+            after: &repainted,
+        };
         let read = install_tile_track(&mut tile, &track, Some(pictures)).expect("a cut");
-        assert!(read > Duration::ZERO, "the repaint's ground read, unread till the cut");
+        assert!(
+            read > Duration::ZERO,
+            "the repaint's ground read, unread till the cut"
+        );
     }
 
     /// A leg in two steps flies its press picture up to the corner whatever its repaint fits: one
@@ -2854,8 +3003,10 @@ mod tests {
         let _core_animation = hold_core_animation();
         use crate::animation::domain::motion::tile::leg;
         use crate::pictures::platform::picture::{stand_in_picture, test_bitmap, test_picture};
-        let (from, to): (GroupRect, GroupRect) =
-            (typed(866.0, 35.0, 860.0, 1079.0), typed(3.0, 576.0, 1148.0, 538.0));
+        let (from, to): (GroupRect, GroupRect) = (
+            typed(866.0, 35.0, 860.0, 1079.0),
+            typed(3.0, 576.0, 1148.0, 538.0),
+        );
         let track = leg(WindowId::new(1, 1), from, to, 100.0, 0.35, MOTION_CURVE);
         let pressed = test_picture(from.size);
         let stand_in = stand_in_picture(to.size.respace(), test_bitmap());
@@ -2863,11 +3014,19 @@ mod tests {
         tile.anchors = Anchors::of_leg(from, to);
         set_tile_content(&mut tile, &pressed, ContentMode::Crop, from.size.respace(), 2.0);
 
-        let pictures = Corner { before: &pressed, after: &stand_in };
-        assert!(install_tile_track(&mut tile, &track, Some(pictures)).is_some(), "its ground read");
+        let pictures = Corner {
+            before: &pressed,
+            after: &stand_in,
+        };
+        assert!(
+            install_tile_track(&mut tile, &track, Some(pictures)).is_some(),
+            "its ground read"
+        );
         assert!(tile.crop_of.is_some(), "still crop-drawn");
         let grid = tile.crop_grid.as_ref().expect("a crop grid");
-        let cut = |layer: &Retained<CALayer>| animation_keys(layer).iter().any(|key| key == PIECE_PICTURE_KEY);
+        let cut = |layer: &Retained<CALayer>| {
+            animation_keys(layer).iter().any(|key| key == PIECE_PICTURE_KEY)
+        };
         assert!(grid.pieces.iter().all(cut), "every piece cut at the corner");
     }
 
@@ -2883,7 +3042,13 @@ mod tests {
         let mut tile = strip_tile(to);
         tile.anchors = Anchors::of_leg(from, to);
         let stand_in = stand_in_picture(to.size.respace(), test_bitmap());
-        set_tile_content(&mut tile, &stand_in, ContentMode::Stretch, from.size.respace(), 2.0);
+        set_tile_content(
+            &mut tile,
+            &stand_in,
+            ContentMode::Stretch,
+            from.size.respace(),
+            2.0,
+        );
         let track = tile_track(from, to, 100.0, 0.35);
         install_tile_track(&mut tile, &track, None);
         let landed: TileSize = to.size.respace();
@@ -2900,16 +3065,33 @@ mod tests {
             assert!(!layer.isHidden());
         }
 
-        let (parked, slot): (GroupRect, GroupRect) =
-            (typed(1726.0, 3.0, 859.0, 1074.0), typed(865.0, 3.0, 859.0, 1074.0));
+        let (parked, slot): (GroupRect, GroupRect) = (
+            typed(1726.0, 3.0, 859.0, 1074.0),
+            typed(865.0, 3.0, 859.0, 1074.0),
+        );
         let mut panning = strip_tile(slot);
         let picture = test_picture(slot.size);
-        set_tile_content(&mut panning, &picture, ContentMode::Stretch, slot.size.respace(), 2.0);
+        set_tile_content(
+            &mut panning,
+            &picture,
+            ContentMode::Stretch,
+            slot.size.respace(),
+            2.0,
+        );
         let pan = tile_track(parked, slot, 100.0, 0.35);
-        swap_onto(&mut panning, &test_picture(slot.size), slot.size.respace(), Some(&pan), 2.0);
+        swap_onto(
+            &mut panning,
+            &test_picture(slot.size),
+            slot.size.respace(),
+            Some(&pan),
+            2.0,
+        );
         assert_eq!(panning.crop_of, None, "a pan stays stretched");
         assert!(panning.crop_grid.is_none(), "and never builds a grid");
-        assert!(panning.layers().into_iter().all(|layer| animation_keys(layer).is_empty()), "nor is re-keyed");
+        assert!(
+            panning.layers().into_iter().all(|layer| animation_keys(layer).is_empty()),
+            "nor is re-keyed"
+        );
     }
 
     /// A crop-drawn tile is filled with its picture's ground where the picture ends, in layers
@@ -2926,14 +3108,23 @@ mod tests {
             unsafe { std::slice::from_raw_parts(components, 4) }.to_vec()
         };
         let mut before = test_picture(TileSize::new(859.0, 535.0));
-        before.ground = LazyGround::known(Ground { r: 0.1, g: 0.1, b: 0.12, a: 0.95 });
+        before.ground = LazyGround::known(Ground {
+            r: 0.1,
+            g: 0.1,
+            b: 0.12,
+            a: 0.95,
+        });
         let frame = TileSize::new(859.0, 1074.0);
         let mut tile = strip_tile(typed(4.0, 3.0, 859.0, 1074.0));
         set_tile_content(&mut tile, &before, ContentMode::Crop, frame, 2.0);
         let grid = tile.crop_grid.as_ref().expect("a grid");
         let laid = crop(TileSize::new(859.0, 535.0), frame, tile.anchors);
         for (layer, span) in grid.ground.iter().zip(laid.ground) {
-            assert_eq!(layer.superlayer().as_deref(), Some(&*tile.picture), "under the picture");
+            assert_eq!(
+                layer.superlayer().as_deref(),
+                Some(&*tile.picture),
+                "under the picture"
+            );
             assert_eq!(layer.frame(), span.to_cg());
             assert_eq!(fill(layer), [0.1, 0.1, 0.12, 0.95]);
             assert!(!layer.isHidden());
@@ -2942,12 +3133,21 @@ mod tests {
 
         let mut after = test_picture(frame);
         after.ground = LazyGround::known(Ground { r: 0.2, g: 0.2, b: 0.2, a: 1.0 });
-        let grow = tile_track(typed(4.0, 3.0, 859.0, 535.0), typed(4.0, 3.0, 859.0, 1074.0), 100.0, 0.35);
+        let grow = tile_track(
+            typed(4.0, 3.0, 859.0, 535.0),
+            typed(4.0, 3.0, 859.0, 1074.0),
+            100.0,
+            0.35,
+        );
         swap_onto(&mut tile, &after, frame, Some(&grow), 2.0);
         let grid = tile.crop_grid.as_ref().expect("a grid");
         for layer in &grid.ground {
             assert_eq!(fill(layer), [0.2, 0.2, 0.2, 1.0], "coloured again");
-            assert_eq!(layer.frame().size.width * layer.frame().size.height, 0.0, "it covers");
+            assert_eq!(
+                layer.frame().size.width * layer.frame().size.height,
+                0.0,
+                "it covers"
+            );
         }
 
         set_tile_content(&mut tile, &after, ContentMode::Stretch, frame, 2.0);
@@ -2971,13 +3171,21 @@ mod tests {
         swap_onto(&mut tile, &fitting, slot.size.respace(), None, 2.0);
         assert_eq!(tile.crop_of, None, "stretched");
         let grid = tile.crop_grid.as_ref().expect("the grid stays pooled");
-        assert!(grid.layers().all(|layer| layer.isHidden()), "none of the grid shows");
+        assert!(
+            grid.layers().all(|layer| layer.isHidden()),
+            "none of the grid shows"
+        );
         let crate::pictures::platform::picture::Pixels::Bitmap(image) = &fitting.image else {
             unreachable!("a test picture is a bitmap")
         };
         // SAFETY: a read of the layer's own property.
-        let shown = unsafe { tile.picture.contents() }.map(|object| Retained::as_ptr(&object) as usize);
-        assert_eq!(shown, Some(&**image as *const _ as usize), "on the picture layer");
+        let shown =
+            unsafe { tile.picture.contents() }.map(|object| Retained::as_ptr(&object) as usize);
+        assert_eq!(
+            shown,
+            Some(&**image as *const _ as usize),
+            "on the picture layer"
+        );
     }
 
     /// A resizing tile's repaint fits the end of its leg and not its start, so it lands on the crop
@@ -2989,7 +3197,13 @@ mod tests {
             (typed(4.0, 3.0, 859.0, 1074.0), typed(4.0, 3.0, 1148.0, 1074.0));
         let mut tile = strip_tile(to);
         tile.anchors = Anchors::of_leg(from, to);
-        set_tile_content(&mut tile, &test_picture(from.size), ContentMode::Crop, from.size.respace(), 2.0);
+        set_tile_content(
+            &mut tile,
+            &test_picture(from.size),
+            ContentMode::Crop,
+            from.size.respace(),
+            2.0,
+        );
         let track = tile_track(from, to, 100.0, 0.35);
         install_tile_track(&mut tile, &track, None);
 
@@ -2997,9 +3211,15 @@ mod tests {
         swap_onto(&mut tile, &repaint, to.size.respace(), Some(&track), 2.0);
         assert_eq!(tile.crop_of, Some(to.size.respace()), "cropped on the repaint");
         let grid = tile.crop_grid.as_ref().expect("a grid");
-        assert!(grid.pieces.iter().all(|piece| !piece.isHidden()), "the pieces show");
+        assert!(
+            grid.pieces.iter().all(|piece| !piece.isHidden()),
+            "the pieces show"
+        );
         // SAFETY: a read of the layer's own property.
-        assert!(unsafe { tile.picture.contents() }.is_none(), "nothing on the picture layer");
+        assert!(
+            unsafe { tile.picture.contents() }.is_none(),
+            "nothing on the picture layer"
+        );
     }
 
     /// A clipped picture's corners are cut at its corner, and only the picture is: the shadow
@@ -3025,7 +3245,10 @@ mod tests {
         let tile = new_tile(&container);
         clip_corners(&tile.picture, true);
         let parent = |layer: &CALayer| layer.superlayer().map(|parent| Retained::as_ptr(&parent));
-        assert_eq!(parent(&tile.decorations.hairline), Some(&*container as *const CALayer));
+        assert_eq!(
+            parent(&tile.decorations.hairline),
+            Some(&*container as *const CALayer)
+        );
     }
 
     /// A pooled tile placed at a new size wears its hairline at that frame, in front of its
@@ -3051,14 +3274,25 @@ mod tests {
         install_tile_track(&mut tile, &tile_track(from, to, 100.0, 0.35), None);
         let (start, end, begin) =
             animation_value(&tile.decorations.hairline, "rini.tile.size", rect_of);
-        assert_eq!((start.size, end.size, begin), (from.size.to_cg(), to.size.to_cg(), 100.0));
+        assert_eq!(
+            (start.size, end.size, begin),
+            (from.size.to_cg(), to.size.to_cg(), 100.0)
+        );
 
         let corner = basic(&tile.decorations.hairline, "rini.tile.hairline.corner");
         let number = |value: Option<Retained<objc2::runtime::AnyObject>>| {
-            value.expect("a value").downcast_ref::<NSNumber>().expect("a number").doubleValue()
+            value
+                .expect("a value")
+                .downcast_ref::<NSNumber>()
+                .expect("a number")
+                .doubleValue()
         };
         assert_eq!(
-            (number(corner.fromValue()), number(corner.toValue()), corner.beginTime()),
+            (
+                number(corner.fromValue()),
+                number(corner.toValue()),
+                corner.beginTime()
+            ),
             (0.0, 16.0, 100.0)
         );
 
@@ -3082,10 +3316,19 @@ mod tests {
         let track = tile_track(from, to, 100.0, 0.35);
         install_tile_track(&mut tile, &track, None);
         let corner = |v: Value| shape::radius(Some(16.0), size_of(v));
-        let hairline = installed(&tile.decorations.hairline, "rini.tile.hairline.corner", number_in);
+        let hairline = installed(
+            &tile.decorations.hairline,
+            "rini.tile.hairline.corner",
+            number_in,
+        );
         assert_eq!(hairline, expected(&track, corner));
-        assert_eq!(hairline.keys.iter().map(|key| key.1).collect::<Vec<_>>(), [0.0, 16.0]);
-        assert_eq!(installed(&tile.picture, "rini.tile.picture.corner", number_in), hairline);
+        assert_eq!(hairline.keys.iter().map(|key| key.1).collect::<Vec<_>>(), [
+            0.0, 16.0
+        ]);
+        assert_eq!(
+            installed(&tile.picture, "rini.tile.picture.corner", number_in),
+            hairline
+        );
         assert_eq!(
             installed(&tile.decorations.shadow, "rini.tile.shadow.path", path_of),
             expected(&track, |v| silhouette_path(size_of(v), corner(v)))
@@ -3097,8 +3340,15 @@ mod tests {
 
         let held = tile_track(typed(4.0, 32.0, 1200.0, 1081.0), to, 100.0, 0.35);
         install_tile_track(&mut tile, &held, None);
-        assert_eq!(animation_keys(&tile.picture), [TILE_ANIMATION_KEY, TILE_SIZE_KEY], "the corner holds");
-        assert!(!animation_keys(&tile.decorations.hairline).contains(&"rini.tile.hairline.corner".to_owned()));
+        assert_eq!(
+            animation_keys(&tile.picture),
+            [TILE_ANIMATION_KEY, TILE_SIZE_KEY],
+            "the corner holds"
+        );
+        assert!(
+            !animation_keys(&tile.decorations.hairline)
+                .contains(&"rini.tile.hairline.corner".to_owned())
+        );
     }
 
     /// A resize animates the shadow's silhouette, its mask and the outline as paths. Handed over as
@@ -3123,7 +3373,7 @@ mod tests {
                 }
             })
             .downcast::<CABasicAnimation>()
-        .expect("a basic animation");
+            .expect("a basic animation");
         assert_eq!(path_bounds(animation.fromValue()).size, from.to_cg());
         assert_eq!(path_bounds(animation.toValue()).size, to.to_cg());
     }
@@ -3193,7 +3443,11 @@ mod tests {
             };
             let held_elsewhere = image.retain_count();
             tree.set_backdrop(&desktop);
-            assert_eq!(image.retain_count(), held_elsewhere + 1, "drawn behind the tiles");
+            assert_eq!(
+                image.retain_count(),
+                held_elsewhere + 1,
+                "drawn behind the tiles"
+            );
             assert!(!tree.backdrop.isHidden());
             tree.release();
             // SAFETY: a read of the layer's own property.
@@ -3218,7 +3472,10 @@ mod tests {
             assert_eq!(stale.fills, 1, "a stale picture is crop-drawn");
             assert!(stale.ground > Duration::ZERO, "and its ground read");
             tree.swap(wid(1), &test_picture(frame.size), false, 0.0);
-            assert_eq!(tree.crops, stale, "a fitting picture is stretched and reads nothing");
+            assert_eq!(
+                tree.crops, stale,
+                "a fitting picture is stretched and reads nothing"
+            );
 
             assert_eq!(tree.take_crops(), stale);
             assert_eq!(tree.crops, Crops::default(), "the next drain counts from none");
@@ -3231,8 +3488,10 @@ mod tests {
         fn a_tree_counts_the_ground_a_corner_cut_reads() {
             use crate::animation::domain::motion::tile::leg;
             let window = wid(1);
-            let (from, to): (GroupRect, GroupRect) =
-                (typed(866.0, 35.0, 860.0, 1079.0), typed(3.0, 576.0, 1148.0, 538.0));
+            let (from, to): (GroupRect, GroupRect) = (
+                typed(866.0, 35.0, 860.0, 1079.0),
+                typed(3.0, 576.0, 1148.0, 538.0),
+            );
             let folding = leg(window, from, to, 100.0, 0.35, MOTION_CURVE);
             let drawn = |from_corner: Option<Picture>| {
                 let tiles = [OverlayTile {
@@ -3242,7 +3501,10 @@ mod tests {
                 let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
                 tree.play(
                     &[
-                        Edit::Place(Node::Container(GroupKey::STILL), Value::Point(OverlayPoint::origin())),
+                        Edit::Place(
+                            Node::Container(GroupKey::STILL),
+                            Value::Point(OverlayPoint::origin()),
+                        ),
                         Edit::Ride(window, GroupKey::STILL),
                         Edit::Place(Node::Tile(window), Value::Rect(to)),
                         Edit::Add(folding.clone()),
@@ -3398,9 +3660,11 @@ mod tests {
                                 )
                             });
                             let keys = match (resizes, caster) {
-                                (true, true) => {
-                                    sorted([TILE_ANIMATION_KEY, TILE_SIZE_KEY, "rini.tile.shadow.path"])
-                                }
+                                (true, true) => sorted([
+                                    TILE_ANIMATION_KEY,
+                                    TILE_SIZE_KEY,
+                                    "rini.tile.shadow.path",
+                                ]),
                                 (true, false) => sorted([TILE_ANIMATION_KEY, TILE_SIZE_KEY]),
                                 (false, _) => sorted([TILE_ANIMATION_KEY]),
                             };
@@ -3418,8 +3682,7 @@ mod tests {
         #[test]
         fn the_overlay_plays_exactly_its_score() {
             let _core_animation = hold_core_animation();
-            let column =
-                |i: f64, w: f64| -> ScreenRect { typed(4.0 + i * 863.0, 32.0, w, 1081.0) };
+            let column = |i: f64, w: f64| -> ScreenRect { typed(4.0 + i * 863.0, 32.0, w, 1081.0) };
             let step = |frame: ScreenRect| -> ScreenRect {
                 typed(
                     frame.origin.x - 863.0,
@@ -3551,8 +3814,10 @@ mod tests {
         fn a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again() {
             use crate::animation::domain::motion::tile;
             let window = wid(1);
-            let (from, to): (ScreenRect, ScreenRect) =
-                (typed(4.0, 32.0, 1000.0, 1081.0), typed(4.0, 32.0, 1008.0, 1081.0));
+            let (from, to): (ScreenRect, ScreenRect) = (
+                typed(4.0, 32.0, 1000.0, 1081.0),
+                typed(4.0, 32.0, 1008.0, 1081.0),
+            );
             let mut tiles = vec![overlay_tile(window, on(from), on(to), false)];
             tiles[0].snapshot = test_picture(ScreenSize::new(1004.0, 1081.0));
             let plan = FlightPlan::from(reflow_plan(&[(window, from, to, false)], DISPLAY));
@@ -3580,7 +3845,10 @@ mod tests {
 
             let real = on(typed(4.0, 32.0, 1012.0, 1081.0));
             let snapped = tile::snap(&tree.replica, window, real, 100.15);
-            assert!(snapped.iter().any(|edit| matches!(edit, Edit::Add(_))), "on its leg");
+            assert!(
+                snapped.iter().any(|edit| matches!(edit, Edit::Add(_))),
+                "on its leg"
+            );
             play(&mut tree, &snapped, &tiles);
             assert!(stretched(&tree), "drawn as it was");
 
@@ -3605,8 +3873,12 @@ mod tests {
             let window = wid(1);
             let (whole, bottom): (GroupRect, GroupRect) =
                 (typed(4.0, 3.0, 859.0, 1074.0), typed(4.0, 542.0, 859.0, 535.0));
-            let tiles =
-                [overlay_tile(window, plan::on_overlay(whole), plan::on_overlay(bottom), false)];
+            let tiles = [overlay_tile(
+                window,
+                plan::on_overlay(whole),
+                plan::on_overlay(bottom),
+                false,
+            )];
             let picture: TileSize = whole.size.respace();
             let leg = |from: GroupRect, to: GroupRect, begin: f64| {
                 Track::between(
@@ -3643,7 +3915,10 @@ mod tests {
                 ],
                 &tiles,
             );
-            let bottom_up = Anchors { x: Anchor::Start, y: Anchor::End };
+            let bottom_up = Anchors {
+                x: Anchor::Start,
+                y: Anchor::End,
+            };
             assert_eq!(laid(&tree, bottom), bottom_up, "a bottom row shrinking down");
 
             let shorter: GroupRect = typed(4.0, 552.0, 859.0, 500.0);
@@ -3655,10 +3930,18 @@ mod tests {
                 ],
                 &tiles,
             );
-            assert_eq!(laid(&tree, shorter), Anchors::default(), "its bottom moving more");
+            assert_eq!(
+                laid(&tree, shorter),
+                Anchors::default(),
+                "its bottom moving more"
+            );
 
             let snapped: GroupRect = typed(4.0, 552.0, 859.0, 520.0);
-            assert_eq!(Anchors::of_leg(bottom, snapped), bottom_up, "judged again, it would turn");
+            assert_eq!(
+                Anchors::of_leg(bottom, snapped),
+                bottom_up,
+                "judged again, it would turn"
+            );
             tree.play(
                 &[
                     Edit::Place(Node::Tile(window), Value::Rect(snapped)),
@@ -3677,33 +3960,50 @@ mod tests {
             let _core_animation = hold_core_animation();
             use crate::animation::domain::motion::tile::leg;
             let window = wid(1);
-            let (from, to): (GroupRect, GroupRect) =
-                (typed(866.0, 35.0, 860.0, 1079.0), typed(3.0, 576.0, 1148.0, 538.0));
+            let (from, to): (GroupRect, GroupRect) = (
+                typed(866.0, 35.0, 860.0, 1079.0),
+                typed(3.0, 576.0, 1148.0, 538.0),
+            );
             let mut tiles = [OverlayTile {
                 from_corner: Some(test_picture(to.size)),
                 ..overlay_tile(window, plan::on_overlay(from), plan::on_overlay(to), false)
             }];
             let cuts = |tree: &Tree| {
                 let grid = tree.tile_layers[&window].crop_grid.as_ref().expect("a grid");
-                grid.pieces.iter().all(|layer| animation_keys(layer).iter().any(|key| key == PIECE_PICTURE_KEY))
+                grid.pieces
+                    .iter()
+                    .all(|layer| animation_keys(layer).iter().any(|key| key == PIECE_PICTURE_KEY))
             };
             let folding = leg(window, from, to, 100.0, 0.35, MOTION_CURVE);
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.play(
                 &[
-                    Edit::Place(Node::Container(GroupKey::STILL), Value::Point(OverlayPoint::origin())),
+                    Edit::Place(
+                        Node::Container(GroupKey::STILL),
+                        Value::Point(OverlayPoint::origin()),
+                    ),
                     Edit::Ride(window, GroupKey::STILL),
                     Edit::Place(Node::Tile(window), Value::Rect(to)),
                     Edit::Add(folding.clone()),
                 ],
                 &tiles,
             );
-            assert_eq!(tree.tile_layers[&window].crop_of, Some(to.size.respace()), "the repaint as it ends");
+            assert_eq!(
+                tree.tile_layers[&window].crop_of,
+                Some(to.size.respace()),
+                "the repaint as it ends"
+            );
             assert!(cuts(&tree), "cut at the corner");
 
             let snapped: GroupRect = typed(4.0, 576.0, 1147.0, 538.0);
             let snap = folding.ending_at(Value::Rect(snapped));
-            tree.play(&[Edit::Place(Node::Tile(window), Value::Rect(snapped)), Edit::Add(snap)], &tiles);
+            tree.play(
+                &[
+                    Edit::Place(Node::Tile(window), Value::Rect(snapped)),
+                    Edit::Add(snap),
+                ],
+                &tiles,
+            );
             assert!(cuts(&tree), "a snap keeps the cut");
 
             tiles[0].snapshot = tiles[0].from_corner.take().expect("carried");
@@ -3717,11 +4017,23 @@ mod tests {
                 0.35,
                 Curve::Bezier(MOTION_CURVE),
             );
-            tree.play(&[Edit::Place(Node::Tile(window), Value::Rect(taller)), Edit::Add(growing)], &tiles);
+            tree.play(
+                &[
+                    Edit::Place(Node::Tile(window), Value::Rect(taller)),
+                    Edit::Add(growing),
+                ],
+                &tiles,
+            );
             let grid = tree.tile_layers[&window].crop_grid.as_ref().expect("a grid");
-            let none = |layer: &Retained<CALayer>| !animation_keys(layer).iter().any(|key| key == PIECE_PICTURE_KEY);
+            let none = |layer: &Retained<CALayer>| {
+                !animation_keys(layer).iter().any(|key| key == PIECE_PICTURE_KEY)
+            };
             assert!(grid.pieces.iter().all(none), "nothing to cut to");
-            assert_eq!(tree.tile_layers[&window].crop_of, Some(to.size.respace()), "the repaint it has");
+            assert_eq!(
+                tree.tile_layers[&window].crop_of,
+                Some(to.size.respace()),
+                "the repaint it has"
+            );
         }
 
         /// A tile riding into a flight is dressed as it rides: clipped, its picture is cut at the
@@ -3739,7 +4051,10 @@ mod tests {
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.play(
                 &[
-                    Edit::Place(Node::Container(GroupKey::STILL), Value::Point(OverlayPoint::origin())),
+                    Edit::Place(
+                        Node::Container(GroupKey::STILL),
+                        Value::Point(OverlayPoint::origin()),
+                    ),
                     Edit::Ride(window, GroupKey::STILL),
                     Edit::Place(Node::Tile(window), Value::Rect(at)),
                 ],
@@ -3748,12 +4063,27 @@ mod tests {
             let picture = &tree.tile_layers[&window].picture;
             assert!(picture.masksToBounds());
             assert_eq!(picture.cornerRadius(), 16.0);
-            assert_eq!(picture.cornerRadius(), tree.tile_layers[&window].decorations.hairline.cornerRadius());
+            assert_eq!(
+                picture.cornerRadius(),
+                tree.tile_layers[&window].decorations.hairline.cornerRadius()
+            );
             let hairline = tree.tile_layers[&window].decorations.hairline.clone();
-            assert_eq!(&*picture.cornerCurve(), unsafe { objc2_quartz_core::kCACornerCurveContinuous });
+            assert_eq!(&*picture.cornerCurve(), unsafe {
+                objc2_quartz_core::kCACornerCurveContinuous
+            });
             assert_eq!(picture.cornerCurve(), hairline.cornerCurve());
-            tree.play(&[Edit::Place(Node::Tile(window), Value::Rect(typed(4.0, 32.0, 12.0, 400.0)))], &tiles);
-            assert_eq!(tree.tile_layers[&window].picture.cornerRadius(), 6.0, "half the shorter side");
+            tree.play(
+                &[Edit::Place(
+                    Node::Tile(window),
+                    Value::Rect(typed(4.0, 32.0, 12.0, 400.0)),
+                )],
+                &tiles,
+            );
+            assert_eq!(
+                tree.tile_layers[&window].picture.cornerRadius(),
+                6.0,
+                "half the shorter side"
+            );
             assert_eq!(
                 &*tree.tile_layers[&window].picture.cornerCurve(),
                 unsafe { objc2_quartz_core::kCACornerCurveContinuous },
@@ -3774,36 +4104,76 @@ mod tests {
             let drawn = typed(4.0, 32.0, 859.0, 1081.0);
             let at: GroupRect = typed(4.0, 32.0, 859.0, 1081.0);
             let (active, inactive) = (Colour::rgb(0x7fc8ff), Colour::rgb(0x505050));
-            let band = Band { width: 4.0, active: Paint::Solid(active), inactive: Paint::Solid(inactive), urgent: Paint::Solid(inactive) };
+            let band = Band {
+                width: 4.0,
+                active: Paint::Solid(active),
+                inactive: Paint::Solid(inactive),
+                urgent: Paint::Solid(inactive),
+            };
             let mut tile = overlay_tile(window, drawn, drawn, false);
-            let worn = |wears_ring, holds_focus| Worn { decoration: Decoration { ring: Some(band), ..Decoration::default() }, wears_ring, holds_focus };
+            let worn = |wears_ring, holds_focus| Worn {
+                decoration: Decoration {
+                    ring: Some(band),
+                    ..Decoration::default()
+                },
+                wears_ring,
+                holds_focus,
+            };
             tile.worn = worn(Ring::Inactive, false);
             tile.radius = Some(16.0);
             let tiles = [tile];
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.play(
                 &[
-                    Edit::Place(Node::Container(GroupKey::STILL), Value::Point(OverlayPoint::origin())),
+                    Edit::Place(
+                        Node::Container(GroupKey::STILL),
+                        Value::Point(OverlayPoint::origin()),
+                    ),
                     Edit::Ride(window, GroupKey::STILL),
                     Edit::Place(Node::Tile(window), Value::Rect(at)),
                 ],
                 &tiles,
             );
             let bands = &tree.tile_layers[&window].decorations.bands;
-            assert!(bands.border.is_none(), "no layer for the border it does not wear");
+            assert!(
+                bands.border.is_none(),
+                "no layer for the border it does not wear"
+            );
             let ring = bands.ring.as_ref().expect("ringed").layer.clone();
-            let colour = |c: Colour| objc2_core_graphics::CGColor::new_srgb(c.r.into(), c.g.into(), c.b.into(), c.a.into());
-            let painted = |c: Colour| objc2_core_graphics::CGColor::equal_to_color(ring.borderColor().as_deref(), Some(&colour(c)));
+            let colour = |c: Colour| {
+                objc2_core_graphics::CGColor::new_srgb(
+                    c.r.into(),
+                    c.g.into(),
+                    c.b.into(),
+                    c.a.into(),
+                )
+            };
+            let painted = |c: Colour| {
+                objc2_core_graphics::CGColor::equal_to_color(
+                    ring.borderColor().as_deref(),
+                    Some(&colour(c)),
+                )
+            };
             assert!(!ring.isHidden() && painted(inactive), "worn unfocused");
-            assert_eq!(ring.frame(), rect(-4.0, -4.0, 867.0, 1089.0), "outside the window");
+            assert_eq!(
+                ring.frame(),
+                rect(-4.0, -4.0, 867.0, 1089.0),
+                "outside the window"
+            );
             assert_eq!(ring.cornerRadius(), 20.0);
             let hairline = tree.tile_layers[&window].decorations.hairline.clone();
             let lit = |alpha| {
                 let white = objc2_core_graphics::CGColor::new_generic_gray(1.0, alpha);
-                objc2_core_graphics::CGColor::equal_to_color(hairline.borderColor().as_deref(), Some(&white))
+                objc2_core_graphics::CGColor::equal_to_color(
+                    hairline.borderColor().as_deref(),
+                    Some(&white),
+                )
             };
             tree.turn(window, true);
-            assert!(lit(0.20) && !ring.isHidden() && painted(inactive), "the hairline turns, the ring stays");
+            assert!(
+                lit(0.20) && !ring.isHidden() && painted(inactive),
+                "the hairline turns, the ring stays"
+            );
             tree.wear(window, worn(Ring::Active, true));
             assert!(lit(0.20) && painted(active));
             tree.wear(window, worn(Ring::None, false));
@@ -3818,11 +4188,17 @@ mod tests {
             let drawn = typed(4.0, 32.0, 859.0, 1081.0);
             let at: GroupRect = typed(4.0, 32.0, 859.0, 1081.0);
             let tiles = [overlay_tile(window, drawn, drawn, false)];
-            assert_eq!(tiles[0].worn.decoration, crate::decorations::domain::style::Decoration::default());
+            assert_eq!(
+                tiles[0].worn.decoration,
+                crate::decorations::domain::style::Decoration::default()
+            );
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.play(
                 &[
-                    Edit::Place(Node::Container(GroupKey::STILL), Value::Point(OverlayPoint::origin())),
+                    Edit::Place(
+                        Node::Container(GroupKey::STILL),
+                        Value::Point(OverlayPoint::origin()),
+                    ),
                     Edit::Ride(window, GroupKey::STILL),
                     Edit::Place(Node::Tile(window), Value::Rect(at)),
                 ],
@@ -3831,12 +4207,20 @@ mod tests {
             let decorations = &tree.tile_layers[&window].decorations;
             assert!(decorations.bands.ring.is_none() && decorations.bands.border.is_none());
             // SAFETY: a read of the hairline's own sublayers, which nothing else mutates.
-            let children = unsafe { decorations.hairline.sublayers() }.map_or(0, |layers| layers.count());
+            let children =
+                unsafe { decorations.hairline.sublayers() }.map_or(0, |layers| layers.count());
             assert_eq!(children, 1, "the outline alone");
             tree.turn(window, true);
-            tree.wear(window, Worn { wears_ring: crate::decorations::domain::style::Ring::Active, holds_focus: true, ..Worn::default() });
+            tree.wear(window, Worn {
+                wears_ring: crate::decorations::domain::style::Ring::Active,
+                holds_focus: true,
+                ..Worn::default()
+            });
             let bands = &tree.tile_layers[&window].decorations.bands;
-            assert!(bands.ring.is_none() && bands.border.is_none(), "nor as focus turns or a merge wears it");
+            assert!(
+                bands.ring.is_none() && bands.border.is_none(),
+                "nor as focus turns or a merge wears it"
+            );
         }
 
         /// A placed tile moves every layer of the tile at once: the picture, the caster and the hairline,

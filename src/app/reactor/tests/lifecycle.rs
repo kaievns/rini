@@ -139,10 +139,9 @@ fn it_retains_windows_without_server_ids_after_login_visibility_failure() {
     // Simulate a native fullscreen transition: space temporarily becomes a fullscreen
     // space id (reactor suppresses it to None), then returns to the original space.
     let fullscreen_space = SpaceId::new(0x400000000 + space.get());
-    reactor.handle_event(space_state_event(
-        vec![full_screen],
-        vec![Some(fullscreen_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![full_screen], vec![Some(
+        fullscreen_space,
+    )]));
 
     reactor.handle_event(space_state_event(vec![full_screen], vec![Some(space)]));
 
@@ -521,14 +520,21 @@ fn an_autosave_keeps_an_empty_desktop_macos_still_lists_off_screen() {
     reactor.autosave_path = Some(dir.join("layout.ron"));
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(other)]));
-    reactor.handle_event(space_state_event_with(vec![screen], vec![Some(shown)], |state| {
-        state.display_space_ids.insert("test-display-0".into(), vec![other, shown]);
-    }));
+    reactor.handle_event(space_state_event_with(
+        vec![screen],
+        vec![Some(shown)],
+        |state| {
+            state.display_space_ids.insert("test-display-0".into(), vec![other, shown]);
+        },
+    ));
     reactor.save_layout_now();
     let _ = std::fs::remove_dir_all(&dir);
 
-    let mut spaces =
-        reactor.layout_manager.layout_engine.virtual_workspace_manager().initialized_spaces();
+    let mut spaces = reactor
+        .layout_manager
+        .layout_engine
+        .virtual_workspace_manager()
+        .initialized_spaces();
     spaces.sort_unstable();
     assert_eq!(spaces, vec![other, shown]);
 }
@@ -543,15 +549,22 @@ fn the_quit_save_keeps_an_empty_desktop_macos_still_lists_off_screen() {
     std::fs::create_dir_all(&dir).unwrap();
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(other)]));
-    reactor.handle_event(space_state_event_with(vec![screen], vec![Some(shown)], |state| {
-        state.display_space_ids.insert("test-display-0".into(), vec![other, shown]);
-    }));
+    reactor.handle_event(space_state_event_with(
+        vec![screen],
+        vec![Some(shown)],
+        |state| {
+            state.display_space_ids.insert("test-display-0".into(), vec![other, shown]);
+        },
+    ));
     let saved = reactor.save_layout_before_exit(dir.join("layout.ron"));
     let _ = std::fs::remove_dir_all(&dir);
 
     saved.unwrap();
-    let mut spaces =
-        reactor.layout_manager.layout_engine.virtual_workspace_manager().initialized_spaces();
+    let mut spaces = reactor
+        .layout_manager
+        .layout_engine
+        .virtual_workspace_manager()
+        .initialized_spaces();
     spaces.sort_unstable();
     assert_eq!(spaces, vec![other, shown]);
 }
@@ -569,17 +582,24 @@ fn a_save_forgets_nothing_when_the_window_server_did_not_list_the_spaces() {
     reactor.autosave_path = Some(dir.join("autosave.ron"));
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(other)]));
-    reactor.handle_event(space_state_event_with(vec![screen], vec![Some(shown)], |state| {
-        state.display_space_ids.insert("test-display-0".into(), vec![shown]);
-        state.display_space_ids_from_screens = true;
-    }));
+    reactor.handle_event(space_state_event_with(
+        vec![screen],
+        vec![Some(shown)],
+        |state| {
+            state.display_space_ids.insert("test-display-0".into(), vec![shown]);
+            state.display_space_ids_from_screens = true;
+        },
+    ));
     reactor.save_layout_now();
     let saved = reactor.save_layout_before_exit(dir.join("layout.ron"));
     let _ = std::fs::remove_dir_all(&dir);
 
     saved.unwrap();
-    let mut spaces =
-        reactor.layout_manager.layout_engine.virtual_workspace_manager().initialized_spaces();
+    let mut spaces = reactor
+        .layout_manager
+        .layout_engine
+        .virtual_workspace_manager()
+        .initialized_spaces();
     spaces.sort_unstable();
     assert_eq!(spaces, vec![other, shown]);
 }
@@ -600,7 +620,11 @@ fn the_quit_save_forgets_a_space_the_display_moved_off_and_left_empty() {
 
     saved.unwrap();
     assert_eq!(
-        reactor.layout_manager.layout_engine.virtual_workspace_manager().initialized_spaces(),
+        reactor
+            .layout_manager
+            .layout_engine
+            .virtual_workspace_manager()
+            .initialized_spaces(),
         vec![new]
     );
 }

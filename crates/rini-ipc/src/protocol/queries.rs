@@ -19,9 +19,7 @@ impl From<rini_core::ids::WindowId> for WindowId {
 
 impl<'de> Deserialize<'de> for WindowId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
+    where D: Deserializer<'de> {
         rini_core::ids::WindowId::deserialize(deserializer).map(Into::into)
     }
 }

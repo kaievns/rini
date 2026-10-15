@@ -79,10 +79,14 @@ impl<S: ErrorSpan> knus::DecodeScalar<S> for ColourValue {
 
     fn raw_decode(value: &Spanned<Literal, S>, _: &mut Context<S>) -> Result<Self, DecodeError<S>> {
         let Literal::String(text) = &**value else {
-            return Err(DecodeError::conversion(value, "expected a colour, such as \"#7fc8ff\""));
+            return Err(DecodeError::conversion(
+                value,
+                "expected a colour, such as \"#7fc8ff\"",
+            ));
         };
-        let colour = csscolorparser::parse(text)
-            .map_err(|error| DecodeError::conversion(value, format!("expected a colour: {error}")))?;
+        let colour = csscolorparser::parse(text).map_err(|error| {
+            DecodeError::conversion(value, format!("expected a colour: {error}"))
+        })?;
         let [r, g, b, a] = colour.to_array();
         Ok(ColourValue(Colour { r, g, b, a }))
     }
@@ -100,9 +104,14 @@ impl<S: ErrorSpan> knus::DecodeScalar<S> for ColourSpaceValue {
 
     fn raw_decode(value: &Spanned<Literal, S>, _: &mut Context<S>) -> Result<Self, DecodeError<S>> {
         let Literal::String(text) = &**value else {
-            return Err(DecodeError::conversion(value, "expected a colour space, such as \"oklch longer hue\""));
+            return Err(DecodeError::conversion(
+                value,
+                "expected a colour space, such as \"oklch longer hue\"",
+            ));
         };
-        colour_space(text).map(ColourSpaceValue).map_err(|why| DecodeError::conversion(value, why))
+        colour_space(text)
+            .map(ColourSpaceValue)
+            .map_err(|why| DecodeError::conversion(value, why))
     }
 }
 
@@ -114,7 +123,11 @@ fn colour_space(text: &str) -> Result<ColourSpace, String> {
         Some("srgb-linear") => ColourSpace::SrgbLinear,
         Some("oklab") => ColourSpace::Oklab,
         Some("oklch") => ColourSpace::Oklch(Hue::Shorter),
-        Some(other) => return Err(format!("invalid color space {other}; can be srgb, srgb-linear, oklab or oklch")),
+        Some(other) => {
+            return Err(format!(
+                "invalid color space {other}; can be srgb, srgb-linear, oklab or oklch"
+            ));
+        }
     };
     let Some(way) = words.next() else { return Ok(space) };
     if space != ColourSpace::Oklch(Hue::Shorter) {
@@ -131,7 +144,11 @@ fn colour_space(text: &str) -> Result<ColourSpace, String> {
         "longer" => Hue::Longer,
         "increasing" => Hue::Increasing,
         "decreasing" => Hue::Decreasing,
-        other => return Err(format!("invalid hue interpolation {other}; can be shorter, longer, increasing, decreasing")),
+        other => {
+            return Err(format!(
+                "invalid hue interpolation {other}; can be shorter, longer, increasing, decreasing"
+            ));
+        }
     };
     Ok(ColourSpace::Oklch(hue))
 }

@@ -99,9 +99,7 @@ mod tests {
         const UP: OverlayVector = OverlayVector::new(0.0, -72.0);
         const LEFT: OverlayVector = OverlayVector::new(-72.0, 0.0);
 
-        fn plays() -> Duration {
-            Duration::from_secs_f64(PLAYS)
-        }
+        fn plays() -> Duration { Duration::from_secs_f64(PLAYS) }
 
         /// Pushes against `wall` at `at`, as the overlay does: each carrier's track replaces the
         /// bounce on it. Returns what the push made, by container.

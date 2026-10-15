@@ -96,9 +96,7 @@ impl ArrangeRequest {
 
 impl EventOutcome {
     /// The event was observed, but it does not require any follow-up work.
-    pub(crate) fn no_change() -> Self {
-        Self::default()
-    }
+    pub(crate) fn no_change() -> Self { Self::default() }
 
     /// Whether focus came to rest somewhere as a result of this event.
     ///
@@ -383,7 +381,8 @@ impl EventOutcome {
         window: WindowId,
         frame: CGRect,
     ) -> Self {
-        self.pre_layout_window_frame_writes.push(WindowFrameWriteRequest { window, frame });
+        self.pre_layout_window_frame_writes
+            .push(WindowFrameWriteRequest { window, frame });
         self
     }
 

@@ -7,12 +7,11 @@
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
-use crate::displays::domain::screen::CoordinateConverter;
-
 use super::layout::{
     GLYPH_CENTRE, HAIRLINE_HEIGHT, HAIRLINE_TOP, HEIGHT, NUMERAL_BASELINE, Piece, Span,
     TEXT_BASELINE, UNDERLINE_HEIGHT,
 };
+use crate::displays::domain::screen::CoordinateConverter;
 
 /// Room around a string's ink in its picture, for anti-aliasing that runs past the measured ink.
 const MARGIN: f64 = 2.0;
@@ -169,14 +168,10 @@ pub fn reframe(
     }
 }
 
-fn snap(value: f64, scale: f64) -> f64 {
-    (value * scale).round() / scale
-}
+fn snap(value: f64, scale: f64) -> f64 { (value * scale).round() / scale }
 
 /// Rounded up to whole pixels, but not past one it already is on by a rounding error.
-fn whole_pixels(value: f64, scale: f64) -> f64 {
-    (value * scale - 1e-6).ceil() / scale
-}
+fn whole_pixels(value: f64, scale: f64) -> f64 { (value * scale - 1e-6).ceil() / scale }
 
 #[cfg(test)]
 mod tests {
@@ -211,13 +206,9 @@ mod tests {
         height: 13.902,
     };
 
-    fn on_grid(value: f64) -> bool {
-        (value * SCALE - (value * SCALE).round()).abs() < 1e-9
-    }
+    fn on_grid(value: f64) -> bool { (value * SCALE - (value * SCALE).round()).abs() < 1e-9 }
 
-    fn span(x0: f64, width: f64) -> Span {
-        Span { x0, x1: x0 + width }
-    }
+    fn span(x0: f64, width: f64) -> Span { Span { x0, x1: x0 + width } }
 
     /// The pen is placed so the ink starts a margin in from the top-left, and the picture is whole
     /// pixels with room for the descender.

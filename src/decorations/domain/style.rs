@@ -77,7 +77,9 @@ impl Decoration {
     /// The radius its ring and border round to: its rule's, else `reported`, the one the window
     /// server reports, read only when no rule gives one. What macOS draws at rest, the hairline and
     /// the shadow, keeps the window server's on a tile too.
-    pub fn corner(&self, reported: impl FnOnce() -> Option<f64>) -> Option<f64> { self.radius.or_else(reported) }
+    pub fn corner(&self, reported: impl FnOnce() -> Option<f64>) -> Option<f64> {
+        self.radius.or_else(reported)
+    }
 }
 
 /// Whether a window wears the ring, and in which paint: its active paint while its workspace is on
@@ -109,7 +111,11 @@ impl Worn {
     /// drawn, which turn with its picture, and its ring and border as where the pass ends, from the
     /// flight's show to its lift.
     pub fn style(&self, focused: bool) -> Style {
-        Style { light_alpha: light_alpha(focused), shadow: shadow(focused), ..Style::of(self.holds_focus, self.wears_ring, &self.decoration) }
+        Style {
+            light_alpha: light_alpha(focused),
+            shadow: shadow(focused),
+            ..Style::of(self.holds_focus, self.wears_ring, &self.decoration)
+        }
     }
 }
 
@@ -131,7 +137,10 @@ impl Style {
     /// and the inactive one otherwise, as niri paints it.
     pub fn of(focused: bool, ring: Ring, decoration: &Decoration) -> Style {
         let urgent = decoration.urgent;
-        let ring_paint = decoration.ring.filter(|_| ring.worn()).map(|band| band.paint(ring == Ring::Active, urgent));
+        let ring_paint = decoration
+            .ring
+            .filter(|_| ring.worn())
+            .map(|band| band.paint(ring == Ring::Active, urgent));
         Style {
             light_alpha: light_alpha(focused),
             shadow: shadow(focused),
@@ -143,7 +152,13 @@ impl Style {
 
 fn light_alpha(focused: bool) -> f64 { if focused { 0.20 } else { 0.18 } }
 
-fn shadow(focused: bool) -> ShadowStyle { if focused { FOCUSED_SHADOW } else { UNFOCUSED_SHADOW } }
+fn shadow(focused: bool) -> ShadowStyle {
+    if focused {
+        FOCUSED_SHADOW
+    } else {
+        UNFOCUSED_SHADOW
+    }
+}
 
 /// Who wears the ring and in which paint, as niri has it (`niri:src/layout/scrolling.rs:2992-2995`,
 /// `niri:src/layout/monitor.rs:1095-1100`): each workspace's active window, on every display, and
@@ -167,19 +182,34 @@ impl Rings {
         let mut holders: Vec<(WindowId, Ring)> = workspaces
             .iter()
             .filter(|(display, workspace, _)| {
-                focus.as_ref().is_none_or(|(on, focused, _)| (on, focused) != (display, workspace))
+                focus
+                    .as_ref()
+                    .is_none_or(|(on, focused, _)| (on, focused) != (display, workspace))
             })
             .filter_map(|(display, _, active)| {
-                Some((active.as_ref().copied()?, if lit(display) { Ring::Active } else { Ring::Inactive }))
+                Some((
+                    active.as_ref().copied()?,
+                    if lit(display) {
+                        Ring::Active
+                    } else {
+                        Ring::Inactive
+                    },
+                ))
             })
             .collect();
         holders.extend(focus.as_ref().map(|(_, _, window)| (*window, Ring::Active)));
-        Rings { holders, focus: focus.map(|(_, _, window)| window) }
+        Rings {
+            holders,
+            focus: focus.map(|(_, _, window)| window),
+        }
     }
 
     /// The ring `window` wears.
     pub fn ring(&self, window: WindowId) -> Ring {
-        self.holders.iter().find(|(holder, _)| *holder == window).map_or(Ring::None, |(_, ring)| *ring)
+        self.holders
+            .iter()
+            .find(|(holder, _)| *holder == window)
+            .map_or(Ring::None, |(_, ring)| *ring)
     }
 
     /// Whether `window` holds focus, so wears the active paint.
@@ -213,29 +243,51 @@ mod tests {
         urgent: Paint::Solid(Colour::rgb(0x9b0000)),
     };
 
-    fn ringed() -> Decoration { Decoration { ring: Some(RING), ..Decoration::default() } }
+    fn ringed() -> Decoration {
+        Decoration {
+            ring: Some(RING),
+            ..Decoration::default()
+        }
+    }
 
     fn w(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
     #[test]
     fn the_focused_windows_hairline_is_the_brighter() {
-        assert_eq!(Style::of(true, Ring::None, &Decoration::default()).light_alpha, 0.20);
-        assert_eq!(Style::of(false, Ring::None, &Decoration::default()).light_alpha, 0.18);
+        assert_eq!(
+            Style::of(true, Ring::None, &Decoration::default()).light_alpha,
+            0.20
+        );
+        assert_eq!(
+            Style::of(false, Ring::None, &Decoration::default()).light_alpha,
+            0.18
+        );
     }
 
     #[test]
     fn the_ring_is_worn_by_each_workspaces_active_window_on_every_display() {
         let rings = Rings::of(
-            &[("a", "left", Some(w(1))), ("b", "right", Some(w(2))), ("b", "empty", None)],
+            &[
+                ("a", "left", Some(w(1))),
+                ("b", "right", Some(w(2))),
+                ("b", "empty", None),
+            ],
             Some(("a", "left", w(1))),
         );
         assert!(rings.ring(w(1)).worn() && rings.ring(w(2)).worn());
-        assert_eq!(rings.ring(w(3)), Ring::None, "a window no workspace has active wears none");
+        assert_eq!(
+            rings.ring(w(3)),
+            Ring::None,
+            "a window no workspace has active wears none"
+        );
     }
 
     #[test]
     fn only_the_display_holding_focus_wears_the_active_colour() {
-        let rings = Rings::of(&[("a", "left", Some(w(1))), ("b", "right", Some(w(2)))], Some(("a", "left", w(1))));
+        let rings = Rings::of(
+            &[("a", "left", Some(w(1))), ("b", "right", Some(w(2)))],
+            Some(("a", "left", w(1))),
+        );
         let paint = |window| Style::of(rings.focused(window), rings.ring(window), &ringed()).ring;
         assert_eq!(paint(w(1)), Some(RING.active));
         assert_eq!(paint(w(2)), Some(RING.inactive));
@@ -245,26 +297,49 @@ mod tests {
     /// switch leaves keeps its window's ring active as it slides away.
     #[test]
     fn every_ring_on_the_display_holding_focus_wears_the_active_colour() {
-        let workspaces = [("a", 1, Some(w(1))), ("a", 2, Some(w(2))), ("b", 3, Some(w(3)))];
+        let workspaces = [
+            ("a", 1, Some(w(1))),
+            ("a", 2, Some(w(2))),
+            ("b", 3, Some(w(3))),
+        ];
         let rings = Rings::of(&workspaces, Some(("a", 2, w(2))));
-        assert_eq!([rings.ring(w(1)), rings.ring(w(2)), rings.ring(w(3))], [Ring::Active, Ring::Active, Ring::Inactive]);
+        assert_eq!([rings.ring(w(1)), rings.ring(w(2)), rings.ring(w(3))], [
+            Ring::Active,
+            Ring::Active,
+            Ring::Inactive
+        ]);
         assert!(!rings.focused(w(1)), "active, not focused");
-        let style = Style::of(rings.focused(w(1)), rings.ring(w(1)), &Decoration { border: Some(BORDER), ..ringed() });
-        assert_eq!((style.ring, style.border), (Some(RING.active), Some(BORDER.inactive)), "the border is the window's own focus");
+        let style = Style::of(rings.focused(w(1)), rings.ring(w(1)), &Decoration {
+            border: Some(BORDER),
+            ..ringed()
+        });
+        assert_eq!(
+            (style.ring, style.border),
+            (Some(RING.active), Some(BORDER.inactive)),
+            "the border is the window's own focus"
+        );
     }
 
     #[test]
     fn a_focused_floating_window_wears_the_ring_instead_of_the_tiled_selection() {
         let rings = Rings::of(&[("a", "left", Some(w(1)))], Some(("a", "left", w(5))));
         assert_eq!(rings.ring(w(5)), Ring::Active);
-        assert_eq!(rings.ring(w(1)), Ring::None, "the selection behind it wears none");
+        assert_eq!(
+            rings.ring(w(1)),
+            Ring::None,
+            "the selection behind it wears none"
+        );
     }
 
     #[test]
     fn with_no_managed_window_focused_nothing_is_active() {
-        let rings = Rings::of::<_, _>(&[("a", "left", Some(w(1))), ("b", "right", Some(w(2)))], None);
+        let rings =
+            Rings::of::<_, _>(&[("a", "left", Some(w(1))), ("b", "right", Some(w(2)))], None);
         for window in [w(1), w(2)] {
-            assert!(rings.ring(window) == Ring::Inactive && !rings.focused(window), "each workspace's active window still");
+            assert!(
+                rings.ring(window) == Ring::Inactive && !rings.focused(window),
+                "each workspace's active window still"
+            );
             let style = Style::of(rings.focused(window), rings.ring(window), &ringed());
             assert_eq!(style.ring, Some(RING.inactive), "and none of them focused");
         }
@@ -272,21 +347,51 @@ mod tests {
 
     #[test]
     fn a_ringed_window_wears_the_paint_its_ring_names() {
-        assert_eq!(Style::of(false, Ring::Inactive, &ringed()).ring, Some(RING.inactive));
+        assert_eq!(
+            Style::of(false, Ring::Inactive, &ringed()).ring,
+            Some(RING.inactive)
+        );
         assert_eq!(Style::of(true, Ring::Active, &ringed()).ring, Some(RING.active));
-        assert_eq!(Style::of(false, Ring::Active, &ringed()).ring, Some(RING.active), "on the display holding focus");
-        assert_eq!(Style::of(true, Ring::None, &ringed()).ring, None, "focused but not its workspace's active window");
-        assert_eq!(Style::of(true, Ring::Active, &Decoration::default()).ring, None, "rings off");
+        assert_eq!(
+            Style::of(false, Ring::Active, &ringed()).ring,
+            Some(RING.active),
+            "on the display holding focus"
+        );
+        assert_eq!(
+            Style::of(true, Ring::None, &ringed()).ring,
+            None,
+            "focused but not its workspace's active window"
+        );
+        assert_eq!(
+            Style::of(true, Ring::Active, &Decoration::default()).ring,
+            None,
+            "rings off"
+        );
     }
 
     #[test]
     fn the_border_wears_the_active_paint_only_while_focused() {
-        let bordered = Decoration { border: Some(BORDER), ..ringed() };
+        let bordered = Decoration {
+            border: Some(BORDER),
+            ..ringed()
+        };
         for ring in [Ring::Active, Ring::Inactive, Ring::None] {
-            assert_eq!(Style::of(true, ring, &bordered).border, Some(BORDER.active), "{ring:?}");
-            assert_eq!(Style::of(false, ring, &bordered).border, Some(BORDER.inactive), "{ring:?}");
+            assert_eq!(
+                Style::of(true, ring, &bordered).border,
+                Some(BORDER.active),
+                "{ring:?}"
+            );
+            assert_eq!(
+                Style::of(false, ring, &bordered).border,
+                Some(BORDER.inactive),
+                "{ring:?}"
+            );
         }
-        assert_eq!(Style::of(true, Ring::Active, &ringed()).border, None, "borders off");
+        assert_eq!(
+            Style::of(true, Ring::Active, &ringed()).border,
+            None,
+            "borders off"
+        );
     }
 
     /// Focus moves from window 1 to window 2: from the show, each tile's ring and border are what
@@ -296,60 +401,142 @@ mod tests {
     /// active ring; across displays, window 1 keeps the inactive one.
     #[test]
     fn a_tile_wears_its_bands_as_where_the_flight_ends_whatever_its_picture_shows() {
-        let bordered = Decoration { border: Some(BORDER), ..ringed() };
-        let worn = |wears_ring, holds_focus| Worn { decoration: bordered, wears_ring, holds_focus };
+        let bordered = Decoration {
+            border: Some(BORDER),
+            ..ringed()
+        };
+        let worn = |wears_ring, holds_focus| Worn {
+            decoration: bordered,
+            wears_ring,
+            holds_focus,
+        };
         let bands = |style: Style| (style.ring, style.border);
         for focused in [true, false] {
-            assert_eq!(bands(worn(Ring::None, false).style(focused)), (None, Some(BORDER.inactive)), "losing, one workspace");
-            assert_eq!(bands(worn(Ring::Active, false).style(focused)), (Some(RING.active), Some(BORDER.inactive)), "losing, a switch");
-            assert_eq!(bands(worn(Ring::Inactive, false).style(focused)), (Some(RING.inactive), Some(BORDER.inactive)), "losing to another display");
-            assert_eq!(bands(worn(Ring::Active, true).style(focused)), (Some(RING.active), Some(BORDER.active)), "gaining");
+            assert_eq!(
+                bands(worn(Ring::None, false).style(focused)),
+                (None, Some(BORDER.inactive)),
+                "losing, one workspace"
+            );
+            assert_eq!(
+                bands(worn(Ring::Active, false).style(focused)),
+                (Some(RING.active), Some(BORDER.inactive)),
+                "losing, a switch"
+            );
+            assert_eq!(
+                bands(worn(Ring::Inactive, false).style(focused)),
+                (Some(RING.inactive), Some(BORDER.inactive)),
+                "losing to another display"
+            );
+            assert_eq!(
+                bands(worn(Ring::Active, true).style(focused)),
+                (Some(RING.active), Some(BORDER.active)),
+                "gaining"
+            );
         }
         let losing = worn(Ring::None, false).style(true);
-        assert_eq!((losing.light_alpha, losing.shadow), (0.20, FOCUSED_SHADOW), "drawn focused until its turn");
+        assert_eq!(
+            (losing.light_alpha, losing.shadow),
+            (0.20, FOCUSED_SHADOW),
+            "drawn focused until its turn"
+        );
         let gaining = worn(Ring::Active, true).style(false);
-        assert_eq!((gaining.light_alpha, gaining.shadow), (0.18, UNFOCUSED_SHADOW), "drawn unfocused until its turn");
-        assert_eq!(Worn::default().style(true), Style::of(true, Ring::None, &Decoration::default()), "bands off");
+        assert_eq!(
+            (gaining.light_alpha, gaining.shadow),
+            (0.18, UNFOCUSED_SHADOW),
+            "drawn unfocused until its turn"
+        );
+        assert_eq!(
+            Worn::default().style(true),
+            Style::of(true, Ring::None, &Decoration::default()),
+            "bands off"
+        );
     }
 
     #[test]
     fn an_app_wanting_attention_draws_each_unfocused_window_urgent() {
         let (editor, other) = (|idx| WindowId::new(7, idx), |idx| WindowId::new(9, idx));
         let attention = Attention::of([7]);
-        let rings = Rings::of(&[("a", "left", Some(editor(1))), ("b", "right", Some(other(1)))], Some(("b", "right", other(1))));
+        let rings = Rings::of(
+            &[
+                ("a", "left", Some(editor(1))),
+                ("b", "right", Some(other(1))),
+            ],
+            Some(("b", "right", other(1))),
+        );
         for window in [editor(1), editor(2)] {
-            assert!(rings.urgent(window, &attention), "{window:?}: ringed or not, every window of the app");
+            assert!(
+                rings.urgent(window, &attention),
+                "{window:?}: ringed or not, every window of the app"
+            );
         }
         assert!(!rings.urgent(other(2), &attention), "an app that does not ask");
-        assert!(Rings::default().urgent(editor(1), &attention), "with nothing focused too");
+        assert!(
+            Rings::default().urgent(editor(1), &attention),
+            "with nothing focused too"
+        );
     }
 
     #[test]
     fn focusing_the_app_clears_its_urgency() {
         let attention = Attention::of([7]);
-        let rings = Rings::of(&[("a", "left", Some(WindowId::new(7, 1)))], Some(("a", "left", WindowId::new(7, 1))));
-        assert!(!rings.urgent(WindowId::new(7, 1), &attention), "the window holding focus");
-        assert!(!rings.urgent(WindowId::new(7, 2), &attention), "and every other window of its app");
+        let rings = Rings::of(
+            &[("a", "left", Some(WindowId::new(7, 1)))],
+            Some(("a", "left", WindowId::new(7, 1))),
+        );
+        assert!(
+            !rings.urgent(WindowId::new(7, 1), &attention),
+            "the window holding focus"
+        );
+        assert!(
+            !rings.urgent(WindowId::new(7, 2), &attention),
+            "and every other window of its app"
+        );
     }
 
     #[test]
     fn urgent_beats_active_beats_inactive() {
-        let urgent = Decoration { border: Some(BORDER), urgent: true, ..ringed() };
-        for (focused, ring) in [(true, Ring::Active), (false, Ring::Inactive), (false, Ring::Active)] {
+        let urgent = Decoration {
+            border: Some(BORDER),
+            urgent: true,
+            ..ringed()
+        };
+        for (focused, ring) in [
+            (true, Ring::Active),
+            (false, Ring::Inactive),
+            (false, Ring::Active),
+        ] {
             let style = Style::of(focused, ring, &urgent);
-            assert_eq!((style.ring, style.border), (Some(RING.urgent), Some(BORDER.urgent)), "focused {focused}, {ring:?}");
+            assert_eq!(
+                (style.ring, style.border),
+                (Some(RING.urgent), Some(BORDER.urgent)),
+                "focused {focused}, {ring:?}"
+            );
         }
-        assert_eq!(Style::of(false, Ring::None, &urgent).ring, None, "urgent wears the ring only where it wears it");
+        assert_eq!(
+            Style::of(false, Ring::None, &urgent).ring,
+            None,
+            "urgent wears the ring only where it wears it"
+        );
         assert_eq!(RING.paint(true, false), RING.active);
         assert_eq!(RING.paint(false, false), RING.inactive);
     }
 
     #[test]
     fn a_rule_radius_goes_ahead_of_the_reported_one() {
-        let ruled = Decoration { radius: Some(12.0), ..Decoration::default() };
-        assert_eq!(ruled.corner(|| panic!("no read while a rule gives the radius")), Some(12.0));
+        let ruled = Decoration {
+            radius: Some(12.0),
+            ..Decoration::default()
+        };
+        assert_eq!(
+            ruled.corner(|| panic!("no read while a rule gives the radius")),
+            Some(12.0)
+        );
         assert_eq!(Decoration::default().corner(|| Some(26.0)), Some(26.0));
-        assert_eq!(Decoration::default().corner(|| None), None, "the fallback is shape's");
+        assert_eq!(
+            Decoration::default().corner(|| None),
+            None,
+            "the fallback is shape's"
+        );
     }
 
     /// Three radii plus the offset is where a gaussian ramp is visually spent.
@@ -376,7 +563,13 @@ mod tests {
 
     #[test]
     fn focus_picks_the_deep_style() {
-        assert_eq!(Style::of(true, Ring::None, &Decoration::default()).shadow, FOCUSED_SHADOW);
-        assert_eq!(Style::of(false, Ring::None, &Decoration::default()).shadow, UNFOCUSED_SHADOW);
+        assert_eq!(
+            Style::of(true, Ring::None, &Decoration::default()).shadow,
+            FOCUSED_SHADOW
+        );
+        assert_eq!(
+            Style::of(false, Ring::None, &Decoration::default()).shadow,
+            UNFOCUSED_SHADOW
+        );
     }
 }

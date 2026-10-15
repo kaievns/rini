@@ -47,9 +47,7 @@ pub const BOOTSTRAP_NAME_IN_USE: kern_return_t = 1101;
 pub const BOOTSTRAP_UNKNOWN_SERVICE: kern_return_t = 1102;
 
 #[inline]
-pub const fn MACH_MSGH_BITS(remote: u32, local: u32) -> u32 {
-    remote | (local << 8)
-}
+pub const fn MACH_MSGH_BITS(remote: u32, local: u32) -> u32 { remote | (local << 8) }
 
 #[inline]
 pub const fn MACH_MSGH_BITS_SET(remote: u32, local: u32, voucher: u32, other: u32) -> u32 {
@@ -57,14 +55,10 @@ pub const fn MACH_MSGH_BITS_SET(remote: u32, local: u32, voucher: u32, other: u3
 }
 
 #[inline]
-pub const fn MACH_MSGH_BITS_REMOTE(bits: u32) -> u32 {
-    bits & 0xff
-}
+pub const fn MACH_MSGH_BITS_REMOTE(bits: u32) -> u32 { bits & 0xff }
 
 #[inline]
-pub const fn MACH_MSGH_BITS_LOCAL(bits: u32) -> u32 {
-    (bits >> 8) & 0xff
-}
+pub const fn MACH_MSGH_BITS_LOCAL(bits: u32) -> u32 { (bits >> 8) & 0xff }
 
 #[repr(C)]
 #[derive(Copy, Clone)]

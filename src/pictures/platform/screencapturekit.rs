@@ -12,7 +12,6 @@ use block2::RcBlock;
 use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2_core_foundation::{CFRetained, CGSize};
-use rini_geometry::space::{FromCg, ScreenSize, ToCg};
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::CVPixelBufferGetIOSurface;
 use objc2_foundation::{NSArray, NSError};
@@ -21,12 +20,13 @@ use objc2_screen_capture_kit::{
     SCCaptureResolutionType, SCContentFilter, SCScreenshotManager, SCShareableContent,
     SCStreamConfiguration, SCWindow,
 };
+use rini_geometry::space::{FromCg, ScreenSize, ToCg};
 use tracing::{debug, warn};
 
 use crate::pictures::domain::coverage::Coverage;
+use crate::pictures::domain::route::Route;
 use crate::pictures::domain::schedule::Display;
 use crate::pictures::domain::target::PictureTarget;
-use crate::pictures::domain::route::Route;
 use crate::pictures::platform::picture::{LazyGround, Picture, Pixels};
 
 /// Alpha above which a pixel counts as painted; shadows are excluded, so a painted edge is opaque.
@@ -248,7 +248,8 @@ pub fn capture(
     // one already running keeps that one's older stamp, so a caller can tell the two apart.
     let taken = std::time::Instant::now();
     let completion = RcBlock::new(move |sample: *mut CMSampleBuffer, _error: *mut NSError| {
-        let buffer = NonNull::new(sample).and_then(|sample| unsafe { sample.as_ref().image_buffer() });
+        let buffer =
+            NonNull::new(sample).and_then(|sample| unsafe { sample.as_ref().image_buffer() });
         let filled = buffer.as_ref().and_then(|b| content_reaches_edges(b));
         let surface = buffer.and_then(|b| CVPixelBufferGetIOSurface(Some(&b)));
         // No capture calls in here: `CGWindowListCreateImage` is proxied through this same delivery

@@ -72,9 +72,7 @@ pub(in crate::transitions) fn worth_flying(moving_drawable: bool, running: bool)
 mod tests {
     use super::*;
 
-    fn window(idx: u32) -> WindowId {
-        WindowId::new(7, idx)
-    }
+    fn window(idx: u32) -> WindowId { WindowId::new(7, idx) }
 
     mod handover {
         use rini_geometry::space::{ScreenPoint, ScreenSize};
@@ -84,7 +82,11 @@ mod tests {
 
         fn measured(
             frames: &[(WindowId, ScreenRect, ScreenRect)],
-        ) -> (Vec<(WindowId, ScreenRect)>, Vec<WindowId>, HashMap<WindowId, ScreenRect>) {
+        ) -> (
+            Vec<(WindowId, ScreenRect)>,
+            Vec<WindowId>,
+            HashMap<WindowId, ScreenRect>,
+        ) {
             let final_frames = frames.iter().map(|(w, intended, _)| (*w, *intended)).collect();
             let tiled = frames.iter().map(|(w, _, _)| *w).collect();
             let real = frames.iter().map(|(w, _, actual)| (*w, *actual)).collect();
@@ -248,7 +250,9 @@ mod tests {
         use rini_geometry::space::{ScreenPoint, SurfacePoint};
 
         use super::*;
-        use crate::animation::domain::motion::plan::{GroupKey, ReflowPlan, RigidGroup, reflow_plan};
+        use crate::animation::domain::motion::plan::{
+            GroupKey, ReflowPlan, RigidGroup, reflow_plan,
+        };
         use crate::animation::domain::motion::surface::surface_travel;
         use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
         use crate::transitions::domain::travel::is_moving;
@@ -264,9 +268,7 @@ mod tests {
             )
         }
 
-        fn column(i: f64) -> ScreenRect {
-            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
-        }
+        fn column(i: f64) -> ScreenRect { rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0) }
 
         fn moving(plan: &ReflowPlan) -> Vec<&RigidGroup> {
             plan.groups
@@ -292,10 +294,7 @@ mod tests {
         fn a_floating_open_over_a_still_strip_does_not_fly() {
             let s1 = rect(0.0, 32.0, 860.0, 1081.0);
             let s2 = rect(867.0, 32.0, 859.0, 1081.0);
-            let tiles = vec![
-                (s1, s1),
-                (s2, s2),
-            ];
+            let tiles = vec![(s1, s1), (s2, s2)];
             assert!(
                 !worth_flying(moving_drawable(&tiles), false),
                 "the entrance, a floating window with no picture, is reserved and never drawn here"
@@ -307,15 +306,25 @@ mod tests {
             let before = rect(0.0, 32.0, 1720.0, 1081.0);
             let after = rect(0.0, 32.0, 860.0, 1081.0);
             let tiles = vec![(before, after)];
-            assert!(worth_flying(moving_drawable(&tiles), false), "the opened window's own reservation aside");
+            assert!(
+                worth_flying(moving_drawable(&tiles), false),
+                "the opened window's own reservation aside"
+            );
         }
 
         #[test]
         fn a_pan_flies() {
             let frame = rect(867.0, 32.0, 859.0, 1081.0);
-            let (from, to) =
-                surface_travel(frame, SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0), false);
-            let tiles = vec![(from_overlay_space(from, DISPLAY), from_overlay_space(to, DISPLAY))];
+            let (from, to) = surface_travel(
+                frame,
+                SurfacePoint::origin(),
+                SurfacePoint::new(867.0, 0.0),
+                false,
+            );
+            let tiles = vec![(
+                from_overlay_space(from, DISPLAY),
+                from_overlay_space(to, DISPLAY),
+            )];
             assert!(worth_flying(moving_drawable(&tiles), false));
         }
 

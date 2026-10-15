@@ -61,9 +61,7 @@ impl RiniMachClient {
     ///
     /// Service discovery happens when a request is sent, allowing callers to
     /// construct the client before Rini has finished starting.
-    pub fn connect() -> Result<Self, ClientError> {
-        Ok(Self)
-    }
+    pub fn connect() -> Result<Self, ClientError> { Ok(Self) }
 
     /// Sends one request and blocks until Rini responds.
     pub fn send_request(&self, request: &RiniRequest) -> Result<RiniResponse, ClientError> {
@@ -101,9 +99,7 @@ struct ServicePort {
 }
 
 impl ServicePort {
-    fn new(name: mach_port_t) -> Self {
-        Self { name }
-    }
+    fn new(name: mach_port_t) -> Self { Self { name } }
 }
 
 impl Drop for ServicePort {
@@ -252,8 +248,11 @@ unsafe fn receive_message(reply_port: mach_port_t) -> Result<Vec<u8>, ClientErro
         });
     }
 
-    let payload_len =
-        buffer.message.header.msgh_size.saturating_sub(size_of::<mach_msg_header_t>() as u32) as usize;
+    let payload_len = buffer
+        .message
+        .header
+        .msgh_size
+        .saturating_sub(size_of::<mach_msg_header_t>() as u32) as usize;
     if payload_len > MAX_MESSAGE_SIZE {
         unsafe { mach_msg_destroy(&mut buffer.message.header) };
         return Err(ClientError::MessageTooLarge);
@@ -271,7 +270,9 @@ mod tests {
     fn parses_nul_terminated_response_with_alignment_padding() {
         let response: RiniResponse =
             parse_json_payload(b"{\"data\":true}\0\0\0", "response").unwrap();
-        assert_eq!(response, RiniResponse::Success { data: serde_json::Value::Bool(true) });
+        assert_eq!(response, RiniResponse::Success {
+            data: serde_json::Value::Bool(true)
+        });
     }
 
     #[test]

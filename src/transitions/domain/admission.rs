@@ -136,7 +136,13 @@ pub(in crate::transitions) struct Landing {
 
 impl EndPicture {
     /// Every sort.
-    const ALL: [Self; 5] = [Self::Awaited, Self::Held, Self::Kept, Self::Repainting, Self::Lands];
+    const ALL: [Self; 5] = [
+        Self::Awaited,
+        Self::Held,
+        Self::Kept,
+        Self::Repainting,
+        Self::Lands,
+    ];
 
     /// Which of `Waits`' lists a window so sorted is in: `awaiting`, `repainting` and `kept`.
     const fn lists(self) -> (bool, bool, bool) {
@@ -161,12 +167,17 @@ impl EndPicture {
         display: ScreenRect,
     ) -> Self {
         let (own, composed) = match flies {
-            FliesOn::Picture { source, covered } => (Self::of_window(source, request.from.size, request.to.size), Some(covered)),
+            FliesOn::Picture { source, covered } => (
+                Self::of_window(source, request.from.size, request.to.size),
+                Some(covered),
+            ),
             FliesOn::Entrance(entrance) => (Self::of_entrance(entrance), None),
         };
         let carried = landing.map(|landing| landing.carried).or(composed);
         match own.landing_on(landing) {
-            Self::Kept if !covers_start(carried, start, request.floating, display) => Self::Repainting,
+            Self::Kept if !covers_start(carried, start, request.floating, display) => {
+                Self::Repainting
+            }
             sorted => sorted,
         }
     }
@@ -179,7 +190,9 @@ impl EndPicture {
     }
 
     fn landing_on(self, landing: Option<Landing>) -> Self {
-        landing.map_or(self, |Landing { carried, to, held }| self.against_tile(carried, to, held))
+        landing.map_or(self, |Landing { carried, to, held }| {
+            self.against_tile(carried, to, held)
+        })
     }
 
     /// A window going from `from` to `to`, drawn from a picture taken `source`: a stand-in, which is
@@ -204,7 +217,11 @@ impl EndPicture {
     /// its cached picture. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
     fn against_tile(self, carried: ScreenSize, to: ScreenSize, held: bool) -> Self {
         let judged = self == Self::Kept || held && self == Self::Lands;
-        if judged && grows(carried, to) { Self::Held } else { self }
+        if judged && grows(carried, to) {
+            Self::Held
+        } else {
+            self
+        }
     }
 
     /// A window that just opened: one flying from where it opened repaints where it ends, one already
@@ -220,8 +237,14 @@ impl EndPicture {
 
 /// Whether a tile starting at `start` starts with a picture covering it: frame zero's, taken there
 /// when it starts wholly on `display`, else the one it carries, `carried` big, when that fits it.
-fn covers_start(carried: Option<ScreenSize>, start: ScreenRect, floating: bool, display: ScreenRect) -> bool {
-    frame_zero_pictures(start, floating, display) || carried.is_some_and(|carried| fits_frame(carried, start.size))
+fn covers_start(
+    carried: Option<ScreenSize>,
+    start: ScreenRect,
+    floating: bool,
+    display: ScreenRect,
+) -> bool {
+    frame_zero_pictures(start, floating, display)
+        || carried.is_some_and(|carried| fits_frame(carried, start.size))
 }
 
 /// A pass's windows as their `EndPicture`s sort them: `StageSummary::awaiting`, `::repainting` and
@@ -243,13 +266,23 @@ impl Waits {
     /// The grows: held for and pictured where they end only once repainted, what a pass merged while
     /// the motion runs is held for, a merged pass's judged against its tiles (`Landing`).
     pub(in crate::transitions) fn grows(&self) -> impl Iterator<Item = WindowId> + '_ {
-        self.awaiting.iter().copied().filter(|window| self.of(*window) == EndPicture::Held)
+        self.awaiting
+            .iter()
+            .copied()
+            .filter(|window| self.of(*window) == EndPicture::Held)
     }
 
     /// How `push` sorted `window`: a window in none of the lists lands.
     fn of(&self, window: WindowId) -> EndPicture {
-        let lists = (self.awaiting.contains(&window), self.repainting.contains(&window), self.kept.contains(&window));
-        EndPicture::ALL.into_iter().find(|end| end.lists() == lists).unwrap_or(EndPicture::Lands)
+        let lists = (
+            self.awaiting.contains(&window),
+            self.repainting.contains(&window),
+            self.kept.contains(&window),
+        );
+        EndPicture::ALL
+            .into_iter()
+            .find(|end| end.lists() == lists)
+            .unwrap_or(EndPicture::Lands)
     }
 
     /// Sorts the window `request` places, its tile starting at `start` on `display`, flying on `flies`
@@ -262,17 +295,28 @@ impl Waits {
         start: ScreenRect,
         display: ScreenRect,
     ) {
-        self.push(request.window, EndPicture::of_request(request, flies, landing, start, display));
+        self.push(
+            request.window,
+            EndPicture::of_request(request, flies, landing, start, display),
+        );
     }
 
     /// Sorts `window`, carried by the strip surface and landing on `landing` (`EndPicture::of_strip`).
-    pub(in crate::transitions) fn push_strip(&mut self, window: WindowId, landing: Option<Landing>) {
+    pub(in crate::transitions) fn push_strip(
+        &mut self,
+        window: WindowId,
+        landing: Option<Landing>,
+    ) {
         self.push(window, EndPicture::of_strip(landing));
     }
 
     pub(in crate::transitions) fn push(&mut self, window: WindowId, end: EndPicture) {
         let (holds, repaints, keeps) = end.lists();
-        for (sorted, into) in [(holds, &mut self.awaiting), (repaints, &mut self.repainting), (keeps, &mut self.kept)] {
+        for (sorted, into) in [
+            (holds, &mut self.awaiting),
+            (repaints, &mut self.repainting),
+            (keeps, &mut self.kept),
+        ] {
             if sorted {
                 into.push(window);
             }
@@ -319,15 +363,19 @@ mod tests {
     use super::*;
     use crate::animation::domain::motion::testing::{Gen, RUNS, rect};
 
-    fn window(idx: u32) -> WindowId {
-        WindowId::new(1, idx)
-    }
+    fn window(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
     /// The built-in display, the menu bar's band included.
-    const DISPLAY: ScreenRect = ScreenRect::new(ScreenPoint::new(0.0, 0.0), ScreenSize::new(1728.0, 1117.0));
+    const DISPLAY: ScreenRect =
+        ScreenRect::new(ScreenPoint::new(0.0, 0.0), ScreenSize::new(1728.0, 1117.0));
 
     /// A SkyLight picture `covered` big.
-    fn skylight(covered: ScreenSize) -> FliesOn { FliesOn::Picture { source: Route::SkyLight, covered } }
+    fn skylight(covered: ScreenSize) -> FliesOn {
+        FliesOn::Picture {
+            source: Route::SkyLight,
+            covered,
+        }
+    }
 
     /// A pass that repeats a destination is not a new flight. This is what stops a held key from
     /// restarting the animation on every repeat, which would mean it never lands.
@@ -419,11 +467,6 @@ mod tests {
         );
     }
 
-
-
-
-
-
     #[test]
     fn a_window_with_a_usable_picture_and_a_real_frame_travels() {
         let spawn: ScreenRect = rect(0., 0., 200., 200.);
@@ -481,11 +524,6 @@ mod tests {
         );
     }
 
-
-
-
-
-
     /// The 0.1pt tolerance is `same_as`'s: the layout recomputes destinations bit-for-bit only most
     /// of the time.
     #[test]
@@ -507,13 +545,23 @@ mod tests {
 
     const COLUMN: ScreenSize = ScreenSize::new(859.0, 1081.0);
 
-    fn end(from: ScreenSize, to: ScreenSize) -> EndPicture { EndPicture::of_window(Route::SkyLight, from, to) }
+    fn end(from: ScreenSize, to: ScreenSize) -> EndPicture {
+        EndPicture::of_window(Route::SkyLight, from, to)
+    }
 
     /// A grow is held for its repaint, a fold that widens a window as it shortens it included.
     #[test]
     fn a_grow_is_held_for_its_repaint() {
-        assert_eq!(end(COLUMN, ScreenSize::new(1720.0, 1081.0)), EndPicture::Held, "a grow");
-        assert_eq!(end(COLUMN, ScreenSize::new(1148.0, 538.0)), EndPicture::Held, "a fold");
+        assert_eq!(
+            end(COLUMN, ScreenSize::new(1720.0, 1081.0)),
+            EndPicture::Held,
+            "a grow"
+        );
+        assert_eq!(
+            end(COLUMN, ScreenSize::new(1148.0, 538.0)),
+            EndPicture::Held,
+            "a fold"
+        );
     }
 
     #[test]
@@ -525,14 +573,28 @@ mod tests {
     #[test]
     fn a_move_lands_a_point_of_rounding_included() {
         assert_eq!(end(COLUMN, COLUMN), EndPicture::Lands, "a move");
-        assert_eq!(end(COLUMN, ScreenSize::new(860.0, 1081.0)), EndPicture::Lands, "rounding");
-        assert_eq!(EndPicture::of_window(Route::Baked, COLUMN, COLUMN), EndPicture::Lands);
+        assert_eq!(
+            end(COLUMN, ScreenSize::new(860.0, 1081.0)),
+            EndPicture::Lands,
+            "rounding"
+        );
+        assert_eq!(
+            EndPicture::of_window(Route::Baked, COLUMN, COLUMN),
+            EndPicture::Lands
+        );
     }
 
     #[test]
     fn a_stand_in_is_awaited_whatever_it_does() {
-        for to in [COLUMN, ScreenSize::new(1720.0, 1081.0), ScreenSize::new(859.0, 535.0)] {
-            assert_eq!(EndPicture::of_window(Route::StandIn, COLUMN, to), EndPicture::Awaited);
+        for to in [
+            COLUMN,
+            ScreenSize::new(1720.0, 1081.0),
+            ScreenSize::new(859.0, 535.0),
+        ] {
+            assert_eq!(
+                EndPicture::of_window(Route::StandIn, COLUMN, to),
+                EndPicture::Awaited
+            );
         }
     }
 
@@ -540,23 +602,26 @@ mod tests {
     /// travelling entrance. Kept: a shrink alone. A move, landing, is in none.
     #[test]
     fn a_grow_is_held_for_a_shrink_kept_and_both_watched_until_repainted() {
-        let window = |idx| WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() };
+        let window = |idx| WindowId {
+            pid: 1,
+            idx: std::num::NonZeroU32::new(idx).unwrap(),
+        };
         let waits: Waits = (1..).map(window).zip(EndPicture::ALL).collect();
-        assert_eq!(
-            waits,
-            Waits {
-                awaiting: vec![window(1), window(2)],
-                repainting: vec![window(2), window(3), window(4)],
-                kept: vec![window(3)],
-            }
-        );
+        assert_eq!(waits, Waits {
+            awaiting: vec![window(1), window(2)],
+            repainting: vec![window(2), window(3), window(4)],
+            kept: vec![window(3)],
+        });
         assert_eq!(waits.grows().collect::<Vec<_>>(), [window(2)], "the grow alone");
     }
 
     /// Every sort pushed reads back as itself, so each is in its own lists.
     #[test]
     fn each_sort_reads_back_as_it_was_pushed() {
-        let window = |idx| WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() };
+        let window = |idx| WindowId {
+            pid: 1,
+            idx: std::num::NonZeroU32::new(idx).unwrap(),
+        };
         let waits: Waits = (1..).map(window).zip(EndPicture::ALL).collect();
         for (idx, end) in (1..).zip(EndPicture::ALL) {
             assert_eq!(waits.of(window(idx)), end);
@@ -569,9 +634,19 @@ mod tests {
     #[test]
     fn a_shrink_ending_wider_than_its_tiles_picture_is_held() {
         let (carried, to) = (ScreenSize::new(572.0, 1079.0), ScreenSize::new(860.0, 1079.0));
-        assert_eq!(EndPicture::Kept.against_tile(carried, to, false), EndPicture::Held);
-        assert_eq!(EndPicture::Kept.against_tile(ScreenSize::new(1148.0, 1079.0), to, false), EndPicture::Kept);
-        assert_eq!(EndPicture::Kept.against_tile(ScreenSize::new(859.0, 1079.0), to, false), EndPicture::Kept, "rounding");
+        assert_eq!(
+            EndPicture::Kept.against_tile(carried, to, false),
+            EndPicture::Held
+        );
+        assert_eq!(
+            EndPicture::Kept.against_tile(ScreenSize::new(1148.0, 1079.0), to, false),
+            EndPicture::Kept
+        );
+        assert_eq!(
+            EndPicture::Kept.against_tile(ScreenSize::new(859.0, 1079.0), to, false),
+            EndPicture::Kept,
+            "rounding"
+        );
     }
 
     /// A move of a window a held pass grows ends where that grow's repaint is still to come: past
@@ -580,10 +655,24 @@ mod tests {
     #[test]
     fn only_a_move_of_a_window_a_held_pass_grows_is_judged_against_its_tiles_picture() {
         let (carried, to) = (ScreenSize::new(572.0, 1079.0), ScreenSize::new(1148.0, 1079.0));
-        assert_eq!(EndPicture::Lands.against_tile(carried, to, true), EndPicture::Held);
-        assert_eq!(EndPicture::Lands.against_tile(to, to, true), EndPicture::Lands, "its picture covers it");
-        assert_eq!(EndPicture::Lands.against_tile(carried, to, false), EndPicture::Lands);
-        for end in [EndPicture::Held, EndPicture::Awaited, EndPicture::Repainting] {
+        assert_eq!(
+            EndPicture::Lands.against_tile(carried, to, true),
+            EndPicture::Held
+        );
+        assert_eq!(
+            EndPicture::Lands.against_tile(to, to, true),
+            EndPicture::Lands,
+            "its picture covers it"
+        );
+        assert_eq!(
+            EndPicture::Lands.against_tile(carried, to, false),
+            EndPicture::Lands
+        );
+        for end in [
+            EndPicture::Held,
+            EndPicture::Awaited,
+            EndPicture::Repainting,
+        ] {
             assert_eq!(end.against_tile(carried, to, true), end);
         }
     }
@@ -605,7 +694,13 @@ mod tests {
             strip_before: None,
             strip_after: None,
         };
-        let landing = |carried: f64, held| Some(Landing { carried: ScreenSize::new(carried, 1079.0), to, held });
+        let landing = |carried: f64, held| {
+            Some(Landing {
+                carried: ScreenSize::new(carried, 1079.0),
+                to,
+                held,
+            })
+        };
         let wider = ScreenSize::new(1148.0, 1079.0);
         let pass = [
             (request(1, wider), landing(572.0, false)),
@@ -615,16 +710,19 @@ mod tests {
         ];
         let mut waits = Waits::default();
         for (request, landing) in &pass {
-            waits.push_request(request, skylight(request.from.size), *landing, request.from, DISPLAY);
+            waits.push_request(
+                request,
+                skylight(request.from.size),
+                *landing,
+                request.from,
+                DISPLAY,
+            );
         }
-        assert_eq!(
-            waits,
-            Waits {
-                awaiting: vec![window(1), window(3)],
-                repainting: vec![window(1), window(2), window(3), window(4)],
-                kept: vec![window(2), window(4)],
-            }
-        );
+        assert_eq!(waits, Waits {
+            awaiting: vec![window(1), window(3)],
+            repainting: vec![window(1), window(2), window(3), window(4)],
+            kept: vec![window(2), window(4)],
+        });
         assert_eq!(waits.grows().collect::<Vec<_>>(), [window(1), window(3)]);
     }
 
@@ -634,9 +732,18 @@ mod tests {
     fn a_window_the_strip_carries_lands_unless_a_held_pass_grows_it_past_its_tiles_picture() {
         let (carried, to) = (ScreenSize::new(572.0, 1079.0), ScreenSize::new(1148.0, 1079.0));
         assert_eq!(EndPicture::of_strip(None), EndPicture::Lands);
-        assert_eq!(EndPicture::of_strip(Some(Landing { carried, to, held: false })), EndPicture::Lands);
-        assert_eq!(EndPicture::of_strip(Some(Landing { carried, to, held: true })), EndPicture::Held);
-        assert_eq!(EndPicture::of_strip(Some(Landing { carried: to, to, held: true })), EndPicture::Lands);
+        assert_eq!(
+            EndPicture::of_strip(Some(Landing { carried, to, held: false })),
+            EndPicture::Lands
+        );
+        assert_eq!(
+            EndPicture::of_strip(Some(Landing { carried, to, held: true })),
+            EndPicture::Held
+        );
+        assert_eq!(
+            EndPicture::of_strip(Some(Landing { carried: to, to, held: true })),
+            EndPicture::Lands
+        );
     }
 
     /// A window that opened flies from where it opened and repaints at its slot, never held for; one
@@ -645,9 +752,18 @@ mod tests {
     fn an_entrance_that_travels_repaints_one_standing_lands_and_a_reservation_is_awaited() {
         let slot: ScreenRect = rect(867.0, 32.0, 859.0, 1081.0);
         let spawn = rect(400.0, 200.0, 700.0, 500.0);
-        assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: spawn, to: slot }), EndPicture::Repainting);
-        assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: slot, to: slot }), EndPicture::Lands);
-        assert_eq!(EndPicture::of_entrance(EntranceDecision::Reserve("capture budget")), EndPicture::Awaited);
+        assert_eq!(
+            EndPicture::of_entrance(EntranceDecision::Travel { from: spawn, to: slot }),
+            EndPicture::Repainting
+        );
+        assert_eq!(
+            EndPicture::of_entrance(EntranceDecision::Travel { from: slot, to: slot }),
+            EndPicture::Lands
+        );
+        assert_eq!(
+            EndPicture::of_entrance(EntranceDecision::Reserve("capture budget")),
+            EndPicture::Awaited
+        );
     }
 
     /// A merged pass judges a picture's tile where its path ends it and a travelling entrance's at
@@ -661,7 +777,10 @@ mod tests {
         let standing = FliesOn::Entrance(EntranceDecision::Travel { from: slot, to: slot });
         assert_eq!(skylight(carried).ends_at(end), Some(end));
         assert_eq!(standing.ends_at(end), Some(slot.size));
-        assert_eq!(FliesOn::Entrance(EntranceDecision::Reserve("capture budget")).ends_at(end), None);
+        assert_eq!(
+            FliesOn::Entrance(EntranceDecision::Reserve("capture budget")).ends_at(end),
+            None
+        );
         let request = AnimationRequest {
             window: window(1),
             server_id: WindowServerId::new(1),
@@ -673,8 +792,14 @@ mod tests {
             strip_after: None,
         };
         let landing = standing.ends_at(end).map(|to| Landing { carried, to, held: true });
-        assert_eq!(EndPicture::of_request(&request, standing, landing, slot, DISPLAY), EndPicture::Held);
-        assert_eq!(EndPicture::of_request(&request, standing, None, slot, DISPLAY), EndPicture::Lands);
+        assert_eq!(
+            EndPicture::of_request(&request, standing, landing, slot, DISPLAY),
+            EndPicture::Held
+        );
+        assert_eq!(
+            EndPicture::of_request(&request, standing, None, slot, DISPLAY),
+            EndPicture::Lands
+        );
     }
 
     /// A pass's windows sorted from their requests, each by the sizes it goes from and to: a grow and
@@ -702,23 +827,36 @@ mod tests {
             (request(2, column, rect(4.0, 32.0, 1148.0, 538.0)), picture),
             (request(3, column, rect(4.0, 32.0, 859.0, 535.0)), picture),
             (request(4, column, next), picture),
-            (request(5, column, next), FliesOn::Picture { source: Route::StandIn, covered: next.size }),
+            (request(5, column, next), FliesOn::Picture {
+                source: Route::StandIn,
+                covered: next.size,
+            }),
             (
                 request(6, column, next),
-                FliesOn::Entrance(EntranceDecision::Travel { from: rect(400.0, 200.0, 700.0, 500.0), to: next }),
+                FliesOn::Entrance(EntranceDecision::Travel {
+                    from: rect(400.0, 200.0, 700.0, 500.0),
+                    to: next,
+                }),
             ),
-            (request(7, next, next), FliesOn::Entrance(EntranceDecision::Travel { from: next, to: next })),
-            (request(8, column, next), FliesOn::Entrance(EntranceDecision::Reserve("capture budget"))),
+            (
+                request(7, next, next),
+                FliesOn::Entrance(EntranceDecision::Travel { from: next, to: next }),
+            ),
+            (
+                request(8, column, next),
+                FliesOn::Entrance(EntranceDecision::Reserve("capture budget")),
+            ),
         ];
         let mut waits = Waits::default();
         for (request, flies) in &pass {
             waits.push_request(request, *flies, None, request.from, DISPLAY);
         }
         let windows = |idxs: &[u32]| idxs.iter().copied().map(window).collect::<Vec<_>>();
-        assert_eq!(
-            waits,
-            Waits { awaiting: windows(&[1, 2, 5, 8]), repainting: windows(&[1, 2, 3, 6]), kept: windows(&[3]) }
-        );
+        assert_eq!(waits, Waits {
+            awaiting: windows(&[1, 2, 5, 8]),
+            repainting: windows(&[1, 2, 3, 6]),
+            kept: windows(&[3])
+        });
     }
 
     /// fold1's g17 (`docs/data/2026-10-10-fold`): a shrink starting part off the display, where frame
@@ -742,17 +880,48 @@ mod tests {
         let (fits, short) = (ScreenSize::new(1148.0, 1079.0), ScreenSize::new(1148.0, 900.0));
         let sort = |from: ScreenRect, floating, covered, carried: Option<ScreenSize>| {
             let request = request(from, floating);
-            let landing = carried.map(|carried| Landing { carried, to: request.to.size, held: false });
+            let landing = carried.map(|carried| Landing {
+                carried,
+                to: request.to.size,
+                held: false,
+            });
             EndPicture::of_request(&request, skylight(covered), landing, from, DISPLAY)
         };
-        let (off, on) = (rect(-285.0, 35.0, 1148.0, 1079.0), rect(3.0, 35.0, 1148.0, 1079.0));
-        assert_eq!(sort(off, false, fits, None), EndPicture::Kept, "the cache's picture fits its start");
-        assert_eq!(sort(off, false, short, None), EndPicture::Repainting, "it does not");
-        assert_eq!(sort(off, false, short, Some(fits)), EndPicture::Kept, "its tile carries one that does");
-        assert_eq!(sort(off, false, fits, Some(short)), EndPicture::Repainting, "its tile carries one that does not");
-        assert_eq!(sort(on, false, short, None), EndPicture::Kept, "frame zero pictures it");
+        let (off, on) = (
+            rect(-285.0, 35.0, 1148.0, 1079.0),
+            rect(3.0, 35.0, 1148.0, 1079.0),
+        );
+        assert_eq!(
+            sort(off, false, fits, None),
+            EndPicture::Kept,
+            "the cache's picture fits its start"
+        );
+        assert_eq!(
+            sort(off, false, short, None),
+            EndPicture::Repainting,
+            "it does not"
+        );
+        assert_eq!(
+            sort(off, false, short, Some(fits)),
+            EndPicture::Kept,
+            "its tile carries one that does"
+        );
+        assert_eq!(
+            sort(off, false, fits, Some(short)),
+            EndPicture::Repainting,
+            "its tile carries one that does not"
+        );
+        assert_eq!(
+            sort(on, false, short, None),
+            EndPicture::Kept,
+            "frame zero pictures it"
+        );
         assert_eq!(sort(on, true, short, None), EndPicture::Repainting, "floating");
-        assert_eq!(sort(on, true, fits, None), EndPicture::Kept, "floating, its cache's picture fitting");
+        assert_eq!(
+            sort(on, true, fits, None),
+            EndPicture::Kept,
+            "floating, its cache's picture fitting"
+        );
     }
 
     #[test]
@@ -780,7 +949,6 @@ mod tests {
             EntranceDecision::Reserve("capture budget")
         );
     }
-
 
     #[test]
     fn entrance_plan_travels_exactly_when_it_can() {

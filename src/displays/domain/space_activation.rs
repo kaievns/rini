@@ -1,6 +1,7 @@
-use crate::displays::domain::screen::ScreenInfo;
 use rini_core::ids::{ScreenId, SpaceId};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+
+use crate::displays::domain::screen::ScreenInfo;
 
 /// this is how we decide which macos spaces (and/or displays) are considered active.
 ///
@@ -46,13 +47,9 @@ impl SpaceActivationPolicy {
         }
     }
 
-    pub fn on_space_created(&mut self, space: SpaceId) {
-        self.known_user_spaces.insert(space);
-    }
+    pub fn on_space_created(&mut self, space: SpaceId) { self.known_user_spaces.insert(space); }
 
-    pub fn on_space_destroyed(&mut self, space: SpaceId) {
-        self.known_user_spaces.remove(&space);
-    }
+    pub fn on_space_destroyed(&mut self, space: SpaceId) { self.known_user_spaces.remove(&space); }
 
     /// Note: this emits no events; Reactor should call this and then recompute active spaces.
     pub fn on_spaces_updated(&mut self, cfg: SpaceActivationConfig, screens: &[ScreenInfo]) {
@@ -275,13 +272,10 @@ mod tests {
         let cfg = SpaceActivationConfig { default_disable: true };
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
-        policy.toggle_space_activated(
-            cfg,
-            ToggleSpaceContext {
-                space: SpaceId::new(1),
-                display_uuid: Some("display-a".to_string()),
-            },
-        );
+        policy.toggle_space_activated(cfg, ToggleSpaceContext {
+            space: SpaceId::new(1),
+            display_uuid: Some("display-a".to_string()),
+        });
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), None)]);
 
@@ -295,13 +289,10 @@ mod tests {
         let cfg = SpaceActivationConfig { default_disable: false };
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
-        policy.toggle_space_activated(
-            cfg,
-            ToggleSpaceContext {
-                space: SpaceId::new(1),
-                display_uuid: Some("display-a".to_string()),
-            },
-        );
+        policy.toggle_space_activated(cfg, ToggleSpaceContext {
+            space: SpaceId::new(1),
+            display_uuid: Some("display-a".to_string()),
+        });
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), None)]);
 
@@ -314,13 +305,10 @@ mod tests {
         let cfg = SpaceActivationConfig { default_disable: true };
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
-        policy.toggle_space_activated(
-            cfg,
-            ToggleSpaceContext {
-                space: SpaceId::new(1),
-                display_uuid: Some("display-a".to_string()),
-            },
-        );
+        policy.toggle_space_activated(cfg, ToggleSpaceContext {
+            space: SpaceId::new(1),
+            display_uuid: Some("display-a".to_string()),
+        });
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-b"))]);
 
@@ -334,19 +322,16 @@ mod tests {
         let cfg = SpaceActivationConfig { default_disable: false };
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
-        policy.toggle_space_activated(
-            cfg,
-            ToggleSpaceContext {
-                space: SpaceId::new(1),
-                display_uuid: Some("display-a".to_string()),
-            },
-        );
+        policy.toggle_space_activated(cfg, ToggleSpaceContext {
+            space: SpaceId::new(1),
+            display_uuid: Some("display-a".to_string()),
+        });
 
-        let active = policy.compute_active_spaces(
-            cfg,
-            &[Some(SpaceId::new(1)), Some(SpaceId::new(2))],
-            &[Some("display-a".to_string()), Some("display-a".to_string())],
-        );
+        let active =
+            policy.compute_active_spaces(cfg, &[Some(SpaceId::new(1)), Some(SpaceId::new(2))], &[
+                Some("display-a".to_string()),
+                Some("display-a".to_string()),
+            ]);
 
         assert_eq!(active, vec![None, Some(SpaceId::new(2))]);
     }
@@ -357,19 +342,13 @@ mod tests {
         let cfg = SpaceActivationConfig { default_disable: true };
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
-        policy.toggle_space_activated(
-            cfg,
-            ToggleSpaceContext {
-                space: SpaceId::new(1),
-                display_uuid: Some("display-a".to_string()),
-            },
-        );
+        policy.toggle_space_activated(cfg, ToggleSpaceContext {
+            space: SpaceId::new(1),
+            display_uuid: Some("display-a".to_string()),
+        });
 
-        let active = policy.compute_active_spaces(
-            cfg,
-            &[Some(SpaceId::new(1))],
-            &[Some("display-a".to_string())],
-        );
+        let active = policy
+            .compute_active_spaces(cfg, &[Some(SpaceId::new(1))], &[Some("display-a".to_string())]);
 
         assert_eq!(active, vec![Some(SpaceId::new(1))]);
     }
@@ -380,19 +359,13 @@ mod tests {
         let cfg = SpaceActivationConfig { default_disable: true };
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
-        policy.toggle_space_activated(
-            cfg,
-            ToggleSpaceContext {
-                space: SpaceId::new(1),
-                display_uuid: Some("display-a".to_string()),
-            },
-        );
+        policy.toggle_space_activated(cfg, ToggleSpaceContext {
+            space: SpaceId::new(1),
+            display_uuid: Some("display-a".to_string()),
+        });
 
-        let active = policy.compute_active_spaces(
-            cfg,
-            &[Some(SpaceId::new(2))],
-            &[Some("display-a".to_string())],
-        );
+        let active = policy
+            .compute_active_spaces(cfg, &[Some(SpaceId::new(2))], &[Some("display-a".to_string())]);
 
         assert_eq!(active, vec![Some(SpaceId::new(2))]);
     }
@@ -403,28 +376,19 @@ mod tests {
         let cfg = SpaceActivationConfig { default_disable: false };
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
-        policy.toggle_space_activated(
-            cfg,
-            ToggleSpaceContext {
-                space: SpaceId::new(1),
-                display_uuid: Some("display-a".to_string()),
-            },
-        );
+        policy.toggle_space_activated(cfg, ToggleSpaceContext {
+            space: SpaceId::new(1),
+            display_uuid: Some("display-a".to_string()),
+        });
 
         policy.on_spaces_updated(cfg, &[input(1, Some(2), Some("display-a"))]);
-        let active = policy.compute_active_spaces(
-            cfg,
-            &[Some(SpaceId::new(2))],
-            &[Some("display-a".to_string())],
-        );
+        let active = policy
+            .compute_active_spaces(cfg, &[Some(SpaceId::new(2))], &[Some("display-a".to_string())]);
         assert_eq!(active, vec![Some(SpaceId::new(2))]);
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
-        let active = policy.compute_active_spaces(
-            cfg,
-            &[Some(SpaceId::new(1))],
-            &[Some("display-a".to_string())],
-        );
+        let active = policy
+            .compute_active_spaces(cfg, &[Some(SpaceId::new(1))], &[Some("display-a".to_string())]);
         assert_eq!(active, vec![None]);
     }
 
@@ -434,13 +398,10 @@ mod tests {
         let cfg = SpaceActivationConfig { default_disable: true };
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
-        policy.toggle_space_activated(
-            cfg,
-            ToggleSpaceContext {
-                space: SpaceId::new(1),
-                display_uuid: Some("display-a".to_string()),
-            },
-        );
+        policy.toggle_space_activated(cfg, ToggleSpaceContext {
+            space: SpaceId::new(1),
+            display_uuid: Some("display-a".to_string()),
+        });
 
         policy.on_space_destroyed(SpaceId::new(1));
         policy.on_spaces_updated(cfg, &[input(1, Some(2), Some("display-a"))]);
@@ -455,13 +416,10 @@ mod tests {
         let cfg = SpaceActivationConfig { default_disable: false };
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
-        policy.toggle_space_activated(
-            cfg,
-            ToggleSpaceContext {
-                space: SpaceId::new(1),
-                display_uuid: Some("display-a".to_string()),
-            },
-        );
+        policy.toggle_space_activated(cfg, ToggleSpaceContext {
+            space: SpaceId::new(1),
+            display_uuid: Some("display-a".to_string()),
+        });
 
         policy.on_space_destroyed(SpaceId::new(1));
         policy.on_spaces_updated(cfg, &[input(1, Some(2), Some("display-a"))]);
@@ -475,27 +433,18 @@ mod tests {
         let mut policy = SpaceActivationPolicy::new();
         let cfg = SpaceActivationConfig { default_disable: true };
 
-        policy.on_spaces_updated(
-            cfg,
-            &[
-                input(1, Some(1), Some("display-a")),
-                input(2, Some(2), Some("display-b")),
-            ],
-        );
-        policy.toggle_space_activated(
-            cfg,
-            ToggleSpaceContext {
-                space: SpaceId::new(1),
-                display_uuid: Some("display-a".to_string()),
-            },
-        );
-        policy.toggle_space_activated(
-            cfg,
-            ToggleSpaceContext {
-                space: SpaceId::new(2),
-                display_uuid: Some("display-b".to_string()),
-            },
-        );
+        policy.on_spaces_updated(cfg, &[
+            input(1, Some(1), Some("display-a")),
+            input(2, Some(2), Some("display-b")),
+        ]);
+        policy.toggle_space_activated(cfg, ToggleSpaceContext {
+            space: SpaceId::new(1),
+            display_uuid: Some("display-a".to_string()),
+        });
+        policy.toggle_space_activated(cfg, ToggleSpaceContext {
+            space: SpaceId::new(2),
+            display_uuid: Some("display-b".to_string()),
+        });
 
         policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
 

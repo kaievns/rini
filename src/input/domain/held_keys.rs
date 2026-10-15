@@ -27,22 +27,14 @@ pub struct HeldKeys {
 impl HeldKeys {
     /// The modifier mask last seen.
     #[cfg(test)]
-    pub fn flags(&self) -> u64 {
-        self.flags
-    }
+    pub fn flags(&self) -> u64 { self.flags }
 
     /// The keys seen down and not yet up.
-    pub fn pressed(&self) -> &HashSet<KeyCode> {
-        &self.pressed
-    }
+    pub fn pressed(&self) -> &HashSet<KeyCode> { &self.pressed }
 
-    pub fn key_down(&mut self, key: KeyCode) {
-        self.pressed.insert(key);
-    }
+    pub fn key_down(&mut self, key: KeyCode) { self.pressed.insert(key); }
 
-    pub fn key_up(&mut self, key: KeyCode) {
-        self.pressed.remove(&key);
-    }
+    pub fn key_up(&mut self, key: KeyCode) { self.pressed.remove(&key); }
 
     /// A modifier changed. The new mask is authoritative about whether it is held.
     ///
@@ -61,9 +53,7 @@ impl HeldKeys {
     }
 
     /// Record the mask carried by an ordinary event, without touching the key set.
-    pub fn observe_flags(&mut self, flags: u64) {
-        self.flags = flags;
-    }
+    pub fn observe_flags(&mut self, flags: u64) { self.flags = flags; }
 
     /// Drop every modifier the mask says is no longer held.
     ///

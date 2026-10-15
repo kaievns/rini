@@ -1,16 +1,14 @@
+use rini_core::ids::WindowId;
 use tracing::debug;
 
 use crate::app::reactor::AppState;
 use crate::app::reactor::events::{EventOutcome, WindowDiscoveryRequest, window};
 use crate::app::reactor::managers::{AppManager, DragManager};
 use crate::app::reactor::state::RiniState;
-use crate::windows::domain::info::AppInfo;
-use crate::windows::domain::info::WindowInfo;
-use crate::windows::domain::info::WindowServerInfo;
+use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
 use crate::windows::domain::transaction::TransactionManager;
 use crate::workspaces::LayoutEvent;
-use rini_core::ids::WindowId;
 
 #[derive(Debug)]
 pub struct ApplicationLaunchedPayload {

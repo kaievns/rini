@@ -40,9 +40,7 @@ pub struct Move {
 }
 
 impl Move {
-    pub fn size_unchanged(&self) -> bool {
-        self.from.size.same_as(self.to.size)
-    }
+    pub fn size_unchanged(&self) -> bool { self.from.size.same_as(self.to.size) }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -263,13 +261,13 @@ mod tests {
         ];
         place_on_strip(&mut requests, &before, &after);
         let places: Vec<_> = requests.iter().map(|r| (r.strip_before, r.strip_after)).collect();
-        assert_eq!(
-            places,
-            vec![
-                (Some(rect(-859.0, 32.0, 859.0, 1081.0)), Some(rect(4.0, 32.0, 859.0, 1081.0))),
-                (None, None),
-                (None, Some(rect(1730.0, 32.0, 859.0, 1081.0))),
-            ]
-        );
+        assert_eq!(places, vec![
+            (
+                Some(rect(-859.0, 32.0, 859.0, 1081.0)),
+                Some(rect(4.0, 32.0, 859.0, 1081.0))
+            ),
+            (None, None),
+            (None, Some(rect(1730.0, 32.0, 859.0, 1081.0))),
+        ]);
     }
 }

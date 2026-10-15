@@ -65,7 +65,11 @@ fn assert_allowed(run: &Run, out_dir: &Path) {
 
 #[test]
 fn a_compile_into_the_checkouts_target_release_is_refused_before_rustc_runs() {
-    for relative in ["target/release/deps", "target/release", "target/release/deps/"] {
+    for relative in [
+        "target/release/deps",
+        "target/release",
+        "target/release/deps/",
+    ] {
         let out_dir = under_root(relative);
         assert_refused(&wrap(&out_dir, None), &out_dir);
     }

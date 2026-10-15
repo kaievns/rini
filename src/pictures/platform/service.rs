@@ -33,12 +33,15 @@ use crate::pictures::domain::region::apart;
 use crate::pictures::domain::schedule::{Ask, Display, Held, Hold, Next, Owed, Schedule};
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{
-    Capture, CapturedElsewhere, Hint, Look, OnScreen, Outcome, Prints, Seen, Set, Tag, Watch, WatchId, Why,
+    Capture, CapturedElsewhere, Hint, Look, OnScreen, Outcome, Prints, Seen, Set, Tag, Watch,
+    WatchId, Why,
 };
 use crate::pictures::event::Event;
-use crate::pictures::platform::desktop::{BarStrip, DesktopBackdrop, bar_strip, desktop_backdrop_windows};
+use crate::pictures::platform::desktop::{
+    BarStrip, DesktopBackdrop, bar_strip, desktop_backdrop_windows,
+};
 use crate::pictures::platform::measure::{band_print, body_samples, picture_thumbprint, rgba};
-use crate::pictures::platform::picture::{Picture, Pixels, stand_in_picture, stand_in_image};
+use crate::pictures::platform::picture::{Picture, Pixels, stand_in_image, stand_in_picture};
 use crate::pictures::platform::screencapturekit::{self, Prepared};
 use crate::pictures::platform::skylight::{self, capture_list_via_skylight};
 use crate::windows::platform::window_server::{key_focus_pid, server_frame};
@@ -57,7 +60,10 @@ pub enum Command {
     KeepFocused(Tag, WindowId),
     Hold(Hold),
     Forget(WindowId),
-    SetDisplay { display: Display, picture_bar: bool },
+    SetDisplay {
+        display: Display,
+        picture_bar: bool,
+    },
     CheckHandover(HandoverCheck),
 }
 
@@ -205,7 +211,12 @@ fn land_desktop<P, O, C>(
 
 /// Puts a capture in the cache; true when its pixels are now the ones held, and then every sink hears
 /// `Taken`.
-fn put(cache: &mut PictureCache<Picture>, window: WindowId, picture: Picture, events: &mut Vec<Event>) -> bool {
+fn put(
+    cache: &mut PictureCache<Picture>,
+    window: WindowId,
+    picture: Picture,
+    events: &mut Vec<Event>,
+) -> bool {
     let took = cache.insert(window, picture);
     if took {
         events.push(Event::Taken { window });
@@ -246,9 +257,8 @@ fn landing<P, O, C>(
     }
     if owed.settles {
         let capture = match &took {
-            Some(picture) => {
-                picture_thumbprint(picture).map_or(CapturedElsewhere::Missed, CapturedElsewhere::Taken)
-            }
+            Some(picture) => picture_thumbprint(picture)
+                .map_or(CapturedElsewhere::Missed, CapturedElsewhere::Taken),
             None if captured => CapturedElsewhere::Refused,
             None => CapturedElsewhere::Missed,
         };
@@ -290,7 +300,11 @@ fn told(
 
 /// The windows of `looks` to capture, at their server frames: those one of their accepts takes there
 /// on the display held. None with no display held.
-fn wanted(looks: &[Look], frames: &[Option<CGRect>], display: Option<Display>) -> Vec<skylight::OnScreen> {
+fn wanted(
+    looks: &[Look],
+    frames: &[Option<CGRect>],
+    display: Option<Display>,
+) -> Vec<skylight::OnScreen> {
     let Some(display) = display else {
         return Vec::new();
     };
@@ -313,11 +327,15 @@ fn wanted(looks: &[Look], frames: &[Option<CGRect>], display: Option<Display>) -
 
 /// Each picture captured, with its prints: its band print, and its thumbprint only where a look at
 /// its window asks for one.
-fn with_prints(looks: &[Look], captured: Vec<(WindowId, Picture)>) -> Vec<(WindowId, Picture, Option<Prints>)> {
+fn with_prints(
+    looks: &[Look],
+    captured: Vec<(WindowId, Picture)>,
+) -> Vec<(WindowId, Picture, Option<Prints>)> {
     captured
         .into_iter()
         .map(|(window, picture)| {
-            let thumbprint = looks.iter().any(|look| look.target.window == window && look.thumbprint);
+            let thumbprint =
+                looks.iter().any(|look| look.target.window == window && look.thumbprint);
             let prints = band_print(&picture).map(|band| Prints {
                 band,
                 thumb: thumbprint.then(|| picture_thumbprint(&picture)).flatten(),
@@ -328,7 +346,10 @@ fn with_prints(looks: &[Look], captured: Vec<(WindowId, Picture)>) -> Vec<(Windo
 }
 
 /// What each window looked at was seen as: at its server frame, and captured as `captures` says.
-fn seen_as(looked: Vec<(WindowId, Option<CGRect>)>, captures: &HashMap<WindowId, Capture>) -> Vec<Seen> {
+fn seen_as(
+    looked: Vec<(WindowId, Option<CGRect>)>,
+    captures: &HashMap<WindowId, Capture>,
+) -> Vec<Seen> {
     looked
         .into_iter()
         .map(|(window, frame)| Seen {
@@ -462,7 +483,9 @@ impl Pictures {
     /// nothing holds the service: through SkyLight, blur and all, where the window server has a window
     /// wholly on the display, every window due in one round until each one's look has settled, and
     /// put once; through ScreenCaptureKit at background priority anywhere else.
-    pub fn refresh(&self, targets: Vec<PictureTarget>) { self.commands.send(Command::Refresh(targets)) }
+    pub fn refresh(&self, targets: Vec<PictureTarget>) {
+        self.commands.send(Command::Refresh(targets))
+    }
 
     /// Starts `watch`, which runs until stopped.
     pub fn watch(&self, watch: Watch) -> WatchId {
@@ -471,7 +494,9 @@ impl Pictures {
         id
     }
 
-    pub fn retarget(&self, id: WatchId, watch: Watch) { self.commands.send(Command::Retarget(id, watch)) }
+    pub fn retarget(&self, id: WatchId, watch: Watch) {
+        self.commands.send(Command::Retarget(id, watch))
+    }
 
     pub fn stop(&self, id: WatchId) { self.commands.send(Command::Stop(id)) }
 
@@ -497,7 +522,9 @@ impl Pictures {
 
     /// Measures a lift: the overlay alone as the next SkyLight call, its client told `OverlayTaken`,
     /// then the screen `AFTER_LIFT` later, and each window compared, told as `Handover`.
-    pub fn check_handover(&self, check: HandoverCheck) { self.commands.send(Command::CheckHandover(check)) }
+    pub fn check_handover(&self, check: HandoverCheck) {
+        self.commands.send(Command::CheckHandover(check))
+    }
 
     /// The picture held of `window` if it is worth drawing, however old it is.
     pub fn usable(&self, window: WindowId) -> Option<Picture> {
@@ -515,7 +542,9 @@ impl Pictures {
 
     /// The last picture of `window` delivered as showing it focused, until a newer capture shows
     /// different content.
-    pub fn focused(&self, window: WindowId) -> Option<Picture> { self.lock().cache.focused(window).cloned() }
+    pub fn focused(&self, window: WindowId) -> Option<Picture> {
+        self.lock().cache.focused(window).cloned()
+    }
 
     /// What is known of the window: its translucency and material.
     pub fn knowledge(&self, window: WindowServerId) -> Knowledge { self.lock().learned.get(window) }
@@ -540,7 +569,9 @@ impl Pictures {
 
     /// `look` held as `window`'s focused look, as a delivery kept focused would hold it.
     #[cfg(test)]
-    pub fn hold_focused(&self, window: WindowId, look: Picture) { self.lock().cache.keep_focused(window, look) }
+    pub fn hold_focused(&self, window: WindowId, look: Picture) {
+        self.lock().cache.keep_focused(window, look)
+    }
 
     /// Hands the cache a picture taken outside the service. True when its pixels are now the ones held.
     pub fn insert(&self, window: WindowId, picture: Picture) -> bool {
@@ -734,19 +765,32 @@ impl Service {
         let (pictures, looks): (Vec<(WindowId, Picture)>, Vec<(WindowId, Picture)>) = {
             let shared = self.shared.lock().unwrap();
             let regions = |held: &mut dyn Iterator<Item = (&WindowId, &Picture)>| {
-                held.filter(|(_, picture)| is_region(picture)).map(|(window, picture)| (*window, picture.clone())).collect()
+                held.filter(|(_, picture)| is_region(picture))
+                    .map(|(window, picture)| (*window, picture.clone()))
+                    .collect()
             };
-            (regions(&mut shared.cache.iter()), regions(&mut shared.cache.focused_looks()))
+            (
+                regions(&mut shared.cache.iter()),
+                regions(&mut shared.cache.focused_looks()),
+            )
         };
         for (window, region) in pictures {
             let Some(copy) = region.kept() else { continue };
             let taken = region.taken;
-            self.shared.lock().unwrap().cache.replace_if(window, |held| held.taken == taken, copy);
+            self.shared
+                .lock()
+                .unwrap()
+                .cache
+                .replace_if(window, |held| held.taken == taken, copy);
         }
         for (window, region) in looks {
             let Some(copy) = region.kept() else { continue };
             let taken = region.taken;
-            self.shared.lock().unwrap().cache.replace_focused_if(window, |held| held.taken == taken, copy);
+            self.shared.lock().unwrap().cache.replace_focused_if(
+                window,
+                |held| held.taken == taken,
+                copy,
+            );
         }
     }
 
@@ -759,7 +803,8 @@ impl Service {
                 .cache
                 .focused_looks()
                 .filter_map(|(window, look)| {
-                    let newer = shared.cache.get(*window).filter(|newer| newer.taken > look.taken)?;
+                    let newer =
+                        shared.cache.get(*window).filter(|newer| newer.taken > look.taken)?;
                     Some((*window, look.clone(), newer.clone()))
                 })
                 .collect()
@@ -775,7 +820,11 @@ impl Service {
             };
             if stale {
                 let taken = look.taken;
-                self.shared.lock().unwrap().cache.drop_focused_if(window, |held| held.taken == taken);
+                self.shared
+                    .lock()
+                    .unwrap()
+                    .cache
+                    .drop_focused_if(window, |held| held.taken == taken);
             }
         }
     }
@@ -796,7 +845,8 @@ impl Service {
             let done = self.done_tx.clone();
             match next {
                 Next::Lost(lost) => {
-                    let events = lost.into_iter().map(|(tag, window)| Event::Lost { tag, window }).collect();
+                    let events =
+                        lost.into_iter().map(|(tag, window)| Event::Lost { tag, window }).collect();
                     self.tell(events);
                 }
                 Next::Sky(sets) => {
@@ -812,15 +862,14 @@ impl Service {
                 }),
                 Next::Capture { target, prepared } => {
                     screencapturekit::capture(target, prepared, move |picture| {
-                        done.send(Done::Captured {
-                            window: target.window,
-                            picture,
-                        })
+                        done.send(Done::Captured { window: target.window, picture })
                     })
                 }
-                Next::Desktop(display) => screencapturekit::render_desktop(display, move |picture| {
-                    done.send(Done::Desktop { display, picture })
-                }),
+                Next::Desktop(display) => {
+                    screencapturekit::render_desktop(display, move |picture| {
+                        done.send(Done::Desktop { display, picture })
+                    })
+                }
                 Next::Bar(display) => self.picture_bar(display),
                 Next::Overlay(overlay) => self.take_overlay(overlay),
                 Next::Screen(check, overlay) => self.compare_screen(check, overlay),
@@ -859,14 +908,17 @@ impl Service {
                     let shared = self.shared.lock().unwrap();
                     (shared.learned.clone(), shared.display.desktop_windows.clone())
                 });
-                let desktop = desktop.get_or_insert_with(|| desktop_backdrop_windows(display.frame));
+                let desktop =
+                    desktop.get_or_insert_with(|| desktop_backdrop_windows(display.frame));
                 let frames: Vec<ScreenRect> =
                     wanted.iter().map(|window| ScreenRect::from_cg(window.frame)).collect();
                 for group in apart(&frames) {
-                    let windows: Vec<skylight::OnScreen> = group.into_iter().map(|at| wanted[at]).collect();
+                    let windows: Vec<skylight::OnScreen> =
+                        group.into_iter().map(|at| wanted[at]).collect();
                     let on = display.frame.to_cg();
-                    let batch =
-                        skylight::capture_on_screen(&windows, &behind, desktop, on, learned, key, &halt);
+                    let batch = skylight::capture_on_screen(
+                        &windows, &behind, desktop, on, learned, key, &halt,
+                    );
                     desktop_stale |= batch.desktop_stale;
                     captured.extend(batch.pictures);
                     halted.extend(batch.halted);
@@ -924,14 +976,21 @@ impl Service {
 
     /// Whether a transition was asked that this thread has not applied yet.
     fn transition_waits(&self) -> bool {
-        transition_asked(self.transitions.load(Ordering::Acquire), self.applied_transitions)
+        transition_asked(
+            self.transitions.load(Ordering::Acquire),
+            self.applied_transitions,
+        )
     }
 
     /// The overlay alone, for the handover check under way, and its client told at once that the
     /// overlay may come down. Not taken with a transition asked: that press has hidden the overlay, and
     /// its frame zero is asked of this thread.
     fn take_overlay(&mut self, overlay: WindowServerId) {
-        let picture = if self.transition_waits() { None } else { skylight::capture_alone(overlay).map(Whole) };
+        let picture = if self.transition_waits() {
+            None
+        } else {
+            skylight::capture_alone(overlay).map(Whole)
+        };
         let taken = picture.is_some();
         let tag = self.shared.lock().unwrap().schedule.overlay_taken(Instant::now(), picture);
         if let Some(tag) = tag {
@@ -1004,7 +1063,8 @@ impl Service {
                         );
                     }
                     let Shared { cache, delivered, schedule, .. } = &mut *shared;
-                    let events = landing(cache, delivered, schedule, Instant::now(), window, kept, picture);
+                    let events =
+                        landing(cache, delivered, schedule, Instant::now(), window, kept, picture);
                     (events, !schedule.held())
                 };
                 self.tell(events);
@@ -1026,16 +1086,25 @@ impl Service {
 }
 
 /// `check`'s windows, each compared between the overlay's picture and the screen's, both drawn whole.
-fn compared(check: &HandoverCheck, overlay: &Whole, screen: &Whole) -> Vec<(WindowId, HandoverDiff)> {
+fn compared(
+    check: &HandoverCheck,
+    overlay: &Whole,
+    screen: &Whole,
+) -> Vec<(WindowId, HandoverDiff)> {
     let (Some(overlay), Some(screen)) = (rgba(&overlay.0), rgba(&screen.0)) else {
         debug!("a picture of the handover check could not be drawn");
         return Vec::new();
     };
-    let (overlay, screen) = (overlay.at(check.overlay_origin, check.scale), screen.at(check.display.origin, check.scale));
+    let (overlay, screen) = (
+        overlay.at(check.overlay_origin, check.scale),
+        screen.at(check.display.origin, check.scale),
+    );
     check
         .windows
         .iter()
-        .filter_map(|&(window, frame, band)| Some((window, compare(&overlay, &screen, frame, band)?)))
+        .filter_map(|&(window, frame, band)| {
+            Some((window, compare(&overlay, &screen, frame, band)?))
+        })
         .collect()
 }
 
@@ -1082,9 +1151,32 @@ mod tests {
         let mut delivered = Delivered::default();
         let mut schedule = Schedule::<(), (), ()>::default();
         let kept = || owed_as_focus(Vec::new());
-        assert!(landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), None, Some(sized(859.0, 1081.0))).is_empty());
+        assert!(
+            landing(
+                &mut cache,
+                &mut delivered,
+                &mut schedule,
+                now,
+                wid(1),
+                None,
+                Some(sized(859.0, 1081.0))
+            )
+            .is_empty()
+        );
         assert!(cache.get(wid(1)).is_none(), "forgotten meanwhile: not cached");
-        assert!(landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), kept(), None).is_empty(), "no picture");
+        assert!(
+            landing(
+                &mut cache,
+                &mut delivered,
+                &mut schedule,
+                now,
+                wid(1),
+                kept(),
+                None
+            )
+            .is_empty(),
+            "no picture"
+        );
 
         assert!(matches!(
             landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), kept(), Some(sized(859.0, 1081.0))).as_slice(),
@@ -1093,13 +1185,39 @@ mod tests {
 
         let mut blurred = sized(859.0, 1081.0);
         blurred.carries_blur = true;
-        landing(&mut cache, &mut delivered, &mut schedule, now, wid(2), kept(), Some(blurred));
+        landing(
+            &mut cache,
+            &mut delivered,
+            &mut schedule,
+            now,
+            wid(2),
+            kept(),
+            Some(blurred),
+        );
         assert!(
-            landing(&mut cache, &mut delivered, &mut schedule, now, wid(2), kept(), Some(sized(859.0, 1081.0))).is_empty(),
+            landing(
+                &mut cache,
+                &mut delivered,
+                &mut schedule,
+                now,
+                wid(2),
+                kept(),
+                Some(sized(859.0, 1081.0))
+            )
+            .is_empty(),
             "refused for the blur it holds"
         );
         assert!(
-            landing(&mut cache, &mut delivered, &mut schedule, now, wid(2), kept(), Some(sliver())).is_empty(),
+            landing(
+                &mut cache,
+                &mut delivered,
+                &mut schedule,
+                now,
+                wid(2),
+                kept(),
+                Some(sliver())
+            )
+            .is_empty(),
             "a sliver refused is no news"
         );
     }
@@ -1115,7 +1233,9 @@ mod tests {
         ScreenRect::new(ScreenPoint::new(4.0, 32.0), ScreenSize::new(859.0, 1081.0))
     }
 
-    fn owed_as_focus(focus: Vec<(Tag, ScreenRect)>) -> Option<Owed> { Some(Owed { focus, settles: false }) }
+    fn owed_as_focus(focus: Vec<(Tag, ScreenRect)>) -> Option<Owed> {
+        Some(Owed { focus, settles: false })
+    }
 
     /// The one ScreenCaptureKit capture of a clipped focus end is delivered to the client owed it as
     /// its focus change, once the cache has it; refused, it is delivered to no one.
@@ -1125,17 +1245,36 @@ mod tests {
         let mut cache = PictureCache::default();
         let mut delivered = Delivered::default();
         let mut schedule = Schedule::<(), (), ()>::default();
-        let events = landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), owed_as_focus(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
+        let events = landing(
+            &mut cache,
+            &mut delivered,
+            &mut schedule,
+            now,
+            wid(1),
+            owed_as_focus(vec![(tag(3), frame())]),
+            Some(sized(859.0, 1081.0)),
+        );
         assert!(matches!(&events[..], [
             Event::Taken { .. },
             Event::Delivered { tag: t, why: Why::FocusChanged, pictures, .. },
         ] if *t == tag(3) && pictures.len() == 1 && pictures[0].2 == frame()));
-        assert!(delivered.under(tag(3), wid(1)).is_some(), "recorded, so it can be kept as a look");
+        assert!(
+            delivered.under(tag(3), wid(1)).is_some(),
+            "recorded, so it can be kept as a look"
+        );
 
         let mut blurred = sized(859.0, 1081.0);
         blurred.carries_blur = true;
         cache.insert(wid(2), blurred);
-        let events = landing(&mut cache, &mut delivered, &mut schedule, now, wid(2), owed_as_focus(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
+        let events = landing(
+            &mut cache,
+            &mut delivered,
+            &mut schedule,
+            now,
+            wid(2),
+            owed_as_focus(vec![(tag(3), frame())]),
+            Some(sized(859.0, 1081.0)),
+        );
         assert!(events.is_empty());
         assert!(delivered.under(tag(3), wid(2)).is_none());
     }
@@ -1160,12 +1299,18 @@ mod tests {
             };
             schedule.watch(WatchId(1), landing, now);
             let _ = sky(schedule.next(now, |window| held(cache, window)));
-            schedule.seen(now, &[Seen { window: wid(1), frame: Some(cut), capture: Capture::Missed }]);
+            schedule.seen(now, &[Seen {
+                window: wid(1),
+                frame: Some(cut),
+                capture: Capture::Missed,
+            }]);
             schedule
         };
         let came_back = |schedule: &mut Schedule<(), (), ()>| loop {
             match schedule.next(now, |_| None) {
-                Next::List(targets) => targets.into_iter().for_each(|t| schedule.listed(t.window, Some(()))),
+                Next::List(targets) => {
+                    targets.into_iter().for_each(|t| schedule.listed(t.window, Some(())))
+                }
                 Next::Capture { target, .. } => break schedule.captured(target.window),
                 other => panic!("a capture: {other:?}"),
             }
@@ -1174,14 +1319,33 @@ mod tests {
         let mut delivered = Delivered::default();
         let mut schedule = watched(&mut cache);
         let first = came_back(&mut schedule);
-        let events = landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), first, Some(sized(1148.0, 1081.0)));
+        let events = landing(
+            &mut cache,
+            &mut delivered,
+            &mut schedule,
+            now,
+            wid(1),
+            first,
+            Some(sized(1148.0, 1081.0)),
+        );
         assert!(matches!(&events[..], [Event::Taken { .. }]), "{events:?}");
         let second = came_back(&mut schedule);
-        let events = landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), second, Some(sized(1148.0, 1081.0)));
-        assert!(matches!(&events[..], [
+        let events = landing(
+            &mut cache,
+            &mut delivered,
+            &mut schedule,
+            now,
+            wid(1),
+            second,
+            Some(sized(1148.0, 1081.0)),
+        );
+        assert!(
+            matches!(&events[..], [
             Event::Taken { .. },
             Event::Delivered { tag: t, why: Why::Landed, pictures, .. },
-        ] if *t == tag(3) && pictures.len() == 1 && pictures[0].2 == cut), "{events:?}");
+        ] if *t == tag(3) && pictures.len() == 1 && pictures[0].2 == cut),
+            "{events:?}"
+        );
         assert!(delivered.under(tag(3), wid(1)).is_some());
 
         let mut cache = PictureCache::default();
@@ -1190,8 +1354,19 @@ mod tests {
         cache.insert(wid(1), blurred);
         let mut schedule = watched(&mut cache);
         let owed = came_back(&mut schedule);
-        let events = landing(&mut cache, &mut delivered, &mut schedule, now, wid(1), owed, Some(sized(1148.0, 1081.0)));
-        assert!(matches!(&events[..], [Event::Lost { tag: t, window }] if *t == tag(3) && *window == wid(1)), "{events:?}");
+        let events = landing(
+            &mut cache,
+            &mut delivered,
+            &mut schedule,
+            now,
+            wid(1),
+            owed,
+            Some(sized(1148.0, 1081.0)),
+        );
+        assert!(
+            matches!(&events[..], [Event::Lost { tag: t, window }] if *t == tag(3) && *window == wid(1)),
+            "{events:?}"
+        );
     }
 
     fn target(idx: u32) -> PictureTarget {
@@ -1246,7 +1421,10 @@ mod tests {
 
     /// Every window `looks` names, with the server frame `frame`.
     fn found(looks: &[Look], frame: Option<ScreenRect>) -> Vec<(WindowId, Option<CGRect>)> {
-        looks.iter().map(|look| (look.target.window, frame.map(ScreenRect::to_cg))).collect()
+        looks
+            .iter()
+            .map(|look| (look.target.window, frame.map(ScreenRect::to_cg)))
+            .collect()
     }
 
     /// One SkyLight round of `ask`, every window found at `frame()` and captured as `pictures` says.
@@ -1260,7 +1438,14 @@ mod tests {
         let now = Instant::now();
         schedule.ask_on_screen(ask);
         let looks = sky(schedule.next(now, |_| None));
-        round(cache, delivered, schedule, now, found(&looks, Some(frame())), with_prints(&looks, pictures))
+        round(
+            cache,
+            delivered,
+            schedule,
+            now,
+            found(&looks, Some(frame())),
+            with_prints(&looks, pictures),
+        )
     }
 
     /// A round puts each picture to the cache before the schedule sees it: every sink hears of each
@@ -1290,8 +1475,17 @@ mod tests {
 
         schedule.ask_on_screen(on_screen(2, Moment::FrameZero, &[3]));
         let looks = sky(schedule.next(now, |_| None));
-        let events = round(&mut cache, &mut delivered, &mut schedule, now, found(&looks, None), Vec::new());
-        assert!(matches!(&events[..], [Event::Delivered { why: Why::FrameZero, pictures, .. }] if pictures.is_empty()));
+        let events = round(
+            &mut cache,
+            &mut delivered,
+            &mut schedule,
+            now,
+            found(&looks, None),
+            Vec::new(),
+        );
+        assert!(
+            matches!(&events[..], [Event::Delivered { why: Why::FrameZero, pictures, .. }] if pictures.is_empty())
+        );
     }
 
     /// A landing whose capture the cache refuses for the blurred picture it holds is lost at once, so
@@ -1311,13 +1505,24 @@ mod tests {
         schedule.hint(Hint::Focused(wid(2)), now);
         schedule.watch(WatchId(2), change_watch(2), now);
         let looks = sky(schedule.next(now, |_| None));
-        let captured = with_prints(&looks, vec![(wid(1), flat(0.1, now)), (wid(2), flat(0.1, now))]);
-        let events = round(&mut cache, &mut delivered, &mut schedule, now, found(&looks, Some(frame())), captured);
+        let captured =
+            with_prints(&looks, vec![(wid(1), flat(0.1, now)), (wid(2), flat(0.1, now))]);
+        let events = round(
+            &mut cache,
+            &mut delivered,
+            &mut schedule,
+            now,
+            found(&looks, Some(frame())),
+            captured,
+        );
         assert!(matches!(&events[..], [
             Event::Lost { tag: lost_tag, window: lost },
         ] if *lost_tag == tag(1) && *lost == wid(1)));
         assert!(delivered.under(tag(1), wid(2)).is_none());
-        assert!(matches!(schedule.next(now, |_| None), Next::Idle), "nothing more is asked of either");
+        assert!(
+            matches!(schedule.next(now, |_| None), Next::Idle),
+            "nothing more is asked of either"
+        );
     }
 
     /// A final capture the cache refused was never delivered, so the next one showing the same is news.
@@ -1336,13 +1541,22 @@ mod tests {
             on_screen(1, Moment::FrameZero, &[1]),
             vec![(wid(1), flat(0.5, now))],
         );
-        assert!(matches!(&events[..], [Event::Taken { .. }, Event::Delivered { why: Why::FrameZero, .. }]));
+        assert!(matches!(&events[..], [Event::Taken { .. }, Event::Delivered {
+            why: Why::FrameZero,
+            ..
+        }]));
         cache.insert(wid(1), blurred(0.5, now));
 
         let final_ask = || on_screen(1, Moment::Final, &[1]);
-        let events = asked(&mut schedule, &mut cache, &mut delivered, final_ask(), vec![(wid(1), flat(0.1, now))]);
+        let events = asked(&mut schedule, &mut cache, &mut delivered, final_ask(), vec![(
+            wid(1),
+            flat(0.1, now),
+        )]);
         assert!(events.is_empty(), "refused for the blurred one held");
-        let events = asked(&mut schedule, &mut cache, &mut delivered, final_ask(), vec![(wid(1), blurred(0.1, now))]);
+        let events = asked(&mut schedule, &mut cache, &mut delivered, final_ask(), vec![(
+            wid(1),
+            blurred(0.1, now),
+        )]);
         assert!(matches!(&events[..], [
             Event::Taken { .. },
             Event::Delivered { why: Why::Final, pictures, .. },
@@ -1363,14 +1577,29 @@ mod tests {
         schedule.ask_on_screen(on_screen(1, Moment::FrameZero, &[1]));
         let looks = sky(schedule.next(taken, |_| None));
         let captured = with_prints(&looks, vec![(wid(1), flat(0.5, taken))]);
-        let events = round(&mut cache, &mut delivered, &mut schedule, sent, found(&looks, Some(frame())), captured);
+        let events = round(
+            &mut cache,
+            &mut delivered,
+            &mut schedule,
+            sent,
+            found(&looks, Some(frame())),
+            captured,
+        );
         assert!(matches!(&events[..], [
             Event::Taken { .. },
             Event::Delivered { why: Why::FrameZero, sent: at, pictures, .. },
         ] if *at == sent && pictures[0].1.taken == taken));
 
         let owed = owed_as_focus(vec![(tag(3), frame())]);
-        let events = landing(&mut cache, &mut delivered, &mut schedule, sent, wid(2), owed, Some(flat(0.5, taken)));
+        let events = landing(
+            &mut cache,
+            &mut delivered,
+            &mut schedule,
+            sent,
+            wid(2),
+            owed,
+            Some(flat(0.5, taken)),
+        );
         assert!(matches!(&events[..], [
             Event::Taken { .. },
             Event::Delivered { why: Why::FocusChanged, sent: at, .. },
@@ -1391,14 +1620,23 @@ mod tests {
             look(1, vec![Accept::Origin { at: frame().origin }]),
             look(2, vec![Accept::OnDisplay]),
             look(3, vec![Accept::OnDisplay]),
-            look(4, vec![Accept::Near { end: off, slack: 20.0 }, Accept::OnDisplay]),
+            look(4, vec![
+                Accept::Near { end: off, slack: 20.0 },
+                Accept::OnDisplay,
+            ]),
         ];
-        let frames =
-            [Some(frame()), None, Some(off), Some(frame())].map(|frame| frame.map(ScreenRect::to_cg));
+        let frames = [Some(frame()), None, Some(off), Some(frame())]
+            .map(|frame| frame.map(ScreenRect::to_cg));
         let wanted_now: Vec<(WindowId, WindowServerId, ScreenRect)> =
             wanted(&looks, &frames, Some(built_in()))
                 .iter()
-                .map(|window| (window.window, window.server_id, ScreenRect::from_cg(window.frame)))
+                .map(|window| {
+                    (
+                        window.window,
+                        window.server_id,
+                        ScreenRect::from_cg(window.frame),
+                    )
+                })
                 .collect();
         assert_eq!(
             wanted_now,
@@ -1421,12 +1659,19 @@ mod tests {
             thumbprint,
         };
         let printed: Vec<(WindowId, bool, bool)> =
-            with_prints(&[look(1, true), look(2, false)], vec![(wid(1), flat(0.5, now)), (wid(2), flat(0.5, now))])
-                .into_iter()
-                .map(|(window, _, prints)| {
-                    (window, prints.is_some(), prints.is_some_and(|prints| prints.thumb.is_some()))
-                })
-                .collect();
+            with_prints(&[look(1, true), look(2, false)], vec![
+                (wid(1), flat(0.5, now)),
+                (wid(2), flat(0.5, now)),
+            ])
+            .into_iter()
+            .map(|(window, _, prints)| {
+                (
+                    window,
+                    prints.is_some(),
+                    prints.is_some_and(|prints| prints.thumb.is_some()),
+                )
+            })
+            .collect();
         assert_eq!(printed, vec![(wid(1), true, true), (wid(2), true, false)]);
     }
 
@@ -1455,8 +1700,14 @@ mod tests {
     #[test]
     fn a_display_change_warms_nothing() {
         let (mut service, shared) = detached_service();
-        service.apply(Command::SetDisplay { display: built_in(), picture_bar: false });
-        service.apply(Command::SetDisplay { display: external(), picture_bar: false });
+        service.apply(Command::SetDisplay {
+            display: built_in(),
+            picture_bar: false,
+        });
+        service.apply(Command::SetDisplay {
+            display: external(),
+            picture_bar: false,
+        });
         assert_eq!(shared.lock().unwrap().schedule.owed().count(), 0);
     }
 
@@ -1470,15 +1721,30 @@ mod tests {
         let mut held = DisplayPictures::default();
         set_display(&mut schedule, &mut held, built_in(), false, now);
         let _ = schedule.next(now, |_| None);
-        assert!(!land_desktop(&mut schedule, &mut held, built_in(), Some(sized(3008.0, 1692.0))));
+        assert!(!land_desktop(
+            &mut schedule,
+            &mut held,
+            built_in(),
+            Some(sized(3008.0, 1692.0))
+        ));
         assert!(held.desktop.is_none(), "the wrong size");
 
         set_display(&mut schedule, &mut held, external(), false, now);
-        assert!(!land_desktop(&mut schedule, &mut held, built_in(), Some(sized(1728.0, 1117.0))));
+        assert!(!land_desktop(
+            &mut schedule,
+            &mut held,
+            built_in(),
+            Some(sized(1728.0, 1117.0))
+        ));
         assert!(held.desktop.is_none(), "the display left");
 
         let _ = schedule.next(now, |_| None);
-        assert!(land_desktop(&mut schedule, &mut held, external(), Some(sized(3008.0, 1692.0))));
+        assert!(land_desktop(
+            &mut schedule,
+            &mut held,
+            external(),
+            Some(sized(3008.0, 1692.0))
+        ));
         assert!(held.desktop.is_some());
     }
 
@@ -1498,7 +1764,10 @@ mod tests {
         let (desktop, bar) = held.for_display(None, built_in(), true);
         assert!(desktop.is_none() && bar.is_none(), "no display held");
         let (desktop, bar) = held.for_display(Some(built_in()), built_in(), false);
-        assert!(desktop.is_some() && bar.is_none(), "the bar has gone from the screen");
+        assert!(
+            desktop.is_some() && bar.is_none(),
+            "the bar has gone from the screen"
+        );
     }
 
     /// SkyLight reads the framebuffer: a bar read with a transition asked and not yet applied, or
@@ -1547,9 +1816,14 @@ mod tests {
         use objc2_core_graphics::CGContext;
         let ctx = crate::pictures::platform::bitmap::rgba_bitmap_context(40, 30).unwrap();
         CGContext::set_rgb_fill_color(Some(&ctx), level, level, level, 1.0);
-        CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(40.0, 30.0)));
+        CGContext::fill_rect(
+            Some(&ctx),
+            CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(40.0, 30.0)),
+        );
         Picture {
-            image: Pixels::Bitmap(objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx)).unwrap()),
+            image: Pixels::Bitmap(
+                objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx)).unwrap(),
+            ),
             taken,
             ..sized(20.0, 15.0)
         }
@@ -1572,21 +1846,41 @@ mod tests {
         let start = Instant::now();
         shared.lock().unwrap().delivered.record(tag(2), wid(1), flat(0.5, start));
         service.apply(Command::KeepFocused(tag(1), wid(1)));
-        assert!(shared.lock().unwrap().cache.focused(wid(1)).is_none(), "not delivered under that tag");
+        assert!(
+            shared.lock().unwrap().cache.focused(wid(1)).is_none(),
+            "not delivered under that tag"
+        );
         service.apply(Command::KeepFocused(tag(2), wid(1)));
         assert!(shared.lock().unwrap().cache.focused(wid(1)).is_some());
 
         service.apply(Command::Hold(Hold::Transition));
-        shared.lock().unwrap().cache.insert(wid(1), flat(0.5, start + Duration::from_millis(5)));
+        shared
+            .lock()
+            .unwrap()
+            .cache
+            .insert(wid(1), flat(0.5, start + Duration::from_millis(5)));
         service.apply(Command::Hold(Hold::Released));
-        assert!(shared.lock().unwrap().cache.focused(wid(1)).is_some(), "the same content");
+        assert!(
+            shared.lock().unwrap().cache.focused(wid(1)).is_some(),
+            "the same content"
+        );
 
         service.apply(Command::Hold(Hold::Transition));
-        shared.lock().unwrap().cache.insert(wid(1), flat(0.1, start + Duration::from_millis(10)));
+        shared
+            .lock()
+            .unwrap()
+            .cache
+            .insert(wid(1), flat(0.1, start + Duration::from_millis(10)));
         service.apply(Command::Hold(Hold::Settling));
-        assert!(shared.lock().unwrap().cache.focused(wid(1)).is_some(), "not judged while held");
+        assert!(
+            shared.lock().unwrap().cache.focused(wid(1)).is_some(),
+            "not judged while held"
+        );
         service.apply(Command::Hold(Hold::Released));
-        assert!(shared.lock().unwrap().cache.focused(wid(1)).is_none(), "content changed");
+        assert!(
+            shared.lock().unwrap().cache.focused(wid(1)).is_none(),
+            "content changed"
+        );
     }
 
     /// A window that is gone takes everything known of it: its pictures, its focused look, what it was
@@ -1606,21 +1900,36 @@ mod tests {
         assert!(shared.cache.get(wid(1)).is_none());
         assert!(shared.cache.focused(wid(1)).is_none());
         assert!(shared.delivered.under(tag(1), wid(1)).is_none());
-        assert_eq!(shared.learned.get(WindowServerId::from(wid(1))), Knowledge::default());
+        assert_eq!(
+            shared.learned.get(WindowServerId::from(wid(1))),
+            Knowledge::default()
+        );
     }
 
     /// A focused look that is a region is kept as a copy at a release too.
     #[test]
     fn a_release_keeps_a_focused_look_that_is_a_region_as_a_copy() {
         let (mut service, shared) = detached_service();
-        shared.lock().unwrap().cache.keep_focused(wid(1), crate::pictures::platform::picture::test_region());
+        shared
+            .lock()
+            .unwrap()
+            .cache
+            .keep_focused(wid(1), crate::pictures::platform::picture::test_region());
         service.apply(Command::Hold(Hold::Released));
-        assert!(matches!(shared.lock().unwrap().cache.focused(wid(1)).unwrap().image, Pixels::Bitmap(_)));
+        assert!(matches!(
+            shared.lock().unwrap().cache.focused(wid(1)).unwrap().image,
+            Pixels::Bitmap(_)
+        ));
     }
 
     /// One SkyLight round on the service at `at`: the looks the schedule hands out past the desktop and
     /// the bar, due on their own, every window found at `frame()` and captured as `pictures` says.
-    fn service_round(service: &mut Service, shared: &Arc<Mutex<Shared>>, at: Instant, pictures: Vec<(WindowId, Picture)>) {
+    fn service_round(
+        service: &mut Service,
+        shared: &Arc<Mutex<Shared>>,
+        at: Instant,
+        pictures: Vec<(WindowId, Picture)>,
+    ) {
         let looks = {
             let schedule = &mut shared.lock().unwrap().schedule;
             let mut next = schedule.next(at, |_| None);
@@ -1630,7 +1939,13 @@ mod tests {
             sky(next)
         };
         let captured = with_prints(&looks, pictures);
-        service.put_round(Looking::Watches, found(&looks, Some(frame())), captured, None, false);
+        service.put_round(
+            Looking::Watches,
+            found(&looks, Some(frame())),
+            captured,
+            None,
+            false,
+        );
     }
 
     fn delivered_of(shared: &Arc<Mutex<Shared>>, idx: u32) -> bool {
@@ -1652,14 +1967,26 @@ mod tests {
                 ..DesktopBackdrop::default()
             })
         };
-        service.put_round(Looking::Watches, Vec::new(), Vec::new(), Some((learned.clone(), listed())), false);
+        service.put_round(
+            Looking::Watches,
+            Vec::new(),
+            Vec::new(),
+            Some((learned.clone(), listed())),
+            false,
+        );
         service.put_round(Looking::Watches, Vec::new(), Vec::new(), None, false);
         {
             let shared = shared.lock().unwrap();
             assert_eq!(shared.learned.get(window).translucent, Some(true));
             assert!(shared.display.desktop_windows.is_some());
         }
-        service.put_round(Looking::Watches, Vec::new(), Vec::new(), Some((learned, listed())), true);
+        service.put_round(
+            Looking::Watches,
+            Vec::new(),
+            Vec::new(),
+            Some((learned, listed())),
+            true,
+        );
         assert!(shared.lock().unwrap().display.desktop_windows.is_none(), "stale");
     }
 
@@ -1669,27 +1996,46 @@ mod tests {
     fn a_round_at_rest_keeps_regions_as_copies_once_the_cache_took_a_picture() {
         let region = crate::pictures::platform::picture::test_region;
         let is_region = |shared: &Arc<Mutex<Shared>>| {
-            matches!(shared.lock().unwrap().cache.get(wid(1)).unwrap().image, Pixels::Region { .. })
+            matches!(
+                shared.lock().unwrap().cache.get(wid(1)).unwrap().image,
+                Pixels::Region { .. }
+            )
         };
 
         let (mut service, shared) = detached_service();
-        service.put_round(Looking::Watches, Vec::new(), vec![(wid(1), region(), None)], None, false);
+        service.put_round(
+            Looking::Watches,
+            Vec::new(),
+            vec![(wid(1), region(), None)],
+            None,
+            false,
+        );
         assert!(!is_region(&shared), "kept as a copy");
 
         let (mut service, shared) = detached_service();
         service.apply(Command::Hold(Hold::Transition));
-        service.put_round(Looking::Watches, Vec::new(), vec![(wid(1), region(), None)], None, false);
+        service.put_round(
+            Looking::Watches,
+            Vec::new(),
+            vec![(wid(1), region(), None)],
+            None,
+            false,
+        );
         assert!(is_region(&shared), "held");
 
         let (mut service, shared) = detached_service();
-        shared.lock().unwrap().cache.insert(
-            wid(1),
-            Picture {
-                carries_blur: true,
-                ..region()
-            },
+        shared
+            .lock()
+            .unwrap()
+            .cache
+            .insert(wid(1), Picture { carries_blur: true, ..region() });
+        service.put_round(
+            Looking::Watches,
+            Vec::new(),
+            vec![(wid(1), region(), None)],
+            None,
+            false,
         );
-        service.put_round(Looking::Watches, Vec::new(), vec![(wid(1), region(), None)], None, false);
         assert!(is_region(&shared), "refused: nothing taken");
     }
 
@@ -1698,7 +2044,8 @@ mod tests {
     /// differed from its old picture while half of it was blank. The capture after it, matching it,
     /// is delivered.
     #[test]
-    fn a_repainting_landing_is_delivered_once_two_captures_match_and_never_for_differing_from_the_picture_held() {
+    fn a_repainting_landing_is_delivered_once_two_captures_match_and_never_for_differing_from_the_picture_held()
+     {
         let now = Instant::now();
         let (mut service, shared) = detached_service();
         {
@@ -1707,12 +2054,21 @@ mod tests {
             shared.cache.insert(wid(1), flat(0.5, now));
             shared.cache.insert(wid(2), flat(0.5, now));
         }
-        service.apply(Command::Watch(WatchId(1), landing_watch(&[1, 2], Settle::Repainted)));
-        service_round(&mut service, &shared, Instant::now(), vec![(wid(1), flat(0.1, now)), (wid(2), flat(0.5, now))]);
+        service.apply(Command::Watch(
+            WatchId(1),
+            landing_watch(&[1, 2], Settle::Repainted),
+        ));
+        service_round(&mut service, &shared, Instant::now(), vec![
+            (wid(1), flat(0.1, now)),
+            (wid(2), flat(0.5, now)),
+        ]);
         assert!(!delivered_of(&shared, 1), "differs from the picture held");
         assert!(!delivered_of(&shared, 2), "matches the picture held");
         let next = Instant::now() + Duration::from_millis(50);
-        service_round(&mut service, &shared, next, vec![(wid(1), flat(0.1, next)), (wid(2), flat(0.5, next))]);
+        service_round(&mut service, &shared, next, vec![
+            (wid(1), flat(0.1, next)),
+            (wid(2), flat(0.5, next)),
+        ]);
         assert!(delivered_of(&shared, 1), "two captures in a row match");
         assert!(delivered_of(&shared, 2), "two captures in a row match");
     }
@@ -1723,7 +2079,8 @@ mod tests {
     /// picture from before until the window's look settles, at a capture like the one before it, and
     /// then the capture it settled on, which every sink hears of once.
     #[test]
-    fn a_refresh_puts_the_capture_its_window_settled_on_once_however_the_picture_held_before_differs() {
+    fn a_refresh_puts_the_capture_its_window_settled_on_once_however_the_picture_held_before_differs()
+     {
         let now = Instant::now();
         let (mut service, shared) = detached_service();
         let told = Arc::new(Mutex::new(Vec::new()));
@@ -1743,7 +2100,13 @@ mod tests {
         let refreshed = |service: &mut Service, picture: Picture| {
             let looks = sky(shared.lock().unwrap().schedule.next(later, |_| None));
             let captured = with_prints(&looks, vec![(wid(1), picture)]);
-            service.put_round(Looking::Refresh, found(&looks, Some(frame())), captured, None, false);
+            service.put_round(
+                Looking::Refresh,
+                found(&looks, Some(frame())),
+                captured,
+                None,
+                false,
+            );
         };
         let owed = || shared.lock().unwrap().schedule.owed().collect::<Vec<_>>();
         let held = || shared.lock().unwrap().cache.get(wid(1)).map(|held| held.taken);
@@ -1774,10 +2137,19 @@ mod tests {
         let later = Instant::now() + Duration::from_secs(1);
         let looks = sky(shared.lock().unwrap().schedule.next(later, |_| None));
         let captured = with_prints(&looks, vec![(wid(1), flat(0.1, later))]);
-        service.put_round(Looking::Refresh, found(&looks, Some(frame())), captured, None, false);
+        service.put_round(
+            Looking::Refresh,
+            found(&looks, Some(frame())),
+            captured,
+            None,
+            false,
+        );
         let shared = shared.lock().unwrap();
         assert!(shared.schedule.owed().next().is_none());
-        assert_eq!(shared.cache.get(wid(1)).map(|held| (held.taken, held.carries_blur)), Some((now, true)));
+        assert_eq!(
+            shared.cache.get(wid(1)).map(|held| (held.taken, held.carries_blur)),
+            Some((now, true))
+        );
     }
 
     /// No call is made while a command is queued: the thread applies it first, so a hold that arrives
@@ -1787,17 +2159,30 @@ mod tests {
     fn no_call_is_made_while_a_command_is_queued() {
         use crate::pictures::domain::schedule::SETTLE_BEFORE_STARTING;
         let (mut service, shared, commands) = detached_service_and_commands();
-        shared.lock().unwrap().schedule.refresh(vec![target(1)], Instant::now() - SETTLE_BEFORE_STARTING);
+        shared
+            .lock()
+            .unwrap()
+            .schedule
+            .refresh(vec![target(1)], Instant::now() - SETTLE_BEFORE_STARTING);
         commands.send(Command::Hold(Hold::Transition));
         assert_eq!(service.make_calls(), Some(Duration::ZERO), "the queue first");
         while let Ok((_, command)) = service.requests.try_recv() {
             service.apply(command);
         }
-        assert_eq!(service.make_calls(), None, "held: nothing looked at, nothing to wake for");
+        assert_eq!(
+            service.make_calls(),
+            None,
+            "held: nothing looked at, nothing to wake for"
+        );
         service.apply(Command::Hold(Hold::Released));
         let wait = service.make_calls().expect("asked again");
-        assert!(wait > Duration::ZERO && wait <= SETTLE_BEFORE_STARTING, "{wait:?}");
-        assert_eq!(shared.lock().unwrap().schedule.owed().collect::<Vec<_>>(), vec![wid(1)]);
+        assert!(
+            wait > Duration::ZERO && wait <= SETTLE_BEFORE_STARTING,
+            "{wait:?}"
+        );
+        assert_eq!(shared.lock().unwrap().schedule.owed().collect::<Vec<_>>(), vec![
+            wid(1)
+        ]);
     }
 
     /// An ask on screen, a stop and a focus hint reach the schedule as they are applied.
@@ -1805,12 +2190,16 @@ mod tests {
     fn an_ask_on_screen_a_stop_and_a_focus_hint_reach_the_schedule() {
         let (mut service, shared) = detached_service();
         let next = || shared.lock().unwrap().schedule.next(Instant::now(), |_| None);
-        let looked = |next| sky(next).into_iter().map(|look| look.target.window).collect::<Vec<_>>();
+        let looked =
+            |next| sky(next).into_iter().map(|look| look.target.window).collect::<Vec<_>>();
 
         service.apply(Command::AskOnScreen(on_screen(1, Moment::FrameZero, &[1, 2])));
         assert_eq!(looked(next()), vec![wid(1), wid(2)]);
 
-        service.apply(Command::Watch(WatchId(1), landing_watch(&[3], Settle::AsSoonAsThere)));
+        service.apply(Command::Watch(
+            WatchId(1),
+            landing_watch(&[3], Settle::AsSoonAsThere),
+        ));
         assert_eq!(looked(next()), vec![wid(3)]);
         service.apply(Command::Stop(WatchId(1)));
         assert!(matches!(next(), Next::Idle), "stopped");
@@ -1820,7 +2209,10 @@ mod tests {
         service.apply(Command::Hint(Hint::Focused(wid(4))));
         assert_eq!(looked(next()), vec![wid(4)]);
         let settled = Instant::now() + crate::pictures::domain::knowledge::ACTIVE_SETTLED;
-        assert!(shared.lock().unwrap().learned.active(wid(4), Some(1), settled), "what a material is measured by");
+        assert!(
+            shared.lock().unwrap().learned.active(wid(4), Some(1), settled),
+            "what a material is measured by"
+        );
     }
 
     /// Every handle method that asks sends its command, in order; the reads are of what is shared.
@@ -1855,7 +2247,10 @@ mod tests {
         }
         assert_eq!(pictures.focused(wid(1)).map(|look| look.taken), Some(now));
         assert!(pictures.focused(wid(2)).is_none());
-        assert_eq!(pictures.knowledge(WindowServerId::from(wid(1))).translucent, Some(true));
+        assert_eq!(
+            pictures.knowledge(WindowServerId::from(wid(1))).translucent,
+            Some(true)
+        );
     }
 
     fn check() -> HandoverCheck {
@@ -1876,7 +2271,9 @@ mod tests {
         let (mut service, shared) = detached_service();
         shared.lock().unwrap().schedule.check_handover(check());
         let next = shared.lock().unwrap().schedule.next(Instant::now(), |_| None);
-        let Next::Overlay(overlay) = next else { panic!("the overlay is the next call") };
+        let Next::Overlay(overlay) = next else {
+            panic!("the overlay is the next call")
+        };
         service.transitions.fetch_add(1, Ordering::AcqRel);
         service.take_overlay(overlay);
         let next = shared.lock().unwrap().schedule.next(Instant::now() + AFTER_LIFT, |_| None);
@@ -1909,23 +2306,38 @@ mod tests {
         let (mut service, shared) = detached_service();
         let region = crate::pictures::platform::picture::test_region();
         let taken = region.taken;
-        let tag = Tag { client: crate::pictures::domain::watch::Client(1), generation: 3 };
+        let tag = Tag {
+            client: crate::pictures::domain::watch::Client(1),
+            generation: 3,
+        };
         shared.lock().unwrap().delivered.record(tag, wid(1), region.clone());
         shared.lock().unwrap().cache.insert(wid(1), region);
         shared.lock().unwrap().cache.insert(wid(2), sized(859.0, 1081.0));
         service.apply(Command::Hold(Hold::Transition));
-        assert!(matches!(
-            shared.lock().unwrap().cache.get(wid(1)).unwrap().image,
-            Pixels::Region { .. }
-        ), "held: still a region");
-        assert!(shared.lock().unwrap().delivered.under(tag, wid(1)).is_some(), "held: still delivered");
+        assert!(
+            matches!(
+                shared.lock().unwrap().cache.get(wid(1)).unwrap().image,
+                Pixels::Region { .. }
+            ),
+            "held: still a region"
+        );
+        assert!(
+            shared.lock().unwrap().delivered.under(tag, wid(1)).is_some(),
+            "held: still delivered"
+        );
         service.apply(Command::Hold(Hold::Released));
         let shared = shared.lock().unwrap();
         let kept = shared.cache.get(wid(1)).unwrap();
         assert!(matches!(kept.image, Pixels::Bitmap(_)));
         assert_eq!(kept.taken, taken);
-        assert!(matches!(shared.cache.get(wid(2)).unwrap().image, Pixels::Bitmap(_)));
-        assert!(shared.delivered.under(tag, wid(1)).is_none(), "its composite goes with it");
+        assert!(matches!(
+            shared.cache.get(wid(2)).unwrap().image,
+            Pixels::Bitmap(_)
+        ));
+        assert!(
+            shared.delivered.under(tag, wid(1)).is_none(),
+            "its composite goes with it"
+        );
     }
 
     /// The switcher draws what `usable_many` returns, in its own order, and never a sliver.

@@ -1,13 +1,13 @@
 //! A round trip: what a save writes, and what a load makes of it.
 
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::CGSize;
+use rini_core::ids::WindowServerId;
 
 use super::*;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::state::WindowState;
 use crate::workspaces::LayoutEvent;
-use rini_core::ids::WindowServerId;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 
 #[test]
 fn save_and_load_arms_fingerprint_reconciliation() {
@@ -26,16 +26,13 @@ fn save_and_load_arms_fingerprint_reconciliation() {
         &mut memory,
         LayoutEvent::WindowAdded(space, window),
     );
-    engine.persistence.windows.insert(
-        window,
-        WindowFingerprint {
-            window_server_id: Some(9001),
-            title: Some("Project".into()),
-            width: 900.0,
-            height: 700.0,
-            app_id: Some("com.example.editor".into()),
-        },
-    );
+    engine.persistence.windows.insert(window, WindowFingerprint {
+        window_server_id: Some(9001),
+        title: Some("Project".into()),
+        width: 900.0,
+        height: 700.0,
+        app_id: Some("com.example.editor".into()),
+    });
     let path = std::env::temp_dir().join(format!(
         "rini-layout-restore-test-{}-{}.ron",
         std::process::id(),
@@ -76,30 +73,27 @@ fn full_save_records_floating_window_in_its_inactive_workspace() {
         .map(|(workspace, _)| workspace)
         .find(|workspace| *workspace != active_workspace)
         .unwrap();
-    window_store.insert_window(
-        window,
-        WindowState {
-            info: WindowInfo {
-                is_standard: true,
-                is_root: true,
-                is_minimized: false,
-                is_resizable: true,
-                min_size: None,
-                max_size: None,
-                title: "Inactive floating".into(),
-                frame,
-                sys_id: Some(WindowServerId::new(4106)),
-                bundle_id: Some("com.example.floating".into()),
-                path: None,
-                ax_role: None,
-                ax_subrole: None,
-                is_modal: false,
-            },
-            frame_monotonic: frame,
-            is_manageable: true,
-            ignore_app_rule: false,
+    window_store.insert_window(window, WindowState {
+        info: WindowInfo {
+            is_standard: true,
+            is_root: true,
+            is_minimized: false,
+            is_resizable: true,
+            min_size: None,
+            max_size: None,
+            title: "Inactive floating".into(),
+            frame,
+            sys_id: Some(WindowServerId::new(4106)),
+            bundle_id: Some("com.example.floating".into()),
+            path: None,
+            ax_role: None,
+            ax_subrole: None,
+            is_modal: false,
         },
-    );
+        frame_monotonic: frame,
+        is_manageable: true,
+        ignore_app_rule: false,
+    });
     assert!(engine.virtual_workspace_manager.assign_window_to_workspace(
         &mut window_store,
         space,
@@ -148,30 +142,27 @@ fn full_save_removes_stale_floating_frame_from_a_tiled_window() {
         LayoutEvent::SpaceExposed(space, size),
     );
     let workspace = engine.active_workspace(space).unwrap();
-    window_store.insert_window(
-        window,
-        WindowState {
-            info: WindowInfo {
-                is_standard: true,
-                is_root: true,
-                is_minimized: false,
-                is_resizable: true,
-                min_size: None,
-                max_size: None,
-                title: "Tiled".into(),
-                frame,
-                sys_id: Some(WindowServerId::new(4107)),
-                bundle_id: Some("com.example.tiled".into()),
-                path: None,
-                ax_role: None,
-                ax_subrole: None,
-                is_modal: false,
-            },
-            frame_monotonic: frame,
-            is_manageable: true,
-            ignore_app_rule: false,
+    window_store.insert_window(window, WindowState {
+        info: WindowInfo {
+            is_standard: true,
+            is_root: true,
+            is_minimized: false,
+            is_resizable: true,
+            min_size: None,
+            max_size: None,
+            title: "Tiled".into(),
+            frame,
+            sys_id: Some(WindowServerId::new(4107)),
+            bundle_id: Some("com.example.tiled".into()),
+            path: None,
+            ax_role: None,
+            ax_subrole: None,
+            is_modal: false,
         },
-    );
+        frame_monotonic: frame,
+        is_manageable: true,
+        ignore_app_rule: false,
+    });
     assert!(engine.virtual_workspace_manager.assign_window_to_workspace(
         &mut window_store,
         space,
@@ -214,16 +205,13 @@ fn load_does_not_arm_locationless_fingerprints() {
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     let workspace = engine.active_workspace(space).unwrap();
-    engine.persistence.windows.insert(
-        orphan,
-        WindowFingerprint {
-            window_server_id: None,
-            title: Some("Untitled".into()),
-            width: 800.0,
-            height: 600.0,
-            app_id: Some("com.example.orphan".into()),
-        },
-    );
+    engine.persistence.windows.insert(orphan, WindowFingerprint {
+        window_server_id: None,
+        title: Some("Untitled".into()),
+        width: 800.0,
+        height: 600.0,
+        app_id: Some("com.example.orphan".into()),
+    });
     engine
         .virtual_workspace_manager
         .set_last_focused_window(space, workspace, Some(orphan));
@@ -304,16 +292,13 @@ fn load_heals_disagreeing_tiled_and_floating_ownership() {
             &mut memory,
             LayoutEvent::WindowAdded(space, window),
         );
-        engine.persistence.windows.insert(
-            window,
-            WindowFingerprint {
-                window_server_id: Some(window.idx.get()),
-                title: Some(format!("window-{}", window.idx)),
-                width: 600.0,
-                height: 500.0,
-                app_id: Some("com.example.editor".into()),
-            },
-        );
+        engine.persistence.windows.insert(window, WindowFingerprint {
+            window_server_id: Some(window.idx.get()),
+            title: Some(format!("window-{}", window.idx)),
+            width: 600.0,
+            height: 500.0,
+            app_id: Some("com.example.editor".into()),
+        });
     }
     let workspaces = engine.virtual_workspace_manager.existing_workspaces();
     let active = engine.active_workspace(space).unwrap();
@@ -359,16 +344,13 @@ fn app_close_removes_saved_fingerprints() {
     let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let window = WindowId::new(42, 7);
-    engine.persistence.windows.insert(
-        window,
-        WindowFingerprint {
-            window_server_id: Some(9),
-            title: Some("Closed".into()),
-            width: 400.0,
-            height: 300.0,
-            app_id: Some("com.example.closed".into()),
-        },
-    );
+    engine.persistence.windows.insert(window, WindowFingerprint {
+        window_server_id: Some(9),
+        title: Some("Closed".into()),
+        width: 400.0,
+        height: 300.0,
+        app_id: Some("com.example.closed".into()),
+    });
     engine.persistence.pending_windows.insert(window);
 
     let _ = engine.handle_event(
@@ -388,7 +370,8 @@ fn a_save_forgets_only_the_spaces_nothing_lists_remembers_or_holds() {
     let mut engine = test_engine();
     let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let [listed, remembered, laid_out, floating, vacant] = [1, 22, 494, 4620, 4615].map(SpaceId::new);
+    let [listed, remembered, laid_out, floating, vacant] =
+        [1, 22, 494, 4620, 4615].map(SpaceId::new);
     for space in [listed, remembered, laid_out, floating, vacant] {
         let _ = engine.handle_event(
             &mut window_store,
@@ -458,13 +441,18 @@ fn a_save_keeps_the_space_active_at_the_last_save_though_it_has_no_layout() {
         workspace,
         Some(WindowId::new(9, 1)),
     );
-    assert!(!engine.workspace_layouts.spaces().contains(&active), "fixture: no layout on it");
+    assert!(
+        !engine.workspace_layouts.spaces().contains(&active),
+        "fixture: no layout on it"
+    );
     let path = std::env::temp_dir().join(format!(
         "rini-saved-active-space-test-{}.ron",
         std::process::id(),
     ));
 
-    engine.autosave_current_layout(path.clone(), &window_store, &memory, Some(active)).unwrap();
+    engine
+        .autosave_current_layout(path.clone(), &window_store, &memory, Some(active))
+        .unwrap();
     let _ = std::fs::remove_file(path);
 
     assert!(engine.forget_vacant_spaces(&window_store, &memory, &[laid_out]).is_empty());

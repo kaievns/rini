@@ -12,21 +12,22 @@ use objc2_core_foundation::{
 };
 use objc2_core_graphics::{CGDisplayBounds, CGError, CGGetActiveDisplayList, CGMainDisplayID};
 use objc2_foundation::{MainThreadMarker, NSNumber, ns_string};
+use rini_core::ids::{ScreenId, SpaceId};
+use rini_skylight_sys::{
+    CFRelease, CFUUIDCreateFromString, CFUUIDCreateString, CGDisplayCreateUUIDFromDisplayID,
+    CGDisplayGetDisplayIDFromUUID, CGSCopyBestManagedDisplayForRect, CGSCopyManagedDisplaySpaces,
+    CGSManagedDisplayGetCurrentSpace, CoreDockGetAutoHideEnabled, CoreDockGetOrientationAndPinning,
+    G_CONNECTION, SLSCopyActiveMenuBarDisplayIdentifier, SLSGetDisplayMenubarHeight,
+    SLSGetDockRectWithReason, SLSGetMenuBarAutohideEnabled, SLSGetSpaceManagementMode,
+    SLSMainConnectionID,
+};
+use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
 use crate::displays::domain::screen::{
     ASSUMED_SCALE, CoordinateConverter, DockEdge, ScreenInfo, menu_bar_inset, top_inset,
     usable_frame,
 };
-use rini_core::ids::{ScreenId, SpaceId};
-use rini_skylight_sys::{
-    CFRelease, CFUUIDCreateFromString, CFUUIDCreateString, CGDisplayCreateUUIDFromDisplayID,
-    CGDisplayGetDisplayIDFromUUID, CGSCopyBestManagedDisplayForRect, CGSCopyManagedDisplaySpaces,
-    CGSManagedDisplayGetCurrentSpace, CoreDockGetAutoHideEnabled, CoreDockGetOrientationAndPinning, G_CONNECTION,
-    SLSCopyActiveMenuBarDisplayIdentifier, SLSGetDisplayMenubarHeight, SLSGetDockRectWithReason,
-    SLSGetMenuBarAutohideEnabled, SLSGetSpaceManagementMode, SLSMainConnectionID,
-};
-use rustc_hash::FxHashMap as HashMap;
 
 #[derive(Debug, Clone)]
 struct ScreenState {
@@ -46,9 +47,7 @@ pub struct ScreenCache<S: System = Actual> {
 }
 
 impl ScreenCache<Actual> {
-    pub fn new(mtm: MainThreadMarker) -> Self {
-        Self::new_with(Actual { mtm })
-    }
+    pub fn new(mtm: MainThreadMarker) -> Self { Self::new_with(Actual { mtm }) }
 }
 
 impl<S: System> ScreenCache<S> {
@@ -252,9 +251,7 @@ fn menu_bar_height(did: u32) -> f64 {
     height as f64
 }
 
-fn dock_hidden() -> bool {
-    unsafe { CoreDockGetAutoHideEnabled() }
-}
+fn dock_hidden() -> bool { unsafe { CoreDockGetAutoHideEnabled() } }
 
 fn dock_orientation() -> i32 {
     let mut orientation = 0;
@@ -292,7 +289,8 @@ fn dock_display_id() -> Option<u32> {
 fn display_id_of_uuid(uuid: &CFString) -> Option<u32> {
     // SAFETY: `uuid` is live for the call, and the CFUUID made from it is released here.
     unsafe {
-        let parsed = CFUUIDCreateFromString(std::ptr::null_mut(), uuid as *const CFString as *mut _);
+        let parsed =
+            CFUUIDCreateFromString(std::ptr::null_mut(), uuid as *const CFString as *mut _);
         if parsed.is_null() {
             return None;
         }
@@ -326,9 +324,7 @@ pub trait System {
     fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError>;
     fn display_uuid(&self, screen: &CGScreenInfo) -> CFRetained<CFString>;
     fn ns_screens(&self) -> Vec<NSScreenInfo>;
-    fn notch_height(&self, _did: u32) -> f64 {
-        0.0
-    }
+    fn notch_height(&self, _did: u32) -> f64 { 0.0 }
 }
 
 #[derive(Debug, Clone)]
@@ -586,21 +582,15 @@ mod test {
         ns_screens: Vec<NSScreenInfo>,
     }
     impl System for Stub {
-        fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError> {
-            Ok(self.cg_screens.clone())
-        }
+        fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError> { Ok(self.cg_screens.clone()) }
 
         fn display_uuid(&self, _screen: &CGScreenInfo) -> CFRetained<CFString> {
             CFString::from_str("stub")
         }
 
-        fn ns_screens(&self) -> Vec<NSScreenInfo> {
-            self.ns_screens.clone()
-        }
+        fn ns_screens(&self) -> Vec<NSScreenInfo> { self.ns_screens.clone() }
 
-        fn notch_height(&self, _did: u32) -> f64 {
-            0.0
-        }
+        fn notch_height(&self, _did: u32) -> f64 { 0.0 }
     }
 
     struct SequenceSystem {
@@ -639,9 +629,7 @@ mod test {
             self.ns_screens.borrow_mut().pop_front().unwrap_or_default()
         }
 
-        fn notch_height(&self, _did: u32) -> f64 {
-            0.0
-        }
+        fn notch_height(&self, _did: u32) -> f64 { 0.0 }
     }
 
     #[test]
@@ -708,8 +696,14 @@ mod test {
         };
         let stub = Stub {
             cg_screens: vec![
-                CGScreenInfo { cg_id: ScreenId::new(1), bounds: bounds(0.0) },
-                CGScreenInfo { cg_id: ScreenId::new(2), bounds: bounds(1440.0) },
+                CGScreenInfo {
+                    cg_id: ScreenId::new(1),
+                    bounds: bounds(0.0),
+                },
+                CGScreenInfo {
+                    cg_id: ScreenId::new(2),
+                    bounds: bounds(1440.0),
+                },
             ],
             ns_screens: vec![ns_screen(1, 2.0), ns_screen(2, 1.0)],
         };
@@ -795,12 +789,14 @@ mod test {
 /// Make a display's desktop window key, so the display holds focus with no app window on it.
 #[cfg(not(test))]
 pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
-    use crate::windows::platform::window_server::{get_window, make_key_window};
+    use std::ptr::NonNull;
+
     use objc2_core_foundation::{CFArray, CFRetained};
     use rini_core::ids::WindowServerId;
     use rini_geometry::CGRectExt;
     use rini_skylight_sys::{G_CONNECTION, SLSManagedDisplaysCopyRoleWindows};
-    use std::ptr::NonNull;
+
+    use crate::windows::platform::window_server::{get_window, make_key_window};
     let Some(display_uuid) = screen.display_uuid_opt() else {
         return false;
     };
@@ -826,6 +822,4 @@ pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
     })
 }
 #[cfg(test)]
-pub fn focus_desktop_window(_screen: &ScreenInfo) -> bool {
-    false
-}
+pub fn focus_desktop_window(_screen: &ScreenInfo) -> bool { false }

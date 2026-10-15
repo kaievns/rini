@@ -28,25 +28,15 @@ impl Modifiers {
     pub const SHIFT_LEFT: Modifiers = Modifiers(0b0000_0001);
     pub const SHIFT_RIGHT: Modifiers = Modifiers(0b0000_0010);
 
-    pub fn empty() -> Self {
-        Modifiers(0)
-    }
+    pub fn empty() -> Self { Modifiers(0) }
 
-    pub fn contains(&self, other: Modifiers) -> bool {
-        (self.0 & other.0) == other.0
-    }
+    pub fn contains(&self, other: Modifiers) -> bool { (self.0 & other.0) == other.0 }
 
-    pub fn intersects(&self, other: Modifiers) -> bool {
-        (self.0 & other.0) != 0
-    }
+    pub fn intersects(&self, other: Modifiers) -> bool { (self.0 & other.0) != 0 }
 
-    pub fn insert(&mut self, other: Modifiers) {
-        self.0 |= other.0;
-    }
+    pub fn insert(&mut self, other: Modifiers) { self.0 |= other.0; }
 
-    pub fn remove(&mut self, other: Modifiers) {
-        self.0 &= !other.0;
-    }
+    pub fn remove(&mut self, other: Modifiers) { self.0 &= !other.0; }
 
     pub fn has_generic_modifiers(&self) -> bool {
         MOD_FAMILIES.iter().any(|m| self.contains(m.generic))
@@ -473,9 +463,7 @@ pub struct Hotkey {
 }
 
 impl Hotkey {
-    pub fn new(modifiers: Modifiers, key_code: KeyCode) -> Self {
-        Self { modifiers, key_code }
-    }
+    pub fn new(modifiers: Modifiers, key_code: KeyCode) -> Self { Self { modifiers, key_code } }
 }
 
 impl fmt::Display for Hotkey {
@@ -931,8 +919,15 @@ mod tests {
     #[test]
     fn mod_is_replaced_wherever_it_is_and_however_it_is_spelt() {
         assert_eq!(substitute_mod("Mod+Shift+J", ModKey::Ctrl), "Ctrl+Shift+J");
-        assert_eq!(substitute_mod("Shift + mod + J", ModKey::Super), "Shift + Super + J");
-        assert_eq!(substitute_mod("Alt+M", ModKey::Ctrl), "Alt+M", "the key M is not Mod");
+        assert_eq!(
+            substitute_mod("Shift + mod + J", ModKey::Super),
+            "Shift + Super + J"
+        );
+        assert_eq!(
+            substitute_mod("Alt+M", ModKey::Ctrl),
+            "Alt+M",
+            "the key M is not Mod"
+        );
         assert_eq!(substitute_mod("Ctrl+Modx", ModKey::Ctrl), "Ctrl+Modx");
     }
 

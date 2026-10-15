@@ -1,9 +1,8 @@
 use objc2_core_foundation::{CGPoint, CGRect};
+use rini_core::ids::{SpaceId, WindowId};
 
 use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RelativeTo};
 use crate::workspaces::VirtualWorkspaceId;
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowId;
 
 /// Complete result of applying a managed app rule to workspace policy.
 ///
@@ -73,13 +72,9 @@ impl AppRuleOutcome {
         self.placements.push(placement);
     }
 
-    pub fn push_resize(&mut self, resize: AppRuleResize) {
-        self.resizes.push(resize);
-    }
+    pub fn push_resize(&mut self, resize: AppRuleResize) { self.resizes.push(resize); }
 
-    pub fn has_resizes(&self) -> bool {
-        !self.resizes.is_empty()
-    }
+    pub fn has_resizes(&self) -> bool { !self.resizes.is_empty() }
 
     pub fn set_workspace_focus(&mut self, focus: AppRuleWorkspaceFocus) {
         self.workspace_focus = Some(focus);

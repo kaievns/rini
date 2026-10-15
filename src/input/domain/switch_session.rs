@@ -58,9 +58,7 @@ impl SwitchKeys {
     ///
     /// A trigger bound with no modifiers — a bare function key, say — has nothing whose release could
     /// commit, so it never opens a session and the one-shot binding handles it instead.
-    pub fn can_hold(&self) -> bool {
-        self.hold != Modifiers::empty()
-    }
+    pub fn can_hold(&self) -> bool { self.hold != Modifiers::empty() }
 }
 
 /// What the tap should tell the reactor.
@@ -123,9 +121,7 @@ impl Verdict {
         }
     }
 
-    const fn eat() -> Self {
-        Self { swallow: true, signal: None }
-    }
+    const fn eat() -> Self { Self { swallow: true, signal: None } }
 }
 
 /// Whether a switch is open, and since when.
@@ -153,26 +149,20 @@ impl SwitchSession {
         self.live.take().map(|_| Signal::Cancel)
     }
 
-    pub fn is_live(&self) -> bool {
-        self.live.is_some()
-    }
+    pub fn is_live(&self) -> bool { self.live.is_some() }
 
     /// End a live session because the tap can no longer be trusted about what is held.
     ///
     /// Called when the tap is rebuilt or re-enabled. Commits rather than cancels: the user pressed the
     /// key meaning to go somewhere, and losing the keyboard is not a reason to pretend they did not.
-    pub fn abandon(&mut self) -> Option<Signal> {
-        self.live.take().map(|_| Signal::Commit)
-    }
+    pub fn abandon(&mut self) -> Option<Signal> { self.live.take().map(|_| Signal::Commit) }
 
     /// End a live session that the far side has already committed, with nothing to tell it.
     ///
     /// A click on a popup row commits from the reactor, not from here, so the tap has to stop treating
     /// the switch as open: otherwise it would keep swallowing the arrow keys until the modifier is let
     /// go, and send a second commit on that release. True when there was a session to end.
-    pub fn close(&mut self) -> bool {
-        self.live.take().is_some()
-    }
+    pub fn close(&mut self) -> bool { self.live.take().is_some() }
 
     /// The whole decision, for one key event.
     pub fn on_key(&mut self, event: KeyEvent) -> Verdict {
@@ -229,10 +219,7 @@ impl SwitchSession {
         }
         let backward = modifiers_satisfy(keys.backward, event.modifiers);
         let scope = keys.scope;
-        self.live = Some(Live {
-            opened: event.at,
-            trigger,
-        });
+        self.live = Some(Live { opened: event.at, trigger });
         Verdict::eat_with(Signal::Open { backward, scope })
     }
 
@@ -313,9 +300,7 @@ mod tests {
         session
     }
 
-    fn at(base: Instant, millis: u64) -> Instant {
-        base + Duration::from_millis(millis)
-    }
+    fn at(base: Instant, millis: u64) -> Instant { base + Duration::from_millis(millis) }
 
     fn down(key: KeyCode, modifiers: Modifiers, when: Instant) -> KeyEvent {
         KeyEvent {
@@ -343,26 +328,20 @@ mod tests {
         let mut session = session();
 
         let opened = session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, base));
-        assert_eq!(
-            opened,
-            Verdict {
-                swallow: true,
-                signal: Some(Signal::Open {
-                    backward: false,
-                    scope: SwitchScope::Everything
-                })
-            }
-        );
+        assert_eq!(opened, Verdict {
+            swallow: true,
+            signal: Some(Signal::Open {
+                backward: false,
+                scope: SwitchScope::Everything
+            })
+        });
         assert!(session.is_live());
 
         let committed = session.on_key(flags(Modifiers::empty(), at(base, 80)));
-        assert_eq!(
-            committed,
-            Verdict {
-                swallow: false,
-                signal: Some(Signal::Commit)
-            }
-        );
+        assert_eq!(committed, Verdict {
+            swallow: false,
+            signal: Some(Signal::Commit)
+        });
         assert!(!session.is_live());
     }
 
@@ -387,13 +366,10 @@ mod tests {
 
         let stepped = session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, at(base, 60)));
 
-        assert_eq!(
-            stepped,
-            Verdict {
-                swallow: true,
-                signal: Some(Signal::Step(1))
-            }
-        );
+        assert_eq!(stepped, Verdict {
+            swallow: true,
+            signal: Some(Signal::Step(1))
+        });
         assert!(session.is_live(), "and the switch stays open");
     }
 
@@ -423,16 +399,13 @@ mod tests {
         held.insert(Modifiers::SHIFT_LEFT);
 
         let opened = session.on_key(down(KeyCode::KeyQ, held, base));
-        assert_eq!(
-            opened,
-            Verdict {
-                swallow: true,
-                signal: Some(Signal::Open {
-                    backward: true,
-                    scope: SwitchScope::Everything
-                })
-            }
-        );
+        assert_eq!(opened, Verdict {
+            swallow: true,
+            signal: Some(Signal::Open {
+                backward: true,
+                scope: SwitchScope::Everything
+            })
+        });
 
         assert_eq!(
             session.on_key(down(KeyCode::KeyQ, held, at(base, 60))),
@@ -486,13 +459,10 @@ mod tests {
 
         let verdict = session.on_key(down(KeyCode::Escape, Modifiers::CONTROL_LEFT, at(base, 40)));
 
-        assert_eq!(
-            verdict,
-            Verdict {
-                swallow: true,
-                signal: Some(Signal::Cancel)
-            }
-        );
+        assert_eq!(verdict, Verdict {
+            swallow: true,
+            signal: Some(Signal::Cancel)
+        });
         assert!(!session.is_live());
     }
 
@@ -542,13 +512,10 @@ mod tests {
         session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, base));
 
         let late = down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, base + MAX_SESSION);
-        assert_eq!(
-            session.on_key(late),
-            Verdict {
-                swallow: false,
-                signal: Some(Signal::Commit)
-            }
-        );
+        assert_eq!(session.on_key(late), Verdict {
+            swallow: false,
+            signal: Some(Signal::Commit)
+        });
         assert!(!session.is_live());
     }
 

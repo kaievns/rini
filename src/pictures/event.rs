@@ -34,5 +34,8 @@ pub enum Event {
     /// may come down.
     OverlayTaken { tag: Tag, taken: bool },
     /// The check's measure: each window, the screen `AFTER_LIFT` after the overlay's picture against it.
-    Handover { tag: Tag, windows: Vec<(WindowId, HandoverDiff)> },
+    Handover {
+        tag: Tag,
+        windows: Vec<(WindowId, HandoverDiff)>,
+    },
 }

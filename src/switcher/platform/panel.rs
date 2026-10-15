@@ -17,11 +17,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use rustc_hash::FxHashMap as HashMap;
-
-use objc2::DefinedClass;
 use objc2::rc::Retained;
-use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSBackingStoreType, NSColor,
     NSEvent, NSGlassEffectView, NSGlassEffectViewStyle, NSPanel, NSRunningApplication, NSView,
@@ -34,6 +31,7 @@ use objc2_quartz_core::{
     kCAMediaTimingFunctionEaseOut,
 };
 use rini_runloop::turns;
+use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
 use crate::bar::domain::palette;
@@ -456,7 +454,9 @@ impl SwitcherPanel {
 
     /// Whether the last draw has a card of `window`.
     pub fn draws(&self, window: rini_core::ids::WindowId) -> bool {
-        self.last.as_ref().is_some_and(|last| drawn_windows(&last.rows).contains(&window))
+        self.last
+            .as_ref()
+            .is_some_and(|last| drawn_windows(&last.rows).contains(&window))
     }
 
     /// Order the panel out. Ordering rather than fading: an alpha-0 window still hit-tests, and this
@@ -661,7 +661,6 @@ impl SwitcherPanel {
         CATransaction::commit();
     }
 
-
     /// Where each row SITS, and where the selection's ring sits.
     ///
     /// Animated when the strip is only moving, which is what makes the ring travel to the next window
@@ -783,9 +782,7 @@ fn draw_card_behind(
 /// 2.0 rather than the display's own: the panel is built once and shown on whichever display a
 /// switch is driven from. Drawing a retina panel at 1.0 is soft; drawing a 1x panel at 2.0 costs
 /// memory and nothing else, so the safe direction is up.
-fn backing_scale() -> f64 {
-    2.0
-}
+fn backing_scale() -> f64 { 2.0 }
 
 #[cfg(test)]
 mod tests {
@@ -837,15 +834,12 @@ mod tests {
             behind: vec![WindowId::new(1, 2), WindowId::new(1, 3)],
             ..row("Ghostty", "~")
         };
-        assert_eq!(
-            drawn_windows(&[stack, lone]),
-            vec![
-                WindowId::new(1, 1),
-                WindowId::new(1, 2),
-                WindowId::new(1, 3),
-                WindowId::new(2, 1)
-            ]
-        );
+        assert_eq!(drawn_windows(&[stack, lone]), vec![
+            WindowId::new(1, 1),
+            WindowId::new(1, 2),
+            WindowId::new(1, 3),
+            WindowId::new(2, 1)
+        ]);
     }
 
     fn ghostty(idx: u32, width: f64) -> Candidate {

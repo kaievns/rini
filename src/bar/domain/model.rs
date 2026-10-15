@@ -108,7 +108,10 @@ pub struct FocusLabel {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     /// Show workspace `index` on the display `display`, whichever display has focus.
-    ShowWorkspace { display: String, index: usize },
+    ShowWorkspace {
+        display: String,
+        index: usize,
+    },
     Focus(WindowId),
 }
 
@@ -122,16 +125,22 @@ pub fn build(input: &BarInput) -> BarModel {
     }
 }
 
-fn display_bar(display: &DisplayInput, focus: Option<&FocusInput>, config_failed: bool) -> DisplayBar {
+fn display_bar(
+    display: &DisplayInput,
+    focus: Option<&FocusInput>,
+    config_failed: bool,
+) -> DisplayBar {
     let rows = display
         .occupied
         .iter()
         .enumerate()
-        .map(|(index, &occupied)| match (display.shown == Some(index), occupied) {
-            (true, _) => Row::Shown,
-            (false, true) => Row::Occupied,
-            (false, false) => Row::Empty,
-        })
+        .map(
+            |(index, &occupied)| match (display.shown == Some(index), occupied) {
+                (true, _) => Row::Shown,
+                (false, true) => Row::Occupied,
+                (false, false) => Row::Empty,
+            },
+        )
         .collect();
 
     let focus_here = focus.filter(|focus| focus.display == display.uuid);
@@ -155,12 +164,20 @@ fn glyphs(windows: &[WindowInput], focused: Option<WindowId>) -> Vec<Glyph> {
     let lit = focused.and_then(|focused| named().find(|window| window.window == focused));
 
     let mut out: Vec<Glyph> = lit
-        .map(|window| Glyph { app: window.app.clone(), window: window.window, lit: true })
+        .map(|window| Glyph {
+            app: window.app.clone(),
+            window: window.window,
+            lit: true,
+        })
         .into_iter()
         .collect();
     for window in named() {
         if !out.iter().any(|glyph| glyph.app == window.app) {
-            out.push(Glyph { app: window.app.clone(), window: window.window, lit: false });
+            out.push(Glyph {
+                app: window.app.clone(),
+                window: window.window,
+                lit: false,
+            });
         }
     }
     out
@@ -176,7 +193,10 @@ mod tests {
     const EXTERNAL: &str = "B5E7ECDB-94D9-4565-949D-5F22F78D104A";
 
     fn window(idx: u32, app: &str) -> WindowInput {
-        WindowInput { window: WindowId::new(800 + idx as i32, idx), app: app.to_string() }
+        WindowInput {
+            window: WindowId::new(800 + idx as i32, idx),
+            app: app.to_string(),
+        }
     }
 
     /// The shapes of a real dump: the built-in shows workspace 4 with eight applications and Ghostty
@@ -223,8 +243,18 @@ mod tests {
     #[test]
     fn each_display_has_its_own_rows() {
         let model = build(&input());
-        assert_eq!(model.displays[0].rows, vec![Row::Occupied, Row::Empty, Row::Empty, Row::Shown]);
-        assert_eq!(model.displays[1].rows, vec![Row::Shown, Row::Empty, Row::Empty, Row::Empty]);
+        assert_eq!(model.displays[0].rows, vec![
+            Row::Occupied,
+            Row::Empty,
+            Row::Empty,
+            Row::Shown
+        ]);
+        assert_eq!(model.displays[1].rows, vec![
+            Row::Shown,
+            Row::Empty,
+            Row::Empty,
+            Row::Empty
+        ]);
     }
 
     /// The focused window's application comes first and is lit, whatever position its window has.
@@ -232,7 +262,11 @@ mod tests {
     #[test]
     fn the_focused_application_leads_the_glyphs() {
         let glyphs = &build(&input()).displays[0].glyphs;
-        assert_eq!(glyphs[0], Glyph { app: "Ghostty".into(), window: WindowId::new(804, 4), lit: true });
+        assert_eq!(glyphs[0], Glyph {
+            app: "Ghostty".into(),
+            window: WindowId::new(804, 4),
+            lit: true
+        });
         let apps: Vec<&str> = glyphs.iter().map(|glyph| glyph.app.as_str()).collect();
         assert_eq!(apps, vec!["Ghostty", "Alacritty", "Code", "Zen"]);
         assert!(glyphs[1..].iter().all(|glyph| !glyph.lit));
@@ -256,7 +290,10 @@ mod tests {
         let model = build(&input());
         assert_eq!(
             model.displays[0].focus,
-            Some(FocusLabel { app: "Ghostty".into(), title: "~/p/rini".into() })
+            Some(FocusLabel {
+                app: "Ghostty".into(),
+                title: "~/p/rini".into()
+            })
         );
         assert_eq!(model.displays[1].focus, None);
     }

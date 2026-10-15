@@ -43,9 +43,7 @@ impl Unresolved {
     /// What to log. Each case is a different amount of wrong: no space is ordinary — a hotkey pressed
     /// before any snapshot has arrived — while no active workspace or layout for a space rini IS
     /// tracking means something upstream did not set one up.
-    pub(super) fn is_worth_warning_about(self) -> bool {
-        !matches!(self, Self::NoSpace)
-    }
+    pub(super) fn is_worth_warning_about(self) -> bool { !matches!(self, Self::NoSpace) }
 }
 
 /// Resolve the three things a command acts on.
@@ -64,9 +62,7 @@ pub(super) fn resolve_target(
 mod tests {
     use super::*;
 
-    fn space() -> SpaceId {
-        SpaceId::new(1)
-    }
+    fn space() -> SpaceId { SpaceId::new(1) }
 
     #[test]
     fn a_space_with_a_workspace_and_a_layout_resolves() {
@@ -74,14 +70,11 @@ mod tests {
         let layout = LayoutId::default();
         let target = resolve_target(Some(space()), |_| Some(workspace), |_, _| Some(layout))
             .expect("resolves");
-        assert_eq!(
-            target,
-            CommandTarget {
-                space: space(),
-                workspace,
-                layout
-            }
-        );
+        assert_eq!(target, CommandTarget {
+            space: space(),
+            workspace,
+            layout
+        });
     }
 
     /// Each failure says which of the three was missing, because they mean different things and the

@@ -9,9 +9,9 @@ use objc2_application_services::{AXError, AXObserver, AXUIElement as RawAXUIElem
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopMode, CFString, kCFRunLoopCommonModes,
 };
+use rini_core::ids::pid_t;
 
 use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
-use rini_core::ids::pid_t;
 
 /// An observer for accessibility events.
 pub struct Observer {

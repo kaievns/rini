@@ -2,11 +2,11 @@
 //! and macOS's activation picks produce.
 use std::time::{Duration, Instant};
 
+use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::windows::domain::focus_order::FocusOrder;
 use crate::windows::domain::request::Quiet;
-use rini_core::ids::{WindowId, pid_t};
 
 /// The focus reports rini's own raises are about to produce.
 ///
@@ -30,13 +30,12 @@ pub struct RaiseEcho {
 }
 
 impl RaiseEcho {
-    /// Long enough to outlast the cascade, which measured 276ms, and short enough not to swallow a click
-    /// that follows the keystroke.
-    const WINDOW: Duration = Duration::from_millis(400);
-
     /// How long echoes are believed if the raise manager never reports idle. The longest drain seen
     /// after a burst was 2.3s past the last press.
     const BUSY_LIMIT: Duration = Duration::from_secs(5);
+    /// Long enough to outlast the cascade, which measured 276ms, and short enough not to swallow a click
+    /// that follows the keystroke.
+    const WINDOW: Duration = Duration::from_millis(400);
 
     fn believed_until(&self) -> Option<Instant> {
         let since = self.since?;
@@ -186,18 +185,16 @@ impl MainWindowTracker {
         self.window_server_focus_authoritative = true;
         self.window_server_focus = Some(window);
     }
+
     #[must_use]
     pub fn handle_event(&mut self, event: FocusEvent) -> Option<WindowId> {
         let (event_pid, quiet_edge) = match event {
             FocusEvent::ApplicationLaunched { pid, is_frontmost, main_window } => {
-                self.apps.insert(
-                    pid,
-                    AppState {
-                        is_frontmost,
-                        frontmost_is_quiet: Quiet::No,
-                        main_window,
-                    },
-                );
+                self.apps.insert(pid, AppState {
+                    is_frontmost,
+                    frontmost_is_quiet: Quiet::No,
+                    main_window,
+                });
                 (pid, Quiet::No)
             }
             FocusEvent::ApplicationThreadTerminated(pid) => {
@@ -305,9 +302,7 @@ impl MainWindowTracker {
     }
 
     /// Every window in the order it was last focused, most recent first.
-    pub fn focus_order(&self) -> &FocusOrder {
-        &self.focus_order
-    }
+    pub fn focus_order(&self) -> &FocusOrder { &self.focus_order }
 
     /// Carry every record of a window across an identity change: no destruction comes for the old
     /// id, so a record left on it names a window that is gone.
@@ -354,12 +349,11 @@ impl MainWindowTracker {
     /// application coming to the front with none of its windows reported, leaves none, where
     /// `main_window` still names the front application's own.
     pub fn key_window(&self) -> Option<WindowId> {
-        self.window_server_focus.filter(|window| Some(window.pid) == self.global_frontmost)
+        self.window_server_focus
+            .filter(|window| Some(window.pid) == self.global_frontmost)
     }
 
-    pub fn is_globally_frontmost(&self, pid: pid_t) -> bool {
-        self.global_frontmost == Some(pid)
-    }
+    pub fn is_globally_frontmost(&self, pid: pid_t) -> bool { self.global_frontmost == Some(pid) }
 
     /// The window `pid` had focused before it was just activated, once per activation.
     ///
@@ -388,12 +382,11 @@ mod tests {
     use super::*;
 
     mod key_window {
-        use super::super::{FocusEvent, MainWindowTracker, looks_turned};
         use rini_core::ids::WindowId;
 
-        fn wid(pid: rini_core::ids::pid_t, idx: u32) -> WindowId {
-            WindowId::new(pid, idx)
-        }
+        use super::super::{FocusEvent, MainWindowTracker, looks_turned};
+
+        fn wid(pid: rini_core::ids::pid_t, idx: u32) -> WindowId { WindowId::new(pid, idx) }
 
         /// A panel of another application, Spotlight's or Raycast's, takes the keys while the
         /// application in front stays in front: its window is no longer drawn focused, though it is
@@ -413,12 +406,24 @@ mod tests {
             assert_eq!(tracker.key_window(), Some(window));
 
             let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(wid(3, 7)));
-            assert_eq!(tracker.key_window(), None, "another application's panel has the keys");
-            assert_eq!(tracker.main_window(), Some(window), "the front application's own main window");
+            assert_eq!(
+                tracker.key_window(),
+                None,
+                "another application's panel has the keys"
+            );
+            assert_eq!(
+                tracker.main_window(),
+                Some(window),
+                "the front application's own main window"
+            );
 
             let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(window));
             let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(5));
-            assert_eq!(tracker.key_window(), None, "an application in front with nothing reported");
+            assert_eq!(
+                tracker.key_window(),
+                None,
+                "an application in front with nothing reported"
+            );
         }
 
         #[test]
@@ -432,8 +437,9 @@ mod tests {
     }
 
     mod rekey {
-        use super::super::{FocusEvent, MainWindowTracker};
         use rini_core::ids::WindowId;
+
+        use super::super::{FocusEvent, MainWindowTracker};
 
         fn launched_in_front(main_window: WindowId) -> MainWindowTracker {
             let mut tracker = MainWindowTracker::default();
@@ -499,13 +505,12 @@ mod tests {
     }
 
     mod focus_order_wiring {
-        use super::super::{FocusEvent, MainWindowTracker};
-        use crate::windows::domain::request::Quiet;
         use rini_core::ids::WindowId;
 
-        fn wid(pid: rini_core::ids::pid_t, idx: u32) -> WindowId {
-            WindowId::new(pid, idx)
-        }
+        use super::super::{FocusEvent, MainWindowTracker};
+        use crate::windows::domain::request::Quiet;
+
+        fn wid(pid: rini_core::ids::pid_t, idx: u32) -> WindowId { WindowId::new(pid, idx) }
 
         /// The order has to be populated by real focus edges, not just by a test poking the pure type.
         /// `WindowServerFocusChanged` is the authoritative one.
@@ -516,10 +521,10 @@ mod tests {
             let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(wid(1, 1)));
             let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(wid(2, 1)));
 
-            assert_eq!(
-                tracker.focus_order().iter().collect::<Vec<_>>(),
-                vec![wid(2, 1), wid(1, 1)]
-            );
+            assert_eq!(tracker.focus_order().iter().collect::<Vec<_>>(), vec![
+                wid(2, 1),
+                wid(1, 1)
+            ]);
         }
 
         /// The cold-start edge. `handle_event` returns early for the window-server arm, so an AX
@@ -576,12 +581,11 @@ mod tests {
     mod raise_echo {
         use std::time::{Duration, Instant};
 
-        use super::super::RaiseEcho;
         use rini_core::ids::WindowId;
 
-        fn wid(idx: u32) -> WindowId {
-            WindowId::new(1, idx)
-        }
+        use super::super::RaiseEcho;
+
+        fn wid(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
         /// The measured cascade: one press raised eleven windows, and each raise came back as a focus
         /// report that moved the layout's selection and scrolled the strip to that window.
@@ -643,9 +647,7 @@ mod tests {
             assert!(!RaiseEcho::default().swallows(wid(68), Instant::now()));
         }
 
-        fn at(base: Instant, millis: u64) -> Instant {
-            base + Duration::from_millis(millis)
-        }
+        fn at(base: Instant, millis: u64) -> Instant { base + Duration::from_millis(millis) }
 
         /// The reported case: three presses, three raises, run late. The earlier targets are reported
         /// after the third raise was recorded, while the raise manager is still working through them.
@@ -808,14 +810,11 @@ mod tests {
     fn an_activation_target_is_offered_once_and_only_to_its_own_app() {
         let mut tracker = MainWindowTracker::default();
         let window = WindowId::new(954, 9607);
-        tracker.apps.insert(
-            954,
-            AppState {
-                is_frontmost: false,
-                frontmost_is_quiet: Quiet::No,
-                main_window: None,
-            },
-        );
+        tracker.apps.insert(954, AppState {
+            is_frontmost: false,
+            frontmost_is_quiet: Quiet::No,
+            main_window: None,
+        });
         let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(window));
         let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(954));
         assert_eq!(
@@ -843,14 +842,11 @@ mod tests {
     fn a_quiet_activation_drops_the_pending_target() {
         let mut tracker = MainWindowTracker::default();
         let window = WindowId::new(954, 9607);
-        tracker.apps.insert(
-            954,
-            AppState {
-                is_frontmost: false,
-                frontmost_is_quiet: Quiet::No,
-                main_window: None,
-            },
-        );
+        tracker.apps.insert(954, AppState {
+            is_frontmost: false,
+            frontmost_is_quiet: Quiet::No,
+            main_window: None,
+        });
         let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(window));
         let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(954));
         let _ = tracker.handle_event(FocusEvent::ApplicationActivated(954, Quiet::Yes));
@@ -864,14 +860,11 @@ mod tests {
         let mut tracker = MainWindowTracker::default();
         let was_in = WindowId::new(954, 9607);
         let picked = WindowId::new(954, 11333);
-        tracker.apps.insert(
-            954,
-            AppState {
-                is_frontmost: false,
-                frontmost_is_quiet: Quiet::No,
-                main_window: None,
-            },
-        );
+        tracker.apps.insert(954, AppState {
+            is_frontmost: false,
+            frontmost_is_quiet: Quiet::No,
+            main_window: None,
+        });
         let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(was_in));
         let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(954));
         let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(picked));
@@ -886,14 +879,11 @@ mod tests {
         let stale_window = WindowId::new(7, 3);
         let mut tracker = MainWindowTracker::default();
         tracker.global_frontmost = Some(7);
-        tracker.apps.insert(
-            7,
-            AppState {
-                is_frontmost: true,
-                frontmost_is_quiet: Quiet::No,
-                main_window: Some(ax_window),
-            },
-        );
+        tracker.apps.insert(7, AppState {
+            is_frontmost: true,
+            frontmost_is_quiet: Quiet::No,
+            main_window: Some(ax_window),
+        });
 
         assert_eq!(tracker.main_window(), Some(ax_window));
         assert_eq!(

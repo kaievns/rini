@@ -191,9 +191,7 @@ pub enum KnownCGSEvent {
 
 impl fmt::Display for KnownCGSEvent {
     #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Debug::fmt(self, f) }
 }
 
 bitflags! {
@@ -406,23 +404,15 @@ pub type SLSWindowIteratorGetCornerRadiiFn =
 #[repr(transparent)]
 pub struct SpaceId(u64);
 impl SpaceId {
-    pub fn new(id: u64) -> SpaceId {
-        SpaceId(id)
-    }
+    pub fn new(id: u64) -> SpaceId { SpaceId(id) }
 
-    pub fn get(&self) -> u64 {
-        self.0
-    }
+    pub fn get(&self) -> u64 { self.0 }
 }
 impl From<SpaceId> for u64 {
-    fn from(id: SpaceId) -> u64 {
-        id.get()
-    }
+    fn from(id: SpaceId) -> u64 { id.get() }
 }
 impl std::fmt::Display for SpaceId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.0) }
 }
 
 /// A CGWindowID: the window server's identity for a window.
@@ -430,25 +420,17 @@ impl std::fmt::Display for SpaceId {
 pub struct WindowServerId(pub u32);
 impl WindowServerId {
     #[inline]
-    pub fn new(id: u32) -> Self {
-        Self(id)
-    }
+    pub fn new(id: u32) -> Self { Self(id) }
 
     #[inline]
-    pub fn as_u32(self) -> u32 {
-        self.0
-    }
+    pub fn as_u32(self) -> u32 { self.0 }
 
     #[inline]
-    pub fn as_nonzero(self) -> Option<NonZeroU32> {
-        NonZeroU32::new(self.0)
-    }
+    pub fn as_nonzero(self) -> Option<NonZeroU32> { NonZeroU32::new(self.0) }
 }
 impl From<WindowServerId> for u32 {
     #[inline]
-    fn from(id: WindowServerId) -> Self {
-        id.0
-    }
+    fn from(id: WindowServerId) -> Self { id.0 }
 }
 
 #[cfg(test)]

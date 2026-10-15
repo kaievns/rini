@@ -3,11 +3,11 @@
 //! `WindowId { pid, idx }` dies with the process and `WindowServerId` is recycled, so a saved identity
 //! matching the wrong live window is the failure every rule here guards against.
 
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::CGSize;
 
 use super::*;
 use crate::workspaces::LayoutEvent;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 
 #[test]
 fn identity_transfer_preserves_window_tree_position_and_fingerprint() {
@@ -34,16 +34,13 @@ fn identity_transfer_preserves_window_tree_position_and_fingerprint() {
         &mut memory,
         LayoutEvent::WindowAdded(space, sibling),
     );
-    engine.persistence.windows.insert(
-        old,
-        WindowFingerprint {
-            window_server_id: Some(42),
-            title: Some("Editor".into()),
-            width: 800.0,
-            height: 600.0,
-            app_id: Some("com.example.editor".into()),
-        },
-    );
+    engine.persistence.windows.insert(old, WindowFingerprint {
+        window_server_id: Some(42),
+        title: Some("Editor".into()),
+        width: 800.0,
+        height: 600.0,
+        app_id: Some("com.example.editor".into()),
+    });
     engine.persistence.pending_windows.insert(old);
     let workspace = engine.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, workspace).unwrap();
@@ -244,26 +241,20 @@ fn restored_window_server_id_cannot_cross_known_application_identity() {
         &mut memory,
         LayoutEvent::WindowAdded(space, id_match),
     );
-    engine.persistence.windows.insert(
-        titled_match,
-        WindowFingerprint {
-            window_server_id: Some(10),
-            title: Some("Current title".into()),
-            width: 800.0,
-            height: 600.0,
-            app_id: Some("com.example.one".into()),
-        },
-    );
-    engine.persistence.windows.insert(
-        id_match,
-        WindowFingerprint {
-            window_server_id: Some(20),
-            title: Some("Old title".into()),
-            width: 500.0,
-            height: 400.0,
-            app_id: Some("com.example.two".into()),
-        },
-    );
+    engine.persistence.windows.insert(titled_match, WindowFingerprint {
+        window_server_id: Some(10),
+        title: Some("Current title".into()),
+        width: 800.0,
+        height: 600.0,
+        app_id: Some("com.example.one".into()),
+    });
+    engine.persistence.windows.insert(id_match, WindowFingerprint {
+        window_server_id: Some(20),
+        title: Some("Old title".into()),
+        width: 500.0,
+        height: 400.0,
+        app_id: Some("com.example.two".into()),
+    });
     engine.persistence.pending_windows.extend([titled_match, id_match]);
 
     engine.reconcile_restored_window(
@@ -383,16 +374,13 @@ fn rejected_fuzzy_candidate_is_removed_when_discovery_finishes() {
             LayoutEvent::WindowAdded(space, window),
         );
     }
-    engine.persistence.windows.insert(
-        ghost,
-        WindowFingerprint {
-            window_server_id: None,
-            title: Some("Music".into()),
-            width: 500.0,
-            height: 500.0,
-            app_id: Some("com.example.app".into()),
-        },
-    );
+    engine.persistence.windows.insert(ghost, WindowFingerprint {
+        window_server_id: None,
+        title: Some("Music".into()),
+        width: 500.0,
+        height: 500.0,
+        app_id: Some("com.example.app".into()),
+    });
     engine.persistence.pending_windows.insert(ghost);
 
     engine.reconcile_restored_window(
@@ -413,11 +401,9 @@ fn rejected_fuzzy_candidate_is_removed_when_discovery_finishes() {
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
-        LayoutEvent::WindowDiscoveryCompleted(
-            live.pid,
-            Some("com.example.app".into()),
-            vec![space],
-        ),
+        LayoutEvent::WindowDiscoveryCompleted(live.pid, Some("com.example.app".into()), vec![
+            space,
+        ]),
     );
     let workspace = engine.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, workspace).unwrap();
@@ -451,26 +437,20 @@ fn restore_fallback_requires_title_and_size_within_known_app() {
         &mut memory,
         LayoutEvent::WindowAdded(space, size_and_app_match),
     );
-    engine.persistence.windows.insert(
-        title_match,
-        WindowFingerprint {
-            window_server_id: None,
-            title: Some("Project".into()),
-            width: 400.0,
-            height: 300.0,
-            app_id: Some("com.example.other".into()),
-        },
-    );
-    engine.persistence.windows.insert(
-        size_and_app_match,
-        WindowFingerprint {
-            window_server_id: None,
-            title: Some("Other".into()),
-            width: 800.0,
-            height: 600.0,
-            app_id: Some("com.example.editor".into()),
-        },
-    );
+    engine.persistence.windows.insert(title_match, WindowFingerprint {
+        window_server_id: None,
+        title: Some("Project".into()),
+        width: 400.0,
+        height: 300.0,
+        app_id: Some("com.example.other".into()),
+    });
+    engine.persistence.windows.insert(size_and_app_match, WindowFingerprint {
+        window_server_id: None,
+        title: Some("Other".into()),
+        width: 800.0,
+        height: 600.0,
+        app_id: Some("com.example.editor".into()),
+    });
     engine.persistence.pending_windows.extend([title_match, size_and_app_match]);
 
     engine.reconcile_restored_window(

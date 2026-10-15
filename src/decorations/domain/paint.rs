@@ -19,7 +19,12 @@ pub struct Colour {
 impl Colour {
     /// `0xRRGGBB`, opaque.
     pub const fn rgb(rgb: u32) -> Colour {
-        Colour { r: channel(rgb, 16), g: channel(rgb, 8), b: channel(rgb, 0), a: 1.0 }
+        Colour {
+            r: channel(rgb, 16),
+            g: channel(rgb, 8),
+            b: channel(rgb, 0),
+            a: 1.0,
+        }
     }
 }
 
@@ -99,11 +104,17 @@ impl Gradient {
         let (vx, vy) = (radians.cos() * length, radians.sin() * length);
         let stretched = (vx * w).powi(2) + (vy * h).powi(2);
         if w <= 0.0 || h <= 0.0 || stretched <= 0.0 {
-            return Axis { start: Point::new(0.5, 0.0), end: Point::new(0.5, 1.0) };
+            return Axis {
+                start: Point::new(0.5, 0.0),
+                end: Point::new(0.5, 1.0),
+            };
         }
         let k = (vx * vx + vy * vy) / stretched;
         let start = Point::new((w - vx) / 2.0 / w, (h - vy) / 2.0 / h);
-        Axis { start, end: Point::new(start.x + k * vx * w, start.y + k * vy * h) }
+        Axis {
+            start,
+            end: Point::new(start.x + k * vx * w, start.y + k * vy * h),
+        }
     }
 
     /// Whether its axis moves with its layer's size: at any angle but a right angle the corners it
@@ -125,25 +136,38 @@ impl Gradient {
         let mixed = match self.space {
             ColourSpace::Srgb | ColourSpace::SrgbLinear => mix_premultiplied(from, to, t, 3),
             ColourSpace::Oklab => {
-                let lab = mix_premultiplied(with_alpha(oklab(from), from[3]), with_alpha(oklab(to), to[3]), t, 3);
+                let lab = mix_premultiplied(
+                    with_alpha(oklab(from), from[3]),
+                    with_alpha(oklab(to), to[3]),
+                    t,
+                    3,
+                );
                 with_alpha(linear_of(lab), lab[3])
             }
             ColourSpace::Oklch(hue) => {
                 let (a, b) = (lch(oklab(from)), lch(oklab(to)));
-                let mut mixed = mix_premultiplied(with_alpha(a, from[3]), with_alpha(b, to[3]), t, 2);
+                let mut mixed =
+                    mix_premultiplied(with_alpha(a, from[3]), with_alpha(b, to[3]), t, 2);
                 mixed[2] = hue_between(a[2], b[2], t, hue);
                 with_alpha(linear_of(lab_of(mixed)), mixed[3])
             }
         };
         let channel = |c: f64| encode(c.clamp(0.0, 1.0));
-        premultiply([channel(mixed[0]), channel(mixed[1]), channel(mixed[2]), mixed[3]])
+        premultiply([
+            channel(mixed[0]),
+            channel(mixed[1]),
+            channel(mixed[2]),
+            mixed[3],
+        ])
     }
 
     /// The colours Core Animation draws the gradient through, its two ends and as many between as
     /// keep what it draws within `TOLERANCE` of niri's colour at every one of `SAMPLES` steps,
     /// whether it interpolates between them in sRGB's values or in linear light.
     pub fn stops(&self) -> Vec<Stop> {
-        let exact: Vec<[f64; 4]> = (0..=SAMPLES).map(|i| self.premultiplied_at(i as f64 / SAMPLES as f64)).collect();
+        let exact: Vec<[f64; 4]> = (0..=SAMPLES)
+            .map(|i| self.premultiplied_at(i as f64 / SAMPLES as f64))
+            .collect();
         let holds = |a: usize, b: usize| (a + 1..b).all(|i| within(&exact, a, b, i));
         let mut ends = vec![0];
         let mut a = 0;
@@ -166,7 +190,10 @@ impl Gradient {
             a = good;
         }
         ends.into_iter()
-            .map(|i| Stop { location: i as f64 / SAMPLES as f64, colour: unpremultiplied(exact[i]) })
+            .map(|i| Stop {
+                location: i as f64 / SAMPLES as f64,
+                colour: unpremultiplied(exact[i]),
+            })
             .collect()
     }
 }
@@ -201,8 +228,15 @@ impl Interpolation {
             #[cfg(test)]
             Interpolation::Power(gamma) => SRGB_POWER / gamma,
         };
-        let mix = |x: f64, y: f64| (x.powf(power) + (y.powf(power) - x.powf(power)) * u).max(0.0).powf(1.0 / power);
-        premultiply([mix(a[0], b[0]), mix(a[1], b[1]), mix(a[2], b[2]), a[3] + (b[3] - a[3]) * u])
+        let mix = |x: f64, y: f64| {
+            (x.powf(power) + (y.powf(power) - x.powf(power)) * u).max(0.0).powf(1.0 / power)
+        };
+        premultiply([
+            mix(a[0], b[0]),
+            mix(a[1], b[1]),
+            mix(a[2], b[2]),
+            a[3] + (b[3] - a[3]) * u,
+        ])
     }
 }
 
@@ -229,10 +263,17 @@ fn unpremultiply(c: [f64; 4]) -> [f64; 4] {
 fn unpremultiplied(c: [f64; 4]) -> Colour {
     let c = unpremultiply(c);
     let f = |x: f64| x.clamp(0.0, 1.0) as f32;
-    Colour { r: f(c[0]), g: f(c[1]), b: f(c[2]), a: f(c[3]) }
+    Colour {
+        r: f(c[0]),
+        g: f(c[1]),
+        b: f(c[2]),
+        a: f(c[3]),
+    }
 }
 
-fn lerp(a: [f64; 4], b: [f64; 4], t: f64) -> [f64; 4] { std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t) }
+fn lerp(a: [f64; 4], b: [f64; 4], t: f64) -> [f64; 4] {
+    std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t)
+}
 
 /// niri's `premul_mix_unpremul`: the first `channels` multiplied by the alpha, mixed, and divided
 /// by the mixed alpha again.
@@ -276,27 +317,51 @@ const FROM_LMS: [[f64; 3]; 3] = [
 ];
 
 /// Linear sRGB to Oklab, with the matrices niri's shader has.
-fn oklab(c: [f64; 4]) -> [f64; 3] { times(LMS_TO_LAB, times(TO_LMS, [c[0], c[1], c[2]]).map(f64::cbrt)) }
+fn oklab(c: [f64; 4]) -> [f64; 3] {
+    times(LMS_TO_LAB, times(TO_LMS, [c[0], c[1], c[2]]).map(f64::cbrt))
+}
 
-fn linear_of(lab: [f64; 4]) -> [f64; 3] { times(FROM_LMS, times(LAB_TO_LMS, [lab[0], lab[1], lab[2]]).map(|x| x * x * x)) }
+fn linear_of(lab: [f64; 4]) -> [f64; 3] {
+    times(
+        FROM_LMS,
+        times(LAB_TO_LMS, [lab[0], lab[1], lab[2]]).map(|x| x * x * x),
+    )
+}
 
 /// Oklab as lightness, chroma and a hue in `(0, 360]`, as niri's `lab_to_lch` has it.
 fn lch(lab: [f64; 3]) -> [f64; 3] {
     let hue = lab[2].atan2(lab[1]).to_degrees();
-    [lab[0], lab[1].hypot(lab[2]), if hue <= 0.0 { hue + 360.0 } else { hue }]
+    [
+        lab[0],
+        lab[1].hypot(lab[2]),
+        if hue <= 0.0 { hue + 360.0 } else { hue },
+    ]
 }
 
 fn lab_of(lch: [f64; 4]) -> [f64; 4] {
     let hue = lch[2].to_radians();
-    [lch[0], lch[1] * hue.cos().clamp(-1.0, 1.0), lch[1] * hue.sin().clamp(-1.0, 1.0), lch[3]]
+    [
+        lch[0],
+        lch[1] * hue.cos().clamp(-1.0, 1.0),
+        lch[1] * hue.sin().clamp(-1.0, 1.0),
+        lch[3],
+    ]
 }
 
 /// The hue `t` of the way from `a` to `b` the way `hue` goes round, as niri's shader takes it.
 fn hue_between(a: f64, b: f64, t: f64, hue: Hue) -> f64 {
     let (low, high) = (a.min(b), a.max(b));
     let (direct, wrapped) = (high - low, 360.0 - high + low);
-    let round = if a == low { (a - wrapped * t).rem_euclid(360.0) } else { (a + wrapped * t).rem_euclid(360.0) };
-    let straight = if a == low { a + direct * t } else { a - direct * t };
+    let round = if a == low {
+        (a - wrapped * t).rem_euclid(360.0)
+    } else {
+        (a + wrapped * t).rem_euclid(360.0)
+    };
+    let straight = if a == low {
+        a + direct * t
+    } else {
+        a - direct * t
+    };
     let wraps = match hue {
         Hue::Shorter => direct > wrapped,
         Hue::Longer => direct <= wrapped,
@@ -316,11 +381,18 @@ mod tests {
     const BLACK: Colour = Colour::rgb(0x000000);
     const WHITE: Colour = Colour::rgb(0xffffff);
 
-    fn gradient(from: Colour, to: Colour, space: ColourSpace) -> Gradient { Gradient { from, to, angle: 180.0, space } }
+    fn gradient(from: Colour, to: Colour, space: ColourSpace) -> Gradient {
+        Gradient { from, to, angle: 180.0, space }
+    }
 
     #[test]
     fn a_hex_colour_is_its_three_channels_opaque() {
-        assert_eq!(Colour::rgb(0xff8000), Colour { r: 1.0, g: 128.0 / 255.0, b: 0.0, a: 1.0 });
+        assert_eq!(Colour::rgb(0xff8000), Colour {
+            r: 1.0,
+            g: 128.0 / 255.0,
+            b: 0.0,
+            a: 1.0
+        });
     }
 
     /// niri's `t` at a point of a rect of `size`: its distance along the angle from the line
@@ -344,16 +416,49 @@ mod tests {
         let wide = TileSize::new(200.0, 100.0);
         let down = gradient(RED, BLUE, ColourSpace::Srgb);
         let near = |axis: Axis, start: (f64, f64), end: (f64, f64)| {
-            [axis.start.x - start.0, axis.start.y - start.1, axis.end.x - end.0, axis.end.y - end.1].iter().all(|d| d.abs() < 1e-12)
+            [
+                axis.start.x - start.0,
+                axis.start.y - start.1,
+                axis.end.x - end.0,
+                axis.end.y - end.1,
+            ]
+            .iter()
+            .all(|d| d.abs() < 1e-12)
         };
-        assert!(near(down.axis(wide), (0.5, 0.0), (0.5, 1.0)), "180, niri's default, is top to bottom");
-        assert!(near(Gradient { angle: 90.0, ..down }.axis(wide), (0.0, 0.5), (1.0, 0.5)), "90 is left to right");
-        for angle in [0.0, 30.0, 45.0, 90.0, 135.0, 180.0, 200.0, 270.0, 315.0, 359.0, -45.0] {
-            for size in [wide, TileSize::new(100.0, 300.0), TileSize::new(1148.0, 1079.0)] {
+        assert!(
+            near(down.axis(wide), (0.5, 0.0), (0.5, 1.0)),
+            "180, niri's default, is top to bottom"
+        );
+        assert!(
+            near(
+                Gradient { angle: 90.0, ..down }.axis(wide),
+                (0.0, 0.5),
+                (1.0, 0.5)
+            ),
+            "90 is left to right"
+        );
+        for angle in [
+            0.0, 30.0, 45.0, 90.0, 135.0, 180.0, 200.0, 270.0, 315.0, 359.0, -45.0,
+        ] {
+            for size in [
+                wide,
+                TileSize::new(100.0, 300.0),
+                TileSize::new(1148.0, 1079.0),
+            ] {
                 let axis = Gradient { angle, ..down }.axis(size);
-                for (x, y) in [(0.0, 0.0), (size.width, 0.0), (0.0, size.height), (size.width, size.height), (13.0, 71.0)] {
-                    let (ours, theirs) = (core_animations(axis, size, x, y), niris(angle, size, x, y));
-                    assert!((ours - theirs).abs() < 1e-9, "{angle} at {x},{y} over {size:?}: {ours} for niri's {theirs}");
+                for (x, y) in [
+                    (0.0, 0.0),
+                    (size.width, 0.0),
+                    (0.0, size.height),
+                    (size.width, size.height),
+                    (13.0, 71.0),
+                ] {
+                    let (ours, theirs) =
+                        (core_animations(axis, size, x, y), niris(angle, size, x, y));
+                    assert!(
+                        (ours - theirs).abs() < 1e-9,
+                        "{angle} at {x},{y} over {size:?}: {ours} for niri's {theirs}"
+                    );
                 }
             }
         }
@@ -362,17 +467,45 @@ mod tests {
     #[test]
     fn an_axis_at_a_right_angle_holds_through_a_resize() {
         for angle in [0.0, 90.0, 180.0, 270.0, -90.0, 45.0, 200.0] {
-            let at = |w, h| Gradient { angle, ..gradient(RED, BLUE, ColourSpace::Srgb) }.axis(TileSize::new(w, h));
+            let at = |w, h| {
+                Gradient {
+                    angle,
+                    ..gradient(RED, BLUE, ColourSpace::Srgb)
+                }
+                .axis(TileSize::new(w, h))
+            };
             let (a, b) = (at(200.0, 100.0), at(100.0, 300.0));
-            let holds = [a.start.x - b.start.x, a.start.y - b.start.y, a.end.x - b.end.x, a.end.y - b.end.y].iter().all(|d| d.abs() < 1e-12);
-            assert_eq!(holds, !Gradient { angle, ..gradient(RED, BLUE, ColourSpace::Srgb) }.follows_size(), "{angle}");
+            let holds = [
+                a.start.x - b.start.x,
+                a.start.y - b.start.y,
+                a.end.x - b.end.x,
+                a.end.y - b.end.y,
+            ]
+            .iter()
+            .all(|d| d.abs() < 1e-12);
+            assert_eq!(
+                holds,
+                !Gradient {
+                    angle,
+                    ..gradient(RED, BLUE, ColourSpace::Srgb)
+                }
+                .follows_size(),
+                "{angle}"
+            );
         }
     }
 
     #[test]
     fn a_band_of_no_size_draws_top_to_bottom() {
-        let axis = Gradient { angle: 45.0, ..gradient(RED, BLUE, ColourSpace::Srgb) }.axis(TileSize::new(0.0, 0.0));
-        assert_eq!(axis, Axis { start: Point::new(0.5, 0.0), end: Point::new(0.5, 1.0) });
+        let axis = Gradient {
+            angle: 45.0,
+            ..gradient(RED, BLUE, ColourSpace::Srgb)
+        }
+        .axis(TileSize::new(0.0, 0.0));
+        assert_eq!(axis, Axis {
+            start: Point::new(0.5, 0.0),
+            end: Point::new(0.5, 1.0)
+        });
     }
 
     #[test]
@@ -380,32 +513,73 @@ mod tests {
         let level = |c: f32| (c * 255.0).round();
         let mid = |space| gradient(BLACK, WHITE, space).colour_at(0.5);
         assert_eq!(level(mid(ColourSpace::Srgb).r), 128.0);
-        assert_eq!(level(mid(ColourSpace::SrgbLinear).r), 186.0, "half in linear light, at niri's power of 2.2");
-        assert_eq!(level(mid(ColourSpace::Oklab).g), level(mid(ColourSpace::Oklch(Hue::Shorter)).g), "a grey has no hue to go round");
+        assert_eq!(
+            level(mid(ColourSpace::SrgbLinear).r),
+            186.0,
+            "half in linear light, at niri's power of 2.2"
+        );
+        assert_eq!(
+            level(mid(ColourSpace::Oklab).g),
+            level(mid(ColourSpace::Oklch(Hue::Shorter)).g),
+            "a grey has no hue to go round"
+        );
         let fade = gradient(RED, Colour { a: 0.0, ..BLUE }, ColourSpace::Srgb).colour_at(0.5);
-        assert_eq!((fade.r, fade.b, fade.a), (1.0, 0.0, 0.5), "mixed premultiplied, a colour fading out keeps its own");
-        for space in [ColourSpace::Srgb, ColourSpace::SrgbLinear, ColourSpace::Oklab, ColourSpace::Oklch(Hue::Longer)] {
+        assert_eq!(
+            (fade.r, fade.b, fade.a),
+            (1.0, 0.0, 0.5),
+            "mixed premultiplied, a colour fading out keeps its own"
+        );
+        for space in [
+            ColourSpace::Srgb,
+            ColourSpace::SrgbLinear,
+            ColourSpace::Oklab,
+            ColourSpace::Oklch(Hue::Longer),
+        ] {
             let ends = gradient(RED, BLUE, space);
             for (t, end) in [(0.0, RED), (1.0, BLUE)] {
                 let c = ends.colour_at(t);
-                assert!([c.r - end.r, c.g - end.g, c.b - end.b].iter().all(|d| d.abs() < 1e-3), "{space:?} at {t}: {c:?}");
+                assert!(
+                    [c.r - end.r, c.g - end.g, c.b - end.b].iter().all(|d| d.abs() < 1e-3),
+                    "{space:?} at {t}: {c:?}"
+                );
             }
         }
     }
 
     #[test]
     fn stops_in_oklch_longer_hue_go_the_long_way() {
-        let hue = |c: Colour| lch(oklab([decode(c.r.into()), decode(c.g.into()), decode(c.b.into()), 1.0]))[2];
+        let hue = |c: Colour| {
+            lch(oklab([
+                decode(c.r.into()),
+                decode(c.g.into()),
+                decode(c.b.into()),
+                1.0,
+            ]))[2]
+        };
         let (red, blue) = (hue(RED), hue(BLUE));
-        assert!(blue - red > 180.0, "red at {red}, blue at {blue}: the short way round passes 0");
-        assert!((hue_between(red, blue, 0.5, Hue::Shorter) - ((red + blue) / 2.0 + 180.0).rem_euclid(360.0)).abs() < 1e-9);
+        assert!(
+            blue - red > 180.0,
+            "red at {red}, blue at {blue}: the short way round passes 0"
+        );
+        assert!(
+            (hue_between(red, blue, 0.5, Hue::Shorter)
+                - ((red + blue) / 2.0 + 180.0).rem_euclid(360.0))
+            .abs()
+                < 1e-9
+        );
         assert!((hue_between(red, blue, 0.5, Hue::Longer) - (red + blue) / 2.0).abs() < 1e-9);
         let at = |hue| gradient(RED, BLUE, ColourSpace::Oklch(hue)).colour_at(0.5);
-        assert!(at(Hue::Longer).g > 0.5 && at(Hue::Shorter).g < 0.1, "the long way from red to blue passes green, the short way magenta");
+        assert!(
+            at(Hue::Longer).g > 0.5 && at(Hue::Shorter).g < 0.1,
+            "the long way from red to blue passes green, the short way magenta"
+        );
         assert_eq!(at(Hue::Increasing), at(Hue::Longer), "red's hue is below blue's");
         assert_eq!(at(Hue::Decreasing), at(Hue::Shorter));
         let stops = |hue| gradient(RED, BLUE, ColourSpace::Oklch(hue)).stops().len();
-        assert!(stops(Hue::Longer) > stops(Hue::Shorter), "the long way needs more stops");
+        assert!(
+            stops(Hue::Longer) > stops(Hue::Shorter),
+            "the long way needs more stops"
+        );
     }
 
     /// Hard cases for each space: black to white for the curves, primaries and complements for the
@@ -417,7 +591,10 @@ mod tests {
             (GREEN, Colour::rgb(0xff00ff)),
             (RED, Colour::rgb(0xffff00)),
             (RED, Colour { a: 0.0, ..BLUE }),
-            (Colour::rgb(0x7fc8ff), Colour { a: 0.3, ..Colour::rgb(0x505050) }),
+            (Colour::rgb(0x7fc8ff), Colour {
+                a: 0.3,
+                ..Colour::rgb(0x505050)
+            }),
         ];
         let spaces = [
             ColourSpace::Srgb,
@@ -428,7 +605,10 @@ mod tests {
             ColourSpace::Oklch(Hue::Increasing),
             ColourSpace::Oklch(Hue::Decreasing),
         ];
-        spaces.iter().flat_map(|space| pairs.map(|(from, to)| gradient(from, to, *space))).collect()
+        spaces
+            .iter()
+            .flat_map(|space| pairs.map(|(from, to)| gradient(from, to, *space)))
+            .collect()
     }
 
     /// The most what a renderer draws between `stops`, interpolating `how`, strays from niri's
@@ -457,9 +637,19 @@ mod tests {
         for gradient in hard_cases() {
             let stops = gradient.stops();
             assert_eq!((stops[0].location, stops[stops.len() - 1].location), (0.0, 1.0));
-            for how in [Interpolation::Srgb, Interpolation::Linear, Interpolation::Power(1.8)] {
+            for how in [
+                Interpolation::Srgb,
+                Interpolation::Linear,
+                Interpolation::Power(1.8),
+            ] {
                 let worst = worst(&gradient, &stops, how);
-                assert!(worst < 1.0, "{:?} {:?} to {:?}, {how:?}: {worst:.2} levels", gradient.space, gradient.from, gradient.to);
+                assert!(
+                    worst < 1.0,
+                    "{:?} {:?} to {:?}, {how:?}: {worst:.2} levels",
+                    gradient.space,
+                    gradient.from,
+                    gradient.to
+                );
             }
             most = most.max(stops.len());
         }
@@ -468,17 +658,39 @@ mod tests {
 
     #[test]
     fn two_stops_alone_miss_by_more_than_a_level() {
-        for gradient in [gradient(RED, BLUE, ColourSpace::Srgb), gradient(BLACK, WHITE, ColourSpace::SrgbLinear)] {
-            let ends = [Stop { location: 0.0, colour: gradient.from }, Stop { location: 1.0, colour: gradient.to }];
-            let off = [Interpolation::Srgb, Interpolation::Linear].map(|how| worst(&gradient, &ends, how));
-            assert!(off.iter().any(|levels| *levels > 10.0), "{:?}: {off:?}", gradient.space);
+        for gradient in [
+            gradient(RED, BLUE, ColourSpace::Srgb),
+            gradient(BLACK, WHITE, ColourSpace::SrgbLinear),
+        ] {
+            let ends = [
+                Stop {
+                    location: 0.0,
+                    colour: gradient.from,
+                },
+                Stop {
+                    location: 1.0,
+                    colour: gradient.to,
+                },
+            ];
+            let off = [Interpolation::Srgb, Interpolation::Linear]
+                .map(|how| worst(&gradient, &ends, how));
+            assert!(
+                off.iter().any(|levels| *levels > 10.0),
+                "{:?}: {off:?}",
+                gradient.space
+            );
         }
     }
 
     /// Except the longer way round in `oklch`, which goes the whole circle, as niri's does.
     #[test]
     fn a_gradient_of_one_colour_is_its_two_ends() {
-        for space in [ColourSpace::Srgb, ColourSpace::SrgbLinear, ColourSpace::Oklab, ColourSpace::Oklch(Hue::Shorter)] {
+        for space in [
+            ColourSpace::Srgb,
+            ColourSpace::SrgbLinear,
+            ColourSpace::Oklab,
+            ColourSpace::Oklch(Hue::Shorter),
+        ] {
             assert_eq!(gradient(RED, RED, space).stops().len(), 2, "{space:?}");
         }
         assert!(gradient(RED, RED, ColourSpace::Oklch(Hue::Longer)).colour_at(0.5).g > 0.5);

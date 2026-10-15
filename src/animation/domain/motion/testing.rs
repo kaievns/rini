@@ -2,9 +2,7 @@
 //! frames and passes on it, a window on a surface and a tile.
 
 use rini_core::ids::WindowId;
-use rini_geometry::space::{
-    OverlayRect, Point, Rect, ScreenRect, ScreenVector, Size, SurfaceRect,
-};
+use rini_geometry::space::{OverlayRect, Point, Rect, ScreenRect, ScreenVector, Size, SurfaceRect};
 use rini_geometry::stretch::is_a_resize;
 
 use super::surface::SurfaceGeometry;
@@ -31,17 +29,13 @@ impl Gen {
         self.0 >> 11
     }
 
-    pub(crate) fn below(&mut self, n: u64) -> u64 {
-        self.next() % n
-    }
+    pub(crate) fn below(&mut self, n: u64) -> u64 { self.next() % n }
 
     pub(crate) fn pt(&mut self, lo: f64, hi: f64) -> f64 {
         lo + self.below((hi - lo) as u64 + 1) as f64
     }
 
-    pub(crate) fn coin(&mut self) -> bool {
-        self.below(2) == 0
-    }
+    pub(crate) fn coin(&mut self) -> bool { self.below(2) == 0 }
 
     /// A window frame with a real share of the display showing: a column on the strip.
     pub(crate) fn on_screen<U>(&mut self) -> Rect<U> {

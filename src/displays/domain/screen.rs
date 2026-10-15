@@ -7,10 +7,9 @@
 use std::cmp::Ordering;
 
 use objc2_core_foundation::{CGPoint, CGRect};
-use serde::{Deserialize, Serialize};
-
 use rini_core::ids::{ScreenId, SpaceId};
 use rini_geometry::{CGRectDef, CGRectExt};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScreenInfo {
@@ -76,9 +75,7 @@ pub fn menu_bar_inset(hidden: bool, height: f64, notch_height: f64) -> f64 {
 /// The taller of the two, never their sum. A band drawn across the top sits where the menu bar and
 /// the notch already are, so a 32pt band on a display whose notch keeps 32pt clear costs nothing more,
 /// and on a display that keeps nothing clear it costs the band.
-pub fn top_inset(menu_bar_inset: f64, band: f64) -> f64 {
-    menu_bar_inset.max(band)
-}
+pub fn top_inset(menu_bar_inset: f64, band: f64) -> f64 { menu_bar_inset.max(band) }
 
 /// Which edge of the screen the Dock is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,15 +133,11 @@ pub struct CoordinateConverter {
 }
 
 impl Default for CoordinateConverter {
-    fn default() -> Self {
-        Self { screen_height: f64::NAN }
-    }
+    fn default() -> Self { Self { screen_height: f64::NAN } }
 }
 
 impl CoordinateConverter {
-    pub fn from_height(height: f64) -> Self {
-        Self { screen_height: height }
-    }
+    pub fn from_height(height: f64) -> Self { Self { screen_height: height } }
 
     pub fn screen_height(&self) -> Option<f64> {
         if self.screen_height.is_nan() {

@@ -69,9 +69,7 @@ pub fn cycle_step(from: usize, len: usize, direction: Cycle) -> Option<usize> {
 mod tests {
     use super::*;
 
-    fn window(idx: u32) -> WindowId {
-        WindowId::new(1, idx)
-    }
+    fn window(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
     #[test]
     fn an_explicit_request_wins() {

@@ -81,32 +81,22 @@ impl Reveal {
     }
 
     /// The switch ended. True when there is a popup up to take down.
-    pub fn on_hide(&mut self) -> bool {
-        std::mem::take(&mut self.state) == State::Shown
-    }
+    pub fn on_hide(&mut self) -> bool { std::mem::take(&mut self.state) == State::Shown }
 
     #[cfg(test)]
-    pub fn is_shown(&self) -> bool {
-        self.state == State::Shown
-    }
+    pub fn is_shown(&self) -> bool { self.state == State::Shown }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn at(base: Instant, millis: u64) -> Instant {
-        base + Duration::from_millis(millis)
-    }
+    fn at(base: Instant, millis: u64) -> Instant { base + Duration::from_millis(millis) }
 
     /// The moment the hold is up, and a moment comfortably past it.
-    fn hold(base: Instant) -> Instant {
-        base + HOLD_TO_REVEAL
-    }
+    fn hold(base: Instant) -> Instant { base + HOLD_TO_REVEAL }
 
-    fn after_hold(base: Instant) -> Instant {
-        base + HOLD_TO_REVEAL * 2
-    }
+    fn after_hold(base: Instant) -> Instant { base + HOLD_TO_REVEAL * 2 }
 
     /// The reported bug: a quick combo showed the popup. Opened and released inside the hold, nothing
     /// is ever drawn.

@@ -10,7 +10,6 @@ use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
 pub use libc::pid_t;
-
 pub use rini_skylight_sys::{SpaceId, WindowServerId};
 
 /// An identifier representing a window.
@@ -25,9 +24,7 @@ pub struct WindowId {
 
 impl serde::ser::Serialize for WindowId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
+    where S: serde::ser::Serializer {
         use serde::ser::SerializeStruct;
         let mut s = serializer.serialize_struct("WindowId", 2)?;
         s.serialize_field("pid", &self.pid)?;
@@ -38,9 +35,7 @@ impl serde::ser::Serialize for WindowId {
 
 impl<'de> serde::de::Deserialize<'de> for WindowId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::de::Deserializer<'de>,
-    {
+    where D: serde::de::Deserializer<'de> {
         struct WindowIdVisitor;
         impl<'de> serde::de::Visitor<'de> for WindowIdVisitor {
             type Value = WindowId;
@@ -52,17 +47,13 @@ impl<'de> serde::de::Deserialize<'de> for WindowId {
             }
 
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
+            where E: serde::de::Error {
                 WindowId::from_debug_string(v)
                     .ok_or_else(|| E::custom("invalid WindowId debug string"))
             }
 
             fn visit_seq<A>(self, mut seq: A) -> Result<WindowId, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
+            where A: serde::de::SeqAccess<'de> {
                 let pid: pid_t = seq
                     .next_element()?
                     .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
@@ -77,9 +68,7 @@ impl<'de> serde::de::Deserialize<'de> for WindowId {
             }
 
             fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
-            where
-                M: serde::de::MapAccess<'de>,
-            {
+            where M: serde::de::MapAccess<'de> {
                 let mut pid: Option<pid_t> = None;
                 let mut idx: Option<u32> = None;
 
@@ -140,9 +129,7 @@ impl WindowId {
 }
 
 impl From<WindowId> for WindowServerId {
-    fn from(id: WindowId) -> Self {
-        Self(id.idx.into())
-    }
+    fn from(id: WindowId) -> Self { Self(id.idx.into()) }
 }
 
 /// A display, keyed by its CGDirectDisplayID.
@@ -152,13 +139,9 @@ impl From<WindowId> for WindowServerId {
 pub struct ScreenId(u32);
 
 impl ScreenId {
-    pub fn new(id: u32) -> Self {
-        ScreenId(id)
-    }
+    pub fn new(id: u32) -> Self { ScreenId(id) }
 
-    pub fn as_u32(&self) -> u32 {
-        self.0
-    }
+    pub fn as_u32(&self) -> u32 { self.0 }
 }
 
 pub trait BTreeExt {
@@ -196,9 +179,7 @@ impl Borrow<PidRange> for WindowId {
 mod tests {
     use super::*;
 
-    fn wid() -> WindowId {
-        WindowId::new(42, 7)
-    }
+    fn wid() -> WindowId { WindowId::new(42, 7) }
 
     #[test]
     fn window_id_json_round_trips_as_a_struct() {
@@ -214,10 +195,7 @@ mod tests {
             serde_json::from_str::<WindowId>(r#""WindowId { pid: 42, idx: 7 }""#).unwrap(),
             wid()
         );
-        assert_eq!(
-            WindowId::from_debug_string(&format!("{:?}", wid())),
-            Some(wid())
-        );
+        assert_eq!(WindowId::from_debug_string(&format!("{:?}", wid())), Some(wid()));
         assert_eq!(WindowId::from_debug_string("Window { pid: 1, idx: 2 }"), None);
     }
 

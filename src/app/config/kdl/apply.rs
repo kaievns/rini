@@ -144,8 +144,11 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
             .filter(|(opening, decorating)| opening.sets_anything() || !decorating.decorates())
             .map(|(opening, _)| opening.clone())
             .collect();
-        settings.decorations.rules =
-            rules.into_iter().map(|(_, decorating)| decorating).filter(DecorationRule::decorates).collect();
+        settings.decorations.rules = rules
+            .into_iter()
+            .map(|(_, decorating)| decorating)
+            .filter(DecorationRule::decorates)
+            .collect();
     } else if !part.undecoded.window_rules
         && let Some(names) = &names
     {
@@ -213,7 +216,11 @@ fn apply_band(part: BandPart, setting: &mut BandSetting, problems: &mut Vec<Prob
 
 /// A band's paint for one state as one block writes it: its gradient, drawn instead of its colour
 /// when both are written, as niri draws it.
-fn paint(colour: Option<ColourValue>, gradient: Option<GradientPart>, problems: &mut Vec<Problem>) -> Option<Paint> {
+fn paint(
+    colour: Option<ColourValue>,
+    gradient: Option<GradientPart>,
+    problems: &mut Vec<Problem>,
+) -> Option<Paint> {
     match gradient {
         Some(gradient) => Some(Paint::Gradient(self::gradient(gradient, problems))),
         None => colour.map(|ColourValue(colour)| Paint::Solid(colour)),
@@ -225,8 +232,12 @@ fn paint(colour: Option<ColourValue>, gradient: Option<GradientPart>, problems: 
 fn gradient(part: GradientPart, problems: &mut Vec<Problem>) -> Gradient {
     if part.relative_to == Some(GradientRelativeTo::WorkspaceView) {
         problems.push(
-            Problem::at(&part.span, "`relative-to=\"workspace-view\"` is not supported yet", "here")
-                .help("rini lays a gradient over its own band; leave `relative-to` out"),
+            Problem::at(
+                &part.span,
+                "`relative-to=\"workspace-view\"` is not supported yet",
+                "here",
+            )
+            .help("rini lays a gradient over its own band; leave `relative-to` out"),
         );
     }
     Gradient {
@@ -387,9 +398,16 @@ fn window_rule(
         let names_nothing = patterns.iter().all(|pattern| pattern.is_none())
             && part.ax_role.is_none()
             && part.ax_subrole.is_none()
-            && [part.is_modal, part.is_active, part.is_focused, part.is_floating, part.is_active_in_column, part.is_urgent]
-                .iter()
-                .all(Option::is_none);
+            && [
+                part.is_modal,
+                part.is_active,
+                part.is_focused,
+                part.is_floating,
+                part.is_active_in_column,
+                part.is_urgent,
+            ]
+            .iter()
+            .all(Option::is_none);
         if names_nothing {
             problems.push(
                 Problem::at(&part.span, "this line names no matcher", "matches every window")
@@ -461,7 +479,9 @@ fn window_rule(
         excludes: excludes.clone(),
         focus_ring: band_rule(part.focus_ring, problems),
         border: band_rule(part.border, problems),
-        corner_radius: part.geometry_corner_radius.and_then(|radius| corner_radius(radius, problems)),
+        corner_radius: part
+            .geometry_corner_radius
+            .and_then(|radius| corner_radius(radius, problems)),
     };
     let decorating = paints_only(decorating, &part.span, problems);
     let opening = WindowRule {
@@ -507,8 +527,12 @@ fn corner_radius(part: RadiusPart, problems: &mut Vec<Problem>) -> Option<f64> {
         [first, _, _, _] if radii.iter().all(|radius| *radius == first) => Some(first),
         [_, _, _, _] => {
             problems.push(
-                Problem::at(&part.span, "corners of different radii are not supported yet", "here")
-                    .help("rini rounds every corner of a window alike; write one radius"),
+                Problem::at(
+                    &part.span,
+                    "corners of different radii are not supported yet",
+                    "here",
+                )
+                .help("rini rounds every corner of a window alike; write one radius"),
             );
             None
         }
@@ -527,8 +551,12 @@ fn paints_only(rule: DecorationRule, span: &Span, problems: &mut Vec<Problem>) -
     }
     let mut refuse = |what: &str, why: &str| {
         problems.push(
-            Problem::at(span, format!("{what} under `is-active`, `is-focused` or `is-urgent` is not supported"), "in this rule")
-                .help(why.to_owned()),
+            Problem::at(
+                span,
+                format!("{what} under `is-active`, `is-focused` or `is-urgent` is not supported"),
+                "in this rule",
+            )
+            .help(why.to_owned()),
         );
     };
     if rule.border.shapes() {
@@ -544,7 +572,10 @@ fn paints_only(rule: DecorationRule, span: &Span, problems: &mut Vec<Problem>) -
         );
     }
     if rule.corner_radius.is_some() {
-        refuse("`geometry-corner-radius`", "not supported yet: a corner that changes with focus or attention");
+        refuse(
+            "`geometry-corner-radius`",
+            "not supported yet: a corner that changes with focus or attention",
+        );
     }
     let colours = |band: BandRule| BandRule { on: None, width: None, ..band };
     DecorationRule {

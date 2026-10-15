@@ -17,5 +17,9 @@ fn the_focuslab_tools_read_the_journal_as_it_is_written() {
             return;
         }
     };
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

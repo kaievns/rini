@@ -17,10 +17,9 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
-
 use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use serde::{Deserialize, Serialize};
 
 use crate::workspaces::domain::display_affinity::{
     ColumnWidth, StoredWidths, UnboundedWidths, read_widths, store_widths,
@@ -48,15 +47,11 @@ impl SetupId {
     }
 
     /// No displays at all, which is what macOS reports mid-reconfiguration.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
+    pub fn is_empty(&self) -> bool { self.0.is_empty() }
 }
 
 impl fmt::Display for SetupId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(&self.0) }
 }
 
 /// What one arrangement remembers. A file holds it as a `SetupRecord`.
@@ -87,7 +82,11 @@ struct SetupRecord {
     display_strip: HashMap<String, Vec<WindowId>>,
     #[serde(default)]
     window_width: StoredWidths,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty", rename = "dragged_width")]
+    #[serde(
+        default,
+        skip_serializing_if = "HashMap::is_empty",
+        rename = "dragged_width"
+    )]
     unbounded_width: UnboundedWidths,
     #[serde(default)]
     home_by_intent: HashSet<WindowId>,
@@ -206,9 +205,7 @@ impl Setup {
 mod tests {
     use super::*;
 
-    fn win(idx: u32) -> WindowId {
-        WindowId::new(1, idx)
-    }
+    fn win(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
     /// The order macOS lists screens in is not stable, and two names for one arrangement would make
     /// a replug pick between two remembered layouts at random.
@@ -276,10 +273,9 @@ mod tests {
     /// A `Setup` as rini wrote and read it before a drag's width had a record, so a test can read
     /// a new file as a rollback to that rini would.
     mod before_dragged_widths {
-        use serde::Deserialize;
-
         use rini_core::ids::WindowId;
         use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+        use serde::Deserialize;
 
         #[derive(Debug, PartialEq, Deserialize)]
         pub enum ColumnWidth {
@@ -314,16 +310,26 @@ mod tests {
         let written = ron::ser::to_string(&setup).unwrap();
         assert!(written.contains("dragged_width:"), "{written}");
 
-        let old: before_dragged_widths::Setup = ron::from_str(&written).expect("an older rini reads it");
+        let old: before_dragged_widths::Setup =
+            ron::from_str(&written).expect("an older rini reads it");
         assert_eq!(old.window_home, setup.window_home);
         assert_eq!(old.home_by_intent, setup.home_by_intent);
         assert_eq!(old.display_strip, setup.display_strip);
         let old_widths = &old.window_width["built-in"];
-        assert_eq!(old_widths[&win(1)], before_dragged_widths::ColumnWidth::Offset(0.33797));
-        assert_eq!(old_widths[&win(2)], before_dragged_widths::ColumnWidth::Offset(0.25));
+        assert_eq!(
+            old_widths[&win(1)],
+            before_dragged_widths::ColumnWidth::Offset(0.33797)
+        );
+        assert_eq!(
+            old_widths[&win(2)],
+            before_dragged_widths::ColumnWidth::Offset(0.25)
+        );
 
         let read: Setup = ron::from_str(&written).unwrap();
-        assert_eq!(read.window_width["built-in"][&win(1)], ColumnWidth::Unbounded(0.33797));
+        assert_eq!(
+            read.window_width["built-in"][&win(1)],
+            ColumnWidth::Unbounded(0.33797)
+        );
         assert_eq!(read.window_width["built-in"][&win(2)], ColumnWidth::Offset(0.25));
     }
 

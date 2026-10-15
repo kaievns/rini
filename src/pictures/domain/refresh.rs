@@ -15,7 +15,9 @@ use rini_geometry::space::ScreenRect;
 
 use crate::pictures::domain::print::print_changed;
 use crate::pictures::domain::target::PictureTarget;
-use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, CHANGE_TRIES, Capture, Look, Seen, Set};
+use crate::pictures::domain::watch::{
+    Accept, CHANGE_EVERY, CHANGE_TRIES, Capture, Look, Seen, Set,
+};
 
 /// How long after a look turns a picture of the window shows the turn: above the 68ms p90 repaint
 /// after make-key ("Where a moving focus change spends its time" in
@@ -132,18 +134,26 @@ impl<C> Refreshes<C> {
     }
 
     /// A window that is gone: owed nothing, and its capture held dropped.
-    pub fn forget(&mut self, window: WindowId) { self.windows.retain(|refresh| refresh.target.window != window) }
+    pub fn forget(&mut self, window: WindowId) {
+        self.windows.retain(|refresh| refresh.target.window != window)
+    }
 
     /// Every window owed a picture, cancelled or not.
     #[cfg(test)]
-    pub fn owed(&self) -> impl Iterator<Item = WindowId> + '_ { self.windows.iter().map(|refresh| refresh.target.window) }
+    pub fn owed(&self) -> impl Iterator<Item = WindowId> + '_ {
+        self.windows.iter().map(|refresh| refresh.target.window)
+    }
 
     /// Every window due a look at `now`, in one round, each taken wholly on the display wherever it
     /// is, with nothing composited behind it but the desktop. `pictured` is when the picture held of a
     /// window was taken: a refresh asked again at a release is done before its first look if that is
     /// `REPAINT_SETTLED` after its look turned. A picture taken sooner, frame zero's at the press among
     /// them, can predate the repaint.
-    pub fn next(&mut self, now: Instant, pictured: impl Fn(WindowId) -> Option<Instant>) -> Option<Set> {
+    pub fn next(
+        &mut self,
+        now: Instant,
+        pictured: impl Fn(WindowId) -> Option<Instant>,
+    ) -> Option<Set> {
         self.windows.retain(|refresh| {
             let again = refresh.poll.as_ref().is_some_and(|poll| poll.again);
             let settled = refresh.asked + REPAINT_SETTLED;
@@ -152,7 +162,9 @@ impl<C> Refreshes<C> {
         let mut windows = Vec::new();
         let mut looks = Vec::new();
         for refresh in &mut self.windows {
-            let Some(poll) = refresh.poll.as_mut().filter(|poll| poll.next <= now) else { continue };
+            let Some(poll) = refresh.poll.as_mut().filter(|poll| poll.next <= now) else {
+                continue;
+            };
             poll.again = false;
             windows.push(refresh.target.window);
             looks.push(Look {
@@ -165,15 +177,16 @@ impl<C> Refreshes<C> {
             return None;
         }
         self.looked = Some(Round { windows, at: now });
-        Some(Set {
-            looks,
-            behind: Vec::new(),
-        })
+        Some(Set { looks, behind: Vec::new() })
     }
 
     /// When a look is next due, if a window is owed one that no press has cancelled.
     pub fn wake(&self) -> Option<Instant> {
-        self.windows.iter().filter_map(|refresh| refresh.poll.as_ref()).map(|poll| poll.next).min()
+        self.windows
+            .iter()
+            .filter_map(|refresh| refresh.poll.as_ref())
+            .map(|poll| poll.next)
+            .min()
     }
 
     /// What the window server and the captures said of the windows `next` handed out, on `display`,
@@ -196,23 +209,35 @@ impl<C> Refreshes<C> {
             settled: Vec::new(),
             elsewhere: Vec::new(),
         };
-        let Some(round) = self.looked.take() else { return refreshed };
+        let Some(round) = self.looked.take() else {
+            return refreshed;
+        };
         for window in round.windows {
-            let Some(seen) = seen.iter().find(|seen| seen.window == window) else { continue };
-            let Some(at) = self.windows.iter().position(|refresh| refresh.target.window == window) else {
+            let Some(seen) = seen.iter().find(|seen| seen.window == window) else {
                 continue;
             };
-            let capture = captures.iter().position(|(of, _)| *of == window).map(|at| captures.swap_remove(at).1);
-            let on_display =
-                seen.frame.zip(display).is_some_and(|(frame, display)| Accept::OnDisplay.accepts(frame, display));
+            let Some(at) = self.windows.iter().position(|refresh| refresh.target.window == window)
+            else {
+                continue;
+            };
+            let capture = captures
+                .iter()
+                .position(|(of, _)| *of == window)
+                .map(|at| captures.swap_remove(at).1);
+            let on_display = seen
+                .frame
+                .zip(display)
+                .is_some_and(|(frame, display)| Accept::OnDisplay.accepts(frame, display));
             let refresh = &mut self.windows[at];
             let repainted = round.at >= refresh.asked + REPAINT_SETTLED;
             let Some(poll) = refresh.poll.as_mut() else { continue };
             let end = match (&seen.capture, capture) {
                 (Capture::Refused, _) => Some(End::Nothing),
                 (Capture::Taken(prints), Some(capture)) => {
-                    let alike =
-                        poll.latest.as_ref().is_some_and(|(band, _)| !print_changed(Some(band), &prints.band));
+                    let alike = poll
+                        .latest
+                        .as_ref()
+                        .is_some_and(|(band, _)| !print_changed(Some(band), &prints.band));
                     poll.latest = Some((prints.band.clone(), capture));
                     poll.spend(now);
                     (alike && repainted || poll.left == 0).then_some(End::Latest)
@@ -262,10 +287,13 @@ mod tests {
     }
 
     fn looked(set: Option<Set>) -> Vec<WindowId> {
-        set.map(|set| set.looks.into_iter().map(|look| look.target.window).collect()).unwrap_or_default()
+        set.map(|set| set.looks.into_iter().map(|look| look.target.window).collect())
+            .unwrap_or_default()
     }
 
-    fn on(idx: u32, capture: Capture) -> Seen { at(idx, Some(rect(4.0, 32.0, 859.0, 1081.0)), capture) }
+    fn on(idx: u32, capture: Capture) -> Seen {
+        at(idx, Some(rect(4.0, 32.0, 859.0, 1081.0)), capture)
+    }
 
     fn at(idx: u32, frame: Option<ScreenRect>, capture: Capture) -> Seen {
         Seen {
@@ -275,12 +303,7 @@ mod tests {
         }
     }
 
-    fn taken(band: u8) -> Capture {
-        Capture::Taken(Prints {
-            band: vec![band],
-            thumb: None,
-        })
-    }
+    fn taken(band: u8) -> Capture { Capture::Taken(Prints { band: vec![band], thumb: None }) }
 
     fn unpictured(_: WindowId) -> Option<Instant> { None }
 
@@ -294,7 +317,12 @@ mod tests {
 
     /// One round at `now`, which looks at the windows `seen` names, in that order, and saw them so,
     /// each capture taken marked `capture`.
-    fn round(refreshes: &mut Refreshes<u32>, now: Instant, seen: Vec<Seen>, capture: u32) -> Refreshed<u32> {
+    fn round(
+        refreshes: &mut Refreshes<u32>,
+        now: Instant,
+        seen: Vec<Seen>,
+        capture: u32,
+    ) -> Refreshed<u32> {
         let windows: Vec<WindowId> = seen.iter().map(|seen| seen.window).collect();
         assert_eq!(looked(refreshes.next(now, unpictured)), windows);
         let captures = captures(&seen, capture);
@@ -328,13 +356,27 @@ mod tests {
         assert!(refreshes.next(now, unpictured).is_none(), "not yet");
         let set = refreshes.next(from, unpictured).expect("due");
         assert!(set.behind.is_empty());
-        assert!(set.looks.iter().all(|look| look.accepts == vec![Accept::OnDisplay] && !look.thumbprint));
+        assert!(
+            set.looks
+                .iter()
+                .all(|look| look.accepts == vec![Accept::OnDisplay] && !look.thumbprint)
+        );
         assert_eq!(looked(Some(set)), vec![wid(1), wid(2)]);
         let seen = [on(1, taken(1)), on(2, taken(2))];
-        assert_eq!(refreshes.seen(from, &seen, captures(&seen, 1), Some(LAPTOP)), nothing());
-        assert_eq!(refreshes.wake(), Some(from + CHANGE_EVERY), "both again together");
+        assert_eq!(
+            refreshes.seen(from, &seen, captures(&seen, 1), Some(LAPTOP)),
+            nothing()
+        );
+        assert_eq!(
+            refreshes.wake(),
+            Some(from + CHANGE_EVERY),
+            "both again together"
+        );
         assert!(refreshes.next(from, unpictured).is_none());
-        assert_eq!(looked(refreshes.next(from + CHANGE_EVERY, unpictured)), vec![wid(1), wid(2)]);
+        assert_eq!(looked(refreshes.next(from + CHANGE_EVERY, unpictured)), vec![
+            wid(1),
+            wid(2)
+        ]);
     }
 
     /// An app repaints a while after its focus changes, and a picture held from before can differ in
@@ -350,16 +392,37 @@ mod tests {
         let at = |look: u32| first + CHANGE_EVERY * look;
         let mut refreshes = Refreshes::<u32>::default();
         refreshes.ask(vec![target(1), target(2), target(3)], asked, first);
-        let seen = |bands: [u8; 3]| vec![on(1, taken(bands[0])), on(2, taken(bands[1])), on(3, taken(bands[2]))];
-        assert_eq!(round(&mut refreshes, at(0), seen([8, 7, 1]), 0), nothing(), "a first capture is never settled");
+        let seen = |bands: [u8; 3]| {
+            vec![
+                on(1, taken(bands[0])),
+                on(2, taken(bands[1])),
+                on(3, taken(bands[2])),
+            ]
+        };
+        assert_eq!(
+            round(&mut refreshes, at(0), seen([8, 7, 1]), 0),
+            nothing(),
+            "a first capture is never settled"
+        );
         assert!(at(1) < asked + REPAINT_SETTLED);
-        assert_eq!(round(&mut refreshes, at(1), seen([8, 9, 2]), 1), nothing(), "alike, but too soon");
-        assert_eq!(round(&mut refreshes, at(2), seen([8, 9, 3]), 2), settled(&[(1, 2), (2, 2)]));
+        assert_eq!(
+            round(&mut refreshes, at(1), seen([8, 9, 2]), 1),
+            nothing(),
+            "alike, but too soon"
+        );
+        assert_eq!(
+            round(&mut refreshes, at(2), seen([8, 9, 3]), 2),
+            settled(&[(1, 2), (2, 2)])
+        );
         refreshes.ask(vec![target(4)], asked, at(3));
         for look in 3..CHANGE_TRIES - 1 {
             let band = look as u8 + 1;
             let seen = vec![on(3, taken(band)), on(4, taken(5))];
-            let expected = if look == 4 { settled(&[(4, look)]) } else { nothing() };
+            let expected = if look == 4 {
+                settled(&[(4, look)])
+            } else {
+                nothing()
+            };
             assert_eq!(round(&mut refreshes, at(look), seen, look), expected, "{look}");
         }
         let last = CHANGE_TRIES - 1;
@@ -374,12 +437,17 @@ mod tests {
     /// one captured before is pictured with that capture. A capture the cache would refuse ends a
     /// refresh with nothing put and nothing more owed: every later one at that size is refused too.
     #[test]
-    fn only_a_window_off_the_display_or_never_captured_is_owed_elsewhere_and_a_refused_one_nothing() {
+    fn only_a_window_off_the_display_or_never_captured_is_owed_elsewhere_and_a_refused_one_nothing()
+    {
         let now = Instant::now();
         let parked = rect(1727.0, 32.0, 859.0, 1081.0);
         let mut refreshes = Refreshes::<u32>::default();
         refreshes.ask(vec![target(1), target(2), target(3)], now, now);
-        let seen = vec![at(1, Some(parked), Capture::Missed), at(2, None, Capture::Missed), on(3, Capture::Refused)];
+        let seen = vec![
+            at(1, Some(parked), Capture::Missed),
+            at(2, None, Capture::Missed),
+            on(3, Capture::Refused),
+        ];
         let refreshed = round(&mut refreshes, now, seen, 0);
         assert_eq!(refreshed.elsewhere, vec![target(1), target(2)]);
         assert!(refreshed.settled.is_empty());
@@ -394,10 +462,23 @@ mod tests {
         let mut at = now;
         for look in 0..CHANGE_TRIES - 1 {
             let sixth = if look == 0 { taken(1) } else { Capture::Missed };
-            assert_eq!(round(&mut refreshes, at, vec![on(5, Capture::Missed), on(6, sixth)], look), nothing());
+            assert_eq!(
+                round(
+                    &mut refreshes,
+                    at,
+                    vec![on(5, Capture::Missed), on(6, sixth)],
+                    look
+                ),
+                nothing()
+            );
             at += CHANGE_EVERY;
         }
-        let refreshed = round(&mut refreshes, at, vec![on(5, Capture::Missed), on(6, Capture::Missed)], 9);
+        let refreshed = round(
+            &mut refreshes,
+            at,
+            vec![on(5, Capture::Missed), on(6, Capture::Missed)],
+            9,
+        );
         assert_eq!(refreshed.elsewhere, vec![target(5)], "never captured");
         assert_eq!(refreshed.settled, vec![(wid(6), 0)], "its one capture");
         assert!(refreshes.owed().next().is_none());
@@ -422,12 +503,22 @@ mod tests {
 
         let seen = vec![on(2, taken(7)), on(1, taken(7)), on(3, taken(7))];
         let refreshed = round(&mut refreshes, from, seen, 1);
-        assert_eq!(refreshed, settled(&[(2, 1)]), "window 1 judged from its next capture");
+        assert_eq!(
+            refreshed,
+            settled(&[(2, 1)]),
+            "window 1 judged from its next capture"
+        );
 
-        assert_eq!(looked(refreshes.next(from + CHANGE_EVERY, unpictured)), vec![wid(1), wid(3)]);
+        assert_eq!(looked(refreshes.next(from + CHANGE_EVERY, unpictured)), vec![
+            wid(1),
+            wid(3)
+        ]);
         refreshes.forget(wid(3));
         let seen = [on(1, taken(8)), on(3, taken(7))];
-        assert_eq!(refreshes.seen(from + CHANGE_EVERY, &seen, captures(&seen, 2), Some(LAPTOP)), nothing());
+        assert_eq!(
+            refreshes.seen(from + CHANGE_EVERY, &seen, captures(&seen, 2), Some(LAPTOP)),
+            nothing()
+        );
         assert_eq!(refreshes.owed().collect::<Vec<_>>(), vec![wid(1)]);
     }
 
@@ -436,15 +527,23 @@ mod tests {
     /// judged from captures of its own with every try, since the flight may have moved or resized the
     /// window.
     #[test]
-    fn a_press_cancels_every_refresh_and_the_release_asks_again_with_a_fresh_first_capture_and_tries() {
+    fn a_press_cancels_every_refresh_and_the_release_asks_again_with_a_fresh_first_capture_and_tries()
+     {
         let now = Instant::now();
         let mut refreshes = Refreshes::<u32>::default();
         refreshes.ask(vec![target(1), target(2)], now, now);
         round(&mut refreshes, now, vec![on(1, taken(7)), on(2, taken(7))], 0);
         refreshes.cancel();
         assert_eq!(refreshes.wake(), None);
-        assert!(refreshes.next(now + CHANGE_EVERY, unpictured).is_none(), "cancelled");
-        assert_eq!(refreshes.owed().collect::<Vec<_>>(), vec![wid(1), wid(2)], "still owed");
+        assert!(
+            refreshes.next(now + CHANGE_EVERY, unpictured).is_none(),
+            "cancelled"
+        );
+        assert_eq!(
+            refreshes.owed().collect::<Vec<_>>(),
+            vec![wid(1), wid(2)],
+            "still owed"
+        );
 
         let release = now + Duration::from_millis(400);
         refreshes.release(release);
@@ -453,11 +552,19 @@ mod tests {
         let mut at = release;
         for look in 0..CHANGE_TRIES - 1 {
             let band = 7 + look as u8;
-            assert_eq!(round(&mut refreshes, at, vec![on(1, taken(band))], look), nothing(), "7 is its first capture now");
+            assert_eq!(
+                round(&mut refreshes, at, vec![on(1, taken(band))], look),
+                nothing(),
+                "7 is its first capture now"
+            );
             at += CHANGE_EVERY;
         }
         let last = CHANGE_TRIES - 1;
-        assert_eq!(round(&mut refreshes, at, vec![on(1, taken(99))], last), settled(&[(1, last)]), "every try");
+        assert_eq!(
+            round(&mut refreshes, at, vec![on(1, taken(99))], last),
+            settled(&[(1, last)]),
+            "every try"
+        );
     }
 
     /// Asked again at a release, a window is done unlooked at when the cache holds a picture of it
@@ -465,7 +572,8 @@ mod tests {
     /// among them, can predate the repaint. Only a refresh asked again is judged so, and only before
     /// its first look: after that its own captures judge it.
     #[test]
-    fn a_refresh_asked_again_is_done_only_where_a_picture_taken_repaint_settled_after_its_turn_is_held() {
+    fn a_refresh_asked_again_is_done_only_where_a_picture_taken_repaint_settled_after_its_turn_is_held()
+     {
         let asked = Instant::now();
         let release = asked + Duration::from_millis(300);
         let mut refreshes = Refreshes::<u32>::default();
@@ -473,17 +581,37 @@ mod tests {
         refreshes.cancel();
         refreshes.release(release);
         let soon = Duration::from_millis(1);
-        let pictured =
-            |window: WindowId| Some(asked + REPAINT_SETTLED - if window == wid(1) { Duration::ZERO } else { soon });
+        let pictured = |window: WindowId| {
+            Some(
+                asked + REPAINT_SETTLED
+                    - if window == wid(1) {
+                        Duration::ZERO
+                    } else {
+                        soon
+                    },
+            )
+        };
         assert_eq!(looked(refreshes.next(release, pictured)), vec![wid(2)]);
-        assert_eq!(refreshes.owed().collect::<Vec<_>>(), vec![wid(2)], "window 1 is pictured");
+        assert_eq!(
+            refreshes.owed().collect::<Vec<_>>(),
+            vec![wid(2)],
+            "window 1 is pictured"
+        );
         let seen = [on(2, taken(1))];
         refreshes.seen(release, &seen, captures(&seen, 0), Some(LAPTOP));
         let later = |_: WindowId| Some(release);
-        assert_eq!(looked(refreshes.next(release + CHANGE_EVERY, later)), vec![wid(2)], "looked at since");
+        assert_eq!(
+            looked(refreshes.next(release + CHANGE_EVERY, later)),
+            vec![wid(2)],
+            "looked at since"
+        );
 
         refreshes.ask(vec![target(3)], asked, asked);
-        assert_eq!(looked(refreshes.next(asked, later)), vec![wid(3)], "never cancelled");
+        assert_eq!(
+            looked(refreshes.next(asked, later)),
+            vec![wid(3)],
+            "never cancelled"
+        );
     }
 
     /// A round the service stopped short of a window, for a press on its way, says nothing of it: no
@@ -495,18 +623,39 @@ mod tests {
         refreshes.ask(vec![target(1), target(2)], now, now);
         assert_eq!(looked(refreshes.next(now, unpictured)), vec![wid(1), wid(2)]);
         let seen = [on(1, taken(1))];
-        assert_eq!(refreshes.seen(now, &seen, captures(&seen, 0), Some(LAPTOP)), nothing(), "window 2 cut");
+        assert_eq!(
+            refreshes.seen(now, &seen, captures(&seen, 0), Some(LAPTOP)),
+            nothing(),
+            "window 2 cut"
+        );
         assert_eq!(refreshes.wake(), Some(now), "no try spent of window 2");
         assert_eq!(round(&mut refreshes, now, vec![on(2, taken(1))], 0), nothing());
         let mut at = now;
         for look in 1..CHANGE_TRIES - 1 {
             at += CHANGE_EVERY;
             let band = 10 + look as u8;
-            assert_eq!(round(&mut refreshes, at, vec![on(1, taken(band)), on(2, taken(band))], look), nothing());
+            assert_eq!(
+                round(
+                    &mut refreshes,
+                    at,
+                    vec![on(1, taken(band)), on(2, taken(band))],
+                    look
+                ),
+                nothing()
+            );
         }
         let last = CHANGE_TRIES - 1;
         at += CHANGE_EVERY;
-        let refreshed = round(&mut refreshes, at, vec![on(1, taken(99)), on(2, taken(98))], last);
-        assert_eq!(refreshed, settled(&[(1, last), (2, last)]), "out of tries together: the cut spent none");
+        let refreshed = round(
+            &mut refreshes,
+            at,
+            vec![on(1, taken(99)), on(2, taken(98))],
+            last,
+        );
+        assert_eq!(
+            refreshed,
+            settled(&[(1, last), (2, last)]),
+            "out of tries together: the cut spent none"
+        );
     }
 }

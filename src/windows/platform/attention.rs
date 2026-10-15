@@ -10,7 +10,9 @@ use std::ptr::NonNull;
 use std::time::Duration;
 
 use libc::{RTLD_DEFAULT, dlsym};
-use objc2_core_foundation::{CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType};
+use objc2_core_foundation::{
+    CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType,
+};
 use once_cell::sync::Lazy;
 use rini_core::ids::pid_t;
 use tracing::warn;
@@ -27,8 +29,11 @@ const WANTS_ATTENTION: &str = "LSWantsAttention";
 /// Every running application's ASN. The second argument changed nothing in the values tried.
 type CopyApplications = unsafe extern "C" fn(session: i32, unknown: u32) -> *const CFArray;
 /// The keys named of the application an ASN names.
-type CopyInformation =
-    unsafe extern "C" fn(session: i32, asn: *const CFType, keys: *const CFArray) -> *const CFDictionary;
+type CopyInformation = unsafe extern "C" fn(
+    session: i32,
+    asn: *const CFType,
+    keys: *const CFArray,
+) -> *const CFDictionary;
 
 struct LaunchServices {
     applications: CopyApplications,
@@ -36,12 +41,15 @@ struct LaunchServices {
 }
 
 static LAUNCH_SERVICES: Lazy<Option<LaunchServices>> = Lazy::new(|| {
-    let resolve = |name: &std::ffi::CStr| NonNull::new(unsafe { dlsym(RTLD_DEFAULT, name.as_ptr()) });
+    let resolve =
+        |name: &std::ffi::CStr| NonNull::new(unsafe { dlsym(RTLD_DEFAULT, name.as_ptr()) });
     let applications = resolve(c"_LSCopyApplicationArrayInFrontToBackOrder")?;
     let information = resolve(c"_LSCopyApplicationInformation")?;
     Some(unsafe {
         LaunchServices {
-            applications: std::mem::transmute::<*mut c_void, CopyApplications>(applications.as_ptr()),
+            applications: std::mem::transmute::<*mut c_void, CopyApplications>(
+                applications.as_ptr(),
+            ),
             information: std::mem::transmute::<*mut c_void, CopyInformation>(information.as_ptr()),
         }
     })
@@ -75,16 +83,21 @@ fn read(launch_services: &LaunchServices) -> Attention {
         CFString::from_static_str(WANTS_ATTENTION),
     ]);
     let keys: *const CFArray = CFRetained::as_ptr(&keys).as_ptr().cast();
-    let Some(applications) = NonNull::new(unsafe { (launch_services.applications)(SESSION, 0) }.cast_mut()) else {
+    let Some(applications) =
+        NonNull::new(unsafe { (launch_services.applications)(SESSION, 0) }.cast_mut())
+    else {
         return Attention::default();
     };
     // SAFETY: the call returns its array retained, and every element is an ASN, a CF object.
-    let applications: CFRetained<CFArray<CFType>> = unsafe { CFRetained::from_raw(applications.cast()) };
+    let applications: CFRetained<CFArray<CFType>> =
+        unsafe { CFRetained::from_raw(applications.cast()) };
     Attention::of(applications.iter().filter_map(|asn| {
         let asn: *const CFType = &*asn;
-        let answer = NonNull::new(unsafe { (launch_services.information)(SESSION, asn, keys) }.cast_mut())?;
+        let answer =
+            NonNull::new(unsafe { (launch_services.information)(SESSION, asn, keys) }.cast_mut())?;
         // SAFETY: returned retained, its keys the strings asked for.
-        let answer: CFRetained<CFDictionary<CFString, CFType>> = unsafe { CFRetained::from_raw(answer.cast()) };
+        let answer: CFRetained<CFDictionary<CFString, CFType>> =
+            unsafe { CFRetained::from_raw(answer.cast()) };
         asking(&answer)
     }))
 }
@@ -92,11 +105,18 @@ fn read(launch_services: &LaunchServices) -> Attention {
 /// The application an answer names, while it asks for attention: its `LSWantsAttention` is true,
 /// where an application that never asked has none and one that stopped asking has it false.
 fn asking(answer: &CFDictionary<CFString, CFType>) -> Option<pid_t> {
-    let wants = answer.get(&CFString::from_static_str(WANTS_ATTENTION))?.downcast::<CFBoolean>().ok()?;
+    let wants = answer
+        .get(&CFString::from_static_str(WANTS_ATTENTION))?
+        .downcast::<CFBoolean>()
+        .ok()?;
     if !wants.as_bool() {
         return None;
     }
-    answer.get(&CFString::from_static_str(PID))?.downcast::<CFNumber>().ok()?.as_i32()
+    answer
+        .get(&CFString::from_static_str(PID))?
+        .downcast::<CFNumber>()
+        .ok()?
+        .as_i32()
 }
 
 #[cfg(test)]
@@ -107,7 +127,10 @@ mod tests {
         let pid = pid.map(CFNumber::new_i32);
         let mut keys = Vec::new();
         let mut values: Vec<&CFType> = Vec::new();
-        let (pid_key, wants_key) = (CFString::from_static_str(PID), CFString::from_static_str(WANTS_ATTENTION));
+        let (pid_key, wants_key) = (
+            CFString::from_static_str(PID),
+            CFString::from_static_str(WANTS_ATTENTION),
+        );
         if let Some(pid) = &pid {
             keys.push(&*pid_key);
             values.push(pid);
@@ -124,6 +147,10 @@ mod tests {
         assert_eq!(asking(&answer(Some(42), Some(true))), Some(42));
         assert_eq!(asking(&answer(Some(42), Some(false))), None, "it stopped asking");
         assert_eq!(asking(&answer(Some(42), None)), None, "it never asked");
-        assert_eq!(asking(&answer(None, Some(true))), None, "no application to draw urgent");
+        assert_eq!(
+            asking(&answer(None, Some(true))),
+            None,
+            "no application to draw urgent"
+        );
     }
 }

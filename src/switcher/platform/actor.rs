@@ -12,11 +12,9 @@
 use std::time::Instant;
 
 use objc2::MainThreadMarker;
-use tracing::{debug, warn};
-
 use objc2_core_foundation::CGRect;
-
 use rini_runloop::channel;
+use tracing::{debug, warn};
 
 use crate::pictures::platform::service::Pictures;
 use crate::switcher::domain::reveal::{Draw, Reveal};
@@ -62,7 +60,12 @@ pub struct SwitcherActor {
 }
 
 impl SwitcherActor {
-    pub fn new(requests: Receiver, mtm: MainThreadMarker, on_pick: OnPick, pictures: Pictures) -> Self {
+    pub fn new(
+        requests: Receiver,
+        mtm: MainThreadMarker,
+        on_pick: OnPick,
+        pictures: Pictures,
+    ) -> Self {
         Self {
             requests,
             panel: None,

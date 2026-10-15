@@ -185,14 +185,11 @@ fn stale_cleanup_uses_ordered_state_instead_of_cached_visibility() {
         mission_control_active: false,
         drag_active: false,
         inactive_windows: Default::default(),
-        server_observations: [(
-            wsid,
-            window_discovery::StaleWindowObservation {
-                info: Some(info),
-                suitable,
-                ordered_in,
-            },
-        )]
+        server_observations: [(wsid, window_discovery::StaleWindowObservation {
+            info: Some(info),
+            suitable,
+            ordered_in,
+        })]
         .into_iter()
         .collect(),
     };
@@ -408,7 +405,11 @@ fn an_application_that_quits_forgets_each_of_its_windows_once() {
         vec![WindowId::new(1, 1), WindowId::new(1, 2)],
         "each window of the application once, and none of another's"
     );
-    assert_eq!(reactor.state.windows.window_ids_for_pid(1).count(), 0, "its records go");
+    assert_eq!(
+        reactor.state.windows.window_ids_for_pid(1).count(),
+        0,
+        "its records go"
+    );
     assert!(reactor.state.windows.window(WindowId::new(2, 1)).is_some());
 }
 
@@ -444,7 +445,10 @@ fn an_application_that_quits_takes_its_native_fullscreen_records() {
     let windows = &reactor.state.windows;
     assert!(windows.native_fullscreen_record_for_window(wid).is_none());
     assert!(!windows.is_window_server_id_native_fullscreen_suspended(wsid));
-    assert_eq!(windows.pending_native_fullscreen_pid_for_window_server_id(unbound), None);
+    assert_eq!(
+        windows.pending_native_fullscreen_pid_for_window_server_id(unbound),
+        None
+    );
 }
 
 /// An application rini never watched has no thread to answer its quit, and the native-fullscreen
@@ -463,7 +467,10 @@ fn an_unwatched_application_that_quits_takes_its_native_fullscreen_records() {
     reactor.handle_event(Event::ApplicationTerminated(7));
 
     assert_eq!(
-        reactor.state.windows.pending_native_fullscreen_pid_for_window_server_id(unbound),
+        reactor
+            .state
+            .windows
+            .pending_native_fullscreen_pid_for_window_server_id(unbound),
         None
     );
 }
@@ -483,7 +490,10 @@ fn a_window_stale_cleanup_retires_is_forgotten_once() {
     crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
     reactor.discover_test_windows(1, Vec::new(), vec![kept]);
     crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
-    assert!(reactor.state.windows.window(gone).is_none(), "the cleanup retires it");
+    assert!(
+        reactor.state.windows.window(gone).is_none(),
+        "the cleanup retires it"
+    );
     reactor.handle_event(Event::WindowDestroyed(gone));
 
     assert_eq!(forgotten(&mut pictures), vec![gone]);
@@ -505,7 +515,10 @@ fn a_minimised_window_the_window_server_closes_is_forgotten_once() {
     crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
     reactor.handle_event(Event::WindowServerDestroyed(wsid, space, SpaceEventKind::User));
     crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
-    assert!(reactor.state.windows.window(wid).is_none(), "the promotion removes the window");
+    assert!(
+        reactor.state.windows.window(wid).is_none(),
+        "the promotion removes the window"
+    );
     reactor.handle_event(Event::WindowDestroyed(wid));
 
     assert_eq!(forgotten(&mut pictures), vec![wid]);

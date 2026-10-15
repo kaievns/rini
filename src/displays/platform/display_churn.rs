@@ -3,17 +3,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static DISPLAY_CHURN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-pub fn begin() {
-    DISPLAY_CHURN_ACTIVE.store(true, Ordering::SeqCst);
-}
+pub fn begin() { DISPLAY_CHURN_ACTIVE.store(true, Ordering::SeqCst); }
 
-pub fn end() {
-    DISPLAY_CHURN_ACTIVE.store(false, Ordering::SeqCst);
-}
+pub fn end() { DISPLAY_CHURN_ACTIVE.store(false, Ordering::SeqCst); }
 
-pub fn is_active() -> bool {
-    DISPLAY_CHURN_ACTIVE.load(Ordering::SeqCst)
-}
+pub fn is_active() -> bool { DISPLAY_CHURN_ACTIVE.load(Ordering::SeqCst) }
 
 #[cfg(test)]
 static HELD_FOR_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -34,9 +28,7 @@ pub(crate) fn hold_for_test() -> HeldForTest {
 
 #[cfg(test)]
 impl Drop for HeldForTest {
-    fn drop(&mut self) {
-        end();
-    }
+    fn drop(&mut self) { end(); }
 }
 
 #[cfg(test)]

@@ -2,12 +2,12 @@
 
 use objc2_core_foundation::CGPoint;
 use objc2_core_graphics::{CGError, CGEventSourceStateID};
-
-use crate::input::platform::cg_ok;
 use rini_skylight_sys::{
     CFRelease, CGEventSourceCreate, CGEventSourceSetLocalEventsSuppressionInterval,
     CGWarpMouseCursorPosition,
 };
+
+use crate::input::platform::cg_ok;
 
 pub fn warp_mouse(point: CGPoint) -> Result<(), CGError> {
     let src = unsafe { CGEventSourceCreate(CGEventSourceStateID::CombinedSessionState) };

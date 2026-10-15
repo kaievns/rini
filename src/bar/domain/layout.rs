@@ -85,16 +85,15 @@ pub struct Span {
 }
 
 impl Span {
-    pub fn width(&self) -> f64 {
-        self.x1 - self.x0
-    }
+    pub fn width(&self) -> f64 { self.x1 - self.x0 }
 
-    fn contains(&self, x: f64) -> bool {
-        self.x0 <= x && x < self.x1
-    }
+    fn contains(&self, x: f64) -> bool { self.x0 <= x && x < self.x1 }
 
     fn grown(&self, left: f64, right: f64) -> Span {
-        Span { x0: self.x0 - left, x1: self.x1 + right }
+        Span {
+            x0: self.x0 - left,
+            x1: self.x1 + right,
+        }
     }
 }
 
@@ -122,9 +121,15 @@ pub fn fold(glyphs: usize, expanded: bool) -> Fold {
     }
     if expanded {
         // The minus sign, not a hyphen: it is as wide as the plus it replaces.
-        Fold { shown: glyphs, more: Some("\u{2212}".into()) }
+        Fold {
+            shown: glyphs,
+            more: Some("\u{2212}".into()),
+        }
     } else {
-        Fold { shown: MAX_GLYPHS, more: Some(format!("+{}", glyphs - MAX_GLYPHS)) }
+        Fold {
+            shown: MAX_GLYPHS,
+            more: Some(format!("+{}", glyphs - MAX_GLYPHS)),
+        }
     }
 }
 
@@ -204,7 +209,10 @@ fn lay_out_left(
     let place = |piece: Piece, scene: &mut Scene, cursor: &mut f64| -> Option<Span> {
         let width = ink(piece)?;
         let (left, right) = pads(piece, bar);
-        let span = Span { x0: *cursor + left, x1: *cursor + left + width };
+        let span = Span {
+            x0: *cursor + left,
+            x1: *cursor + left + width,
+        };
         *cursor = span.x1 + right;
         scene.pieces.push((piece, span));
         Some(span)
@@ -302,7 +310,11 @@ mod tests {
     const WIDTH: f64 = 1728.0;
 
     fn glyph(n: u32, lit: bool) -> Glyph {
-        Glyph { app: format!("app{n}"), window: WindowId::new(n as i32, n), lit }
+        Glyph {
+            app: format!("app{n}"),
+            window: WindowId::new(n as i32, n),
+            lit,
+        }
     }
 
     /// The bar the numbers were measured on: four workspaces with the second shown, four glyphs with
@@ -313,14 +325,25 @@ mod tests {
             screen: 1,
             frame: objc2_core_foundation::CGRect::ZERO,
             rows: vec![Row::Occupied, Row::Shown, Row::Empty, Row::Empty],
-            glyphs: vec![glyph(1, true), glyph(2, false), glyph(3, false), glyph(4, false)],
-            focus: Some(FocusLabel { app: "Code".into(), title: "lib.rs — rini".into() }),
+            glyphs: vec![
+                glyph(1, true),
+                glyph(2, false),
+                glyph(3, false),
+                glyph(4, false),
+            ],
+            focus: Some(FocusLabel {
+                app: "Code".into(),
+                title: "lib.rs — rini".into(),
+            }),
             config_failed: false,
         }
     }
 
     fn right() -> Right {
-        Right { tray: 3, vitals: Vital::ORDER.to_vec() }
+        Right {
+            tray: 3,
+            vitals: Vital::ORDER.to_vec(),
+        }
     }
 
     /// Widths as they measured: a "1" is 5pt of ink and a "2" 6.5pt, glyphs 12 to 15.
@@ -345,9 +368,7 @@ mod tests {
         })
     }
 
-    fn scene() -> Scene {
-        lay_out(WIDTH, &bar(), &fold(4, false), &right(), ink)
-    }
+    fn scene() -> Scene { lay_out(WIDTH, &bar(), &fold(4, false), &right(), ink) }
 
     fn gap(scene: &Scene, a: Piece, b: Piece) -> f64 {
         scene.span(b).unwrap().x0 - scene.span(a).unwrap().x1
@@ -385,9 +406,18 @@ mod tests {
         assert_eq!(WIDTH - scene.span(Piece::Time).unwrap().x1, 27.0);
         assert_eq!(gap(&scene, Piece::Date, Piece::Time), 16.0);
         assert_eq!(gap(&scene, Piece::ClockDivider, Piece::Date), 11.5);
-        assert_eq!(gap(&scene, Piece::Vital(Vital::Battery), Piece::ClockDivider), 10.0);
-        assert_eq!(gap(&scene, Piece::Vital(Vital::Sound), Piece::Vital(Vital::Battery)), 16.0);
-        assert_eq!(gap(&scene, Piece::Vital(Vital::WiFi), Piece::Vital(Vital::Sound)), 16.0);
+        assert_eq!(
+            gap(&scene, Piece::Vital(Vital::Battery), Piece::ClockDivider),
+            10.0
+        );
+        assert_eq!(
+            gap(&scene, Piece::Vital(Vital::Sound), Piece::Vital(Vital::Battery)),
+            16.0
+        );
+        assert_eq!(
+            gap(&scene, Piece::Vital(Vital::WiFi), Piece::Vital(Vital::Sound)),
+            16.0
+        );
         assert_eq!(gap(&scene, Piece::Chevron, Piece::Vital(Vital::WiFi)), 16.0);
         assert_eq!(gap(&scene, Piece::Tray(2), Piece::Chevron), 16.0);
         assert_eq!(gap(&scene, Piece::Tray(0), Piece::Tray(1)), 15.0);
@@ -415,7 +445,10 @@ mod tests {
     fn a_click_on_a_glyph_asks_for_its_window() {
         let scene = scene();
         let glyph = scene.span(Piece::Glyph(1)).unwrap();
-        assert_eq!(scene.hit(glyph.x0 + 1.0), Some(Target::Window(WindowId::new(2, 2))));
+        assert_eq!(
+            scene.hit(glyph.x0 + 1.0),
+            Some(Target::Window(WindowId::new(2, 2)))
+        );
     }
 
     #[test]
@@ -439,8 +472,14 @@ mod tests {
     #[test]
     fn a_long_glyph_list_folds() {
         assert_eq!(fold(4, false), Fold { shown: 4, more: None });
-        assert_eq!(fold(8, false), Fold { shown: 5, more: Some("+3".into()) });
-        assert_eq!(fold(8, true), Fold { shown: 8, more: Some("\u{2212}".into()) });
+        assert_eq!(fold(8, false), Fold {
+            shown: 5,
+            more: Some("+3".into())
+        });
+        assert_eq!(fold(8, true), Fold {
+            shown: 8,
+            more: Some("\u{2212}".into())
+        });
     }
 
     #[test]
@@ -480,10 +519,16 @@ mod tests {
     /// No tray, no chevron, and the vitals close up; a missing vital closes up too.
     #[test]
     fn missing_extras_close_up() {
-        let right = Right { tray: 0, vitals: vec![Vital::WiFi, Vital::Sound] };
+        let right = Right {
+            tray: 0,
+            vitals: vec![Vital::WiFi, Vital::Sound],
+        };
         let scene = lay_out(WIDTH, &bar(), &fold(4, false), &right, ink);
         assert!(scene.span(Piece::Chevron).is_none());
-        assert_eq!(gap(&scene, Piece::Vital(Vital::Sound), Piece::ClockDivider), 10.0);
+        assert_eq!(
+            gap(&scene, Piece::Vital(Vital::Sound), Piece::ClockDivider),
+            10.0
+        );
     }
 
     /// Pieces come back left to right, whatever order they were placed in.
@@ -502,7 +547,13 @@ mod tests {
         let marker = marked_scene.span(Piece::ConfigFailed).expect("the marker is placed");
         assert_eq!(gap(&marked_scene, Piece::ConfigFailed, Piece::Tray(0)), TRAY_GAP);
         assert!(marked_scene.span(Piece::FocusTitle).unwrap().x1 <= marker.x0 - ZONE_CLEARANCE);
-        assert!(marked_scene.hit(marker.x0 + 1.0).is_none(), "a marker, not a button");
-        assert!(scene().span(Piece::ConfigFailed).is_none(), "no marker without a failure");
+        assert!(
+            marked_scene.hit(marker.x0 + 1.0).is_none(),
+            "a marker, not a button"
+        );
+        assert!(
+            scene().span(Piece::ConfigFailed).is_none(),
+            "no marker without a failure"
+        );
     }
 }

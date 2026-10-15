@@ -106,12 +106,11 @@ impl WindowLayoutConstraints {
 
 #[cfg(test)]
 mod tests {
-    use super::{ScrollingLayoutSystem, WindowLayoutConstraints};
     use rini_core::ids::WindowId;
 
-    fn w(idx: u32) -> WindowId {
-        WindowId::new(1, idx)
-    }
+    use super::{ScrollingLayoutSystem, WindowLayoutConstraints};
+
+    fn w(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
     #[test]
     fn axis_specific_fixed_detection_supports_one_axis_locked_other_resizable() {

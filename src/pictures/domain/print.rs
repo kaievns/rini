@@ -9,9 +9,7 @@ pub const BAND_PRINT: (usize, usize) = (96, 8);
 
 /// The band print of the picture last delivered for a window, against a new one: a delivery that
 /// carries an unchanged print is no news. With none delivered, every print is new.
-pub fn print_changed(last: Option<&[u8]>, print: &[u8]) -> bool {
-    last != Some(print)
-}
+pub fn print_changed(last: Option<&[u8]>, print: &[u8]) -> bool { last != Some(print) }
 
 /// The grid a picture's body is sampled on, per side.
 pub const BODY_GRID: usize = 40;
@@ -71,9 +69,7 @@ mod tests {
         assert!(points[0].0 < points[1].0, "left to right");
     }
 
-    fn flat(level: u8) -> Vec<[u8; 4]> {
-        vec![[level, level, level, 255]; BODY_GRID * BODY_GRID]
-    }
+    fn flat(level: u8) -> Vec<[u8; 4]> { vec![[level, level, level, 255]; BODY_GRID * BODY_GRID] }
 
     /// More than three levels on average is different content; a cursor or a clock is not.
     #[test]

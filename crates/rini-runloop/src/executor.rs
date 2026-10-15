@@ -39,7 +39,12 @@ impl Executor {
         if set == 0 {
             info!(thread, had, priority, "run loop raised to user-interactive");
         } else {
-            warn!(thread, had, error = set, "run loop not raised to user-interactive");
+            warn!(
+                thread,
+                had,
+                error = set,
+                "run loop not raised to user-interactive"
+            );
         }
         Self::run(task);
     }
@@ -135,9 +140,7 @@ impl State {
 struct WakerImpl(WakeupHandle);
 
 impl Wake for WakerImpl {
-    fn wake(self: Arc<Self>) {
-        self.0.wake();
-    }
+    fn wake(self: Arc<Self>) { self.0.wake(); }
 }
 
 #[cfg(test)]
@@ -184,9 +187,7 @@ mod tests {
     fn executor_drops_main_task_on_unwind() {
         struct SignallingDrop(AssertUnwindSafe<Rc<Cell<bool>>>);
         impl Drop for SignallingDrop {
-            fn drop(&mut self) {
-                self.0.replace(true);
-            }
+            fn drop(&mut self) { self.0.replace(true); }
         }
 
         let dropped = Rc::new(Cell::new(false));

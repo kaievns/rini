@@ -1,3 +1,5 @@
+use rini_core::ids::{SpaceId, WindowId, WindowServerId};
+use rustc_hash::FxHashMap as HashMap;
 use tracing::{error, info, warn};
 
 use super::super::ScreenInfo;
@@ -14,10 +16,6 @@ use crate::displays::domain::space_activation::{
 use crate::windows::domain::raise as raise_manager;
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
 use crate::workspaces::{EventResponse, LayoutCommand, LayoutEvent};
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowId;
-use rini_core::ids::WindowServerId;
-use rustc_hash::FxHashMap as HashMap;
 
 #[derive(Debug, Clone)]
 pub struct LayoutCommandPayload {
@@ -246,13 +244,10 @@ pub fn handle_command_reactor_toggle_space_activated(
     let Some(space) = payload.space else {
         return Ok(EventOutcome::no_change());
     };
-    policy.toggle_space_activated(
-        payload.config,
-        ToggleSpaceContext {
-            space,
-            display_uuid: payload.display_uuid,
-        },
-    );
+    policy.toggle_space_activated(payload.config, ToggleSpaceContext {
+        space,
+        display_uuid: payload.display_uuid,
+    });
     Ok(EventOutcome::layout_changed(false).with_active_space_recompute())
 }
 
@@ -400,18 +395,15 @@ pub fn handle_command_reactor_move_window_to_display(
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use rini_core::ids::ScreenId;
 
+    use super::*;
     use crate::app::reactor::managers::AppManager;
     use crate::app::reactor::state::RiniState;
     use crate::app::reactor::testing::make_window_info;
     use crate::windows::domain::state::WindowState;
-    use rini_core::ids::ScreenId;
 
-    use super::*;
-
-    fn wid() -> WindowId {
-        WindowId::new(1, 1)
-    }
+    fn wid() -> WindowId { WindowId::new(1, 1) }
 
     fn screen(space: Option<SpaceId>) -> ScreenInfo {
         ScreenInfo {

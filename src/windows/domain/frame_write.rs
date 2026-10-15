@@ -33,9 +33,7 @@ mod tests {
 
     const DESIRED: CGSize = CGSize { width: 800.0, height: 600.0 };
 
-    fn size(width: f64, height: f64) -> CGSize {
-        CGSize::new(width, height)
-    }
+    fn size(width: f64, height: f64) -> CGSize { CGSize::new(width, height) }
 
     #[test]
     fn the_same_size_writes_the_position_alone() {

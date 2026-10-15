@@ -8,10 +8,10 @@
 //! This holds the same three facts keyed by bundle identifier and display topology instead. See
 //! `src/workspaces/docs/launch-memory.md` (in this crate).
 
+use rustc_hash::FxHashMap as HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::workspaces::domain::display_affinity::{ColumnWidth, StoredWidth};
-use rustc_hash::FxHashMap as HashMap;
 
 /// The set of displays connected, as a name that can key a map.
 ///
@@ -47,7 +47,11 @@ struct SlotRecord {
     workspace_index: usize,
     #[serde(default)]
     width: Option<StoredWidth>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not", rename = "width_dragged")]
+    #[serde(
+        default,
+        skip_serializing_if = "std::ops::Not::not",
+        rename = "width_dragged"
+    )]
     width_unbounded: bool,
 }
 
@@ -185,9 +189,7 @@ impl LaunchMemory {
             .unwrap_or_default()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.apps.is_empty()
-    }
+    pub fn is_empty(&self) -> bool { self.apps.is_empty() }
 }
 
 /// Which remembered slot a newly appeared window should take.
@@ -269,11 +271,15 @@ mod tests {
         let written = ron::ser::to_string(&dragged).unwrap();
         assert!(written.contains("width_dragged:true"), "{written}");
 
-        let old: before_dragged_widths::Slot = ron::from_str(&written).expect("an older rini reads it");
+        let old: before_dragged_widths::Slot =
+            ron::from_str(&written).expect("an older rini reads it");
         assert_eq!(old.title, dragged.title);
         assert_eq!(old.display_uuid, dragged.display_uuid);
         assert_eq!(old.workspace_index, dragged.workspace_index);
-        assert_eq!(old.width, Some(before_dragged_widths::ColumnWidth::Offset(0.33797)));
+        assert_eq!(
+            old.width,
+            Some(before_dragged_widths::ColumnWidth::Offset(0.33797))
+        );
         assert_eq!(ron::from_str::<Slot>(&written).unwrap(), dragged);
 
         let offset = Slot {
@@ -300,32 +306,24 @@ mod tests {
         let alone = topology_key(&[BUILT_IN.to_owned()]);
         let mut memory = LaunchMemory::default();
 
-        memory.remember(
-            "com.mitchellh.ghostty",
-            &docked,
-            vec![
-                Slot {
-                    title: None,
-                    display_uuid: EXTERNAL.to_owned(),
-                    workspace_index: 2,
-                    width: Some(ColumnWidth::Offset(0.0)),
-                }
-                .into(),
-            ],
-        );
-        memory.remember(
-            "com.mitchellh.ghostty",
-            &alone,
-            vec![
-                Slot {
-                    title: None,
-                    display_uuid: BUILT_IN.to_owned(),
-                    workspace_index: 0,
-                    width: Some(ColumnWidth::FullWidth),
-                }
-                .into(),
-            ],
-        );
+        memory.remember("com.mitchellh.ghostty", &docked, vec![
+            Slot {
+                title: None,
+                display_uuid: EXTERNAL.to_owned(),
+                workspace_index: 2,
+                width: Some(ColumnWidth::Offset(0.0)),
+            }
+            .into(),
+        ]);
+        memory.remember("com.mitchellh.ghostty", &alone, vec![
+            Slot {
+                title: None,
+                display_uuid: BUILT_IN.to_owned(),
+                workspace_index: 0,
+                width: Some(ColumnWidth::FullWidth),
+            }
+            .into(),
+        ]);
 
         let docked_slots = memory.slots("com.mitchellh.ghostty", &docked);
         assert_eq!(docked_slots[0].display_uuid, EXTERNAL);
@@ -407,11 +405,10 @@ mod tests {
     #[test]
     fn remembering_replaces_rather_than_accumulates() {
         let mut memory = LaunchMemory::default();
-        memory.remember(
-            "app",
-            "one",
-            vec![slot("a", BUILT_IN, 0).into(), slot("b", BUILT_IN, 1).into()],
-        );
+        memory.remember("app", "one", vec![
+            slot("a", BUILT_IN, 0).into(),
+            slot("b", BUILT_IN, 1).into(),
+        ]);
         memory.remember("app", "one", vec![slot("a", BUILT_IN, 0).into()]);
         assert_eq!(memory.slots("app", "one").len(), 1);
     }
@@ -502,20 +499,15 @@ mod tests {
     #[test]
     fn repeated_saves_that_cannot_read_the_layout_never_erase_a_width() {
         let mut memory = LaunchMemory::default();
-        memory.remember(
-            "app",
-            "one",
-            vec![projected(
-                Some("term"),
-                ProjectedWidth::Known(Some(ColumnWidth::FullWidth)),
-            )],
-        );
+        memory.remember("app", "one", vec![projected(
+            Some("term"),
+            ProjectedWidth::Known(Some(ColumnWidth::FullWidth)),
+        )]);
         for _ in 0..5 {
-            memory.remember(
-                "app",
-                "one",
-                vec![projected(Some("term"), ProjectedWidth::Unknown)],
-            );
+            memory.remember("app", "one", vec![projected(
+                Some("term"),
+                ProjectedWidth::Unknown,
+            )]);
             assert_eq!(
                 memory.slots("app", "one")[0].width,
                 Some(ColumnWidth::FullWidth),

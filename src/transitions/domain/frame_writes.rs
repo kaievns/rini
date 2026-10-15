@@ -76,7 +76,10 @@ mod tests {
     use super::*;
 
     fn rect(origin_x: f64, origin_y: f64, width: f64, height: f64) -> ScreenRect {
-        ScreenRect::new(ScreenPoint::new(origin_x, origin_y), ScreenSize::new(width, height))
+        ScreenRect::new(
+            ScreenPoint::new(origin_x, origin_y),
+            ScreenSize::new(width, height),
+        )
     }
 
     fn display() -> ScreenRect {

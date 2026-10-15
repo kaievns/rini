@@ -92,8 +92,13 @@ impl RuleMatch {
 
 /// Whether a rule with these lines applies to `context`'s window: it matches one of `matches`, or
 /// there are none, and none of `excludes`.
-pub fn applies(matches: &[RuleMatch], excludes: &[RuleMatch], context: WindowRuleContext<'_>) -> bool {
-    (matches.is_empty() || matches.iter().any(|m| m.holds(context))) && !excludes.iter().any(|m| m.holds(context))
+pub fn applies(
+    matches: &[RuleMatch],
+    excludes: &[RuleMatch],
+    context: WindowRuleContext<'_>,
+) -> bool {
+    (matches.is_empty() || matches.iter().any(|m| m.holds(context)))
+        && !excludes.iter().any(|m| m.holds(context))
 }
 
 fn regex_holds(regex: Option<&RegexEq>, actual: Option<&str>) -> bool {
@@ -159,11 +164,18 @@ pub struct WindowRule {
 }
 
 impl WindowRule {
-    fn applies(&self, context: WindowRuleContext<'_>) -> bool { applies(&self.matches, &self.excludes, context) }
+    fn applies(&self, context: WindowRuleContext<'_>) -> bool {
+        applies(&self.matches, &self.excludes, context)
+    }
 
     /// Whether it sets anything a window opens with.
     pub fn sets_anything(&self) -> bool {
-        *self != WindowRule { matches: self.matches.clone(), excludes: self.excludes.clone(), ..WindowRule::default() }
+        *self
+            != WindowRule {
+                matches: self.matches.clone(),
+                excludes: self.excludes.clone(),
+                ..WindowRule::default()
+            }
     }
 
     /// `self` with every property `later` sets replaced by `later`'s.
@@ -520,20 +532,55 @@ mod tests {
     #[test]
     fn dynamic_matchers_read_the_window_as_it_opens() {
         let rule = |line: RuleMatch| {
-            AppRuleEngine::new(&[WindowRule { open_on_workspace: Some("main".into()), ..WindowRule::when(line) }])
+            AppRuleEngine::new(&[WindowRule {
+                open_on_workspace: Some("main".into()),
+                ..WindowRule::when(line)
+            }])
         };
         let opening = window("com.example.Editor");
         for line in [
-            RuleMatch { is_active: Some(true), ..RuleMatch::default() },
-            RuleMatch { is_focused: Some(true), ..RuleMatch::default() },
-            RuleMatch { is_floating: Some(true), ..RuleMatch::default() },
-            RuleMatch { is_urgent: Some(true), ..RuleMatch::default() },
+            RuleMatch {
+                is_active: Some(true),
+                ..RuleMatch::default()
+            },
+            RuleMatch {
+                is_focused: Some(true),
+                ..RuleMatch::default()
+            },
+            RuleMatch {
+                is_floating: Some(true),
+                ..RuleMatch::default()
+            },
+            RuleMatch {
+                is_urgent: Some(true),
+                ..RuleMatch::default()
+            },
         ] {
-            assert_eq!(rule(line.clone()).evaluate(opening), AppRuleDecision::NoMatch, "{line:?}");
+            assert_eq!(
+                rule(line.clone()).evaluate(opening),
+                AppRuleDecision::NoMatch,
+                "{line:?}"
+            );
         }
-        let unfocused = RuleMatch { is_focused: Some(false), is_floating: Some(false), ..RuleMatch::default() };
-        assert_ne!(rule(unfocused.clone()).evaluate(opening), AppRuleDecision::NoMatch);
-        let focused = WindowRuleContext { state: RuleState { focused: true, ..RuleState::default() }, ..opening };
-        assert!(!applies(&[unfocused], &[], focused), "the same line, once the window holds focus");
+        let unfocused = RuleMatch {
+            is_focused: Some(false),
+            is_floating: Some(false),
+            ..RuleMatch::default()
+        };
+        assert_ne!(
+            rule(unfocused.clone()).evaluate(opening),
+            AppRuleDecision::NoMatch
+        );
+        let focused = WindowRuleContext {
+            state: RuleState {
+                focused: true,
+                ..RuleState::default()
+            },
+            ..opening
+        };
+        assert!(
+            !applies(&[unfocused], &[], focused),
+            "the same line, once the window holds focus"
+        );
     }
 }

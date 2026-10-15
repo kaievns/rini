@@ -1,3 +1,5 @@
+use rini_core::ids::{SpaceId, WindowId, WindowServerId};
+use rustc_hash::FxHashSet as HashSet;
 use tracing::{debug, trace};
 
 use crate::app::hotkeys::WmEvent;
@@ -9,10 +11,6 @@ use crate::displays::domain::space_activation::SpaceActivationPolicy;
 use crate::displays::domain::topology::SpaceEventKind;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::request::Request;
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowId;
-use rini_core::ids::WindowServerId;
-use rustc_hash::FxHashSet as HashSet;
 
 // spacewindowappeared/destroyed happen a lot when a display is connected/disconnected
 // since they are literally when a window enters or leaves a space and each display has its own space(s)

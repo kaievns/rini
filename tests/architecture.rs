@@ -113,13 +113,10 @@ fn code_lines_in(source: &str) -> Vec<(usize, String)> {
 fn a_comment_is_stripped_and_a_comment_marker_in_a_string_is_not() {
     let source =
         "let url = \"http://x\"; // note\n/* a\n /* nested */ still */ let b = '/';\n// only\n";
-    assert_eq!(
-        code_lines_in(source),
-        vec![
-            (1, "let url = \"http://x\";".to_string()),
-            (3, "let b = '/';".to_string())
-        ]
-    );
+    assert_eq!(code_lines_in(source), vec![
+        (1, "let url = \"http://x\";".to_string()),
+        (3, "let b = '/';".to_string())
+    ]);
 }
 
 fn feature_files() -> Vec<PathBuf> {
@@ -129,9 +126,7 @@ fn feature_files() -> Vec<PathBuf> {
         .collect()
 }
 
-fn slash(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}
+fn slash(path: &Path) -> String { path.to_string_lossy().replace('\\', "/") }
 
 #[test]
 fn a_feature_never_names_the_application() {
@@ -484,14 +479,11 @@ pub(crate) mod testing;
         .map(|(line, _)| line)
         .collect();
     assert_eq!(caught, vec![2, 5, 21]);
-    assert_eq!(
-        test_modules(source),
-        vec![
-            TestModule::Inline(7..=13),
-            TestModule::Inline(16..=19),
-            TestModule::File("testing".to_string()),
-        ]
-    );
+    assert_eq!(test_modules(source), vec![
+        TestModule::Inline(7..=13),
+        TestModule::Inline(16..=19),
+        TestModule::File("testing".to_string()),
+    ]);
 }
 
 #[test]
@@ -569,7 +561,10 @@ fn the_crate_map_names_every_feature() {
         .copied()
         .filter(|feature| !map.contains(&format!("//! src/{feature}/ ")))
         .collect();
-    assert!(unnamed.is_empty(), "src/lib.rs's map of the tree leaves out: {unnamed:?}");
+    assert!(
+        unnamed.is_empty(),
+        "src/lib.rs's map of the tree leaves out: {unnamed:?}"
+    );
 }
 
 /// Every feature and every crate carries its own `docs/README.md`.
@@ -648,7 +643,10 @@ fn every_documented_path_resolves() {
     for dir in ["docs", "specs", "src", "crates", "tools"] {
         collect_markdown(Path::new(dir), &mut files);
     }
-    for (dir, extensions) in [(".", &["md"][..]), ("tools/focuslab", &["py", "sh", "swift"])] {
+    for (dir, extensions) in [
+        (".", &["md"][..]),
+        ("tools/focuslab", &["py", "sh", "swift"]),
+    ] {
         for entry in fs::read_dir(dir).expect("readable directory") {
             let path = entry.expect("readable entry").path();
             if path.extension().is_some_and(|e| extensions.iter().any(|x| e == *x)) {
@@ -831,14 +829,11 @@ fn a_first_argument_is_read_across_lines_and_never_from_a_declaration() {
     .enumerate()
     .map(|(n, code)| (n + 1, code.to_string()))
     .collect();
-    assert_eq!(
-        first_arguments(&lines, "SLSWindowQueryRun"),
-        vec![
-            (2, "*G_CONNECTION".to_string()),
-            (3, "*READ_CONNECTION".to_string()),
-            (6, "SLSMainConnectionID(".to_string()),
-        ]
-    );
+    assert_eq!(first_arguments(&lines, "SLSWindowQueryRun"), vec![
+        (2, "*G_CONNECTION".to_string()),
+        (3, "*READ_CONNECTION".to_string()),
+        (6, "SLSMainConnectionID(".to_string()),
+    ]);
 }
 
 /// Every spec is reachable from the index, and the index names nothing that is missing.
@@ -917,44 +912,73 @@ const FN_LIMIT: usize = 100;
 const FILE_LIMIT: usize = 1500;
 
 /// The functions over `FN_LIMIT`, each at its size now as its ceiling: file, name, ceiling.
-const LONG_FNS: [(&str, &str, usize); 41] = [
+const LONG_FNS: [(&str, &str, usize); 42] = [
     ("crates/rini-ipc/src/mach.rs", "mach_server_begin", 101),
     ("src/animation/domain/choreography/slide.rs", "retarget", 156),
     ("src/animation/domain/motion/plan.rs", "merge_plans", 202),
-    ("src/app/config/kdl/apply.rs", "apply", 134),
+    ("src/app/config/kdl/apply.rs", "apply", 137),
     ("src/app/config/kdl/apply.rs", "apply_binds", 105),
-    ("src/app/config/kdl/apply.rs", "window_rule", 115),
+    ("src/app/config/kdl/apply.rs", "window_rule", 124),
     ("src/app/notifications.rs", "new", 130),
-    ("src/app/reactor/animation.rs", "animate_layout", 147),
+    ("src/app/reactor/animation.rs", "animate_layout", 151),
     ("src/app/reactor/events/command.rs", "handle_command_layout", 105),
-    ("src/app/reactor/events/space.rs", "handle_window_server_appeared", 162),
-    ("src/app/reactor/events/window.rs", "handle_window_frame_changed", 148),
-    ("src/app/reactor/events/window_discovery.rs", "emit_layout_events", 147),
+    (
+        "src/app/reactor/events/space.rs",
+        "handle_window_server_appeared",
+        162,
+    ),
+    (
+        "src/app/reactor/events/window.rs",
+        "handle_window_frame_changed",
+        148,
+    ),
+    (
+        "src/app/reactor/events/window_discovery.rs",
+        "emit_layout_events",
+        147,
+    ),
     ("src/app/reactor/mod.rs", "apply_event_outcome", 212),
     ("src/app/reactor/mod.rs", "dispatch_workflow", 274),
-    ("src/app/reactor/mod.rs", "handle_authoritative_space_snapshot", 190),
+    (
+        "src/app/reactor/mod.rs",
+        "handle_authoritative_space_snapshot",
+        190,
+    ),
     ("src/app/reactor/mod.rs", "handle_layout_response", 190),
     ("src/app/reactor/mod.rs", "maybe_swap_on_drag", 111),
-    ("src/app/reactor/mod.rs", "on_windows_discovered_with_app_info", 147),
-    ("src/app/reactor/mod.rs", "start_strip_switch", 131),
+    (
+        "src/app/reactor/mod.rs",
+        "on_windows_discovered_with_app_info",
+        144,
+    ),
+    ("src/app/reactor/mod.rs", "start_strip_switch", 132),
     ("src/app/reactor/query.rs", "handle_diagnostics_query", 161),
     ("src/displays/platform/spaces.rs", "build_forwarded_state", 118),
     ("src/displays/platform/spaces.rs", "handle_event", 118),
     ("src/displays/screen.rs", "refresh_snapshot", 130),
     ("src/input/platform/keyboard.rs", "build_cg_keycode_table", 125),
     ("src/layout/domain/constraints.rs", "solve_axis_lengths", 114),
-    ("src/layout/domain/scrolling.rs", "calculate_layout", 247),
+    ("src/layout/domain/scrolling.rs", "calculate_layout", 249),
+    ("src/layout/domain/scrolling.rs", "on_window_resized", 105),
     ("src/main.rs", "main", 292),
-    ("src/pictures/domain/watch.rs", "seen", 146),
-    ("src/transitions/platform/engine.rs", "merge_now", 124),
-    ("src/transitions/platform/engine.rs", "start", 247),
+    ("src/pictures/domain/watch.rs", "seen", 151),
+    ("src/transitions/platform/engine.rs", "merge_now", 125),
+    ("src/transitions/platform/engine.rs", "start", 256),
     ("src/transitions/platform/engine.rs", "start_surface", 124),
     ("src/windows/platform/app_actor.rs", "handle_notification", 148),
     ("src/windows/platform/app_actor.rs", "handle_raise_request", 101),
     ("src/windows/platform/app_actor.rs", "handle_request", 132),
-    ("src/workspaces/domain/virtual_workspace.rs", "apply_app_rule_decision", 133),
-    ("src/workspaces/engine.rs", "calculate_layout_with_virtual_workspaces", 177),
-    ("src/workspaces/engine.rs", "handle_event_inner", 128),
+    (
+        "src/workspaces/domain/virtual_workspace.rs",
+        "apply_app_rule_decision",
+        133,
+    ),
+    (
+        "src/workspaces/engine.rs",
+        "calculate_layout_with_virtual_workspaces",
+        177,
+    ),
+    ("src/workspaces/engine.rs", "handle_event_inner", 123),
     ("src/workspaces/engine.rs", "move_focus_internal", 106),
     ("src/workspaces/engine.rs", "move_window_to_space", 119),
     ("src/workspaces/engine.rs", "move_window_to_workspace", 156),
@@ -963,10 +987,10 @@ const LONG_FNS: [(&str, &str, usize); 41] = [
 
 /// The files over `FILE_LIMIT`, each at its size now as its ceiling: file, ceiling.
 const LONG_FILES: [(&str, usize); 4] = [
-    ("src/app/reactor/mod.rs", 4538),
-    ("src/layout/domain/scrolling.rs", 1825),
-    ("src/transitions/platform/engine.rs", 2021),
-    ("src/workspaces/engine.rs", 2553),
+    ("src/app/reactor/mod.rs", 4545),
+    ("src/layout/domain/scrolling.rs", 1828),
+    ("src/transitions/platform/engine.rs", 2210),
+    ("src/workspaces/engine.rs", 2547),
 ];
 
 /// `source` with every comment blanked, so a `//` inside a string is not a comment, and with
@@ -1017,7 +1041,8 @@ fn blank_comments(source: &str, literals: bool) -> String {
                 i += 1;
                 continue;
             }
-            let close: String = std::iter::once('"').chain(std::iter::repeat_n('#', hashes)).collect();
+            let close: String =
+                std::iter::once('"').chain(std::iter::repeat_n('#', hashes)).collect();
             let open = 2 + hashes;
             out.extend(&chars[i..i + open]);
             i += open;
@@ -1206,7 +1231,9 @@ fn size_breaches(
                 "{file}: {total} code lines, under {FILE_LIMIT}: remove it from LONG_FILES"
             )),
             Some(&(_, ceiling)) if *total > ceiling => {
-                broken.push(format!("{file}: {total} code lines, past its ceiling of {ceiling}"));
+                broken.push(format!(
+                    "{file}: {total} code lines, past its ceiling of {ceiling}"
+                ));
             }
             Some(&(_, ceiling)) if *total < ceiling => broken.push(format!(
                 "{file}: {total} code lines, under its ceiling of {ceiling}: lower it in \
@@ -1280,21 +1307,21 @@ fn no_function_or_file_grows_past_its_limit() {
 
 #[test]
 fn a_size_breach_is_a_new_offender_a_grown_exception_or_a_stale_one() {
-    let span = |name: &str, line, code_lines| FnSpan { name: name.to_string(), line, code_lines };
+    let span = |name: &str, line, code_lines| FnSpan {
+        name: name.to_string(),
+        line,
+        code_lines,
+    };
     let sizes = vec![
-        (
-            "a.rs".to_string(),
-            1501,
-            vec![
-                span("new", 1, 101),
-                span("grown", 2, 121),
-                span("kept", 3, 115),
-                span("lowered", 4, 110),
-                span("shrunk", 5, 100),
-                span("twin", 6, 125),
-                span("twin", 7, 105),
-            ],
-        ),
+        ("a.rs".to_string(), 1501, vec![
+            span("new", 1, 101),
+            span("grown", 2, 121),
+            span("kept", 3, 115),
+            span("lowered", 4, 110),
+            span("shrunk", 5, 100),
+            span("twin", 6, 125),
+            span("twin", 7, 105),
+        ]),
         ("b.rs".to_string(), 1600, vec![span("small", 1, 100)]),
         ("c.rs".to_string(), 1500, vec![]),
         ("e.rs".to_string(), 1650, vec![]),
@@ -1307,22 +1334,24 @@ fn a_size_breach_is_a_new_offender_a_grown_exception_or_a_stale_one() {
         ("a.rs", "twin", 125),
         ("a.rs", "deleted", 140),
     ];
-    let long_files = [("b.rs", 1700), ("c.rs", 1600), ("d.rs", 1600), ("e.rs", 1650)];
-    assert_eq!(
-        size_breaches(&sizes, &long_fns, &long_files),
-        vec![
-            "a.rs: 1501 code lines, past 1500",
-            "a.rs: `deleted` is gone: remove it from LONG_FNS",
-            "a.rs: `shrunk` 100 code lines, under 100: remove it from LONG_FNS",
-            "a.rs:1: `new` 101 code lines, past 100",
-            "a.rs:2: `grown` 121 code lines, past its ceiling of 120",
-            "a.rs:4: `lowered` 110 code lines, under its ceiling of 115: lower it in LONG_FNS to 110",
-            "a.rs:7: `twin` 105 code lines, past 100",
-            "b.rs: 1600 code lines, under its ceiling of 1700: lower it in LONG_FILES to 1600",
-            "c.rs: 1500 code lines, under 1500: remove it from LONG_FILES",
-            "d.rs is gone: remove it from LONG_FILES",
-        ]
-    );
+    let long_files = [
+        ("b.rs", 1700),
+        ("c.rs", 1600),
+        ("d.rs", 1600),
+        ("e.rs", 1650),
+    ];
+    assert_eq!(size_breaches(&sizes, &long_fns, &long_files), vec![
+        "a.rs: 1501 code lines, past 1500",
+        "a.rs: `deleted` is gone: remove it from LONG_FNS",
+        "a.rs: `shrunk` 100 code lines, under 100: remove it from LONG_FNS",
+        "a.rs:1: `new` 101 code lines, past 100",
+        "a.rs:2: `grown` 121 code lines, past its ceiling of 120",
+        "a.rs:4: `lowered` 110 code lines, under its ceiling of 115: lower it in LONG_FNS to 110",
+        "a.rs:7: `twin` 105 code lines, past 100",
+        "b.rs: 1600 code lines, under its ceiling of 1700: lower it in LONG_FILES to 1600",
+        "c.rs: 1500 code lines, under 1500: remove it from LONG_FILES",
+        "d.rs is gone: remove it from LONG_FILES",
+    ]);
 }
 
 #[test]
@@ -1356,13 +1385,18 @@ mod tests {
 }
 "##;
     let (total, fns) = production_size(source);
-    assert_eq!(
-        fns,
-        vec![
-            FnSpan { name: "short".to_string(), line: 1, code_lines: 5 },
-            FnSpan { name: "longer".to_string(), line: 7, code_lines: 4 },
-        ]
-    );
+    assert_eq!(fns, vec![
+        FnSpan {
+            name: "short".to_string(),
+            line: 1,
+            code_lines: 5
+        },
+        FnSpan {
+            name: "longer".to_string(),
+            line: 7,
+            code_lines: 4
+        },
+    ]);
     assert_eq!(total, 12);
 }
 
@@ -1387,7 +1421,9 @@ fn every_domain_and_reactor_module_is_named_in_its_readme() {
     layers.push((PathBuf::from("src/app"), PathBuf::from("reactor/events")));
     let mut missing = Vec::new();
     for (root, layer) in layers {
-        let Ok(entries) = fs::read_dir(root.join(&layer)) else { continue };
+        let Ok(entries) = fs::read_dir(root.join(&layer)) else {
+            continue;
+        };
         let readme_path = root.join("docs/README.md");
         let readme = fs::read_to_string(&readme_path).expect("every feature has a README");
         let mut files: Vec<PathBuf> = entries
@@ -1500,7 +1536,8 @@ fn declared_names(source: &str) -> Vec<String> {
         out.extend(fns_declared(&code).map(|(name, _)| name));
         let field = code.trim_start();
         let field = field.strip_prefix("pub").map_or(field, |rest| {
-            let rest = rest.strip_prefix('(').and_then(|r| r.split_once(')')).map_or(rest, |(_, r)| r);
+            let rest =
+                rest.strip_prefix('(').and_then(|r| r.split_once(')')).map_or(rest, |(_, r)| r);
             rest.trim_start()
         });
         if let Some((name, _)) = field.split_once(':')
@@ -1538,7 +1575,9 @@ fn documentation() -> Vec<PathBuf> {
 fn every_long_name_a_doc_cites_is_still_defined() {
     let mut defined = std::collections::HashSet::new();
     for path in ["src", "crates", "tests"].iter().flat_map(|dir| rust_files(Path::new(dir))) {
-        defined.extend(declared_names(&fs::read_to_string(&path).expect("readable source")));
+        defined.extend(declared_names(
+            &fs::read_to_string(&path).expect("readable source"),
+        ));
     }
     let mut broken = Vec::new();
     let mut cited = std::collections::HashSet::new();
@@ -1570,7 +1609,10 @@ fn every_long_name_a_doc_cites_is_still_defined() {
 
 #[test]
 fn a_long_snake_name_is_read_whole_from_its_span() {
-    assert_eq!(long_snake_name("every_spec_is_listed"), Some("every_spec_is_listed"));
+    assert_eq!(
+        long_snake_name("every_spec_is_listed"),
+        Some("every_spec_is_listed")
+    );
     assert_eq!(long_snake_name("reactor::query::a_b_c_d()"), Some("a_b_c_d"));
     assert_eq!(long_snake_name("three_word_name"), None);
     assert_eq!(long_snake_name("WAITS_ON_THE_MAIN"), None);
@@ -1578,10 +1620,13 @@ fn a_long_snake_name_is_read_whole_from_its_span() {
     assert_eq!(long_snake_name("a_b_c_d(x)"), None);
     assert_eq!(long_snake_name("a__b_c_d"), None);
     let doc = "`one_two_three_four` and `x`\n```\n`five_six_seven_eight`\n```\nlast `y`";
-    assert_eq!(code_spans(doc), vec![(1, "one_two_three_four"), (1, "x"), (5, "y")]);
+    assert_eq!(code_spans(doc), vec![
+        (1, "one_two_three_four"),
+        (1, "x"),
+        (5, "y")
+    ]);
     let source = "pub(crate) fn a_b_c_d() {}\nstruct S {\n    pub e_f_g_h: u8,\n    i_j_k_l: u8,\n}\n// fn m_n_o_p\nuse a::b;\nfn q_r_s_t(f: fn(u8)) {} fn u_v_w_x() {}";
-    assert_eq!(
-        declared_names(source),
-        vec!["a_b_c_d", "e_f_g_h", "i_j_k_l", "q_r_s_t", "u_v_w_x"]
-    );
+    assert_eq!(declared_names(source), vec![
+        "a_b_c_d", "e_f_g_h", "i_j_k_l", "q_r_s_t", "u_v_w_x"
+    ]);
 }

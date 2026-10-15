@@ -121,13 +121,28 @@ pub fn two_steps<U>(from: Rect<U>, to: Rect<U>) -> Option<TwoSteps<U>> {
     let x = travel(from.min_x(), from.max_x(), to.min_x(), to.max_x());
     let y = travel(from.min_y(), from.max_y(), to.min_y(), to.max_y());
     let (corner, shrinking) = if short(b.width, a.width) && short(a.height, b.height) {
-        (Rect::new(Point::new(to.min_x(), from.min_y()), Size::new(b.width, a.height)), x)
+        (
+            Rect::new(
+                Point::new(to.min_x(), from.min_y()),
+                Size::new(b.width, a.height),
+            ),
+            x,
+        )
     } else if short(b.height, a.height) && short(a.width, b.width) {
-        (Rect::new(Point::new(from.min_x(), to.min_y()), Size::new(a.width, b.height)), y)
+        (
+            Rect::new(
+                Point::new(from.min_x(), to.min_y()),
+                Size::new(a.width, b.height),
+            ),
+            y,
+        )
     } else {
         return None;
     };
-    Some(TwoSteps { corner, share: shrinking / (x + y) })
+    Some(TwoSteps {
+        corner,
+        share: shrinking / (x + y),
+    })
 }
 
 /// `window`'s tile carried from `from` to `to` on `curve`, from `begin` for `seconds`: in one
@@ -146,7 +161,15 @@ pub fn leg(
     let steps = two_steps(from, to);
     let (from, to) = (Value::Rect(from), Value::Rect(to));
     let Some(steps) = steps else {
-        return Track::between(node, Channel::Base, from, to, begin, seconds, Curve::Bezier(curve));
+        return Track::between(
+            node,
+            Channel::Base,
+            from,
+            to,
+            begin,
+            seconds,
+            Curve::Bezier(curve),
+        );
     };
     let (at, first, second) = curve.split(steps.share);
     let keys = vec![(0.0, from), (at, Value::Rect(steps.corner)), (1.0, to)];
@@ -203,9 +226,24 @@ fn spans(picture: f64, frame: f64, band: f64, anchor: Anchor) -> ([Span; 3], (f6
         Anchor::End => (band + gap, picture - band - shows, band),
     };
     let spans = [
-        Span { at: 0.0, len: band, from: 0.0, shows: band },
-        Span { at: middle, len: shows, from, shows },
-        Span { at: band + room, len: band, from: picture - band, shows: band },
+        Span {
+            at: 0.0,
+            len: band,
+            from: 0.0,
+            shows: band,
+        },
+        Span {
+            at: middle,
+            len: shows,
+            from,
+            shows,
+        },
+        Span {
+            at: band + room,
+            len: band,
+            from: picture - band,
+            shows: band,
+        },
     ];
     (spans, (ground, gap))
 }
@@ -308,9 +346,7 @@ mod tests {
     }
 
     /// A tile's frame size on the overlay, as a track's ends carry it.
-    fn drawn(w: f64, h: f64) -> Size<Overlay> {
-        Size::new(w, h)
-    }
+    fn drawn(w: f64, h: f64) -> Size<Overlay> { Size::new(w, h) }
 
     #[test]
     fn lerp_at_zero_is_the_start_frame() {
@@ -368,9 +404,19 @@ mod tests {
         for (case, covered, from, to) in [
             ("a grow past the picture", picture, col, drawn(1720.0, 1081.0)),
             ("a shrink", picture, col, drawn(859.0, 540.0)),
-            ("a stale narrow picture", ScreenSize::new(572.0, 1081.0), col, col),
+            (
+                "a stale narrow picture",
+                ScreenSize::new(572.0, 1081.0),
+                col,
+                col,
+            ),
             ("a stale wide picture", ScreenSize::new(918.0, 1081.0), col, col),
-            ("the end's picture", ScreenSize::new(1720.0, 1081.0), col, drawn(1720.0, 1081.0)),
+            (
+                "the end's picture",
+                ScreenSize::new(1720.0, 1081.0),
+                col,
+                drawn(1720.0, 1081.0),
+            ),
         ] {
             assert_eq!(mode(covered, from, to), ContentMode::Crop, "{case}");
         }
@@ -396,9 +442,21 @@ mod tests {
             leg("bottom row shrinking down", column, lower, top, end),
             leg("middle row, its bottom moving more", middle, lower, top, top),
             leg("middle row, its top moving more", middle, upper, top, end),
-            leg("moving left as it widens", rect(866.0, 3.0, 859.0, 1074.0), wide, end, top),
+            leg(
+                "moving left as it widens",
+                rect(866.0, 3.0, 859.0, 1074.0),
+                wide,
+                end,
+                top,
+            ),
             leg("widening right", column, wide, top, top),
-            leg("widening as it shrinks up", column, rect(4.0, 542.0, 1148.0, 535.0), top, end),
+            leg(
+                "widening as it shrinks up",
+                column,
+                rect(4.0, 542.0, 1148.0, 535.0),
+                top,
+                end,
+            ),
             leg("a pure move", parked, slot, top, top),
         ]
     }
@@ -427,9 +485,17 @@ mod tests {
         pieces.into_iter().find_map(|piece| {
             let (frame, contents) = (piece.frame, piece.contents);
             let (start, from, shows) = if vertical {
-                (frame.origin.y, contents.origin.y * picture, contents.size.height * picture)
+                (
+                    frame.origin.y,
+                    contents.origin.y * picture,
+                    contents.size.height * picture,
+                )
             } else {
-                (frame.origin.x, contents.origin.x * picture, contents.size.width * picture)
+                (
+                    frame.origin.x,
+                    contents.origin.x * picture,
+                    contents.size.width * picture,
+                )
             };
             (from - 1e-9 <= at && at < from + shows).then_some(start + at - from)
         })
@@ -450,7 +516,10 @@ mod tests {
             grid.pieces.iter().map(|piece| piece.frame).chain(grid.ground).collect();
         let mut area = 0.0;
         for (i, f) in laid.iter().enumerate() {
-            assert!(f.size.width >= -eps && f.size.height >= -eps, "{case}: {i} is {f:?}");
+            assert!(
+                f.size.width >= -eps && f.size.height >= -eps,
+                "{case}: {i} is {f:?}"
+            );
             area += f.size.width * f.size.height;
             for o in &laid[i + 1..] {
                 let w = f.max_x().min(o.max_x()) - f.min_x().max(o.min_x());
@@ -458,17 +527,32 @@ mod tests {
                 assert!(w <= eps || h <= eps, "{case}: {f:?} overlaps {o:?}");
             }
         }
-        assert!((area - frame.width * frame.height).abs() < 1e-3, "{case}: a gap at {frame:?}");
+        assert!(
+            (area - frame.width * frame.height).abs() < 1e-3,
+            "{case}: a gap at {frame:?}"
+        );
         let band = crop_band(frame).min(picture.width / 2.0).min(picture.height / 2.0);
         let at = |far: bool, side: f64| if far { (side - band) / side } else { 0.0 };
-        let corners = [(0, false, false), (2, true, false), (6, false, true), (8, true, true)];
+        let corners = [
+            (0, false, false),
+            (2, true, false),
+            (6, false, true),
+            (8, true, true),
+        ];
         for (i, right, bottom) in corners {
             let corner = grid.pieces[i];
-            assert_eq!(corner.frame.size, TileSize::new(band, band), "{case}: corner {i}");
+            assert_eq!(
+                corner.frame.size,
+                TileSize::new(band, band),
+                "{case}: corner {i}"
+            );
             let x = corner.contents.origin.x - at(right, picture.width);
             let y = corner.contents.origin.y - at(bottom, picture.height);
             let shows = corner.contents;
-            assert!(x.abs() < eps && y.abs() < eps, "{case}: corner {i} shows {shows:?}");
+            assert!(
+                x.abs() < eps && y.abs() < eps,
+                "{case}: corner {i} shows {shows:?}"
+            );
         }
     }
 
@@ -498,15 +582,27 @@ mod tests {
             }
             for (i, span) in drawn.ground.iter().enumerate() {
                 let between = lerp_rect(first.ground[i], last.ground[i], t);
-                assert!(close(*span, between, 1e-6), "{case} at {t}: ground {i} not interpolated");
+                assert!(
+                    close(*span, between, 1e-6),
+                    "{case} at {t}: ground {i} not interpolated"
+                );
             }
             assert_seamless(&drawn, picture, frame.size.respace(), &case);
             let (w, h) = (frame.size.width, frame.size.height);
             let bare = w * h - w.min(picture.width) * h.min(picture.height);
-            assert!((grounded(&drawn) - bare).abs() < 1e-3, "{case} at {t}: ground off the bare");
+            assert!(
+                (grounded(&drawn) - bare).abs() < 1e-3,
+                "{case} at {t}: ground off the bare"
+            );
             for (vertical, anchor, side, start, len) in [
                 (false, anchors.x, picture.width, frame.origin.x, frame.size.width),
-                (true, anchors.y, picture.height, frame.origin.y, frame.size.height),
+                (
+                    true,
+                    anchors.y,
+                    picture.height,
+                    frame.origin.y,
+                    frame.size.height,
+                ),
             ] {
                 let pieces = &drawn.pieces;
                 let line = if vertical {
@@ -515,9 +611,9 @@ mod tests {
                     [&pieces[3], &pieces[4], &pieces[5]]
                 };
                 let on_screen = |at: f64| {
-                    start + drawn_at(line, side, at, vertical).unwrap_or_else(|| {
-                        panic!("{case} at {t}: {at} not drawn")
-                    })
+                    start
+                        + drawn_at(line, side, at, vertical)
+                            .unwrap_or_else(|| panic!("{case} at {t}: {at} not drawn"))
                 };
                 let from_start = |depth: f64| on_screen(depth) - start;
                 let from_end = |depth: f64| start + len - on_screen(side - depth);
@@ -531,7 +627,10 @@ mod tests {
                     assert!(off.abs() < 1e-6, "{case} at {t}: content {off} off its anchor");
                 }
                 let off = moving(5.0) - 5.0;
-                assert!(off.abs() < 1e-6, "{case} at {t}: the band {off} off the moving edge");
+                assert!(
+                    off.abs() < 1e-6,
+                    "{case} at {t}: the band {off} off the moving edge"
+                );
             }
         }
     }
@@ -587,7 +686,11 @@ mod tests {
                 for y in [Anchor::Start, Anchor::End] {
                     let grid = crop(picture, frame, Anchors { x, y });
                     assert_seamless(&grid, picture, frame, &format!("{picture:?} {x:?} {y:?}"));
-                    assert_eq!(grid.pieces[0].frame.size, TileSize::new(30.0, 30.0), "half its side");
+                    assert_eq!(
+                        grid.pieces[0].frame.size,
+                        TileSize::new(30.0, 30.0),
+                        "half its side"
+                    );
                 }
             }
         }
@@ -718,10 +821,21 @@ mod tests {
         let corner = rect(866.0, 576.0, 860.0, 538.0);
         let (x, y) = (863.0 + 575.0, 541.0);
         let of = |steps: Option<TwoSteps<Overlay>>| steps.map(|steps| (steps.corner, steps.share));
-        assert_eq!(of(two_steps(column, folded)), Some((corner, y / (x + y))), "fold");
-        assert_eq!(of(two_steps(folded, column)), Some((corner, x / (x + y))), "unfold");
+        assert_eq!(
+            of(two_steps(column, folded)),
+            Some((corner, y / (x + y))),
+            "fold"
+        );
+        assert_eq!(
+            of(two_steps(folded, column)),
+            Some((corner, x / (x + y))),
+            "unfold"
+        );
         let (_, up_from, up_to, _) = legs()[8];
-        assert_eq!(two_steps(up_from, up_to).map(|steps| steps.corner), Some(rect(4.0, 542.0, 859.0, 535.0)));
+        assert_eq!(
+            two_steps(up_from, up_to).map(|steps| steps.corner),
+            Some(rect(4.0, 542.0, 859.0, 535.0))
+        );
     }
 
     /// A leg changing one axis, or the other only within the stretch tolerance, is one movement.
@@ -737,7 +851,10 @@ mod tests {
         ] {
             assert!(two_steps(column, to).is_none(), "{case}");
         }
-        assert!(two_steps(column, rect(4.0, 3.0, 0.0, 1200.0)).is_none(), "nothing to turn at");
+        assert!(
+            two_steps(column, rect(4.0, 3.0, 0.0, 1200.0)).is_none(),
+            "nothing to turn at"
+        );
     }
 
     /// Each step of a fold and an unfold is covered at every frame by the picture it flies: the
@@ -758,20 +875,31 @@ mod tests {
                 (corner.size.width != to.size.width, second.x, anchors.x),
                 (corner.size.height != to.size.height, second.y, anchors.y),
             ] {
-                assert!(!moved || step == whole, "{from:?} to {to:?}: a step's own anchor");
+                assert!(
+                    !moved || step == whole,
+                    "{from:?} to {to:?}: a step's own anchor"
+                );
             }
             for (start, end, picture) in [(from, corner, from.size), (corner, to, to.size)] {
                 let picture: TileSize = picture.respace();
                 assert_flies(picture, start, end, anchors);
                 for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
                     let frame = lerp_rect(start, end, t).size.respace();
-                    assert_eq!(grounded(&crop(picture, frame, anchors)), 0.0, "{start:?} to {end:?} at {t}");
+                    assert_eq!(
+                        grounded(&crop(picture, frame, anchors)),
+                        0.0,
+                        "{start:?} to {end:?} at {t}"
+                    );
                 }
             }
             for picture in [from.size.respace(), to.size.respace()] {
-                let bare = [0.0, 0.25, 0.5, 0.75, 1.0]
-                    .map(|t| grounded(&crop(picture, lerp_rect(from, to, t).size.respace(), anchors)));
-                assert!(bare.iter().any(|ground| *ground > 0.0), "{picture:?} in one movement");
+                let bare = [0.0, 0.25, 0.5, 0.75, 1.0].map(|t| {
+                    grounded(&crop(picture, lerp_rect(from, to, t).size.respace(), anchors))
+                });
+                assert!(
+                    bare.iter().any(|ground| *ground > 0.0),
+                    "{picture:?} in one movement"
+                );
             }
         }
     }
@@ -788,17 +916,27 @@ mod tests {
         let track = leg(window, from, to, 100.0, 0.35, MOTION_CURVE);
         let at = corner_key(&track).expect("a corner");
         assert_eq!(track.form(), Form::Keyframes);
-        assert_eq!(track.keys(), [(0.0, Value::Rect(from)), (at, Value::Rect(steps.corner)), (1.0, Value::Rect(to))]);
+        assert_eq!(track.keys(), [
+            (0.0, Value::Rect(from)),
+            (at, Value::Rect(steps.corner)),
+            (1.0, Value::Rect(to))
+        ]);
         assert!((MOTION_CURVE.ease(at) - steps.share).abs() < 1e-6, "{at}");
-        let Some(Value::Rect(turning)) = track.at(100.0 + 0.35 * at) else { panic!("playing") };
+        let Some(Value::Rect(turning)) = track.at(100.0 + 0.35 * at) else {
+            panic!("playing")
+        };
         assert!(close(turning, steps.corner, 1e-6), "{turning:?} at the corner");
-        let Some(Value::Rect(first)) = track.at(100.0 + 0.35 * at / 2.0) else { panic!("playing") };
+        let Some(Value::Rect(first)) = track.at(100.0 + 0.35 * at / 2.0) else {
+            panic!("playing")
+        };
         let x_waits = Rect::new(
             Point::new(from.origin.x, first.origin.y),
             Size::new(from.size.width, first.size.height),
         );
         assert!(close(first, x_waits, 1e-6), "x waits");
-        let Some(Value::Rect(second)) = track.at(100.0 + 0.35 * (at + 1.0) / 2.0) else { panic!("playing") };
+        let Some(Value::Rect(second)) = track.at(100.0 + 0.35 * (at + 1.0) / 2.0) else {
+            panic!("playing")
+        };
         let y_done = Rect::new(
             Point::new(second.origin.x, to.origin.y),
             Size::new(second.size.width, to.size.height),
@@ -809,16 +947,28 @@ mod tests {
         let one = leg(window, from, grown, 100.0, 0.35, MOTION_CURVE);
         let (from, grown) = (Value::Rect(from), Value::Rect(grown));
         let curve = Curve::Bezier(MOTION_CURVE);
-        assert_eq!(one, Track::between(Node::Tile(window), Channel::Base, from, grown, 100.0, 0.35, curve));
+        assert_eq!(
+            one,
+            Track::between(
+                Node::Tile(window),
+                Channel::Base,
+                from,
+                grown,
+                100.0,
+                0.35,
+                curve
+            )
+        );
         assert_eq!(corner_key(&one), None);
     }
 
     mod snaps {
+        use rini_geometry::space::GroupRect;
+
         use super::*;
         use crate::animation::domain::motion::easing::MOTION_CURVE;
         use crate::animation::domain::motion::plan::GroupKey;
         use crate::animation::domain::motion::score::{Curve, Track};
-        use rini_geometry::space::GroupRect;
 
         const STRIP: GroupKey = GroupKey::STILL;
 
@@ -902,8 +1052,13 @@ mod tests {
                 )
             ]);
             assert!(
-                snap(&Score::default(), window(), rect(865.0, 32.0, 861.0, 1081.0), 100.5)
-                    .is_empty(),
+                snap(
+                    &Score::default(),
+                    window(),
+                    rect(865.0, 32.0, 861.0, 1081.0),
+                    100.5
+                )
+                .is_empty(),
                 "no tile, no snap"
             );
         }

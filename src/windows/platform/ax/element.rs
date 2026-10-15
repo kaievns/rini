@@ -9,7 +9,6 @@ use objc2_application_services::{AXError, AXUIElement as RawAXUIElement, AXValue
 use objc2_core_foundation::{
     CFArray, CFBoolean, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, ConcreteType,
 };
-
 use rini_core::ids::pid_t;
 
 pub const AX_WINDOW_ROLE: &str = "AXWindow";
@@ -40,15 +39,11 @@ impl fmt::Display for Error {
 impl StdError for Error {}
 
 impl From<AXError> for Error {
-    fn from(value: AXError) -> Self {
-        Self::Ax(value)
-    }
+    fn from(value: AXError) -> Self { Self::Ax(value) }
 }
 
 impl AXUIElement {
-    fn new(inner: CFRetained<RawAXUIElement>) -> Self {
-        Self { inner }
-    }
+    fn new(inner: CFRetained<RawAXUIElement>) -> Self { Self { inner } }
 
     #[inline]
     pub fn application(pid: pid_t) -> Self {
@@ -60,14 +55,10 @@ impl AXUIElement {
 
     #[allow(non_snake_case)]
     #[inline]
-    pub fn as_concrete_TypeRef(&self) -> &RawAXUIElement {
-        self.deref()
-    }
+    pub fn as_concrete_TypeRef(&self) -> &RawAXUIElement { self.deref() }
 
     #[inline]
-    pub fn raw_ptr(&self) -> NonNull<RawAXUIElement> {
-        CFRetained::as_ptr(&self.inner)
-    }
+    pub fn raw_ptr(&self) -> NonNull<RawAXUIElement> { CFRetained::as_ptr(&self.inner) }
 
     #[inline]
     pub unsafe fn from_get_rule(ptr: *const RawAXUIElement) -> Self {
@@ -152,30 +143,26 @@ impl AXUIElement {
         Ok(string.to_string())
     }
 
-    pub fn minimized(&self) -> Result<bool> {
-        self.bool_attribute("AXMinimized")
-    }
+    pub fn minimized(&self) -> Result<bool> { self.bool_attribute("AXMinimized") }
 
     /// `kAXModalAttribute`: whether the window is modal. Most windows do not expose the
     /// attribute at all, which comes back as an error and is read as "not modal".
-    pub fn modal(&self) -> Result<bool> {
-        self.bool_attribute("AXModal")
-    }
+    pub fn modal(&self) -> Result<bool> { self.bool_attribute("AXModal") }
+
     pub fn title(&self) -> Result<String> {
         let value = self.copy_required_attribute("AXTitle")?;
         let string = self.downcast::<CFString>(value)?;
         Ok(string.to_string())
     }
 
-    pub fn frontmost(&self) -> Result<bool> {
-        self.bool_attribute("AXFrontmost")
-    }
+    pub fn frontmost(&self) -> Result<bool> { self.bool_attribute("AXFrontmost") }
 
     pub fn main_window(&self) -> Result<AXUIElement> {
         let value = self.copy_required_attribute("AXMainWindow")?;
         let element = self.downcast::<RawAXUIElement>(value)?;
         Ok(AXUIElement::new(element))
     }
+
     pub fn windows(&self) -> Result<Vec<AXUIElement>> {
         let Some(value) = self.copy_attribute("AXWindows")? else {
             return Ok(Vec::new());
@@ -189,6 +176,7 @@ impl AXUIElement {
         }
         Ok(out)
     }
+
     pub fn attribute(&self, name: &'static str) -> Result<Option<CFRetained<CFType>>> {
         self.copy_attribute(name)
     }
@@ -229,17 +217,14 @@ impl AXUIElement {
         let attr = CFString::from_static_str(name);
         self.set_attribute_value(attr.as_ref(), cf_bool.as_ref())
     }
-    pub fn can_resize(&self) -> Result<bool> {
-        self.is_settable("AXSize")
-    }
+
+    pub fn can_resize(&self) -> Result<bool> { self.is_settable("AXSize") }
 }
 
 impl Deref for AXUIElement {
     type Target = RawAXUIElement;
 
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
+    fn deref(&self) -> &Self::Target { &self.inner }
 }
 
 impl PartialEq for AXUIElement {
@@ -263,9 +248,7 @@ impl Hash for AXUIElement {
 }
 
 impl fmt::Debug for AXUIElement {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.deref().fmt(f)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { self.deref().fmt(f) }
 }
 
 fn rect_from_axvalue(value: &AXValue) -> Result<CGRect> {

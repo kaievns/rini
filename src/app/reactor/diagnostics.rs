@@ -60,13 +60,9 @@ pub(crate) fn stale_display_homes(
 mod tests {
     use super::*;
 
-    fn space(id: u64) -> SpaceId {
-        SpaceId::new(id)
-    }
+    fn space(id: u64) -> SpaceId { SpaceId::new(id) }
 
-    fn window(idx: u32) -> WindowId {
-        WindowId::new(1, idx)
-    }
+    fn window(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
     #[test]
     fn the_workspace_command_space_is_preferred_over_everything() {

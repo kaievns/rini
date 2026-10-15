@@ -27,9 +27,7 @@ impl From<WindowInfo> for WindowState {
 }
 
 impl WindowState {
-    pub fn is_effectively_manageable(&self) -> bool {
-        self.is_manageable && !self.ignore_app_rule
-    }
+    pub fn is_effectively_manageable(&self) -> bool { self.is_manageable && !self.ignore_app_rule }
 
     pub fn matches_filter(&self, filter: WindowFilter) -> bool {
         match filter {

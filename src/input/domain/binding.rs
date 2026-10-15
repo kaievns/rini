@@ -333,7 +333,10 @@ mod tests {
     #[test]
     fn only_a_workspace_named_by_name_is_a_workspace_name() {
         let named = |name: &str| WorkspaceReference::Name(name.into());
-        assert_eq!(Action::FocusWorkspace(named("mail")).workspace_name(), Some("mail"));
+        assert_eq!(
+            Action::FocusWorkspace(named("mail")).workspace_name(),
+            Some("mail")
+        );
         assert_eq!(
             Action::MoveWindowToWorkspace(named("code"), true).workspace_name(),
             Some("code")

@@ -1,15 +1,13 @@
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::CGRect;
+use rini_core::ids::{SpaceId, WindowId, pid_t};
 use rini_geometry::SameAs;
-
-use crate::layout::domain::edge_drag::End;
 pub use rini_ipc::protocol::{DisplaySelector, ReactorCommand};
 
+use crate::layout::domain::edge_drag::End;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::request::AppThreadHandle;
 use crate::workspaces::WindowStore;
-use rini_core::ids::SpaceId;
-use rini_core::ids::{WindowId, pid_t};
+use crate::workspaces::domain::display_memory::DisplayMemory;
 
 /// All mutable domain state is owned by the reactor thread.
 ///
@@ -39,9 +37,7 @@ pub struct DragSession {
 
 impl DragSession {
     /// Whether the drag changed its window's size rather than only moving it.
-    pub(crate) fn resized(&self) -> bool {
-        !self.start_frame.size.same_as(self.last_frame.size)
-    }
+    pub(crate) fn resized(&self) -> bool { !self.start_frame.size.same_as(self.last_frame.size) }
 }
 
 #[derive(Debug, Clone)]

@@ -1,13 +1,11 @@
 use objc2_core_foundation::CGRect;
+use rini_core::ids::{SpaceId, WindowId, pid_t};
+use rini_geometry::CGRectDef;
+use rustc_hash::FxHashMap as HashMap;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 use crate::workspaces::{VirtualWorkspaceId, WorkspaceStore};
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowId;
-use rini_core::ids::pid_t;
-use rini_geometry::CGRectDef;
-use rustc_hash::FxHashMap as HashMap;
 
 /// Saved floating frames. This is layout persistence, not workspace catalog
 /// state; callers must remove entries as part of the corresponding window
@@ -184,13 +182,9 @@ mod tests {
 
     use super::*;
 
-    fn workspace() -> VirtualWorkspaceId {
-        KeyData::from_ffi(1).into()
-    }
+    fn workspace() -> VirtualWorkspaceId { KeyData::from_ffi(1).into() }
 
-    fn frame() -> CGRect {
-        CGRect::new(CGPoint::new(10.0, 20.0), CGSize::new(300.0, 200.0))
-    }
+    fn frame() -> CGRect { CGRect::new(CGPoint::new(10.0, 20.0), CGSize::new(300.0, 200.0)) }
 
     #[test]
     fn window_lifecycle_cleanup_removes_all_saved_frames() {

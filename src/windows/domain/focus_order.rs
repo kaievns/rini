@@ -70,9 +70,7 @@ impl FocusOrder {
 
     /// Most recently focused first.
     #[cfg(test)]
-    pub fn iter(&self) -> impl Iterator<Item = WindowId> + '_ {
-        self.recent.iter().copied()
-    }
+    pub fn iter(&self) -> impl Iterator<Item = WindowId> + '_ { self.recent.iter().copied() }
 
     /// Where `window` sits in the order, or `None` if it has never been focused.
     pub fn position(&self, window: WindowId) -> Option<usize> {
@@ -80,23 +78,17 @@ impl FocusOrder {
     }
 
     #[cfg(test)]
-    pub fn len(&self) -> usize {
-        self.recent.len()
-    }
+    pub fn len(&self) -> usize { self.recent.len() }
 
     #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.recent.is_empty()
-    }
+    pub fn is_empty(&self) -> bool { self.recent.is_empty() }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn win(pid: pid_t, idx: u32) -> WindowId {
-        WindowId::new(pid, idx)
-    }
+    fn win(pid: pid_t, idx: u32) -> WindowId { WindowId::new(pid, idx) }
 
     #[test]
     fn the_most_recently_focused_window_is_first() {
@@ -105,10 +97,11 @@ mod tests {
         order.touch(win(1, 2));
         order.touch(win(1, 3));
 
-        assert_eq!(
-            order.iter().collect::<Vec<_>>(),
-            vec![win(1, 3), win(1, 2), win(1, 1)]
-        );
+        assert_eq!(order.iter().collect::<Vec<_>>(), vec![
+            win(1, 3),
+            win(1, 2),
+            win(1, 1)
+        ]);
     }
 
     /// Re-focusing a window already in the list MOVES it rather than adding it again.
@@ -172,10 +165,11 @@ mod tests {
 
         order.rekey(win(1, 2), win(1, 9));
 
-        assert_eq!(
-            order.iter().collect::<Vec<_>>(),
-            vec![win(1, 3), win(1, 9), win(1, 1)]
-        );
+        assert_eq!(order.iter().collect::<Vec<_>>(), vec![
+            win(1, 3),
+            win(1, 9),
+            win(1, 1)
+        ]);
     }
 
     /// Rekeying onto an id that is already listed must not leave the window in twice.
@@ -201,10 +195,11 @@ mod tests {
 
         order.rekey(win(1, 9), win(1, 2));
 
-        assert_eq!(
-            order.iter().collect::<Vec<_>>(),
-            vec![win(1, 3), win(1, 2), win(1, 1)]
-        );
+        assert_eq!(order.iter().collect::<Vec<_>>(), vec![
+            win(1, 3),
+            win(1, 2),
+            win(1, 1)
+        ]);
     }
 
     #[test]

@@ -123,7 +123,8 @@ fn surface_thumbprint(surface: &IOSurfaceRef) -> Option<Vec<u8>> {
                 for down in 0..points {
                     let y = step(row * points + down, height);
                     for across in 0..points {
-                        let pixel = base.add(y * stride + step(column * points + across, width) * 4);
+                        let pixel =
+                            base.add(y * stride + step(column * points + across, width) * 4);
                         for (channel, at) in [2, 1, 0, 3].into_iter().enumerate() {
                             sum[channel] += *pixel.add(at) as usize;
                         }
@@ -139,9 +140,7 @@ fn surface_thumbprint(surface: &IOSurfaceRef) -> Option<Vec<u8>> {
 
 /// The ground of a picture's pixels, read off its body samples, in the colour space
 /// [`ground_space`] names.
-pub fn ground_of(image: &Pixels) -> Option<Ground> {
-    ground(&body_samples(image)?)
-}
+pub fn ground_of(image: &Pixels) -> Option<Ground> { ground(&body_samples(image)?) }
 
 /// The colour space a picture's body is sampled in, and so its ground filled in: a bitmap's own,
 /// read in its own pixel format, and device RGB (`None`) for a surface and for a bitmap whose format
@@ -159,8 +158,10 @@ pub struct SampleFormat {
 }
 
 /// The format of the device RGB context a picture is drawn into when its own cannot be read.
-const RGBA: SampleFormat =
-    SampleFormat { channels: [0, 1, 2, 3], info: CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0) };
+const RGBA: SampleFormat = SampleFormat {
+    channels: [0, 1, 2, 3],
+    info: CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0),
+};
 
 /// How to read the pixels of an image in an RGB space of `bits_per_component` and `bits_per_pixel`
 /// with `info`, drawn into a context of the same: 8 bits a channel, four to a pixel, alpha
@@ -173,7 +174,11 @@ pub fn sample_format(
     bits_per_pixel: usize,
 ) -> Option<SampleFormat> {
     let extra = info.0 & !(CGBitmapInfo::AlphaInfoMask.0 | CGBitmapInfo::ByteOrderInfoMask.0);
-    if model != CGColorSpaceModel::RGB || bits_per_component != 8 || bits_per_pixel != 32 || extra != 0 {
+    if model != CGColorSpaceModel::RGB
+        || bits_per_component != 8
+        || bits_per_pixel != 32
+        || extra != 0
+    {
         return None;
     }
     let alpha = CGImageAlphaInfo(info.0 & CGBitmapInfo::AlphaInfoMask.0);
@@ -272,7 +277,14 @@ impl Drawn {
     /// Its pixels as a handover check reads them: its top-left at `origin` on screen, `scale` pixels a
     /// point.
     pub fn at(&self, origin: ScreenPoint, scale: f64) -> Rgba<'_> {
-        Rgba { width: self.width, height: self.height, stride: self.stride, bytes: &self.bytes, origin, scale }
+        Rgba {
+            width: self.width,
+            height: self.height,
+            stride: self.stride,
+            bytes: &self.bytes,
+            origin,
+            scale,
+        }
     }
 }
 
@@ -439,7 +451,8 @@ mod tests {
         let a = body_samples(&grey.image).unwrap();
         assert_eq!(a.len(), BODY_GRID * BODY_GRID);
         assert!(
-            a.iter().all(|rgba| rgba[..3].iter().all(|c| c.abs_diff(128) <= 1) && rgba[3] == 255),
+            a.iter()
+                .all(|rgba| rgba[..3].iter().all(|c| c.abs_diff(128) <= 1) && rgba[3] == 255),
             "grey body"
         );
 
@@ -470,11 +483,17 @@ mod tests {
         assert!(near(grey, [0.5, 0.5, 0.5, 1.0]), "{grey:?}");
         let surface = Pixels::Surface(test_surface(800, 600, [40, 20, 10, 255]));
         let brown = ground_of(&surface).unwrap();
-        assert!(near(brown, [40.0 / 255.0, 20.0 / 255.0, 10.0 / 255.0, 1.0]), "{brown:?}");
+        assert!(
+            near(brown, [40.0 / 255.0, 20.0 / 255.0, 10.0 / 255.0, 1.0]),
+            "{brown:?}"
+        );
         let surface = Pixels::Surface(test_surface(800, 600, [95, 95, 95, 242]));
         let clear = ground_of(&surface).unwrap();
         let (level, alpha) = (95.0 / 242.0, 242.0 / 255.0);
-        assert!(near(clear, [level, level, level, alpha]), "unpremultiplied: {clear:?}");
+        assert!(
+            near(clear, [level, level, level, alpha]),
+            "unpremultiplied: {clear:?}"
+        );
     }
 
     /// A window picture in Display P3, BGRA premultiplied first in little endian, flat in `p3`,
@@ -484,7 +503,8 @@ mod tests {
         let bgra = CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order32Little.0;
         let ctx = bitmap_context(width, height, &space, CGBitmapInfo(bgra)).unwrap();
         // SAFETY: the four components an RGB space with alpha takes, read during the call.
-        let colour = unsafe { objc2_core_graphics::CGColor::new(Some(&space), p3.as_ptr()) }.unwrap();
+        let colour =
+            unsafe { objc2_core_graphics::CGColor::new(Some(&space), p3.as_ptr()) }.unwrap();
         CGContext::set_fill_color_with_color(Some(&ctx), Some(&colour));
         CGContext::fill_rect(Some(&ctx), rect(0.0, 0.0, width as f64, height as f64));
         CGBitmapContextCreateImage(Some(&ctx)).unwrap()
@@ -492,7 +512,8 @@ mod tests {
 
     fn display_p3() -> CFRetained<CGColorSpace> {
         // SAFETY: Core Graphics' own colour space name.
-        CGColorSpace::with_name(Some(unsafe { objc2_core_graphics::kCGColorSpaceDisplayP3 })).unwrap()
+        CGColorSpace::with_name(Some(unsafe { objc2_core_graphics::kCGColorSpaceDisplayP3 }))
+            .unwrap()
     }
 
     fn is_p3(space: Option<&CGColorSpace>) -> bool {
@@ -506,15 +527,40 @@ mod tests {
     #[test]
     fn sample_format_reads_bgra_premultiplied_first_as_rgba() {
         let rgb = CGColorSpaceModel::RGB;
-        let info = |alpha: CGImageAlphaInfo, order: CGImageByteOrderInfo| CGBitmapInfo(alpha.0 | order.0);
-        let (first, last) = (CGImageAlphaInfo::PremultipliedFirst, CGImageAlphaInfo::PremultipliedLast);
-        let (little, big) = (CGImageByteOrderInfo::Order32Little, CGImageByteOrderInfo::Order32Big);
+        let info =
+            |alpha: CGImageAlphaInfo, order: CGImageByteOrderInfo| CGBitmapInfo(alpha.0 | order.0);
+        let (first, last) = (
+            CGImageAlphaInfo::PremultipliedFirst,
+            CGImageAlphaInfo::PremultipliedLast,
+        );
+        let (little, big) = (
+            CGImageByteOrderInfo::Order32Little,
+            CGImageByteOrderInfo::Order32Big,
+        );
         let bgra = info(first, little);
-        assert_eq!(sample_format(rgb, bgra, 8, 32), Some(SampleFormat { channels: [2, 1, 0, 3], info: bgra }));
-        assert_eq!(sample_format(rgb, info(first, big), 8, 32).unwrap().channels, [1, 2, 3, 0], "ARGB");
-        assert_eq!(sample_format(rgb, info(last, little), 8, 32).unwrap().channels, [3, 2, 1, 0], "ABGR");
+        assert_eq!(
+            sample_format(rgb, bgra, 8, 32),
+            Some(SampleFormat {
+                channels: [2, 1, 0, 3],
+                info: bgra
+            })
+        );
+        assert_eq!(
+            sample_format(rgb, info(first, big), 8, 32).unwrap().channels,
+            [1, 2, 3, 0],
+            "ARGB"
+        );
+        assert_eq!(
+            sample_format(rgb, info(last, little), 8, 32).unwrap().channels,
+            [3, 2, 1, 0],
+            "ABGR"
+        );
         let rgba = info(last, CGImageByteOrderInfo::OrderDefault);
-        assert_eq!(sample_format(rgb, rgba, 8, 32).unwrap().channels, [0, 1, 2, 3], "RGBA");
+        assert_eq!(
+            sample_format(rgb, rgba, 8, 32).unwrap().channels,
+            [0, 1, 2, 3],
+            "RGBA"
+        );
     }
 
     /// What a context of the image's own format would not take, or that is not read a byte a channel,
@@ -524,18 +570,62 @@ mod tests {
     fn sample_format_refuses_16_bit_and_float() {
         let rgb = CGColorSpaceModel::RGB;
         let bgra = CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order32Little.0;
-        assert!(sample_format(rgb, CGBitmapInfo(bgra), 16, 64).is_none(), "16-bit");
-        let float = CGImageAlphaInfo::PremultipliedLast.0 | objc2_core_graphics::CGImageComponentInfo::Float.0;
-        assert!(sample_format(rgb, CGBitmapInfo(float), 32, 128).is_none(), "float");
-        assert!(sample_format(rgb, CGBitmapInfo(float), 8, 32).is_none(), "the float flag alone");
-        assert!(sample_format(rgb, CGBitmapInfo(float | CGImageByteOrderInfo::Order16Little.0), 16, 64).is_none(), "half float");
-        for alpha in [CGImageAlphaInfo::NoneSkipFirst, CGImageAlphaInfo::NoneSkipLast, CGImageAlphaInfo::None, CGImageAlphaInfo::First, CGImageAlphaInfo::Last] {
-            assert!(sample_format(rgb, CGBitmapInfo(alpha.0), 8, 32).is_none(), "{alpha:?}");
+        assert!(
+            sample_format(rgb, CGBitmapInfo(bgra), 16, 64).is_none(),
+            "16-bit"
+        );
+        let float = CGImageAlphaInfo::PremultipliedLast.0
+            | objc2_core_graphics::CGImageComponentInfo::Float.0;
+        assert!(
+            sample_format(rgb, CGBitmapInfo(float), 32, 128).is_none(),
+            "float"
+        );
+        assert!(
+            sample_format(rgb, CGBitmapInfo(float), 8, 32).is_none(),
+            "the float flag alone"
+        );
+        assert!(
+            sample_format(
+                rgb,
+                CGBitmapInfo(float | CGImageByteOrderInfo::Order16Little.0),
+                16,
+                64
+            )
+            .is_none(),
+            "half float"
+        );
+        for alpha in [
+            CGImageAlphaInfo::NoneSkipFirst,
+            CGImageAlphaInfo::NoneSkipLast,
+            CGImageAlphaInfo::None,
+            CGImageAlphaInfo::First,
+            CGImageAlphaInfo::Last,
+        ] {
+            assert!(
+                sample_format(rgb, CGBitmapInfo(alpha.0), 8, 32).is_none(),
+                "{alpha:?}"
+            );
         }
-        let sixteen = CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order16Little.0;
-        assert!(sample_format(rgb, CGBitmapInfo(sixteen), 8, 32).is_none(), "16-bit order");
-        assert!(sample_format(rgb, CGBitmapInfo(bgra | objc2_core_graphics::CGImagePixelFormatInfo::RGB101010.0), 8, 32).is_none(), "packed");
-        assert!(sample_format(CGColorSpaceModel::Monochrome, CGBitmapInfo(bgra), 8, 32).is_none(), "grey");
+        let sixteen =
+            CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order16Little.0;
+        assert!(
+            sample_format(rgb, CGBitmapInfo(sixteen), 8, 32).is_none(),
+            "16-bit order"
+        );
+        assert!(
+            sample_format(
+                rgb,
+                CGBitmapInfo(bgra | objc2_core_graphics::CGImagePixelFormatInfo::RGB101010.0),
+                8,
+                32
+            )
+            .is_none(),
+            "packed"
+        );
+        assert!(
+            sample_format(CGColorSpaceModel::Monochrome, CGBitmapInfo(bgra), 8, 32).is_none(),
+            "grey"
+        );
     }
 
     /// A Display P3 picture's ground is its own P3 components, read without converting the picture,
@@ -547,23 +637,32 @@ mod tests {
         let picture = Pixels::Bitmap(p3_image(800, 600, p3));
         let got = ground_of(&picture).expect("a ground");
         let got = [got.r, got.g, got.b, got.a];
-        assert!(got.iter().zip(p3).all(|(got, want)| (got - want).abs() <= 1.0 / 255.0), "{got:?}");
+        assert!(
+            got.iter().zip(p3).all(|(got, want)| (got - want).abs() <= 1.0 / 255.0),
+            "{got:?}"
+        );
         assert!(is_p3(ground_space(&picture).as_deref()), "kept in P3");
 
         let surface = Pixels::Surface(test_surface(8, 8, [51, 128, 204, 255]));
         assert!(ground_space(&surface).is_none(), "a surface is device RGB");
-        assert!(ground_space(&window((40.0, 30.0), 1.0, (0.5, 0.5, 0.5)).image)
-            .is_some_and(|space| !is_p3(Some(&space))), "a device RGB picture stays so");
+        assert!(
+            ground_space(&window((40.0, 30.0), 1.0, (0.5, 0.5, 0.5)).image)
+                .is_some_and(|space| !is_p3(Some(&space))),
+            "a device RGB picture stays so"
+        );
     }
 
     /// A P3 bitmap and a surface holding its bytes are sampled alike, so a focused look kept from one
     /// is not dropped for a newer picture of the other route showing the same window.
     #[test]
     fn a_p3_bitmap_and_a_surface_of_its_colour_do_not_differ() {
-        let bitmap = body_samples(&Pixels::Bitmap(p3_image(800, 600, [0.2, 0.5, 0.8, 1.0]))).unwrap();
-        let surface = body_samples(&Pixels::Surface(test_surface(800, 600, [51, 128, 204, 255]))).unwrap();
+        let bitmap =
+            body_samples(&Pixels::Bitmap(p3_image(800, 600, [0.2, 0.5, 0.8, 1.0]))).unwrap();
+        let surface =
+            body_samples(&Pixels::Surface(test_surface(800, 600, [51, 128, 204, 255]))).unwrap();
         assert!(!bodies_differ(&bitmap, &surface));
-        let other = body_samples(&Pixels::Surface(test_surface(800, 600, [80, 128, 204, 255]))).unwrap();
+        let other =
+            body_samples(&Pixels::Surface(test_surface(800, 600, [80, 128, 204, 255]))).unwrap();
         assert!(bodies_differ(&bitmap, &other));
     }
 
@@ -619,14 +718,19 @@ mod tests {
         assert_eq!(&drawn.bytes[..4], &[255, 0, 0, 255], "the top row");
         assert_eq!(&drawn.bytes[drawn.stride..drawn.stride + 4], &[0, 0, 255, 255]);
         let read = drawn.at(ScreenPoint::new(10.0, 20.0), 2.0);
-        assert_eq!((read.origin, read.scale, read.bytes.len()), (ScreenPoint::new(10.0, 20.0), 2.0, drawn.stride * 2));
+        assert_eq!(
+            (read.origin, read.scale, read.bytes.len()),
+            (ScreenPoint::new(10.0, 20.0), 2.0, drawn.stride * 2)
+        );
     }
 
     /// A surface is thumbprinted off its pixels, read as RGBA, into one small square whatever its
     /// size: the same content prints the same, other content otherwise.
     #[test]
     fn a_surface_is_thumbprinted_into_one_small_square_whatever_its_size() {
-        let print = |width, height, rgba| surface_thumbprint(&test_surface(width, height, rgba)).expect("printed");
+        let print = |width, height, rgba| {
+            surface_thumbprint(&test_surface(width, height, rgba)).expect("printed")
+        };
         let small = print(60, 40, [10, 20, 30, 255]);
         assert_eq!(small.len(), THUMBPRINT_SIDE * THUMBPRINT_SIDE * 4);
         assert_eq!(small[..4], [10, 20, 30, 255], "RGBA");

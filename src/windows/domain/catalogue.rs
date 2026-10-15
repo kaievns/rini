@@ -3,12 +3,11 @@
 //! workspace a window belongs to is not here; that index is `crate::workspaces::domain::assignment`.
 use std::time::Instant;
 
-use rini_core::ids::SpaceId;
+use rini_core::ids::{SpaceId, WindowId, WindowServerId};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::domain::state::WindowState;
-use rini_core::ids::{WindowId, WindowServerId};
 
 /// The complete reactor-owned state for one AX window identity.
 #[derive(Debug, Default)]
@@ -34,9 +33,7 @@ impl WindowRecord {
         state.is_none() && window_server_id.is_none() && !*last_rule_decision
     }
 
-    pub fn window_server_id(&self) -> Option<WindowServerId> {
-        self.window_server_id
-    }
+    pub fn window_server_id(&self) -> Option<WindowServerId> { self.window_server_id }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,9 +178,7 @@ impl WindowCatalogue {
         self.windows.get(&window_id)
     }
 
-    pub fn contains_window(&self, window_id: WindowId) -> bool {
-        self.window(window_id).is_some()
-    }
+    pub fn contains_window(&self, window_id: WindowId) -> bool { self.window(window_id).is_some() }
 
     pub fn tracked_window_count(&self) -> usize {
         self.windows.values().filter(|record| record.state.is_some()).count()
@@ -323,9 +318,7 @@ impl WindowCatalogue {
     }
 
     pub fn set_visible_windows<I>(&mut self, wsids: I)
-    where
-        I: IntoIterator<Item = WindowServerId>,
-    {
+    where I: IntoIterator<Item = WindowServerId> {
         for wsid in wsids {
             self.mark_window_visible(wsid);
         }
@@ -476,6 +469,7 @@ impl WindowCatalogue {
             self.upsert_native_fullscreen_record(record);
         }
     }
+
     pub fn native_fullscreen_record_for_window(
         &self,
         window_id: WindowId,
@@ -659,9 +653,7 @@ impl WindowCatalogue {
     }
 
     pub fn mark_wsids_recent<I>(&mut self, wsids: I)
-    where
-        I: IntoIterator<Item = WindowServerId>,
-    {
+    where I: IntoIterator<Item = WindowServerId> {
         let now = Instant::now();
         for wsid in wsids {
             self.server_record_mut(wsid).recent_at = Some(now);
@@ -726,8 +718,9 @@ impl WindowCatalogue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use objc2_core_foundation::{CGRect, CGSize};
+
+    use super::*;
     #[test]
     fn authoritative_space_only_record_is_not_pruned() {
         let mut window_store = WindowCatalogue::default();

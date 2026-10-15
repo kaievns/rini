@@ -18,10 +18,10 @@ use rini_skylight_sys::{SLSCaptureWindowsContentsToRectWithOptions, SLSHWCapture
 use crate::pictures::domain::coverage::Coverage;
 use crate::pictures::domain::knowledge::{Call, Learned};
 use crate::pictures::domain::region::{composite_frame, composite_scale, contains, pixel_rect};
+use crate::pictures::domain::route::Route;
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
 use crate::pictures::platform::desktop::DesktopBackdrop;
 use crate::pictures::platform::measure::{first_sight, shows_material};
-use crate::pictures::domain::route::Route;
 use crate::pictures::platform::picture::{LazyGround, Picture, Pixels, image_size};
 use crate::windows::platform::window_server::{READ_CONNECTION, on_screen_windows};
 
@@ -189,12 +189,20 @@ pub fn capture_on_screen(
     }
     if let Some((composite, origin, scale)) = call(&alpha, &[], None, display) {
         for window in alpha {
-            let Some((rect, crop)) = cut(&composite, origin, scale, window.frame) else { continue };
+            let Some((rect, crop)) = cut(&composite, origin, scale, window.frame) else {
+                continue;
+            };
             if learned.get(window.server_id).translucent.is_none() {
                 learned.saw_alpha(window.server_id, first_sight(&crop));
             }
-            match learned.get(window.server_id).after_alpha(learned.active(window.window, key, taken)) {
-                Call::Alpha => pictures.push(region(&window, &composite, rect, taken, Route::SkyLight, false)),
+            match learned.get(window.server_id).after_alpha(learned.active(
+                window.window,
+                key,
+                taken,
+            )) {
+                Call::Alpha => {
+                    pictures.push(region(&window, &composite, rect, taken, Route::SkyLight, false))
+                }
                 Call::Baked => {
                     alone.insert(window.server_id, crop);
                     baked.push(window);
@@ -214,7 +222,11 @@ pub fn capture_on_screen(
                     };
                     if let Some(alone) = alone.get(&window.server_id) {
                         let active = learned.active(window.window, key, taken);
-                        learned.saw_material(window.server_id, shows_material(alone, &crop), active);
+                        learned.saw_material(
+                            window.server_id,
+                            shows_material(alone, &crop),
+                            active,
+                        );
                     }
                     let material = learned.get(window.server_id).material == Some(true);
                     pictures.push(region(&window, &composite, rect, taken, Route::Baked, material));
@@ -285,23 +297,17 @@ fn region(
     carries_blur: bool,
 ) -> (WindowId, Picture) {
     let size = ScreenSize::from_cg(window.frame.size);
-    (
-        window.window,
-        Picture {
-            image: Pixels::Region {
-                composite: composite.clone(),
-                rect,
-            },
-            coverage: Coverage {
-                covered: size,
-                window: size,
-            },
-            source,
-            taken,
-            carries_blur,
-            ground: LazyGround::default(),
+    (window.window, Picture {
+        image: Pixels::Region {
+            composite: composite.clone(),
+            rect,
         },
-    )
+        coverage: Coverage { covered: size, window: size },
+        source,
+        taken,
+        carries_blur,
+        ground: LazyGround::default(),
+    })
 }
 
 /// One framed capture of a window: a new window's at its spawn frame. See "A window that opens" in
@@ -323,11 +329,11 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<Picture>
     let after = crate::windows::platform::window_server::get_window(window).map(|w| w.frame);
     let whole = stayed_wholly_on_a_display(frame, after, &displays);
     let composite = composite.filter(|_| whole);
-    let (image, carries_blur) =
-        match composite.and_then(|composite| with_blur(&framed, &composite)) {
-            Some((merged, merge)) if merge.carries_blur => (merged, true),
-            _ => (framed, false),
-        };
+    let (image, carries_blur) = match composite.and_then(|composite| with_blur(&framed, &composite))
+    {
+        Some((merged, merge)) if merge.carries_blur => (merged, true),
+        _ => (framed, false),
+    };
     Some(Picture {
         image: Pixels::Bitmap(image),
         coverage: framed_coverage(

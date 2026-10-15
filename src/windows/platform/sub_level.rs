@@ -183,9 +183,15 @@ pub fn window_sub_level(wid: u32) -> Option<c_int> {
 
 unsafe fn request_sub_level(port: mach_port_t, wid: u32) -> Result<c_int, Failure> {
     let (request, response) = if objc2::available!(macos = 26.0) {
-        (WINDOW_SUB_LEVEL_REQUEST_POST_TAHOE, WINDOW_SUB_LEVEL_RESPONSE_POST_TAHOE)
+        (
+            WINDOW_SUB_LEVEL_REQUEST_POST_TAHOE,
+            WINDOW_SUB_LEVEL_RESPONSE_POST_TAHOE,
+        )
     } else {
-        (WINDOW_SUB_LEVEL_REQUEST_PRE_TAHOE, WINDOW_SUB_LEVEL_RESPONSE_PRE_TAHOE)
+        (
+            WINDOW_SUB_LEVEL_REQUEST_PRE_TAHOE,
+            WINDOW_SUB_LEVEL_RESPONSE_PRE_TAHOE,
+        )
     };
 
     // SAFETY: every field is an integer, so all zeroes is a valid message.
@@ -210,8 +216,9 @@ unsafe fn request_sub_level(port: mach_port_t, wid: u32) -> Result<c_int, Failur
 
     let header_ptr = core::ptr::addr_of_mut!(msg.0.info.header);
     // SAFETY: an unaligned read of a field of a packed struct this function owns.
-    let local_port =
-        unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(msg.0.info.header.msgh_local_port)) };
+    let local_port = unsafe {
+        core::ptr::read_unaligned(core::ptr::addr_of!(msg.0.info.header.msgh_local_port))
+    };
     // SAFETY: `header_ptr` heads a buffer of `recv_size` bytes, at least `send_size`.
     let kr = unsafe {
         mach_msg(
@@ -261,7 +268,10 @@ mod tests {
     fn a_reply_answers_only_when_received_with_the_expected_id() {
         assert_eq!(answer(KERN_SUCCESS, 0x7747, 0x7747, 3), Ok(3));
         assert_eq!(answer(KERN_SUCCESS, 0x7747, 0x7747, 0), Ok(0));
-        assert_eq!(answer(0x10004003, 0x7747, 0x7747, 3), Err(Failure::Receive(0x10004003)));
+        assert_eq!(
+            answer(0x10004003, 0x7747, 0x7747, 3),
+            Err(Failure::Receive(0x10004003))
+        );
         assert_eq!(
             answer(KERN_SUCCESS, 0x7427, 0x7747, 3),
             Err(Failure::WrongReply { id: 0x7427, expected: 0x7747 })

@@ -60,9 +60,7 @@ pub fn handling(failure: AxFailure) -> Handling {
 /// Used by the periodic sweep, which asks every tracked window for its role and drops the ones whose
 /// element has died. `kAXWindowsAttribute` is space-filtered and cannot answer whether a window
 /// still exists globally, so absence from it proves nothing and only an invalid element does.
-pub fn is_gone(failure: AxFailure) -> bool {
-    matches!(handling(failure), Handling::Retire)
-}
+pub fn is_gone(failure: AxFailure) -> bool { matches!(handling(failure), Handling::Retire) }
 
 /// What an Accessibility observer notification is about.
 ///

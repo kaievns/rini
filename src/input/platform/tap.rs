@@ -120,9 +120,7 @@ const DISABLE_BURST_WINDOW: std::time::Duration = std::time::Duration::from_secs
 const REENABLE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl Default for ReEnableGovernor {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 impl ReEnableGovernor {

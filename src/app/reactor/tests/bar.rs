@@ -35,29 +35,17 @@ impl Drop for Desk {
     }
 }
 
-fn left_ghostty() -> WindowId {
-    WindowId::new(GHOSTTY, 1)
-}
+fn left_ghostty() -> WindowId { WindowId::new(GHOSTTY, 1) }
 
-fn left_zen() -> WindowId {
-    WindowId::new(ZEN, 1)
-}
+fn left_zen() -> WindowId { WindowId::new(ZEN, 1) }
 
-fn right_zen() -> WindowId {
-    WindowId::new(ZEN, 2)
-}
+fn right_zen() -> WindowId { WindowId::new(ZEN, 2) }
 
-fn right_ghostty() -> WindowId {
-    WindowId::new(GHOSTTY, 2)
-}
+fn right_ghostty() -> WindowId { WindowId::new(GHOSTTY, 2) }
 
-fn left_frame() -> CGRect {
-    CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.))
-}
+fn left_frame() -> CGRect { CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.)) }
 
-fn right_frame() -> CGRect {
-    CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.))
-}
+fn right_frame() -> CGRect { CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.)) }
 
 fn desk() -> Desk {
     let mut reactor = test_reactor();
@@ -66,10 +54,10 @@ fn desk() -> Desk {
     let right = SpaceId::new(2);
     let (left_frame, right_frame) = (left_frame(), right_frame());
     set_space_membership(&[(left, &[901, 902]), (right, &[903, 904])]);
-    reactor.handle_test_batch(vec![space_state_event(
-        vec![left_frame, right_frame],
-        vec![Some(left), Some(right)],
-    )]);
+    reactor.handle_test_batch(vec![space_state_event(vec![left_frame, right_frame], vec![
+        Some(left),
+        Some(right),
+    ])]);
     reactor.add_test_app_with_info(GHOSTTY, "com.mitchellh.ghostty", "Ghostty");
     reactor.add_test_app_with_info(ZEN, "app.zen-browser.zen", "Zen");
     for (window, wsid, space, frame, workspace) in [
@@ -117,10 +105,12 @@ fn a_workspace_change_sends_a_model() {
     ))]);
     let sent = models(&mut desk.bar);
     assert_eq!(sent.len(), 1, "one batch, one model");
-    assert_eq!(
-        sent[0].displays[0].rows,
-        vec![Row::Occupied, Row::Shown, Row::Empty, Row::Empty]
-    );
+    assert_eq!(sent[0].displays[0].rows, vec![
+        Row::Occupied,
+        Row::Shown,
+        Row::Empty,
+        Row::Empty
+    ]);
 }
 
 /// A title the bar does not draw is a change the bar never hears about. The focused window's is.
@@ -243,12 +233,14 @@ fn a_config_file_that_cannot_be_used_marks_every_bar_until_one_can() {
 
     let mut config = desk.reactor.config.clone();
     config.settings.mark_failed_config = false;
-    desk.reactor.handle_test_batch(vec![
-        Event::ConfigUpdated(config),
-        Event::ConfigFileRead { usable: false },
-    ]);
+    desk.reactor
+        .handle_test_batch(vec![Event::ConfigUpdated(config), Event::ConfigFileRead {
+            usable: false,
+        }]);
     assert!(
-        models(&mut desk.bar).iter().all(|model| model.displays.iter().all(|d| !d.config_failed)),
+        models(&mut desk.bar)
+            .iter()
+            .all(|model| model.displays.iter().all(|d| !d.config_failed)),
         "turned off, nothing is marked"
     );
 }
@@ -290,14 +282,18 @@ fn occupied_rows_are_per_display() {
         LayoutCommand::SwitchToWorkspace(1),
     ))]);
     let sent = models(&mut desk.bar).pop().expect("the switch is sent");
-    assert_eq!(
-        sent.displays[0].rows,
-        vec![Row::Occupied, Row::Shown, Row::Empty, Row::Empty]
-    );
-    assert_eq!(
-        sent.displays[1].rows,
-        vec![Row::Shown, Row::Empty, Row::Occupied, Row::Empty]
-    );
+    assert_eq!(sent.displays[0].rows, vec![
+        Row::Occupied,
+        Row::Shown,
+        Row::Empty,
+        Row::Empty
+    ]);
+    assert_eq!(sent.displays[1].rows, vec![
+        Row::Shown,
+        Row::Empty,
+        Row::Occupied,
+        Row::Empty
+    ]);
 }
 
 /// The shown workspace's windows, in the order the workspace holds them, each with its
@@ -314,13 +310,10 @@ fn each_display_is_told_its_own_shown_windows() {
             .collect()
     };
     assert_eq!(input.displays[0].uuid, LEFT);
-    assert_eq!(
-        windows(0),
-        vec![
-            (left_ghostty(), "Ghostty".to_string()),
-            (left_zen(), "Zen".to_string())
-        ]
-    );
+    assert_eq!(windows(0), vec![
+        (left_ghostty(), "Ghostty".to_string()),
+        (left_zen(), "Zen".to_string())
+    ]);
     assert_eq!(input.displays[1].uuid, RIGHT);
     assert_eq!(windows(1), vec![(right_zen(), "Zen".to_string())]);
     assert_eq!(input.displays[1].shown, Some(0));
@@ -347,20 +340,22 @@ fn a_display_that_changes_its_frame_sends_a_model() {
     let mut desk = desk();
     let (left, right) = (desk.left, desk.right);
     let wider = CGRect::new(right_frame().origin, CGSize::new(1920., 1080.));
-    desk.reactor.handle_test_batch(vec![space_state_event(
-        vec![left_frame(), wider],
-        vec![Some(left), Some(right)],
-    )]);
+    desk.reactor
+        .handle_test_batch(vec![space_state_event(vec![left_frame(), wider], vec![
+            Some(left),
+            Some(right),
+        ])]);
     let sent = models(&mut desk.bar);
     assert_eq!(sent.len(), 1, "one resize, one model");
     assert_eq!(sent[0].displays[1].uuid, RIGHT);
     assert_eq!(sent[0].displays[1].frame, wider);
 
     let moved = CGRect::new(CGPoint::new(0., -1080.), wider.size);
-    desk.reactor.handle_test_batch(vec![space_state_event(
-        vec![left_frame(), moved],
-        vec![Some(left), Some(right)],
-    )]);
+    desk.reactor
+        .handle_test_batch(vec![space_state_event(vec![left_frame(), moved], vec![
+            Some(left),
+            Some(right),
+        ])]);
     let sent = models(&mut desk.bar);
     assert_eq!(sent.len(), 1, "one move, one model");
     assert_eq!(sent[0].displays[1].frame, moved);

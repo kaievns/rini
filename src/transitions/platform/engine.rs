@@ -40,16 +40,16 @@ use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::domain::motion::tile;
 use crate::animation::platform::overlay::{OverlayTile, TRACE_TARGET, same_layout, window_origin};
 use crate::animation::platform::renderer::{Batch, Render};
+use crate::decorations::domain::style::Worn;
 use crate::pictures::domain::handover::HandoverCheck;
+use crate::pictures::domain::route::Route;
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
 use crate::pictures::domain::stand_in::picture_or_stand_in;
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::domain::watch::{
-    CHANGE_EVERY, CHANGE_TRIES, Client, END_SLACK, LIVE_EVERY, Moment, OnScreen, Settle, Tag, Watch,
-    WatchId, Why,
+    CHANGE_EVERY, CHANGE_TRIES, Client, END_SLACK, LIVE_EVERY, Moment, OnScreen, Settle, Tag,
+    Watch, WatchId, Why,
 };
-use crate::decorations::domain::style::Worn;
-use crate::pictures::domain::route::Route;
 use crate::pictures::platform::picture::Picture;
 use crate::pictures::platform::service::Pictures;
 use crate::pictures::platform::skylight::capture_via_framed;
@@ -57,9 +57,11 @@ use crate::transitions::domain::admission::*;
 use crate::transitions::domain::drawn::{Drawn, Owed};
 use crate::transitions::domain::flight::*;
 use crate::transitions::domain::flight_score::FlightScore;
-use crate::transitions::domain::journal::{Heard, Journalled, OVERLAY_TAKE_PATIENCE, Wearing, measures};
+use crate::transitions::domain::journal::{
+    Heard, Journalled, OVERLAY_TAKE_PATIENCE, Wearing, measures,
+};
 use crate::transitions::domain::lifecycle::{
-    self, Command, EndWatch, Generation, Kind, Start, StageSummary, TileSummary, drawn_focused,
+    self, Command, EndWatch, Generation, Kind, StageSummary, Start, TileSummary, drawn_focused,
     extend_latest, losing_focus,
 };
 use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
@@ -326,9 +328,7 @@ fn band_plan(
     tiles: &[OverlayTile],
     focus: Option<WindowId>,
 ) -> plan::Banding {
-    use crate::animation::domain::motion::z_group::{
-        Band, focus_is_off_strip, stack,
-    };
+    use crate::animation::domain::motion::z_group::{Band, focus_is_off_strip, stack};
     let stacked = stacked_windows(tiles);
     let placements = stack(&stacked, focus);
     let mut within: HashMap<WindowId, usize> = HashMap::default();
@@ -447,7 +447,12 @@ impl RunningAnimation {
     }
 
     /// The flight as composed, for the coordinator.
-    fn stage(&self, shape: Shape, (display, rests): (ScreenRect, bool), opaque: &dyn Fn(WindowId) -> bool) -> StageSummary {
+    fn stage(
+        &self,
+        shape: Shape,
+        (display, rests): (ScreenRect, bool),
+        opaque: &dyn Fn(WindowId) -> bool,
+    ) -> StageSummary {
         summary(
             self.tile_summaries(display),
             self.final_frames.clone(),
@@ -480,7 +485,14 @@ impl RunningAnimation {
         self.tiles
             .iter()
             .filter(|tile| windows.contains(&tile.window))
-            .map(|tile| (tile.window, tile.snapshot.source, tile.snapshot.carries_blur, tile.snapshot.taken))
+            .map(|tile| {
+                (
+                    tile.window,
+                    tile.snapshot.source,
+                    tile.snapshot.carries_blur,
+                    tile.snapshot.taken,
+                )
+            })
             .collect()
     }
 
@@ -541,10 +553,18 @@ impl RunningAnimation {
     /// the leg's start, as frame zero's does, goes on at once, and so does any onto a tile drawn
     /// stretched, with no crop grid to cut (`tile::content_mode`).
     fn waits_for_corner(&self, window: WindowId, picture: &Picture, at: f64) -> bool {
-        let Some(tile) = self.tiles.iter().find(|t| t.window == window) else { return false };
-        let start = self.score.leg_start(window).filter(|_| self.flown).map_or(tile.from.size, Respace::respace);
+        let Some(tile) = self.tiles.iter().find(|t| t.window == window) else {
+            return false;
+        };
+        let start = self
+            .score
+            .leg_start(window)
+            .filter(|_| self.flown)
+            .map_or(tile.from.size, Respace::respace);
         let (covered, source) = (tile.snapshot.coverage.covered, tile.snapshot.source);
-        if tile::content_mode(covered, source, start, tile.to.size) == tile::ContentMode::Stretch || picture.fits(start) {
+        if tile::content_mode(covered, source, start, tile.to.size) == tile::ContentMode::Stretch
+            || picture.fits(start)
+        {
             return false;
         }
         if !self.flown {
@@ -607,7 +627,9 @@ impl RunningAnimation {
     /// `target`'s tile flies `look`, drawn focused and `clipped` or whole, if it fits where the tile
     /// starts. Whether it does.
     fn fly_focused_look(&mut self, target: WindowId, look: Option<Picture>, clipped: bool) -> bool {
-        let Some(tile) = self.tiles.iter_mut().find(|t| t.window == target) else { return false };
+        let Some(tile) = self.tiles.iter_mut().find(|t| t.window == target) else {
+            return false;
+        };
         let Some(look) = look.filter(|look| look.fits(tile.from.size)) else {
             return false;
         };
@@ -708,7 +730,11 @@ impl RunningAnimation {
     fn band(&self, window: WindowId, scale: f64) -> f64 {
         let worn = self.tiles.iter().find(|tile| tile.window == window).map(|tile| tile.worn);
         worn.map_or(0.0, |worn| {
-            crate::decorations::domain::shape::outset(&worn.decoration, worn.wears_ring.worn(), scale)
+            crate::decorations::domain::shape::outset(
+                &worn.decoration,
+                worn.wears_ring.worn(),
+                scale,
+            )
         })
     }
 
@@ -761,7 +787,10 @@ fn target_at(window: WindowId, frame: ScreenRect) -> PictureTarget {
 }
 
 fn targets_at(windows: &[(WindowId, ScreenRect)]) -> Vec<(PictureTarget, ScreenRect)> {
-    windows.iter().map(|&(window, frame)| (target_at(window, frame), frame)).collect()
+    windows
+        .iter()
+        .map(|&(window, frame)| (target_at(window, frame), frame))
+        .collect()
 }
 
 fn server_ids(windows: &[WindowId]) -> Vec<WindowServerId> {
@@ -832,12 +861,19 @@ impl EndWatches {
                 tries: CHANGE_TRIES,
             }),
         ];
-        for (slot, watch) in [&mut self.landing, &mut self.awaiting, &mut self.change].into_iter().zip(watches) {
+        for (slot, watch) in [&mut self.landing, &mut self.awaiting, &mut self.change]
+            .into_iter()
+            .zip(watches)
+        {
             put(slot, watch, pictures);
         }
         let live = (!end.background.is_empty()).then(|| Watch::Live {
             tag,
-            windows: end.background.iter().map(|&(window, frame)| target_at(window, frame)).collect(),
+            windows: end
+                .background
+                .iter()
+                .map(|&(window, frame)| target_at(window, frame))
+                .collect(),
             every: LIVE_EVERY,
             after: self.change,
             initial: end.background_initial,
@@ -846,7 +882,12 @@ impl EndWatches {
     }
 
     fn stop(&mut self, pictures: &Pictures) {
-        for slot in [&mut self.landing, &mut self.awaiting, &mut self.change, &mut self.live] {
+        for slot in [
+            &mut self.landing,
+            &mut self.awaiting,
+            &mut self.change,
+            &mut self.live,
+        ] {
             put(slot, None, pictures);
         }
     }
@@ -936,7 +977,17 @@ pub struct FlightEngine {
 
 impl FlightEngine {
     pub fn new(parts: Parts) -> Self {
-        let Parts { rx, tx, pictures, client, draw, place_frames, on_flight, media, clock } = parts;
+        let Parts {
+            rx,
+            tx,
+            pictures,
+            client,
+            draw,
+            place_frames,
+            on_flight,
+            media,
+            clock,
+        } = parts;
         Self {
             rx,
             tx,
@@ -992,7 +1043,15 @@ impl FlightEngine {
                 self.rests = rests;
                 self.set_display(id, frame, scale, top_band)
             }
-            Event::Animate { windows, focus, focused_before, key, duration, look, cause } => {
+            Event::Animate {
+                windows,
+                focus,
+                focused_before,
+                key,
+                duration,
+                look,
+                cause,
+            } => {
                 self.take_request(cause);
                 self.start(windows, (focus, focused_before), key, duration, look)
             }
@@ -1048,9 +1107,13 @@ impl FlightEngine {
             Event::LooksTurned(windows) => self.drive(lifecycle::Event::LooksTurned(windows)),
             Event::Journal(settings) => self.set_journal(settings),
             Event::Rendered(answer) => self.rendered(answer),
-            Event::MainTurn(turn) => {
-                self.flights.main_turn(turn.began, turn.busy, &turn.actors, turn.outside, &turn.changes)
-            }
+            Event::MainTurn(turn) => self.flights.main_turn(
+                turn.began,
+                turn.busy,
+                &turn.actors,
+                turn.outside,
+                &turn.changes,
+            ),
         }
         self.keep_held();
         self.send_batch();
@@ -1088,7 +1151,9 @@ impl FlightEngine {
             self.flights.set_writing(false);
             self.writer = None;
         } else if self.writer.is_none() {
-            let Some(writer) = Writer::start(rini_core::paths::journal_file()) else { return };
+            let Some(writer) = Writer::start(rini_core::paths::journal_file()) else {
+                return;
+            };
             if let Some(burst) = self.flights.set_writing(true) {
                 writer.send(burst);
             }
@@ -1105,9 +1170,18 @@ impl FlightEngine {
             }
             Command::Settle => self.settle(),
             Command::Release => self.pictures.hold(Hold::Released),
-            Command::AskFrameZero { generation, strip, background, behind } => self
-                .pictures
-                .ask_on_screen(on_screen(self.tag(generation), Moment::FrameZero, &strip, &background, &behind)),
+            Command::AskFrameZero {
+                generation,
+                strip,
+                background,
+                behind,
+            } => self.pictures.ask_on_screen(on_screen(
+                self.tag(generation),
+                Moment::FrameZero,
+                &strip,
+                &background,
+                &behind,
+            )),
             Command::Show => self.shown = self.render(Render::Show),
             Command::Write(frames) => self.owe(self.shown, Owed::Write(frames)),
             Command::Holes(ends) => {
@@ -1124,14 +1198,18 @@ impl FlightEngine {
             Command::StopWatches => self.watches.stop(&self.pictures),
             Command::StartMoving => self.start_moving(now),
             Command::Retarget { .. } => {
-                let held = self.running.as_mut().map(|running| std::mem::take(&mut running.held)).unwrap_or_default();
+                let held = self
+                    .running
+                    .as_mut()
+                    .map(|running| std::mem::take(&mut running.held))
+                    .unwrap_or_default();
                 for pass in held {
                     self.merge_now(pass);
                 }
             }
-            Command::AskFinal { generation, windows, behind } => self
-                .pictures
-                .ask_on_screen(on_screen(self.tag(generation), Moment::Final, &windows, &[], &behind)),
+            Command::AskFinal { generation, windows, behind } => self.pictures.ask_on_screen(
+                on_screen(self.tag(generation), Moment::Final, &windows, &[], &behind),
+            ),
             Command::Swap { generation, window } => self.swap(generation, window, now),
             Command::Snap { window, frame } => self.snap(window, frame, now),
             Command::KeepFocusedLook { generation, window } => {
@@ -1214,7 +1292,11 @@ impl FlightEngine {
     /// The event's batch to the renderer, if it drew anything, stamped as it is sent.
     fn send_batch(&mut self) {
         if let Some((seq, commands)) = self.batch.take() {
-            (self.draw)(Batch { seq, sent: self.now(), commands });
+            (self.draw)(Batch {
+                seq,
+                sent: self.now(),
+                commands,
+            });
         }
     }
 
@@ -1224,8 +1306,18 @@ impl FlightEngine {
     /// sent since draws nothing either.
     fn rendered(&mut self, answer: crate::animation::event::Event) {
         match answer {
-            crate::animation::event::Event::Committed { seq, overlay, shown, places, crops, sent, began, flushed } => {
-                self.flights.drawn(self.now(), seq, (shown, places, crops), (sent, began, flushed));
+            crate::animation::event::Event::Committed {
+                seq,
+                overlay,
+                shown,
+                places,
+                crops,
+                sent,
+                began,
+                flushed,
+            } => {
+                self.flights
+                    .drawn(self.now(), seq, (shown, places, crops), (sent, began, flushed));
                 if overlay.is_some() {
                     self.overlay = overlay;
                 }
@@ -1255,8 +1347,12 @@ impl FlightEngine {
         match landed {
             crate::pictures::event::Event::Taken { .. } => {}
             crate::pictures::event::Event::Delivered { tag, why, sent, pictures } => {
-                let Some(generation) = Generation::for_client(tag, self.client) else { return };
-                let taken = pictures.iter().map(|(window, picture, frame)| (*window, *frame, picture.taken));
+                let Some(generation) = Generation::for_client(tag, self.client) else {
+                    return;
+                };
+                let taken = pictures
+                    .iter()
+                    .map(|(window, picture, frame)| (*window, *frame, picture.taken));
                 self.flights.delivery(self.now(), generation, why, sent, taken);
                 if why == Why::FrameZero {
                     self.frame_zero(generation, pictures);
@@ -1265,16 +1361,27 @@ impl FlightEngine {
                 self.offer(generation, why, pictures);
             }
             crate::pictures::event::Event::Lost { tag, window } => {
-                let Some(generation) = Generation::for_client(tag, self.client) else { return };
-                debug!(pid = window.pid, idx = window.idx.get(), generation = generation.0, "end window's picture will not come");
+                let Some(generation) = Generation::for_client(tag, self.client) else {
+                    return;
+                };
+                debug!(
+                    pid = window.pid,
+                    idx = window.idx.get(),
+                    generation = generation.0,
+                    "end window's picture will not come"
+                );
                 self.drive(lifecycle::Event::Lost { generation, window });
             }
             crate::pictures::event::Event::OverlayTaken { tag, taken } => {
-                let Some(generation) = Generation::for_client(tag, self.client) else { return };
+                let Some(generation) = Generation::for_client(tag, self.client) else {
+                    return;
+                };
                 self.lift_heard(Heard::OverlayTaken { generation, taken });
             }
             crate::pictures::event::Event::Handover { tag, windows } => {
-                let Some(generation) = Generation::for_client(tag, self.client) else { return };
+                let Some(generation) = Generation::for_client(tag, self.client) else {
+                    return;
+                };
                 self.flights.handover(self.now(), generation, windows);
             }
         }
@@ -1282,7 +1389,12 @@ impl FlightEngine {
 
     /// Each delivered picture to the coordinator, which says whether it is swapped in now, held to be
     /// later, or never.
-    fn offer(&mut self, generation: Generation, why: Why, pictures: Vec<(WindowId, Picture, ScreenRect)>) {
+    fn offer(
+        &mut self,
+        generation: Generation,
+        why: Why,
+        pictures: Vec<(WindowId, Picture, ScreenRect)>,
+    ) {
         for (window, picture, frame) in pictures {
             self.delivered.insert(window, (generation, frame, picture));
             self.drive(lifecycle::Event::Picture { generation, window, frame, why });
@@ -1293,13 +1405,19 @@ impl FlightEngine {
     /// will never be swapped in.
     fn keep_held(&mut self) {
         let coordinator = self.flights.coordinator();
-        self.delivered.retain(|window, (generation, frame, _)| coordinator.holds(*window, *generation, *frame));
+        self.delivered.retain(|window, (generation, frame, _)| {
+            coordinator.holds(*window, *generation, *frame)
+        });
     }
 
     /// Frame zero's pictures, put on their tiles while the overlay is not up yet, then the overlay can
     /// go up; once it is up without them, each is offered to its tile as a swap, and frame zero is
     /// never installed again under a moving flight.
-    fn frame_zero(&mut self, generation: Generation, pictures: Vec<(WindowId, Picture, ScreenRect)>) {
+    fn frame_zero(
+        &mut self,
+        generation: Generation,
+        pictures: Vec<(WindowId, Picture, ScreenRect)>,
+    ) {
         if self.flights.coordinator().is_shown() {
             self.offer(generation, Why::FrameZero, pictures);
         } else if self.flights.coordinator().generation() == generation
@@ -1329,10 +1447,16 @@ impl FlightEngine {
     /// One held for the corner of its tile's leg in two steps poses nothing before the motion, and
     /// once the leg plays has it installed again, carrying the picture from the corner.
     fn swap(&mut self, generation: Generation, window: WindowId, now: Instant) {
-        if self.delivered.get(&window).is_none_or(|(delivered, _, _)| *delivered != generation) {
+        if self
+            .delivered
+            .get(&window)
+            .is_none_or(|(delivered, _, _)| *delivered != generation)
+        {
             return;
         }
-        let Some((_, _, picture)) = self.delivered.remove(&window) else { return };
+        let Some((_, _, picture)) = self.delivered.remove(&window) else {
+            return;
+        };
         let server_id = WindowServerId::from(window);
         let clipped = picture.source.clips();
         let at = self.media.at(now);
@@ -1357,7 +1481,13 @@ impl FlightEngine {
             }
             Took::Tile => self.journal_wears(Wearing::Swap, worn),
         }
-        debug!(pid = window.pid, idx = window.idx.get(), generation = generation.0, flown, "picture swapped mid-flight");
+        debug!(
+            pid = window.pid,
+            idx = window.idx.get(),
+            generation = generation.0,
+            flown,
+            "picture swapped mid-flight"
+        );
         if !flown {
             self.reinstall();
             return;
@@ -1389,13 +1519,20 @@ impl FlightEngine {
         );
         if !running.flown {
             let loose = running.plan.position_of(plan::GroupKey::Loose);
-            let (from, to) = (plan::group_relative(tile.from, loose), plan::group_relative(tile.to, loose));
+            let (from, to) = (
+                plan::group_relative(tile.from, loose),
+                plan::group_relative(tile.to, loose),
+            );
             running.plan.entrances.push((tile.window, from, to));
             self.reinstall();
             return;
         }
         let mut entrance = plan::ReflowPlan::empty();
-        entrance.entrances.push((tile.window, plan::installed(tile.from), plan::installed(tile.to)));
+        entrance.entrances.push((
+            tile.window,
+            plan::installed(tile.from),
+            plan::installed(tile.to),
+        ));
         let drawn = running.drawn();
         let pass = Pass {
             plan: &entrance,
@@ -1518,7 +1655,10 @@ impl FlightEngine {
     /// (`Landing`), the picture its tile carries into the leg bent now (`carried_into`). See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
     fn landing(&self, window: WindowId, to: ScreenSize) -> Option<Landing> {
         let running = self.running.as_ref()?;
-        let held = running.held.iter().any(|held| held.shape.waits.grows().any(|grown| grown == window));
+        let held = running
+            .held
+            .iter()
+            .any(|held| held.shape.waits.grows().any(|grown| grown == window));
         let carried = running.carried_into(window, to, self.media.at(self.now()))?;
         Some(Landing { carried, to, held })
     }
@@ -1573,7 +1713,13 @@ impl FlightEngine {
                     floating: request.floating,
                 })
                 .collect();
-            if !self.begin(requested, final_frames.clone(), (focus, focused_before), key, shape.clone()) {
+            if !self.begin(
+                requested,
+                final_frames.clone(),
+                (focus, focused_before),
+                key,
+                shape.clone(),
+            ) {
                 return;
             }
         }
@@ -1649,7 +1795,10 @@ impl FlightEngine {
             );
             let flies = match snapshot {
                 Some(snapshot) => {
-                    let flies = FliesOn::Picture { source: snapshot.source, covered: snapshot.coverage.covered };
+                    let flies = FliesOn::Picture {
+                        source: snapshot.source,
+                        covered: snapshot.coverage.covered,
+                    };
                     let clipped = snapshot.source.clips();
                     let focused = drawn_focused(request.window, drawing_focus, losing);
                     tiles.push(OverlayTile {
@@ -1818,7 +1967,11 @@ impl FlightEngine {
         if let (Some(dressing), Some(display)) = (dressing, display) {
             let strip = dressing.strip.map(|strip| to_overlay_space(strip, display));
             log_dressing(pass.label, &dressing, strip);
-            self.render(Render::Dress { desktop: dressing.desktop, bar: dressing.bar, strip });
+            self.render(Render::Dress {
+                desktop: dressing.desktop,
+                bar: dressing.bar,
+                strip,
+            });
         }
         let (focus, losing) = self.drawing_focus(pass.focus);
         let score = FlightScore::new(pass.look);
@@ -1843,7 +1996,9 @@ impl FlightEngine {
         let composed = running.worn(&running.drawn());
         self.running = Some(running);
         self.journal_wears(Wearing::Compose, composed);
-        let Some(mut stage) = self.stage(pass.shape) else { return };
+        let Some(mut stage) = self.stage(pass.shape) else {
+            return;
+        };
         if let Some(target) = stage.parked_focus()
             && self.fly_focused_look(target)
         {
@@ -1859,7 +2014,10 @@ impl FlightEngine {
         let look = self.pictures.focused(target);
         let clipped = look.as_ref().is_some_and(|look| look.source.clips());
         let worn = look.as_ref().map(|look| (target, look.source, look.carries_blur, look.taken));
-        let flown = self.running.as_mut().is_some_and(|running| running.fly_focused_look(target, look, clipped));
+        let flown = self
+            .running
+            .as_mut()
+            .is_some_and(|running| running.fly_focused_look(target, look, clipped));
         if flown {
             self.journal_wears(Wearing::FocusedLook, worn.into_iter().collect());
         }
@@ -1885,7 +2043,11 @@ impl FlightEngine {
             let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, drawn)| *drawn);
             let (window, focused, worn) = (tile.window, tile.focused, tile.worn);
             if look == Some(window) {
-                drawn.push(Render::Swap { window, picture: tile.snapshot.clone(), clipped: tile.clipped });
+                drawn.push(Render::Swap {
+                    window,
+                    picture: tile.snapshot.clone(),
+                    clipped: tile.clipped,
+                });
                 drawn.push(Render::Focus { window, focused: true });
             } else if was.is_some_and(|(was, _)| was != focused) {
                 drawn.push(Render::Focus { window, focused });
@@ -1910,7 +2072,12 @@ impl FlightEngine {
             .shape
             .waits
             .grows()
-            .filter_map(|window| pass.tiles.iter().find(|tile| tile.window == window).map(|tile| (window, tile.to)))
+            .filter_map(|window| {
+                pass.tiles
+                    .iter()
+                    .find(|tile| tile.window == window)
+                    .map(|tile| (window, tile.to))
+            })
             .collect();
         if !running.flown || (grows.is_empty() && running.held.is_empty()) {
             return self.merge_now(pass);
@@ -1918,7 +2085,10 @@ impl FlightEngine {
         let writes = pass.final_frames.clone();
         running.held.push(pass);
         let Some((display, _)) = self.display else { return };
-        let grows = grows.into_iter().map(|(window, to)| (window, from_overlay_space(to, display))).collect();
+        let grows = grows
+            .into_iter()
+            .map(|(window, to)| (window, from_overlay_space(to, display)))
+            .collect();
         self.drive(lifecycle::Event::HoldMerge { grows, writes });
     }
 
@@ -1946,8 +2116,12 @@ impl FlightEngine {
         let drawn_focused_before: Vec<(WindowId, (bool, Worn))> =
             running.tiles.iter().map(|t| (t.window, (t.focused, t.worn))).collect();
         let (pass_focus, _) = pass.focus;
-        let joining: Vec<WindowId> =
-            pass.tiles.iter().map(|tile| tile.window).filter(|window| !running.drawn().contains(window)).collect();
+        let joining: Vec<WindowId> = pass
+            .tiles
+            .iter()
+            .map(|tile| tile.window)
+            .filter(|window| !running.drawn().contains(window))
+            .collect();
         running.merge_pass(pass.tiles, pass_focus);
         let composed = running.worn(&joining);
         let mut shape = pass.shape;
@@ -1994,15 +2168,12 @@ impl FlightEngine {
                         plan::Member::Rigid { key, rel } => {
                             plan::overlay_of(rel, running.plan.position_of(key))
                         }
-                        plan::Member::Changing { to, .. }
-                        | plan::Member::Entrance { to, .. } => plan::overlay_of(
-                            to,
-                            running.plan.position_of(plan::GroupKey::Loose),
-                        ),
-                        plan::Member::Floating { to, .. } => plan::overlay_of(
-                            to,
-                            running.plan.position_of(plan::GroupKey::Floating),
-                        ),
+                        plan::Member::Changing { to, .. } | plan::Member::Entrance { to, .. } => {
+                            plan::overlay_of(to, running.plan.position_of(plan::GroupKey::Loose))
+                        }
+                        plan::Member::Floating { to, .. } => {
+                            plan::overlay_of(to, running.plan.position_of(plan::GroupKey::Floating))
+                        }
                     });
                     let from_to = running.plan.position_of(*from_key);
                     debug!(
@@ -2105,9 +2276,9 @@ impl FlightEngine {
         let radii = crate::windows::platform::window_server::corner_radii(&ids);
         let real_frames: HashMap<WindowServerId, ScreenRect> =
             crate::windows::platform::window_server::get_windows(&ids)
-            .into_iter()
-            .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
-            .collect();
+                .into_iter()
+                .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
+                .collect();
         let mut tiles = Vec::with_capacity(windows.len());
         let mut waits = Waits::default();
         let mut missing = 0usize;
@@ -2227,7 +2398,9 @@ impl FlightEngine {
         }
         let at = self.media.at(self.now());
         let Some(running) = self.running.as_mut() else { return };
-        let Some(edits) = running.push(&cue, overshoot, duration.as_secs_f64(), at) else { return };
+        let Some(edits) = running.push(&cue, overshoot, duration.as_secs_f64(), at) else {
+            return;
+        };
         let remaining = running.score.remaining(at);
         self.play(edits);
         debug!(
@@ -2321,12 +2494,17 @@ impl FlightEngine {
     /// the last watch named. `None` unless the lift is measured (`journal::measures`).
     fn handover_check(&mut self, generation: Generation) -> Option<HandoverCheck> {
         let windows = std::mem::take(&mut self.ends);
-        if !measures(self.journal.is_some_and(|journal| journal.measure_handover), &windows) {
+        if !measures(
+            self.journal.is_some_and(|journal| journal.measure_handover),
+            &windows,
+        ) {
             return None;
         }
         let (display, scale) = self.display?;
-        let band = |window| self.running.as_ref().map_or(0.0, |running| running.band(window, scale));
-        let windows = windows.into_iter().map(|(window, end)| (window, end, band(window))).collect();
+        let band =
+            |window| self.running.as_ref().map_or(0.0, |running| running.band(window, scale));
+        let windows =
+            windows.into_iter().map(|(window, end)| (window, end, band(window))).collect();
         Some(HandoverCheck {
             tag: self.tag(generation),
             overlay: self.overlay?,
@@ -2343,12 +2521,17 @@ impl FlightEngine {
     fn hold_lift(&mut self, generation: Generation, check: HandoverCheck, now: Instant) {
         let quiet = Owed::Quiet(generation);
         let tx = self.tx.clone();
-        let Some(patience) = RepeatingTimer::every(OVERLAY_TAKE_PATIENCE, move || _ = tx.send(Event::LiftPatience)) else {
+        let Some(patience) =
+            RepeatingTimer::every(OVERLAY_TAKE_PATIENCE, move || _ = tx.send(Event::LiftPatience))
+        else {
             self.hide(vec![quiet]);
             return;
         };
         self.pictures.check_handover(check);
-        self.held = Some(HeldLift { _patience: patience, owed: vec![quiet] });
+        self.held = Some(HeldLift {
+            _patience: patience,
+            owed: vec![quiet],
+        });
         self.flights.lifted(generation, now);
     }
 
@@ -2420,7 +2603,10 @@ impl FlightEngine {
         if targets.is_empty() {
             return;
         }
-        debug!(count = targets.len(), "asking for pictures the flight has none of");
+        debug!(
+            count = targets.len(),
+            "asking for pictures the flight has none of"
+        );
         self.pictures.ask(Ask {
             priority: Priority::Warm,
             targets,
@@ -2467,7 +2653,10 @@ fn log_dressing(
         bar = dressing
             .bar
             .as_ref()
-            .map(|b| format!("{:.0}x{:.0}", b.coverage.covered.width, b.coverage.covered.height))
+            .map(|b| format!(
+                "{:.0}x{:.0}",
+                b.coverage.covered.width, b.coverage.covered.height
+            ))
             .unwrap_or_else(|| "NONE".to_string()),
         strip = strip
             .map(|r| format!(
@@ -2496,11 +2685,11 @@ mod tests {
     fn screen(frame: OverlayRect) -> ScreenRect { from_overlay_space(frame, DISPLAY) }
 
     /// A frame on the strip surface where the viewport at rest shows it.
-    fn seen(frame: SurfaceRect) -> OverlayRect { viewport(SurfacePoint::origin()).transform_rect(&frame) }
-
-    fn wid(idx: u32) -> WindowId {
-        WindowId::new(7, idx)
+    fn seen(frame: SurfaceRect) -> OverlayRect {
+        viewport(SurfacePoint::origin()).transform_rect(&frame)
     }
+
+    fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
 
     /// A flight with nothing in it, composed and not yet moving.
     fn flight() -> RunningAnimation {
@@ -2577,7 +2766,10 @@ mod tests {
         fn end(generation: u64, now: Instant) -> EndWatch {
             EndWatch {
                 generation: Generation(generation),
-                compared: vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0)), (wid(2), rect(867.0, 32.0, 859.0, 1081.0))],
+                compared: vec![
+                    (wid(1), rect(4.0, 32.0, 859.0, 1081.0)),
+                    (wid(2), rect(867.0, 32.0, 859.0, 1081.0)),
+                ],
                 landing: vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0))],
                 awaiting: vec![(wid(2), rect(867.0, 32.0, 859.0, 1081.0))],
                 landing_until: now + Duration::from_millis(150),
@@ -2591,7 +2783,8 @@ mod tests {
         }
 
         #[test]
-        fn the_end_state_is_watched_one_slot_a_kind_and_retargeted_from_one_generation_to_the_next() {
+        fn the_end_state_is_watched_one_slot_a_kind_and_retargeted_from_one_generation_to_the_next()
+        {
             let (pictures, mut commands) = Pictures::detached();
             let client = Client(1);
             let now = Instant::now();
@@ -2601,13 +2794,37 @@ mod tests {
             let first = asked(&mut commands);
             assert_eq!(first.len(), 4, "{first:?}");
             match &first[0] {
-                Asked::Watch(id, Watch::Landing { tag: under, windows, behind, slack, settle, until }) => {
+                Asked::Watch(
+                    id,
+                    Watch::Landing {
+                        tag: under,
+                        windows,
+                        behind,
+                        slack,
+                        settle,
+                        until,
+                    },
+                ) => {
                     assert_eq!(Some(*id), watches.landing);
                     assert_eq!(*under, tag);
                     let target = &windows[0].0;
-                    assert_eq!((target.window, target.server_id), (wid(1), WindowServerId::new(1)));
-                    assert_eq!(*behind, vec![WindowServerId::new(9)], "the strip is captured over them");
-                    assert_eq!((*slack, *settle, *until), (END_SLACK, Settle::AsSoonAsThere, now + Duration::from_millis(150)));
+                    assert_eq!(
+                        (target.window, target.server_id),
+                        (wid(1), WindowServerId::new(1))
+                    );
+                    assert_eq!(
+                        *behind,
+                        vec![WindowServerId::new(9)],
+                        "the strip is captured over them"
+                    );
+                    assert_eq!(
+                        (*slack, *settle, *until),
+                        (
+                            END_SLACK,
+                            Settle::AsSoonAsThere,
+                            now + Duration::from_millis(150)
+                        )
+                    );
                 }
                 other => panic!("{other:?}"),
             }
@@ -2615,25 +2832,45 @@ mod tests {
                 Asked::Watch(id, Watch::Landing { windows, settle, until, .. }) => {
                     assert_eq!(Some(*id), watches.awaiting);
                     assert_eq!(windows[0].0.window, wid(2));
-                    assert_eq!((*settle, *until), (Settle::Repainted, now + HOLD_CAP), "watched as long as it is held for");
+                    assert_eq!(
+                        (*settle, *until),
+                        (Settle::Repainted, now + HOLD_CAP),
+                        "watched as long as it is held for"
+                    );
                 }
                 other => panic!("{other:?}"),
             }
             match &first[2] {
-                Asked::Watch(id, Watch::Change { window, losing, every, tries, .. }) => {
+                Asked::Watch(
+                    id,
+                    Watch::Change {
+                        window, losing, every, tries, ..
+                    },
+                ) => {
                     assert_eq!(Some(*id), watches.change);
                     assert_eq!(window.window, wid(1));
                     let (losing, at) = losing.expect("the window focus leaves, beside it");
-                    assert_eq!((losing.window, losing.size, at), (wid(3), at.size, rect(867.0, 32.0, 859.0, 1081.0)));
+                    assert_eq!(
+                        (losing.window, losing.size, at),
+                        (wid(3), at.size, rect(867.0, 32.0, 859.0, 1081.0))
+                    );
                     assert_eq!((*every, *tries), (CHANGE_EVERY, CHANGE_TRIES));
                 }
                 other => panic!("{other:?}"),
             }
             match &first[3] {
-                Asked::Watch(_, Watch::Live { windows, every, after, initial, .. }) => {
+                Asked::Watch(
+                    _,
+                    Watch::Live {
+                        windows, every, after, initial, ..
+                    },
+                ) => {
                     assert_eq!(windows[0].window, wid(9));
                     assert_eq!(*every, LIVE_EVERY);
-                    assert_eq!(*after, watches.change, "kept fresh once the focus target's look is in");
+                    assert_eq!(
+                        *after, watches.change,
+                        "kept fresh once the focus target's look is in"
+                    );
                     assert_eq!(*initial, Some(now + Duration::from_millis(30)));
                 }
                 other => panic!("{other:?}"),
@@ -2656,28 +2893,50 @@ mod tests {
                 ]),
                 "{second:?}"
             );
-            assert_eq!((watches.awaiting, watches.live), (awaiting, live), "retargeted, not watched afresh");
+            assert_eq!(
+                (watches.awaiting, watches.live),
+                (awaiting, live),
+                "retargeted, not watched afresh"
+            );
             assert_eq!((watches.landing, watches.change), (None, None));
 
             watches.stop(&pictures);
-            assert!(matches!(&asked(&mut commands)[..], [Asked::Stop(_), Asked::Stop(_)]));
+            assert!(matches!(&asked(&mut commands)[..], [
+                Asked::Stop(_),
+                Asked::Stop(_)
+            ]));
             assert_eq!(watches, EndWatches::default());
         }
 
         #[test]
-        fn an_ask_of_windows_on_screen_carries_the_engines_tag_and_each_window_where_it_is_expected() {
+        fn an_ask_of_windows_on_screen_carries_the_engines_tag_and_each_window_where_it_is_expected()
+         {
             let client = Client(1);
             let tag = Tag { client, generation: 5 };
             let at: ScreenRect = rect(4.0, 32.0, 859.0, 1081.0);
             let floating = rect(224.0, 95.0, 600.0, 400.0);
-            let ask = on_screen(tag, Moment::FrameZero, &[(wid(1), at)], &[(wid(9), floating)], &[wid(9)]);
+            let ask = on_screen(
+                tag,
+                Moment::FrameZero,
+                &[(wid(1), at)],
+                &[(wid(9), floating)],
+                &[wid(9)],
+            );
             assert_eq!((ask.tag, ask.moment), (tag, Moment::FrameZero));
             let size = at.size;
-            let target = PictureTarget { window: wid(1), server_id: WindowServerId::new(1), size };
+            let target = PictureTarget {
+                window: wid(1),
+                server_id: WindowServerId::new(1),
+                size,
+            };
             assert_eq!(ask.strip, vec![(target, at)]);
             assert_eq!(ask.background.len(), 1);
             assert_eq!(ask.behind, vec![WindowServerId::new(9)]);
-            assert_eq!(sized_targets(vec![(wid(1), at)]), vec![target], "warmed at the size it ended");
+            assert_eq!(
+                sized_targets(vec![(wid(1), at)]),
+                vec![target],
+                "warmed at the size it ended"
+            );
         }
 
         #[test]
@@ -2687,21 +2946,25 @@ mod tests {
             let next = rect(867.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles.push(stacked(wid(1), next, slot, Some(0), false));
-            running.entrances.push(PendingEntrance { window: wid(2), to: next, floating: true, worn: Default::default() });
+            running.entrances.push(PendingEntrance {
+                window: wid(2),
+                to: next,
+                floating: true,
+                worn: Default::default(),
+            });
             running.final_frames = vec![(wid(1), from_overlay_space(slot, display))];
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
-            let waits = [(wid(2), EndPicture::Awaited), (wid(1), EndPicture::Kept)].into_iter().collect();
+            let waits = [(wid(2), EndPicture::Awaited), (wid(1), EndPicture::Kept)]
+                .into_iter()
+                .collect();
             let stage = running.stage(layout(waits), (display, true), &|window| window == wid(1));
-            assert_eq!(
-                stage.tiles[0],
-                TileSummary {
-                    window: wid(1),
-                    start: rect(2595.0, 32.0, 859.0, 1081.0),
-                    end: rect(1732.0, 32.0, 859.0, 1081.0),
-                    floating: false,
-                }
-            );
+            assert_eq!(stage.tiles[0], TileSummary {
+                window: wid(1),
+                start: rect(2595.0, 32.0, 859.0, 1081.0),
+                end: rect(1732.0, 32.0, 859.0, 1081.0),
+                floating: false,
+            });
             assert_eq!(
                 stage.tiles[1],
                 TileSummary {
@@ -2713,12 +2976,25 @@ mod tests {
                 "a reserved entrance, drawn once its picture is swapped in"
             );
             assert_eq!(stage.final_frames, running.final_frames);
-            assert_eq!(stage.losing_focus, Some(wid(1)), "drawn focused until focus hands over");
+            assert_eq!(
+                stage.losing_focus,
+                Some(wid(1)),
+                "drawn focused until focus hands over"
+            );
             assert_eq!(stage.opaque, vec![wid(1)]);
-            assert_eq!((stage.awaiting, stage.repainting, stage.kept), (vec![wid(2)], vec![wid(1)], vec![wid(1)]));
+            assert_eq!(
+                (stage.awaiting, stage.repainting, stage.kept),
+                (vec![wid(2)], vec![wid(1)], vec![wid(1)])
+            );
             assert_eq!(stage.display, display);
             running.shown_focus = Some(wid(2));
-            assert_eq!(running.stage(layout(Waits::default()), (display, true), &|_| false).losing_focus, None, "handed over");
+            assert_eq!(
+                running
+                    .stage(layout(Waits::default()), (display, true), &|_| false)
+                    .losing_focus,
+                None,
+                "handed over"
+            );
         }
     }
 
@@ -2732,7 +3008,10 @@ mod tests {
             let mut running = flight();
             running.tiles.push(stacked(wid(1), slot, slot, Some(0), false));
             let fresh = test_picture(ScreenSize::new(859.0, 1000.0));
-            let worn = running.wear(vec![(wid(1), fresh.clone(), true), (wid(5), fresh.clone(), true)]);
+            let worn = running.wear(vec![
+                (wid(1), fresh.clone(), true),
+                (wid(5), fresh.clone(), true),
+            ]);
             assert_eq!(worn, vec![wid(1)], "a window with no tile is the cache's alone");
             assert_eq!(running.tiles[0].snapshot.coverage, fresh.coverage);
             assert!(running.tiles[0].clipped, "as it was handed");
@@ -2745,20 +3024,40 @@ mod tests {
             let neighbour = rect(4.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles.push(stacked(wid(1), neighbour, neighbour, Some(1), false));
-            running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false, worn: Default::default() });
+            running.entrances.push(PendingEntrance {
+                window: wid(2),
+                to: slot,
+                floating: false,
+                worn: Default::default(),
+            });
             running.focus = Some(wid(2));
-            let tile = running.admit(wid(2), &test_picture(slot.size), true, || Some(26.0)).expect("admitted");
-            assert_eq!((tile.from, tile.to), (entrance_from(slot), slot), "zero width at its left edge");
+            let tile = running
+                .admit(wid(2), &test_picture(slot.size), true, || Some(26.0))
+                .expect("admitted");
+            assert_eq!(
+                (tile.from, tile.to),
+                (entrance_from(slot), slot),
+                "zero width at its left edge"
+            );
             assert!(tile.focused);
             assert!(tile.clipped, "as it was handed");
             assert_eq!(tile.radius, Some(26.0), "as it was handed");
             assert_eq!(tile.depth, 0, "the entrance leads: raised on open");
             assert!(running.entrances.is_empty());
             let other = running.tiles.iter().find(|t| t.window == wid(1)).unwrap();
-            assert_eq!(other.depth, 2, "its neighbour keeps the server's order, within the band");
+            assert_eq!(
+                other.depth, 2,
+                "its neighbour keeps the server's order, within the band"
+            );
             let unread = || -> Option<f64> { panic!("a radius read for a window not entering") };
-            assert!(running.admit(wid(2), &test_picture(slot.size), false, unread).is_none(), "taken once");
-            assert!(running.admit(wid(1), &test_picture(slot.size), false, unread).is_none(), "not an entrance");
+            assert!(
+                running.admit(wid(2), &test_picture(slot.size), false, unread).is_none(),
+                "taken once"
+            );
+            assert!(
+                running.admit(wid(1), &test_picture(slot.size), false, unread).is_none(),
+                "not an entrance"
+            );
             assert_eq!(running.tiles.len(), 2, "no second tile");
         }
 
@@ -2780,16 +3079,31 @@ mod tests {
                 strip_before: None,
                 strip_after: None,
             };
-            let flies = FliesOn::Picture { source: stand_in.source, covered: stand_in.coverage.covered };
+            let flies = FliesOn::Picture {
+                source: stand_in.source,
+                covered: stand_in.coverage.covered,
+            };
             let display = rect(0.0, 0.0, 1728.0, 1117.0);
-            assert_eq!(EndPicture::of_request(&request, flies, None, request.from, display), EndPicture::Awaited);
+            assert_eq!(
+                EndPicture::of_request(&request, flies, None, request.from, display),
+                EndPicture::Awaited
+            );
             let mut running = flight();
             let mut tile = stacked(wid(1), park, slot, Some(0), false);
             tile.snapshot = stand_in;
             tile.clipped = true;
             running.tiles.push(tile);
             let real = test_picture(slot.size);
-            assert!(matches!(running.take_picture(wid(1), &real, false, || panic!("a radius read for a tile"), 0.0), Took::Tile));
+            assert!(matches!(
+                running.take_picture(
+                    wid(1),
+                    &real,
+                    false,
+                    || panic!("a radius read for a tile"),
+                    0.0
+                ),
+                Took::Tile
+            ));
             assert_eq!(running.tiles.len(), 1, "one tile, never a newcomer's entrance");
             let tile = &running.tiles[0];
             assert_eq!((tile.from, tile.to), (park, slot), "travels as it did");
@@ -2806,23 +3120,61 @@ mod tests {
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles.push(stacked(wid(1), slot, slot, Some(0), false));
-            running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false, worn: Default::default() });
+            running.entrances.push(PendingEntrance {
+                window: wid(2),
+                to: slot,
+                floating: false,
+                worn: Default::default(),
+            });
             running.focused_look = Some(wid(1));
             let picture = test_picture(slot.size);
-            assert!(matches!(running.take_picture(wid(2), &picture, false, || None, 0.0), Took::Entrance(tile) if tile.from == entrance_from(slot)));
-            assert!(matches!(running.take_picture(wid(1), &picture, false, || panic!("a radius read for a tile"), 0.0), Took::Tile));
+            assert!(
+                matches!(running.take_picture(wid(2), &picture, false, || None, 0.0), Took::Entrance(tile) if tile.from == entrance_from(slot))
+            );
+            assert!(matches!(
+                running.take_picture(
+                    wid(1),
+                    &picture,
+                    false,
+                    || panic!("a radius read for a tile"),
+                    0.0
+                ),
+                Took::Tile
+            ));
             assert_eq!(running.focused_look, None);
-            assert!(matches!(running.take_picture(wid(3), &picture, false, || panic!("a radius read for no tile"), 0.0), Took::Nothing));
+            assert!(matches!(
+                running.take_picture(
+                    wid(3),
+                    &picture,
+                    false,
+                    || panic!("a radius read for no tile"),
+                    0.0
+                ),
+                Took::Nothing
+            ));
             assert_eq!(running.tiles.len(), 2);
         }
 
         /// Two columns stepping one column left, frame zero posed.
         fn posed() -> (RunningAnimation, plan::ReflowPlan) {
             let (a, b) = (rect(4.0, 32.0, 859.0, 1081.0), rect(867.0, 32.0, 859.0, 1081.0));
-            let shifted = |frame: ScreenRect, dx: f64| rect(frame.origin.x + dx, frame.origin.y, frame.size.width, frame.size.height);
-            let requests = [(wid(1), a, shifted(a, -863.0), false), (wid(2), b, shifted(b, -863.0), false)];
+            let shifted = |frame: ScreenRect, dx: f64| {
+                rect(
+                    frame.origin.x + dx,
+                    frame.origin.y,
+                    frame.size.width,
+                    frame.size.height,
+                )
+            };
+            let requests = [
+                (wid(1), a, shifted(a, -863.0), false),
+                (wid(2), b, shifted(b, -863.0), false),
+            ];
             let mut running = flight();
-            running.tiles = requests.iter().map(|&(w, from, to, _)| stacked(w, on(from), on(to), Some(0), false)).collect();
+            running.tiles = requests
+                .iter()
+                .map(|&(w, from, to, _)| stacked(w, on(from), on(to), Some(0), false))
+                .collect();
             running.plan = running.score.plan(plan::reflow_plan(&requests, DISPLAY), &Cue::Plain);
             pose(&mut running);
             let again = requests.map(|(w, _, to, floating)| (w, to, shifted(to, -863.0), floating));
@@ -2835,11 +3187,23 @@ mod tests {
         }
 
         fn stage<'a>(plan: &'a plan::FlightPlan, drawn: &'a [WindowId]) -> Stage<'a> {
-            Stage { plan, drawn, seconds: 0.35, cue: Cue::Plain, accents: &[] }
+            Stage {
+                plan,
+                drawn,
+                seconds: 0.35,
+                cue: Cue::Plain,
+                accents: &[],
+            }
         }
 
         fn strip_key(running: &RunningAnimation) -> plan::GroupKey {
-            running.plan.groups.iter().find(|g| g.members.iter().any(|m| m.window == wid(1))).map(|g| g.key).expect("rigid")
+            running
+                .plan
+                .groups
+                .iter()
+                .find(|g| g.members.iter().any(|m| m.window == wid(1)))
+                .map(|g| g.key)
+                .expect("rigid")
         }
 
         /// A push before the flight moves waits for the motion, the latest winning, and plays as the
@@ -2856,11 +3220,19 @@ mod tests {
             let start = running.score.start_moving(&stage(&plan, &drawn), 10.0);
             let key = strip_key(&running);
             let plays = Duration::from_secs_f64(0.35);
-            assert!(start.contains(&Edit::Add(Bounce::from_rest(right, plays).track(key, 10.0))), "the latest push");
+            assert!(
+                start.contains(&Edit::Add(Bounce::from_rest(right, plays).track(key, 10.0))),
+                "the latest push"
+            );
             assert!(!start.contains(&Edit::Add(Bounce::from_rest(left, plays).track(key, 10.0))));
-            let pushed = running.push(&Cue::Plain, OverlayVector::new(0.0, 72.0), 0.35, 10.1).expect("at once");
+            let pushed = running
+                .push(&Cue::Plain, OverlayVector::new(0.0, 72.0), 0.35, 10.1)
+                .expect("at once");
             assert!(!pushed.is_empty());
-            assert!(pushed.iter().all(|e| matches!(e, Edit::Add(t) if t.begin() == 10.1)), "{pushed:?}");
+            assert!(
+                pushed.iter().all(|e| matches!(e, Edit::Add(t) if t.begin() == 10.1)),
+                "{pushed:?}"
+            );
         }
 
         /// A pass before the flight moves is folded into frame zero with its step waiting for the
@@ -2870,7 +3242,10 @@ mod tests {
         fn a_pass_before_the_flight_moves_is_folded_with_its_step_waiting_and_one_after_bends_it() {
             use crate::animation::domain::motion::score::Channel;
             let (mut running, again) = posed();
-            let step = Accent::Step { offset: OverlayVector::new(-576.0, 0.0), seconds: 0.35 };
+            let step = Accent::Step {
+                offset: OverlayVector::new(-576.0, 0.0),
+                seconds: 0.35,
+            };
             let drawn = running.drawn();
             let pass = Pass {
                 plan: &again,
@@ -2884,20 +3259,32 @@ mod tests {
             };
             assert!(running.take_pass(&pass, 10.0).is_none(), "folded");
             let key = strip_key(&running);
-            assert_eq!(running.plan.position_of(key), OverlayPoint::new(-1726.0, 0.0), "both pans from frame zero");
+            assert_eq!(
+                running.plan.position_of(key),
+                OverlayPoint::new(-1726.0, 0.0),
+                "both pans from frame zero"
+            );
             pose(&mut running);
             running.flown = true;
             let (plan, drawn) = (running.plan.clone(), running.drawn());
             let start = running.score.start_moving(&stage(&plan, &drawn), 10.0);
             assert!(start.iter().any(|e| matches!(e, Edit::Add(t) if t.channel() == Channel::Nudge && t.begin() == 10.0)), "the step waited");
 
-            let further = Pass { pan: Some(OverlayVector::new(-863.0, 0.0)), accent: None, ..pass };
+            let further = Pass {
+                pan: Some(OverlayVector::new(-863.0, 0.0)),
+                accent: None,
+                ..pass
+            };
             let (delta, edits) = running.take_pass(&further, 10.1).expect("bent");
             assert!(delta.retargeted_groups.iter().any(|(k, _)| *k == key));
             assert!(edits.iter().any(|e| matches!(e, Edit::Add(t) if t.begin() == 10.1)));
             assert_eq!(running.plan.position_of(key), OverlayPoint::new(-2589.0, 0.0));
             let tile = running.tiles.iter().find(|t| t.window == wid(1)).unwrap();
-            assert_eq!(tile.to.origin.x, 4.0 - 2589.0, "the tile follows the merged plan");
+            assert_eq!(
+                tile.to.origin.x,
+                4.0 - 2589.0,
+                "the tile follows the merged plan"
+            );
         }
 
         /// fold1's lab-C folding (`docs/data/2026-10-10-fold`), its repaint held for the corner before
@@ -2908,34 +3295,76 @@ mod tests {
         /// and one before it is let go where the picture from the press covers the new leg.
         #[test]
         fn a_repaint_held_for_the_corner_is_the_tiles_own_once_no_corner_is_ahead() {
-            let (column, folded) = (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
+            let (column, folded) =
+                (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
             let further = rect(3.0, 600.0, 1148.0, 514.0);
-            for (at, to, held) in [(10.005, further, true), (10.1, further, false), (10.005, column, false)] {
+            for (at, to, held) in [
+                (10.005, further, true),
+                (10.1, further, false),
+                (10.005, column, false),
+            ] {
                 let requests = [(wid(1), column, folded, false)];
                 let mut running = flight();
                 running.tiles = vec![stacked(wid(1), on(column), on(folded), Some(0), false)];
                 running.tiles[0].snapshot = test_picture(column.size);
-                running.plan = running.score.plan(plan::reflow_plan(&requests, DISPLAY), &Cue::Plain);
+                running.plan =
+                    running.score.plan(plan::reflow_plan(&requests, DISPLAY), &Cue::Plain);
                 pose(&mut running);
                 let at_start = test_picture(column.size);
-                assert!(matches!(running.take_picture(wid(1), &at_start, false, || None, 0.0), Took::Tile), "where it starts");
+                assert!(
+                    matches!(
+                        running.take_picture(wid(1), &at_start, false, || None, 0.0),
+                        Took::Tile
+                    ),
+                    "where it starts"
+                );
                 let repaint = test_picture(folded.size);
-                assert!(matches!(running.take_picture(wid(1), &repaint, false, || None, 0.0), Took::Corner));
+                assert!(matches!(
+                    running.take_picture(wid(1), &repaint, false, || None, 0.0),
+                    Took::Corner
+                ));
                 running.flown = true;
                 let (plan, drawn) = (running.plan.clone(), running.drawn());
                 running.score.start_moving(&stage(&plan, &drawn), 10.0);
                 running.turn_corners(10.0);
                 let tile = &running.tiles[0];
-                assert_eq!((tile.snapshot.coverage.covered, tile.from_corner.as_ref().map(|p| p.coverage.covered)), (column.size, Some(folded.size)), "held through the start");
+                assert_eq!(
+                    (
+                        tile.snapshot.coverage.covered,
+                        tile.from_corner.as_ref().map(|p| p.coverage.covered)
+                    ),
+                    (column.size, Some(folded.size)),
+                    "held through the start"
+                );
 
                 let again = plan::reflow_plan(&[(wid(1), folded, to, false)], DISPLAY);
                 let drawn = running.drawn();
-                let pass = Pass { plan: &again, pan: None, focus: None, viewport: VIEWPORT, drawn: &drawn, seconds: 0.35, cue: Cue::Plain, accent: None };
+                let pass = Pass {
+                    plan: &again,
+                    pan: None,
+                    focus: None,
+                    viewport: VIEWPORT,
+                    drawn: &drawn,
+                    seconds: 0.35,
+                    cue: Cue::Plain,
+                    accent: None,
+                };
                 running.take_pass(&pass, at).expect("bent");
                 let tile = &running.tiles[0];
-                let carries = (tile.snapshot.coverage.covered, tile.from_corner.as_ref().map(|p| p.coverage.covered));
-                let expected = if held { (column.size, Some(folded.size)) } else { (folded.size, None) };
-                let expected = if to == column && at < 10.01 { (column.size, None) } else { expected };
+                let carries = (
+                    tile.snapshot.coverage.covered,
+                    tile.from_corner.as_ref().map(|p| p.coverage.covered),
+                );
+                let expected = if held {
+                    (column.size, Some(folded.size))
+                } else {
+                    (folded.size, None)
+                };
+                let expected = if to == column && at < 10.01 {
+                    (column.size, None)
+                } else {
+                    expected
+                };
                 assert_eq!(carries, expected, "bent at {at} to {to:?}");
             }
         }
@@ -2945,7 +3374,8 @@ mod tests {
         /// leg's corner waits for it, though it fits where the flight first started.
         #[test]
         fn a_repaint_landing_after_a_bend_waits_for_the_new_legs_corner() {
-            let (column, folded) = (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
+            let (column, folded) =
+                (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
             let requests = [(wid(1), column, folded, false)];
             let mut running = flight();
             running.tiles = vec![stacked(wid(1), on(column), on(folded), Some(0), false)];
@@ -2959,17 +3389,44 @@ mod tests {
 
             let again = plan::reflow_plan(&[(wid(1), folded, column, false)], DISPLAY);
             let drawn = running.drawn();
-            let pass = Pass { plan: &again, pan: None, focus: None, viewport: VIEWPORT, drawn: &drawn, seconds: 0.35, cue: Cue::Plain, accent: None };
+            let pass = Pass {
+                plan: &again,
+                pan: None,
+                focus: None,
+                viewport: VIEWPORT,
+                drawn: &drawn,
+                seconds: 0.35,
+                cue: Cue::Plain,
+                accent: None,
+            };
             running.take_pass(&pass, 10.1).expect("bent");
             let tile = &running.tiles[0];
-            assert_eq!(tile.snapshot.coverage.covered, folded.size, "past the old corner");
+            assert_eq!(
+                tile.snapshot.coverage.covered, folded.size,
+                "past the old corner"
+            );
             let corner = running.score.corner_at(wid(1)).expect("the new leg in two steps");
             let repaint = test_picture(column.size);
-            assert!(matches!(running.take_picture(wid(1), &repaint, false, || None, corner - 0.001), Took::Corner));
+            assert!(matches!(
+                running.take_picture(wid(1), &repaint, false, || None, corner - 0.001),
+                Took::Corner
+            ));
             let tile = &running.tiles[0];
-            assert_eq!((tile.snapshot.coverage.covered, tile.from_corner.as_ref().map(|p| p.coverage.covered)), (folded.size, Some(column.size)));
+            assert_eq!(
+                (
+                    tile.snapshot.coverage.covered,
+                    tile.from_corner.as_ref().map(|p| p.coverage.covered)
+                ),
+                (folded.size, Some(column.size))
+            );
             let late = test_picture(column.size);
-            assert!(matches!(running.take_picture(wid(1), &late, false, || None, corner + 0.001), Took::Tile), "past the new corner");
+            assert!(
+                matches!(
+                    running.take_picture(wid(1), &late, false, || None, corner + 0.001),
+                    Took::Tile
+                ),
+                "past the new corner"
+            );
         }
 
         /// A stand-in flying a fold, stretched with no crop grid to cut, takes its real picture at
@@ -2977,14 +3434,19 @@ mod tests {
         #[test]
         fn a_stand_in_on_a_fold_takes_its_real_picture_at_once() {
             use crate::pictures::platform::picture::{stand_in_image, stand_in_picture};
-            let (column, folded) = (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
+            let (column, folded) =
+                (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
             assert!(tile::two_steps(column, folded).is_some());
             let mut running = flight();
             let mut tile = stacked(wid(1), on(column), on(folded), Some(0), false);
-            tile.snapshot = stand_in_picture(folded.size.respace(), stand_in_image().expect("drawn"));
+            tile.snapshot =
+                stand_in_picture(folded.size.respace(), stand_in_image().expect("drawn"));
             running.tiles.push(tile);
             let real = test_picture(folded.size);
-            assert!(matches!(running.take_picture(wid(1), &real, false, || None, 0.0), Took::Tile));
+            assert!(matches!(
+                running.take_picture(wid(1), &real, false, || None, 0.0),
+                Took::Tile
+            ));
             let tile = &running.tiles[0];
             assert!(tile.from_corner.is_none());
             assert_ne!(tile.snapshot.source, Route::StandIn);
@@ -3002,18 +3464,34 @@ mod tests {
                 stacked(wid(3), slot, slot, Some(2), false),
             ];
             running.tiles[0].focused = true;
-            running.tiles[1].worn = Worn { wears_ring: Ring::Active, holds_focus: true, ..Worn::default() };
+            running.tiles[1].worn = Worn {
+                wears_ring: Ring::Active,
+                holds_focus: true,
+                ..Worn::default()
+            };
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
-            let focused = |running: &RunningAnimation| running.tiles.iter().map(|t| t.focused).collect::<Vec<_>>();
-            let worn = |running: &RunningAnimation| running.tiles.iter().map(|t| t.worn).collect::<Vec<_>>();
+            let focused = |running: &RunningAnimation| {
+                running.tiles.iter().map(|t| t.focused).collect::<Vec<_>>()
+            };
+            let worn = |running: &RunningAnimation| {
+                running.tiles.iter().map(|t| t.worn).collect::<Vec<_>>()
+            };
             let ends = worn(&running);
             running.draw_focused(wid(1), false);
             assert_eq!(focused(&running), vec![false, false, false]);
-            assert_eq!(losing_focus(running.focus, running.shown_focus), Some(wid(1)), "still leaving it");
+            assert_eq!(
+                losing_focus(running.focus, running.shown_focus),
+                Some(wid(1)),
+                "still leaving it"
+            );
             running.draw_focused(wid(2), true);
             assert_eq!(focused(&running), vec![false, true, false]);
-            assert_eq!(losing_focus(running.focus, running.shown_focus), None, "a later merge moves none");
+            assert_eq!(
+                losing_focus(running.focus, running.shown_focus),
+                None,
+                "a later merge moves none"
+            );
             running.draw_focused(wid(4), true);
             assert_eq!(focused(&running), vec![false, true, false], "no tile");
             assert_eq!(worn(&running), ends, "no turn wears anything");
@@ -3025,33 +3503,76 @@ mod tests {
         fn a_decorated_window_is_holed_in_its_band_as_well() {
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
-            running.tiles = vec![stacked(wid(1), slot, slot, Some(0), false), stacked(wid(2), slot, slot, Some(1), false)];
+            running.tiles = vec![
+                stacked(wid(1), slot, slot, Some(0), false),
+                stacked(wid(2), slot, slot, Some(1), false),
+            ];
             let band = crate::decorations::domain::style::Band {
                 width: 1.3,
-                active: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x7fc8ff)),
-                inactive: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x505050)),
-                urgent: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x9b0000)),
+                active: crate::decorations::domain::paint::Paint::Solid(
+                    crate::decorations::domain::paint::Colour::rgb(0x7fc8ff),
+                ),
+                inactive: crate::decorations::domain::paint::Paint::Solid(
+                    crate::decorations::domain::paint::Colour::rgb(0x505050),
+                ),
+                urgent: crate::decorations::domain::paint::Paint::Solid(
+                    crate::decorations::domain::paint::Colour::rgb(0x9b0000),
+                ),
             };
-            let decoration = crate::decorations::domain::style::Decoration { ring: Some(band), ..Default::default() };
-            running.tiles[0].worn = Worn { decoration, wears_ring: Ring::Inactive, holds_focus: false };
-            running.tiles[1].worn = Worn { decoration, wears_ring: Ring::None, holds_focus: false };
+            let decoration = crate::decorations::domain::style::Decoration {
+                ring: Some(band),
+                ..Default::default()
+            };
+            running.tiles[0].worn = Worn {
+                decoration,
+                wears_ring: Ring::Inactive,
+                holds_focus: false,
+            };
+            running.tiles[1].worn = Worn {
+                decoration,
+                wears_ring: Ring::None,
+                holds_focus: false,
+            };
             let holes = running.holes(vec![(wid(1), slot), (wid(2), slot), (wid(3), slot)], 2.0);
             assert_eq!(holes, vec![(slot, 1.5), (slot, 0.0), (slot, 0.0)]);
-            let bordered = crate::decorations::domain::style::Decoration { border: Some(band), ..decoration };
+            let bordered = crate::decorations::domain::style::Decoration {
+                border: Some(band),
+                ..decoration
+            };
             running.tiles[0].worn.decoration = bordered;
             running.tiles[1].worn.decoration = bordered;
             let holes = running.holes(vec![(wid(1), slot), (wid(2), slot)], 2.0);
-            assert_eq!(holes, vec![(slot, 3.0), (slot, 1.5)], "past the ring outside the border, and past the border");
+            assert_eq!(
+                holes,
+                vec![(slot, 3.0), (slot, 1.5)],
+                "past the ring outside the border, and past the border"
+            );
         }
 
         #[test]
         fn a_parked_focus_target_flies_its_focused_look_only_where_it_fits() {
             let park = rect(-860.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
-            running.tiles.push(stacked(wid(2), park, rect(4.0, 32.0, 859.0, 1081.0), Some(0), false));
-            assert!(!running.fly_focused_look(wid(2), Some(test_picture(ScreenSize::new(600.0, 1081.0))), false), "drawn squashed");
+            running.tiles.push(stacked(
+                wid(2),
+                park,
+                rect(4.0, 32.0, 859.0, 1081.0),
+                Some(0),
+                false,
+            ));
+            assert!(
+                !running.fly_focused_look(
+                    wid(2),
+                    Some(test_picture(ScreenSize::new(600.0, 1081.0))),
+                    false
+                ),
+                "drawn squashed"
+            );
             assert!(!running.fly_focused_look(wid(2), None, false));
-            assert!(!running.fly_focused_look(wid(3), Some(test_picture(park.size)), false), "no tile");
+            assert!(
+                !running.fly_focused_look(wid(3), Some(test_picture(park.size)), false),
+                "no tile"
+            );
             assert_eq!((running.focused_look, running.tiles[0].focused), (None, false));
             let mut look = test_picture(park.size);
             look.coverage.covered.height -= 1.0;
@@ -3078,7 +3599,8 @@ mod tests {
             look.coverage.covered.height -= 1.0;
             assert!(running.fly_focused_look(wid(2), Some(look.clone()), false));
             let next = rect(867.0, 32.0, 859.0, 1081.0);
-            let outcomes = running.merge_pass(vec![stacked(wid(2), park, next, Some(0), false)], None);
+            let outcomes =
+                running.merge_pass(vec![stacked(wid(2), park, next, Some(0), false)], None);
             assert_eq!(outcomes, vec![(wid(2), Admitted::Retargeted)]);
             let tile = running.tiles.iter().find(|t| t.window == wid(2)).unwrap();
             assert_eq!(tile.to, next);
@@ -3086,7 +3608,11 @@ mod tests {
             assert!(tile.focused);
             assert_eq!(running.focused_look, Some(wid(2)));
             running.merge_pass(vec![stacked(wid(2), park, slot, Some(0), false)], Some(wid(2)));
-            assert_eq!(running.focused_look, Some(wid(2)), "a pass naming the same focus moves none");
+            assert_eq!(
+                running.focused_look,
+                Some(wid(2)),
+                "a pass naming the same focus moves none"
+            );
         }
 
         /// A pass moving focus on: the window focused as the flight began is still drawn as its own
@@ -3108,15 +3634,31 @@ mod tests {
             assert!(running.fly_focused_look(wid(2), Some(test_picture(park.size)), false));
             running.merge_pass(vec![stacked(wid(3), park, slot, Some(2), false)], Some(wid(3)));
             let focused = |running: &RunningAnimation| {
-                running.tiles.iter().map(|t| (t.window, t.focused)).collect::<Vec<(WindowId, bool)>>()
+                running
+                    .tiles
+                    .iter()
+                    .map(|t| (t.window, t.focused))
+                    .collect::<Vec<(WindowId, bool)>>()
             };
-            assert_eq!(focused(&running), vec![(wid(1), true), (wid(2), false), (wid(3), false)]);
+            assert_eq!(focused(&running), vec![
+                (wid(1), true),
+                (wid(2), false),
+                (wid(3), false)
+            ]);
             assert_eq!(running.focused_look, None);
             running.draw_focused(wid(1), false);
             running.merge_pass(vec![stacked(wid(4), park, slot, Some(3), false)], Some(wid(4)));
-            assert_eq!(focused(&running)[0], (wid(1), false), "turned unfocused with its own picture, it stays so");
+            assert_eq!(
+                focused(&running)[0],
+                (wid(1), false),
+                "turned unfocused with its own picture, it stays so"
+            );
             running.merge_pass(vec![stacked(wid(1), slot, slot, Some(0), false)], Some(wid(1)));
-            assert_eq!(focused(&running)[0], (wid(1), false), "focus back on it before its focused picture");
+            assert_eq!(
+                focused(&running)[0],
+                (wid(1), false),
+                "focus back on it before its focused picture"
+            );
             running.merge_pass(vec![stacked(wid(3), park, slot, Some(2), false)], Some(wid(3)));
             assert_eq!(focused(&running)[0], (wid(1), false), "and on again");
         }
@@ -3137,12 +3679,17 @@ mod tests {
                 cache.insert(wid(3), test_picture(slot.size));
                 assert!(cache.usable(wid(3)).is_some(), "seed 95: the drawn neighbour");
 
-                let (from, to) =
-                    surface_travel(slot, SurfacePoint::origin(), SurfacePoint::new(861.0, 0.0), false);
+                let (from, to) = surface_travel(
+                    slot,
+                    SurfacePoint::origin(),
+                    SurfacePoint::new(861.0, 0.0),
+                    false,
+                );
                 let mut running = flight();
                 running.tiles.push(stacked(wid(3), from, to, Some(0), false));
                 let real_to = screen(to);
-                running.final_frames = vec![(wid(1), real_to), (wid(2), real_to), (wid(3), real_to)];
+                running.final_frames =
+                    vec![(wid(1), real_to), (wid(2), real_to), (wid(3), real_to)];
                 let tiled: Vec<WindowId> = running.tiles.iter().map(|t| t.window).collect();
                 let real: HashMap<WindowId, ScreenRect> =
                     running.final_frames.iter().copied().collect();
@@ -3199,7 +3746,10 @@ mod tests {
             (tiles, plan::surface_plan(windows, from, to))
         }
 
-        fn composed((tiles, pieces): (Vec<OverlayTile>, plan::ReflowPlan), focus: WindowId) -> RunningAnimation {
+        fn composed(
+            (tiles, pieces): (Vec<OverlayTile>, plan::ReflowPlan),
+            focus: WindowId,
+        ) -> RunningAnimation {
             let mut running = flight();
             running.tiles = tiles;
             running.plan = running.score.plan(pieces, &Cue::Plain);
@@ -3236,8 +3786,15 @@ mod tests {
             (tile.from, tile.to)
         }
 
-        fn piece(running: &RunningAnimation, window: WindowId) -> Option<(plan::GroupKey, OverlayVector)> {
-            let group = running.plan.groups.iter().find(|g| g.members.iter().any(|m| m.window == window))?;
+        fn piece(
+            running: &RunningAnimation,
+            window: WindowId,
+        ) -> Option<(plan::GroupKey, OverlayVector)> {
+            let group = running
+                .plan
+                .groups
+                .iter()
+                .find(|g| g.members.iter().any(|m| m.window == window))?;
             Some((group.key, group.travel))
         }
 
@@ -3248,8 +3805,10 @@ mod tests {
         #[test]
         fn a_second_switch_before_the_flight_moves_carries_the_floating_window_with_the_surface() {
             let (a, b, floater, c) = (wid(1), wid(2), wid(3), wid(4));
-            let column = |row: f64| -> SurfaceRect { rect(4.0, 32.0 + row * PITCH, 1720.0, 1081.0) };
-            let floating = |row: f64| -> SurfaceRect { rect(224.0, 95.0 + row * PITCH, 600.0, 400.0) };
+            let column =
+                |row: f64| -> SurfaceRect { rect(4.0, 32.0 + row * PITCH, 1720.0, 1081.0) };
+            let floating =
+                |row: f64| -> SurfaceRect { rect(224.0, 95.0 + row * PITCH, 600.0, 400.0) };
             let (rest, down) = (SurfacePoint::new(0.0, 0.0), SurfacePoint::new(0.0, PITCH));
             let first = [
                 on_surface(a, column(0.0), false),
@@ -3265,7 +3824,10 @@ mod tests {
             press(&mut running, &second, (rest, down), c, Cue::Plain);
 
             let both = OverlayVector::new(0.0, -2.0 * PITCH);
-            assert_eq!(running.plan.floating_travel, both, "the floating container travels both rows");
+            assert_eq!(
+                running.plan.floating_travel, both,
+                "the floating container travels both rows"
+            );
             let standing = plan::installed(seen(floating(1.0)));
             assert_eq!(
                 running.plan.member(floater),
@@ -3276,7 +3838,11 @@ mod tests {
             assert_eq!(strip.map(|(_, travel)| travel), Some(both));
             assert_eq!(piece(&running, b), strip);
             assert_eq!(piece(&running, c), strip);
-            assert_eq!(path(&running, c), (seen(column(2.0)), seen(column(0.0))), "below B, where the stack has it");
+            assert_eq!(
+                path(&running, c),
+                (seen(column(2.0)), seen(column(0.0))),
+                "below B, where the stack has it"
+            );
             assert_eq!(path(&running, a).1, seen(column(-2.0)));
             assert_eq!(path(&running, floater).1, seen(floating(-1.0)));
         }
@@ -3288,7 +3854,9 @@ mod tests {
             let step = 864.0;
             let column = |x: f64| -> SurfaceRect { rect(x, 32.0, 860.0, 1081.0) };
             let columns = [wid(1), wid(2), wid(3), wid(4)];
-            let at = |i: usize, scrolled: f64| on_surface(columns[i], column(4.0 + (i as f64 - scrolled) * step), false);
+            let at = |i: usize, scrolled: f64| {
+                on_surface(columns[i], column(4.0 + (i as f64 - scrolled) * step), false)
+            };
             let first: Vec<SurfaceWindow> = (0..3).map(|i| at(i, 1.0)).collect();
             let second: Vec<SurfaceWindow> = (1..4).map(|i| at(i, 2.0)).collect();
             let (away, rest) = (SurfacePoint::new(-step, 0.0), SurfacePoint::new(0.0, 0.0));
@@ -3296,7 +3864,10 @@ mod tests {
             press(&mut running, &second, (away, rest), columns[3], Cue::Plain);
 
             let strip = piece(&running, columns[0]);
-            assert_eq!(strip.map(|(_, travel)| travel), Some(OverlayVector::new(-2.0 * step, 0.0)));
+            assert_eq!(
+                strip.map(|(_, travel)| travel),
+                Some(OverlayVector::new(-2.0 * step, 0.0))
+            );
             for window in &columns[1..] {
                 assert_eq!(piece(&running, *window), strip, "{window:?} rides the strip");
             }
@@ -3315,12 +3886,21 @@ mod tests {
             let step = 864.0;
             let column = |x: f64| -> SurfaceRect { rect(x, 32.0, 860.0, 1081.0) };
             let (a, w) = (wid(1), wid(2));
-            let first = [on_surface(a, column(4.0), false), on_surface(w, column(4.0 + step), false)];
-            let second = [on_surface(w, column(4.0), false), on_surface(a, column(4.0 + step), false)];
+            let first = [
+                on_surface(a, column(4.0), false),
+                on_surface(w, column(4.0 + step), false),
+            ];
+            let second = [
+                on_surface(w, column(4.0), false),
+                on_surface(a, column(4.0 + step), false),
+            ];
             let rest = SurfacePoint::new(0.0, 0.0);
             let mut running = composed(movement(&first, rest, rest), a);
             assert_eq!(running.cue, Cue::Plain);
-            let moved = Cue::Move { window: w, direction: rini_ipc::protocol::Direction::Left };
+            let moved = Cue::Move {
+                window: w,
+                direction: rini_ipc::protocol::Direction::Left,
+            };
             press(&mut running, &second, (rest, rest), w, moved);
             assert_eq!(running.cue, moved);
             press(&mut running, &second, (rest, rest), w, Cue::Plain);
@@ -3332,16 +3912,13 @@ mod tests {
     mod depth {
         use rini_ipc::protocol::Direction;
 
-        use super::*;
-        use super::wid;
+        use super::{wid, *};
         use crate::animation::domain::motion::plan::*;
         use crate::animation::domain::motion::surface::SurfaceGeometry;
         use crate::animation::domain::motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
         use crate::transitions::domain::strip_move::tests::staging::*;
 
-        fn column(i: f64) -> OverlayRect {
-            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
-        }
+        fn column(i: f64) -> OverlayRect { rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0) }
 
         /// The plan of `tiles` alone, as a pass plans its requests.
         fn plan_of(tiles: &[OverlayTile]) -> FlightPlan {
@@ -3357,10 +3934,7 @@ mod tests {
         }
 
         fn shifted(frame: OverlayRect, dx: f64, dy: f64) -> OverlayRect {
-            OverlayRect::new(
-                Point::new(frame.origin.x + dx, frame.origin.y + dy),
-                frame.size,
-            )
+            OverlayRect::new(Point::new(frame.origin.x + dx, frame.origin.y + dy), frame.size)
         }
 
         fn depth(flight: &RunningAnimation, window: WindowId) -> usize {
@@ -3851,7 +4425,8 @@ mod tests {
                     (wid(3), at(4.0 + step, width)),
                 ];
                 let windows = surface(&frames, wid(2), Direction::Right);
-                let (from_offset, to_offset) = (SurfacePoint::new(-step, 0.0), SurfacePoint::new(0.0, 0.0));
+                let (from_offset, to_offset) =
+                    (SurfacePoint::new(-step, 0.0), SurfacePoint::new(0.0, 0.0));
                 let plan = FlightPlan::from(surface_plan(&windows, from_offset, to_offset));
                 let mut tiles: Vec<OverlayTile> = windows
                     .iter()
@@ -3918,7 +4493,9 @@ mod tests {
             let mut tiles: Vec<OverlayTile> = second
                 .iter()
                 .enumerate()
-                .map(|(order, &(window, frame))| stacked(window, seen(frame), seen(frame), Some(order), false))
+                .map(|(order, &(window, frame))| {
+                    stacked(window, seen(frame), seen(frame), Some(order), false)
+                })
                 .collect();
             restack(&mut tiles, Some(w));
             let banding = band_plan(&merged, &tiles, Some(w));
@@ -3987,7 +4564,10 @@ mod tests {
         }
 
         /// Puts what it is handed in the outbox, as `sent` makes it.
-        fn sink<T: 'static>(outbox: &Arc<Mutex<Outbox>>, sent: fn(T) -> Sent) -> impl Fn(T) + Send + 'static {
+        fn sink<T: 'static>(
+            outbox: &Arc<Mutex<Outbox>>,
+            sent: fn(T) -> Sent,
+        ) -> impl Fn(T) + Send + 'static {
             let outbox = outbox.clone();
             move |what| outbox.lock().unwrap().push(sent(what))
         }
@@ -4024,7 +4604,8 @@ mod tests {
                     client: CLIENT,
                     draw: Box::new(sink(&outbox, Sent::Drawn)),
                     place_frames: Box::new({
-                        let (place, now, placing) = (sink(&outbox, Sent::Placed), now.clone(), placing.clone());
+                        let (place, now, placing) =
+                            (sink(&outbox, Sent::Placed), now.clone(), placing.clone());
                         move |frames| {
                             *now.lock().unwrap() += *placing.lock().unwrap();
                             place(frames)
@@ -4041,8 +4622,22 @@ mod tests {
                         }
                     }),
                 });
-                let mut harness = Harness { engine, outbox, now, placing, per_read, media, worn: Worn::default() };
-                let display = harness.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND, rests: true });
+                let mut harness = Harness {
+                    engine,
+                    outbox,
+                    now,
+                    placing,
+                    per_read,
+                    media,
+                    worn: Worn::default(),
+                };
+                let display = harness.step(Event::SetDisplay {
+                    id: 1,
+                    frame: DISPLAY,
+                    scale: 2.0,
+                    top_band: BAND,
+                    rests: true,
+                });
                 let committed = harness.committed(only_batch(&display).seq, None);
                 harness.step(committed);
                 harness
@@ -4051,7 +4646,10 @@ mod tests {
             /// One that measures each lift's handover, as `measure-handover` does, the journal unwritten.
             fn measuring() -> Harness {
                 let mut harness = Harness::new();
-                harness.step(Event::Journal(JournalSettings { write: false, measure_handover: true }));
+                harness.step(Event::Journal(JournalSettings {
+                    write: false,
+                    measure_handover: true,
+                }));
                 harness
             }
 
@@ -4064,9 +4662,15 @@ mod tests {
                     writer.send(burst);
                 }
                 self.engine.writer = Some(writer);
-                self.engine.journal = Some(JournalSettings { write: true, measure_handover: false });
+                self.engine.journal = Some(JournalSettings {
+                    write: true,
+                    measure_handover: false,
+                });
                 let ring = bursts.try_recv().expect("the ring, at once");
-                assert!(matches!(ring.marks[..], [Stamped { mark: Mark::Drawn { .. }, .. }]), "{ring:?}");
+                assert!(
+                    matches!(ring.marks[..], [Stamped { mark: Mark::Drawn { .. }, .. }]),
+                    "{ring:?}"
+                );
                 bursts
             }
 
@@ -4088,7 +4692,16 @@ mod tests {
             fn committed(&self, seq: u64, overlay: Option<WindowServerId>) -> Event {
                 let now = self.at();
                 let crops = Crops::default();
-                Event::Rendered(Committed { seq, overlay, shown: None, places: false, crops, sent: now, began: now, flushed: now })
+                Event::Rendered(Committed {
+                    seq,
+                    overlay,
+                    shown: None,
+                    places: false,
+                    crops,
+                    sent: now,
+                    began: now,
+                    flushed: now,
+                })
             }
 
             /// The renderer committed every batch up to `seq`.
@@ -4098,7 +4711,9 @@ mod tests {
             }
 
             /// A pan bringing `wid(1)` from `start` to `end`, pressed now.
-            fn pan(&self) -> Event { self.strip_pan(SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0)) }
+            fn pan(&self) -> Event {
+                self.strip_pan(SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0))
+            }
 
             /// The strip panned on from where `pan` leaves it.
             fn pan_on(&self) -> Event {
@@ -4147,12 +4762,20 @@ mod tests {
                 }
             }
 
-            fn cause(&self) -> Cause { Cause { at: self.at(), what: "move_focus" } }
+            fn cause(&self) -> Cause {
+                Cause {
+                    at: self.at(),
+                    what: "move_focus",
+                }
+            }
 
             /// Frame zero's picture of `wid(1)` where the pan starts it, for the flight running.
             fn frame_zero(&self) -> Event {
                 Event::Pictures(crate::pictures::event::Event::Delivered {
-                    tag: Tag { client: CLIENT, generation: self.generation() },
+                    tag: Tag {
+                        client: CLIENT,
+                        generation: self.generation(),
+                    },
                     why: Why::FrameZero,
                     sent: self.at(),
                     pictures: vec![(wid(1), test_picture(start().size), start())],
@@ -4183,7 +4806,15 @@ mod tests {
         }
 
         fn batches(sent: &[Sent]) -> Vec<&Batch> {
-            sent.iter().filter_map(|sent| if let Sent::Drawn(batch) = sent { Some(batch) } else { None }).collect()
+            sent.iter()
+                .filter_map(|sent| {
+                    if let Sent::Drawn(batch) = sent {
+                        Some(batch)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         }
 
         fn only_batch(sent: &[Sent]) -> &Batch {
@@ -4193,11 +4824,27 @@ mod tests {
         }
 
         fn placed(sent: &[Sent]) -> Vec<Vec<(WindowId, ScreenRect)>> {
-            sent.iter().filter_map(|sent| if let Sent::Placed(frames) = sent { Some(frames.clone()) } else { None }).collect()
+            sent.iter()
+                .filter_map(|sent| {
+                    if let Sent::Placed(frames) = sent {
+                        Some(frames.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         }
 
         fn holds(sent: &[Sent]) -> Vec<Hold> {
-            sent.iter().filter_map(|sent| if let Sent::Asked(Asked::Hold(hold)) = sent { Some(*hold) } else { None }).collect()
+            sent.iter()
+                .filter_map(|sent| {
+                    if let Sent::Asked(Asked::Hold(hold)) = sent {
+                        Some(*hold)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         }
 
         fn kind(command: &Render) -> &'static str {
@@ -4227,8 +4874,23 @@ mod tests {
         /// The begin time of every track the batches' plays add.
         fn begins(sent: &[Sent]) -> Vec<f64> {
             let plays = batches(sent).into_iter().flat_map(|batch| &batch.commands);
-            let edits = plays.filter_map(|command| if let Render::Play { edits, .. } = command { Some(edits) } else { None });
-            edits.flatten().filter_map(|edit| if let Edit::Add(track) = edit { Some(track.begin()) } else { None }).collect()
+            let edits = plays.filter_map(|command| {
+                if let Render::Play { edits, .. } = command {
+                    Some(edits)
+                } else {
+                    None
+                }
+            });
+            edits
+                .flatten()
+                .filter_map(|edit| {
+                    if let Edit::Add(track) = edit {
+                        Some(track.begin())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         }
 
         #[test]
@@ -4239,7 +4901,9 @@ mod tests {
             let asked = sent.iter().position(|sent| {
                 matches!(sent, Sent::Asked(Asked::AskOnScreen(ask)) if ask.moment == Moment::FrameZero)
             });
-            let staged = sent.iter().position(|sent| matches!(sent, Sent::Drawn(batch) if kinds(batch).contains(&"stage")));
+            let staged = sent.iter().position(
+                |sent| matches!(sent, Sent::Drawn(batch) if kinds(batch).contains(&"stage")),
+            );
             assert!(asked.expect("frame zero asked") < staged.expect("frame zero posed"));
         }
 
@@ -4250,7 +4914,11 @@ mod tests {
             h.step(pan);
             let frame_zero = h.frame_zero();
             let sent = h.step(frame_zero);
-            assert_eq!(kinds(only_batch(&sent)), ["stage", "show", "holes", "play"], "posed again with its pictures, holed and moving");
+            assert_eq!(
+                kinds(only_batch(&sent)),
+                ["stage", "show", "holes", "play"],
+                "posed again with its pictures, holed and moving"
+            );
         }
 
         #[test]
@@ -4262,7 +4930,10 @@ mod tests {
             let sent = h.step(frame_zero);
             let shown = only_batch(&sent).seq;
             assert!(placed(&sent).is_empty(), "shown, not drawn");
-            assert!(placed(&h.commit(begun)).is_empty(), "the press's batch shows nothing");
+            assert!(
+                placed(&h.commit(begun)).is_empty(),
+                "the press's batch shows nothing"
+            );
             assert_eq!(placed(&h.commit(shown)), [vec![(wid(1), end())]]);
             assert!(placed(&h.commit(shown)).is_empty(), "written once");
         }
@@ -4275,7 +4946,11 @@ mod tests {
             h.advance(Duration::from_millis(50));
             let pan_on = h.pan_on();
             let sent = h.step(pan_on);
-            assert_eq!(placed(&sent), [vec![(wid(1), rect(-100.0, 0.0, 859.0, 1081.0))]], "in the press's own handler");
+            assert_eq!(
+                placed(&sent),
+                [vec![(wid(1), rect(-100.0, 0.0, 859.0, 1081.0))]],
+                "in the press's own handler"
+            );
         }
 
         #[test]
@@ -4283,7 +4958,10 @@ mod tests {
             let mut h = Harness::new();
             let sent = h.lifted();
             let lift = lift_batch(&sent).expect("lifted").seq;
-            assert!(!holds(&sent).contains(&Hold::Settling), "the overlay may still be on screen");
+            assert!(
+                !holds(&sent).contains(&Hold::Settling),
+                "the overlay may still be on screen"
+            );
             assert_eq!(holds(&h.commit(lift)), [Hold::Settling]);
         }
 
@@ -4304,7 +4982,10 @@ mod tests {
             h.commit(shown);
             h.advance(Duration::from_millis(50));
             let sent = h.step(background(h.generation(), h.at()));
-            assert!(batches(&sent).iter().any(|batch| kinds(batch).contains(&"swap")), "swapped in");
+            assert!(
+                batches(&sent).iter().any(|batch| kinds(batch).contains(&"swap")),
+                "swapped in"
+            );
             assert!(h.engine.delivered.is_empty(), "taken by its tile");
         }
 
@@ -4328,7 +5009,10 @@ mod tests {
             h.step(pan_on);
             assert!(h.generation() > before, "the merge bumps the generation");
             let sent = h.step(background(before, h.at()));
-            assert!(!batches(&sent).iter().any(|batch| kinds(batch).contains(&"swap")), "taken for the end before");
+            assert!(
+                !batches(&sent).iter().any(|batch| kinds(batch).contains(&"swap")),
+                "taken for the end before"
+            );
             assert!(h.engine.delivered.is_empty(), "left to the cache");
         }
 
@@ -4350,8 +5034,10 @@ mod tests {
             let windows = vec![window(1, old), window(2, new)];
             h.engine.pictures.insert(wid(2), test_picture(new.size));
             let (from_offset, to_offset) = (SurfacePoint::origin(), SurfacePoint::new(20.0, 0.0));
-            let final_frames =
-                windows.iter().map(|w| (w.window, screen(w.travel(from_offset, to_offset).1))).collect::<Vec<_>>();
+            let final_frames = windows
+                .iter()
+                .map(|w| (w.window, screen(w.travel(from_offset, to_offset).1)))
+                .collect::<Vec<_>>();
             let ends: Vec<ScreenRect> = final_frames.iter().map(|(_, frame)| *frame).collect();
             let press = Event::AnimateSurface {
                 windows,
@@ -4374,7 +5060,10 @@ mod tests {
             h.commit(shown);
             let changed = |h: &Harness, id, frame: ScreenRect| {
                 Event::Pictures(crate::pictures::event::Event::Delivered {
-                    tag: Tag { client: CLIENT, generation: h.generation() },
+                    tag: Tag {
+                        client: CLIENT,
+                        generation: h.generation(),
+                    },
                     why: Why::FocusChanged,
                     sent: h.at(),
                     pictures: vec![(wid(id), test_picture(frame.size), frame)],
@@ -4382,7 +5071,10 @@ mod tests {
             };
             let target = changed(&h, 2, ends[1]);
             h.step(target);
-            assert!(h.engine.delivered.contains_key(&wid(2)), "held for the old window's turn");
+            assert!(
+                h.engine.delivered.contains_key(&wid(2)),
+                "held for the old window's turn"
+            );
             let losing = changed(&h, 1, ends[0]);
             let sent = h.step(losing);
             assert!(h.engine.delivered.is_empty(), "swapped in with it");
@@ -4392,14 +5084,27 @@ mod tests {
         }
 
         /// A strip pan of `wid(id)` for each of `ids`, side by side from where `pan` starts `wid(1)`.
-        fn strip_of(h: &Harness, ids: &[u32], from_offset: SurfacePoint, to_offset: SurfacePoint) -> Event {
-            let frames: Vec<(u32, SurfaceRect)> =
-                ids.iter().enumerate().map(|(i, &id)| (id, rect(867.0 * (i as f64 + 1.0), 0.0, 859.0, 1081.0))).collect();
+        fn strip_of(
+            h: &Harness,
+            ids: &[u32],
+            from_offset: SurfacePoint,
+            to_offset: SurfacePoint,
+        ) -> Event {
+            let frames: Vec<(u32, SurfaceRect)> = ids
+                .iter()
+                .enumerate()
+                .map(|(i, &id)| (id, rect(867.0 * (i as f64 + 1.0), 0.0, 859.0, 1081.0)))
+                .collect();
             strip_over(h, &frames, from_offset, to_offset)
         }
 
         /// A strip pan of `wid(id)` at each of `frames` on the surface.
-        fn strip_over(h: &Harness, frames: &[(u32, SurfaceRect)], from_offset: SurfacePoint, to_offset: SurfacePoint) -> Event {
+        fn strip_over(
+            h: &Harness,
+            frames: &[(u32, SurfaceRect)],
+            from_offset: SurfacePoint,
+            to_offset: SurfacePoint,
+        ) -> Event {
             let windows: Vec<SurfaceWindow> = frames
                 .iter()
                 .map(|&(id, frame)| SurfaceWindow {
@@ -4412,8 +5117,10 @@ mod tests {
                     from: None,
                 })
                 .collect();
-            let final_frames =
-                windows.iter().map(|w| (w.window, screen(w.travel(from_offset, to_offset).1))).collect();
+            let final_frames = windows
+                .iter()
+                .map(|w| (w.window, screen(w.travel(from_offset, to_offset).1)))
+                .collect();
             Event::AnimateSurface {
                 windows,
                 from_offset,
@@ -4433,7 +5140,10 @@ mod tests {
         /// `wid(id)` parked off the display, where a window with no picture flies as the stand-in.
         fn park(id: u32) {
             let parked: ScreenRect = rect(1727.0, 1085.0, 859.0, 1081.0);
-            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(id), Some(parked.to_cg()));
+            crate::windows::platform::window_server::set_window_frame_override(
+                WindowServerId::new(id),
+                Some(parked.to_cg()),
+            );
         }
 
         /// The tiles every stage and play among `sent` handed the overlay, by window.
@@ -4473,22 +5183,34 @@ mod tests {
             let press = strip_of(&h, &[1, 2], from_offset, to_offset);
             let staged = handed(&h.step(press), wid(2));
             assert!(!staged.is_empty(), "staged");
-            assert!(staged.iter().all(|tile| tile.snapshot.source == Route::StandIn && tile.clipped), "the stand-in, clipped");
+            assert!(
+                staged.iter().all(|tile| tile.snapshot.source == Route::StandIn && tile.clipped),
+                "the stand-in, clipped"
+            );
             h.advance(Duration::from_millis(5));
             let frame_zero = h.frame_zero();
             let shown = only_batch(&h.step(frame_zero)).seq;
             h.commit(shown);
-            assert!(h.engine.running.as_ref().is_some_and(|running| running.flown), "moving");
+            assert!(
+                h.engine.running.as_ref().is_some_and(|running| running.flown),
+                "moving"
+            );
             h.advance(Duration::from_millis(50));
             let lands = rect(867.0, 0.0, 859.0, 1081.0);
             let own = Event::Pictures(crate::pictures::event::Event::Delivered {
-                tag: Tag { client: CLIENT, generation: h.generation() },
+                tag: Tag {
+                    client: CLIENT,
+                    generation: h.generation(),
+                },
                 why: Why::Background,
                 sent: h.at(),
                 pictures: vec![(wid(2), test_picture(lands.size), lands)],
             });
             assert_eq!(swapped(&h.step(own), wid(2)), [false], "whole");
-            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+            crate::windows::platform::window_server::set_window_frame_override(
+                WindowServerId::new(2),
+                None,
+            );
         }
 
         /// Frame zero's pictures are clipped or drawn whole by what each one is, not by what its tile
@@ -4498,25 +5220,48 @@ mod tests {
         fn frame_zeros_pictures_are_clipped_by_what_each_one_is() {
             let mut h = Harness::new();
             park(2);
-            let press = strip_of(&h, &[1, 2], SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0));
+            let press = strip_of(
+                &h,
+                &[1, 2],
+                SurfacePoint::origin(),
+                SurfacePoint::new(867.0, 0.0),
+            );
             let pressed = h.step(press);
-            assert!(handed(&pressed, wid(1)).iter().all(|tile| !tile.clipped), "its picture captured alone");
-            assert!(handed(&pressed, wid(2)).iter().all(|tile| tile.clipped), "the stand-in");
+            assert!(
+                handed(&pressed, wid(1)).iter().all(|tile| !tile.clipped),
+                "its picture captured alone"
+            );
+            assert!(
+                handed(&pressed, wid(2)).iter().all(|tile| tile.clipped),
+                "the stand-in"
+            );
             h.advance(Duration::from_millis(5));
             let mut baked = test_picture(start().size);
             baked.source = Route::Baked;
             let frame_zero = Event::Pictures(crate::pictures::event::Event::Delivered {
-                tag: Tag { client: CLIENT, generation: h.generation() },
+                tag: Tag {
+                    client: CLIENT,
+                    generation: h.generation(),
+                },
                 why: Why::FrameZero,
                 sent: h.at(),
-                pictures: vec![(wid(1), baked, start()), (wid(2), test_picture(start().size), start())],
+                pictures: vec![
+                    (wid(1), baked, start()),
+                    (wid(2), test_picture(start().size), start()),
+                ],
             });
             let sent = h.step(frame_zero);
             let staged = |window| -> Vec<OverlayTile> {
                 only_batch(&sent)
                     .commands
                     .iter()
-                    .filter_map(|command| if let Render::Stage { tiles, .. } = command { Some(tiles) } else { None })
+                    .filter_map(|command| {
+                        if let Render::Stage { tiles, .. } = command {
+                            Some(tiles)
+                        } else {
+                            None
+                        }
+                    })
                     .flatten()
                     .filter(|tile| tile.window == window)
                     .cloned()
@@ -4524,9 +5269,19 @@ mod tests {
             };
             let (one, two) = (staged(wid(1)), staged(wid(2)));
             assert!(!one.is_empty() && !two.is_empty(), "both staged again");
-            assert!(one.iter().all(|tile| tile.snapshot.source == Route::Baked && tile.clipped), "baked");
-            assert!(two.iter().all(|tile| tile.snapshot.source == Route::ScreenCaptureKit && !tile.clipped), "captured alone");
-            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+            assert!(
+                one.iter().all(|tile| tile.snapshot.source == Route::Baked && tile.clipped),
+                "baked"
+            );
+            assert!(
+                two.iter()
+                    .all(|tile| tile.snapshot.source == Route::ScreenCaptureKit && !tile.clipped),
+                "captured alone"
+            );
+            crate::windows::platform::window_server::set_window_frame_override(
+                WindowServerId::new(2),
+                None,
+            );
         }
 
         /// A tile that joins a moving flight is dressed as it rides in, clipped as any other: a parked
@@ -4542,17 +5297,30 @@ mod tests {
             let mut baked = test_picture(end().size);
             baked.source = Route::Baked;
             h.engine.pictures.insert(wid(3), baked);
-            let merge = strip_of(&h, &[1, 2, 3], SurfacePoint::new(867.0, 0.0), SurfacePoint::new(967.0, 0.0));
+            let merge = strip_of(
+                &h,
+                &[1, 2, 3],
+                SurfacePoint::new(867.0, 0.0),
+                SurfacePoint::new(967.0, 0.0),
+            );
             let sent = h.step(merge);
             let joined = |window| {
                 let tiles = handed(&sent, window);
                 assert!(!tiles.is_empty(), "{window:?} rides in");
                 tiles
             };
-            assert!(joined(wid(2)).iter().all(|tile| tile.snapshot.source == Route::StandIn && tile.clipped), "the stand-in");
+            assert!(
+                joined(wid(2))
+                    .iter()
+                    .all(|tile| tile.snapshot.source == Route::StandIn && tile.clipped),
+                "the stand-in"
+            );
             assert!(joined(wid(3)).iter().all(|tile| tile.clipped), "baked");
             assert!(joined(wid(1)).iter().all(|tile| !tile.clipped), "captured alone");
-            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+            crate::windows::platform::window_server::set_window_frame_override(
+                WindowServerId::new(2),
+                None,
+            );
         }
 
         /// A merge that moves focus onto a parked window flies its focused look, swapped onto its tile
@@ -4568,14 +5336,26 @@ mod tests {
                 let mut look = test_picture(end().size);
                 look.source = route;
                 h.engine.pictures.hold_focused(wid(2), look);
-                let mut merge = strip_of(&h, &[1, 2], SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0));
+                let mut merge = strip_of(
+                    &h,
+                    &[1, 2],
+                    SurfacePoint::origin(),
+                    SurfacePoint::new(867.0, 0.0),
+                );
                 if let Event::AnimateSurface { focus, .. } = &mut merge {
                     *focus = Some(wid(2));
                 }
                 let sent = h.step(merge);
-                assert_eq!(h.engine.running.as_ref().and_then(|running| running.focused_look), Some(wid(2)), "flown");
+                assert_eq!(
+                    h.engine.running.as_ref().and_then(|running| running.focused_look),
+                    Some(wid(2)),
+                    "flown"
+                );
                 assert_eq!(swapped(&sent, wid(2)), [clipped], "{route:?}");
-                crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+                crate::windows::platform::window_server::set_window_frame_override(
+                    WindowServerId::new(2),
+                    None,
+                );
             }
         }
 
@@ -4584,7 +5364,13 @@ mod tests {
             batches(sent)
                 .into_iter()
                 .flat_map(|batch| &batch.commands)
-                .filter_map(|command| if let Render::Wear { window, worn } = command { Some((*window, *worn)) } else { None })
+                .filter_map(|command| {
+                    if let Render::Wear { window, worn } = command {
+                        Some((*window, *worn))
+                    } else {
+                        None
+                    }
+                })
                 .collect()
         }
 
@@ -4594,7 +5380,11 @@ mod tests {
         #[test]
         fn a_merge_moving_focus_wears_each_flying_tiles_new_end_at_once() {
             let mut h = Harness::new();
-            h.worn = Worn { wears_ring: Ring::Active, holds_focus: true, ..Worn::default() };
+            h.worn = Worn {
+                wears_ring: Ring::Active,
+                holds_focus: true,
+                ..Worn::default()
+            };
             let (_, shown) = h.shown();
             h.commit(shown);
             h.advance(Duration::from_millis(50));
@@ -4602,17 +5392,36 @@ mod tests {
             assert!(worn_again(&h.step(unchanged)).is_empty(), "the same end");
             park(2);
             let leaving = Worn::default();
-            let gaining = Worn { wears_ring: Ring::Active, holds_focus: true, ..Worn::default() };
-            let mut merge = strip_of(&h, &[1, 2], SurfacePoint::new(967.0, 0.0), SurfacePoint::new(1834.0, 0.0));
+            let gaining = Worn {
+                wears_ring: Ring::Active,
+                holds_focus: true,
+                ..Worn::default()
+            };
+            let mut merge = strip_of(
+                &h,
+                &[1, 2],
+                SurfacePoint::new(967.0, 0.0),
+                SurfacePoint::new(1834.0, 0.0),
+            );
             if let Event::AnimateSurface { windows, focus, .. } = &mut merge {
                 *focus = Some(wid(2));
                 windows[0].worn = leaving;
                 windows[1].worn = gaining;
             }
             let sent = h.step(merge);
-            assert_eq!(worn_again(&sent), [(wid(1), leaving)], "at once, and only the tile already flying");
-            assert!(handed(&sent, wid(2)).iter().all(|tile| tile.worn == gaining), "dressed with its own");
-            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+            assert_eq!(
+                worn_again(&sent),
+                [(wid(1), leaving)],
+                "at once, and only the tile already flying"
+            );
+            assert!(
+                handed(&sent, wid(2)).iter().all(|tile| tile.worn == gaining),
+                "dressed with its own"
+            );
+            crate::windows::platform::window_server::set_window_frame_override(
+                WindowServerId::new(2),
+                None,
+            );
         }
 
         /// A layout pass of `wid(1)` from `start` to `end` and of each of `others` from and to its
@@ -4647,7 +5456,10 @@ mod tests {
         }
 
         fn report_corners(id: u32, corners: Option<Vec<f64>>) {
-            crate::windows::platform::window_server::set_corner_radii_override(WindowServerId::new(id), corners);
+            crate::windows::platform::window_server::set_corner_radii_override(
+                WindowServerId::new(id),
+                corners,
+            );
         }
 
         /// Every tile rounds to the radius the window server reports for its window, read as the flight
@@ -4660,7 +5472,9 @@ mod tests {
             let parked = rect(1727.0, 1085.0, 859.0, 1081.0);
             let slot = rect(867.0, 0.0, 859.0, 1081.0);
             let composes: [(&str, fn(&Harness, ScreenRect, ScreenRect) -> Event); 2] = [
-                ("a layout pass", |h, parked, slot| pass_of(h, &[(2, parked, slot)])),
+                ("a layout pass", |h, parked, slot| {
+                    pass_of(h, &[(2, parked, slot)])
+                }),
                 ("a strip movement", |h, _, _| {
                     strip_of(h, &[1, 2], SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0))
                 }),
@@ -4675,10 +5489,22 @@ mod tests {
                     assert!(!tiles.is_empty(), "{what}: {window:?} flies");
                     tiles.iter().map(|tile| tile.radius).collect::<Vec<_>>()
                 };
-                assert!(radii(wid(1)).iter().all(|radius| *radius == Some(26.0)), "{what}: its own");
-                assert!(radii(wid(2)).iter().all(Option::is_none), "{what}: none reported");
-                assert!(handed(&sent, wid(2)).iter().all(|tile| tile.snapshot.source == Route::StandIn), "{what}");
-                crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+                assert!(
+                    radii(wid(1)).iter().all(|radius| *radius == Some(26.0)),
+                    "{what}: its own"
+                );
+                assert!(
+                    radii(wid(2)).iter().all(Option::is_none),
+                    "{what}: none reported"
+                );
+                assert!(
+                    handed(&sent, wid(2)).iter().all(|tile| tile.snapshot.source == Route::StandIn),
+                    "{what}"
+                );
+                crate::windows::platform::window_server::set_window_frame_override(
+                    WindowServerId::new(2),
+                    None,
+                );
             }
             report_corners(1, None);
             report_corners(2, None);
@@ -4693,12 +5519,25 @@ mod tests {
             park(2);
             let ring = crate::decorations::domain::style::Band {
                 width: 4.0,
-                active: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x7fc8ff)),
-                inactive: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x505050)),
-                urgent: crate::decorations::domain::paint::Paint::Solid(crate::decorations::domain::paint::Colour::rgb(0x9b0000)),
+                active: crate::decorations::domain::paint::Paint::Solid(
+                    crate::decorations::domain::paint::Colour::rgb(0x7fc8ff),
+                ),
+                inactive: crate::decorations::domain::paint::Paint::Solid(
+                    crate::decorations::domain::paint::Colour::rgb(0x505050),
+                ),
+                urgent: crate::decorations::domain::paint::Paint::Solid(
+                    crate::decorations::domain::paint::Colour::rgb(0x9b0000),
+                ),
             };
-            let decoration = crate::decorations::domain::style::Decoration { ring: Some(ring), ..Default::default() };
-            let worn = |wears_ring, holds_focus| Worn { decoration, wears_ring, holds_focus };
+            let decoration = crate::decorations::domain::style::Decoration {
+                ring: Some(ring),
+                ..Default::default()
+            };
+            let worn = |wears_ring, holds_focus| Worn {
+                decoration,
+                wears_ring,
+                holds_focus,
+            };
             let request = |id: u32, from, to, worn| AnimationRequest {
                 window: wid(id),
                 server_id: WindowServerId::new(id),
@@ -4713,7 +5552,12 @@ mod tests {
             let press = Event::Animate {
                 windows: vec![
                     request(1, start(), end(), worn(Ring::None, false)),
-                    request(2, parked, rect(867.0, 0.0, 859.0, 1081.0), worn(Ring::Active, true)),
+                    request(
+                        2,
+                        parked,
+                        rect(867.0, 0.0, 859.0, 1081.0),
+                        worn(Ring::Active, true),
+                    ),
                 ],
                 focus: Some(wid(2)),
                 focused_before: Some(wid(1)),
@@ -4729,10 +5573,16 @@ mod tests {
                 tiles.iter().map(|tile| (tile.worn, tile.focused)).collect::<Vec<_>>()
             };
             let losing = (worn(Ring::None, false), true);
-            assert!(staged(wid(1)).iter().all(|drawn| *drawn == losing), "losing focus");
+            assert!(
+                staged(wid(1)).iter().all(|drawn| *drawn == losing),
+                "losing focus"
+            );
             let target = (worn(Ring::Active, true), false);
             assert!(staged(wid(2)).iter().all(|drawn| *drawn == target), "the target");
-            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+            crate::windows::platform::window_server::set_window_frame_override(
+                WindowServerId::new(2),
+                None,
+            );
         }
 
         /// A window that opens has no radius to read until it has drawn: its entrance takes the one the
@@ -4742,11 +5592,20 @@ mod tests {
             let mut h = Harness::new();
             let slot = rect(867.0, 0.0, 859.0, 1081.0);
             let unlaid: ScreenRect = rect(867.0, 0.0, 0.0, 0.0);
-            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), Some(unlaid.to_cg()));
+            crate::windows::platform::window_server::set_window_frame_override(
+                WindowServerId::new(2),
+                Some(unlaid.to_cg()),
+            );
             report_corners(2, Some(vec![12.0; 4]));
             let pass = pass_of(&h, &[(2, slot, slot)]);
             h.step(pass);
-            assert!(h.engine.running.as_ref().is_some_and(|running| running.entrances.iter().any(|e| e.window == wid(2))), "reserved");
+            assert!(
+                h.engine
+                    .running
+                    .as_ref()
+                    .is_some_and(|running| running.entrances.iter().any(|e| e.window == wid(2))),
+                "reserved"
+            );
             h.advance(Duration::from_millis(5));
             let frame_zero = h.frame_zero();
             let shown = only_batch(&h.step(frame_zero)).seq;
@@ -4754,25 +5613,41 @@ mod tests {
             h.advance(Duration::from_millis(50));
             report_corners(2, Some(vec![26.0; 4]));
             let landed = Event::Pictures(crate::pictures::event::Event::Delivered {
-                tag: Tag { client: CLIENT, generation: h.generation() },
+                tag: Tag {
+                    client: CLIENT,
+                    generation: h.generation(),
+                },
                 why: Why::Background,
                 sent: h.at(),
                 pictures: vec![(wid(2), test_picture(slot.size), slot)],
             });
             let joined = handed(&h.step(landed), wid(2));
             assert!(!joined.is_empty(), "joined");
-            assert!(joined.iter().all(|tile| tile.radius == Some(26.0)), "{:?}", joined.iter().map(|t| t.radius).collect::<Vec<_>>());
-            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(2), None);
+            assert!(
+                joined.iter().all(|tile| tile.radius == Some(26.0)),
+                "{:?}",
+                joined.iter().map(|t| t.radius).collect::<Vec<_>>()
+            );
+            crate::windows::platform::window_server::set_window_frame_override(
+                WindowServerId::new(2),
+                None,
+            );
             report_corners(2, None);
         }
 
         /// `windows`' repaints where they end, delivered under the flight's generation now.
         fn repainted(h: &Harness, windows: &[(u32, ScreenRect)]) -> Event {
             Event::Pictures(crate::pictures::event::Event::Delivered {
-                tag: Tag { client: CLIENT, generation: h.generation() },
+                tag: Tag {
+                    client: CLIENT,
+                    generation: h.generation(),
+                },
                 why: Why::Landed,
                 sent: h.at(),
-                pictures: windows.iter().map(|&(id, frame)| (wid(id), test_picture(frame.size), frame)).collect(),
+                pictures: windows
+                    .iter()
+                    .map(|&(id, frame)| (wid(id), test_picture(frame.size), frame))
+                    .collect(),
             })
         }
 
@@ -4783,9 +5658,16 @@ mod tests {
             h.engine.pictures.insert(wid(2), test_picture(end().size));
             let beside = rect(867.0, 0.0, 859.0, 1081.0);
             for (id, frame) in [(1, start()), (2, beside)] {
-                crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(id), Some(frame.to_cg()));
+                crate::windows::platform::window_server::set_window_frame_override(
+                    WindowServerId::new(id),
+                    Some(frame.to_cg()),
+                );
             }
-            let press = pass_of(&h, &[(2, beside, beside.translate(ScreenVector::new(-10.0, 0.0)))]);
+            let press = pass_of(&h, &[(
+                2,
+                beside,
+                beside.translate(ScreenVector::new(-10.0, 0.0)),
+            )]);
             h.step(press);
             h.advance(Duration::from_millis(5));
             let frame_zero = h.frame_zero();
@@ -4796,23 +5678,31 @@ mod tests {
             assert!(kinds(only_batch(&ticked)).contains(&"play"), "moving");
             h.advance(Duration::from_millis(60));
             for id in [1, 2] {
-                crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(id), None);
+                crate::windows::platform::window_server::set_window_frame_override(
+                    WindowServerId::new(id),
+                    None,
+                );
             }
             h
         }
 
-        fn plays(sent: &[Sent]) -> bool { batches(sent).iter().any(|batch| kinds(batch).contains(&"play")) }
+        fn plays(sent: &[Sent]) -> bool {
+            batches(sent).iter().any(|batch| kinds(batch).contains(&"play"))
+        }
 
         /// Where the running flight ends `window`'s tile.
         fn tile_to(h: &Harness, window: u32) -> Option<OverlayRect> {
-            h.engine.running.as_ref().and_then(|running| running.tiles.iter().find(|tile| tile.window == wid(window)).map(|tile| tile.to))
+            h.engine.running.as_ref().and_then(|running| {
+                running.tiles.iter().find(|tile| tile.window == wid(window)).map(|tile| tile.to)
+            })
         }
 
         /// A pass growing a window while the flight moves writes it at once and draws nothing of it
         /// until its repaint lands: then, in one drain, the tile is bent from where it is drawn at that
         /// moment and the repaint goes onto it.
         #[test]
-        fn a_grow_merged_while_the_flight_moves_retargets_once_it_repaints_from_where_its_tile_is_drawn() {
+        fn a_grow_merged_while_the_flight_moves_retargets_once_it_repaints_from_where_its_tile_is_drawn()
+         {
             let mut h = moving_pair();
             let grown = rect(0.0, 0.0, 1300.0, 1081.0);
             let press = resize_of(&h, &[(1, end(), grown)]);
@@ -4824,11 +5714,20 @@ mod tests {
             let sent = h.step(landed);
             let batch = only_batch(&sent);
             let order = kinds(batch);
-            let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
-            assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
+            let (play, swap) = (
+                order.iter().position(|k| *k == "play"),
+                order.iter().position(|k| *k == "swap"),
+            );
+            assert!(
+                play.is_some_and(|play| swap.is_some_and(|swap| play < swap)),
+                "{order:?}"
+            );
             let at = h.media.at(h.at());
             let begins = begins(&sent);
-            assert!(!begins.is_empty() && begins.iter().all(|begin| (begin - at).abs() < 1e-9), "{begins:?} from {at}");
+            assert!(
+                !begins.is_empty() && begins.iter().all(|begin| (begin - at).abs() < 1e-9),
+                "{begins:?} from {at}"
+            );
             let to = tile_to(&h, 1);
             assert_eq!(to, Some(on(grown)));
         }
@@ -4846,8 +5745,12 @@ mod tests {
         #[test]
         fn a_held_passs_first_repaint_is_kept_until_it_merges() {
             let mut h = moving_pair();
-            let (first, second) = (rect(0.0, 0.0, 1000.0, 1081.0), rect(700.0, 0.0, 1000.0, 1081.0));
-            let press = resize_of(&h, &[(1, end(), first), (2, rect(857.0, 0.0, 859.0, 1081.0), second)]);
+            let (first, second) =
+                (rect(0.0, 0.0, 1000.0, 1081.0), rect(700.0, 0.0, 1000.0, 1081.0));
+            let press = resize_of(&h, &[
+                (1, end(), first),
+                (2, rect(857.0, 0.0, 859.0, 1081.0), second),
+            ]);
             h.step(press);
             h.advance(Duration::from_millis(80));
             let one = repainted(&h, &[(1, first)]);
@@ -4863,9 +5766,11 @@ mod tests {
         /// whose repaint has not come, ends wider than the picture its tile still carries from the
         /// press: it is held too, and the repaint where it ends goes onto the tile as both merge.
         #[test]
-        fn a_shrink_superseding_a_held_grow_ending_wider_than_its_tiles_picture_waits_for_its_repaint() {
+        fn a_shrink_superseding_a_held_grow_ending_wider_than_its_tiles_picture_waits_for_its_repaint()
+         {
             let mut h = moving_pair();
-            let (grown, narrower) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
+            let (grown, narrower) =
+                (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
             let press = resize_of(&h, &[(1, end(), grown)]);
             h.step(press);
             h.advance(Duration::from_millis(40));
@@ -4877,8 +5782,14 @@ mod tests {
             let landed = repainted(&h, &[(1, narrower)]);
             let sent = h.step(landed);
             let order = kinds(only_batch(&sent));
-            let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
-            assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
+            let (play, swap) = (
+                order.iter().position(|k| *k == "play"),
+                order.iter().position(|k| *k == "swap"),
+            );
+            assert!(
+                play.is_some_and(|play| swap.is_some_and(|swap| play < swap)),
+                "{order:?}"
+            );
             let to = tile_to(&h, 1);
             assert_eq!(to, Some(on(narrower)));
         }
@@ -4896,12 +5807,22 @@ mod tests {
             h.advance(Duration::from_millis(40));
             let press = resize_of(&h, &[(2, sent, latest)]);
             assert!(plays(&h.step(press)), "at once");
-            assert!(h.engine.running.as_ref().is_some_and(|running| running.held.is_empty()), "with the held one");
-            assert_eq!((tile_to(&h, 1), tile_to(&h, 2)), (Some(on(grown)), Some(on(latest))));
+            assert!(
+                h.engine.running.as_ref().is_some_and(|running| running.held.is_empty()),
+                "with the held one"
+            );
+            assert_eq!(
+                (tile_to(&h, 1), tile_to(&h, 2)),
+                (Some(on(grown)), Some(on(latest)))
+            );
             h.advance(Duration::from_millis(80));
             let landed = repainted(&h, &[(1, grown)]);
             h.step(landed);
-            assert_eq!(tile_to(&h, 2), Some(on(latest)), "not sent back where the held one ends it");
+            assert_eq!(
+                tile_to(&h, 2),
+                Some(on(latest)),
+                "not sent back where the held one ends it"
+            );
         }
 
         /// A pass only moving a window a held pass grows ends it wider than the picture its tile
@@ -4919,8 +5840,14 @@ mod tests {
             let landed = repainted(&h, &[(1, moved)]);
             let sent = h.step(landed);
             let order = kinds(only_batch(&sent));
-            let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
-            assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
+            let (play, swap) = (
+                order.iter().position(|k| *k == "play"),
+                order.iter().position(|k| *k == "swap"),
+            );
+            assert!(
+                play.is_some_and(|play| swap.is_some_and(|swap| play < swap)),
+                "{order:?}"
+            );
             assert_eq!(tile_to(&h, 1), Some(on(moved)));
         }
 
@@ -4935,15 +5862,26 @@ mod tests {
             h.step(press);
             h.advance(Duration::from_millis(40));
             h.engine.pictures.insert(wid(1), test_picture(end().size));
-            let pan = strip_over(&h, &[(1, rect(0.0, 0.0, 1300.0, 1081.0))], SurfacePoint::origin(), SurfacePoint::new(-100.0, 0.0));
+            let pan = strip_over(
+                &h,
+                &[(1, rect(0.0, 0.0, 1300.0, 1081.0))],
+                SurfacePoint::origin(),
+                SurfacePoint::new(-100.0, 0.0),
+            );
             assert!(!plays(&h.step(pan)), "held");
             let panned = rect(100.0, 0.0, 1300.0, 1081.0);
             h.advance(Duration::from_millis(120));
             let landed = repainted(&h, &[(1, panned)]);
             let sent = h.step(landed);
             let order = kinds(only_batch(&sent));
-            let (play, swap) = (order.iter().position(|k| *k == "play"), order.iter().position(|k| *k == "swap"));
-            assert!(play.is_some_and(|play| swap.is_some_and(|swap| play < swap)), "{order:?}");
+            let (play, swap) = (
+                order.iter().position(|k| *k == "play"),
+                order.iter().position(|k| *k == "swap"),
+            );
+            assert!(
+                play.is_some_and(|play| swap.is_some_and(|swap| play < swap)),
+                "{order:?}"
+            );
             assert_eq!(tile_to(&h, 1), Some(on(panned)));
         }
 
@@ -4952,7 +5890,8 @@ mod tests {
         #[test]
         fn a_shrink_after_the_grows_repaint_landed_retargets_at_once() {
             let mut h = moving_pair();
-            let (grown, narrower) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
+            let (grown, narrower) =
+                (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
             let press = resize_of(&h, &[(1, end(), grown)]);
             h.step(press);
             h.advance(Duration::from_millis(120));
@@ -4968,15 +5907,22 @@ mod tests {
         #[test]
         fn a_shrink_merged_before_the_motion_ending_wider_than_its_tiles_picture_keeps_the_hold() {
             let mut h = Harness::new();
-            let (grown, narrower) = (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
-            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(1), Some(start().to_cg()));
+            let (grown, narrower) =
+                (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
+            crate::windows::platform::window_server::set_window_frame_override(
+                WindowServerId::new(1),
+                Some(start().to_cg()),
+            );
             let press = resize_of(&h, &[(1, start(), grown)]);
             h.step(press);
             h.advance(Duration::from_millis(5));
             let frame_zero = h.frame_zero();
             let shown = only_batch(&h.step(frame_zero)).seq;
             h.commit(shown);
-            crate::windows::platform::window_server::set_window_frame_override(WindowServerId::new(1), None);
+            crate::windows::platform::window_server::set_window_frame_override(
+                WindowServerId::new(1),
+                None,
+            );
             h.advance(Duration::from_millis(10));
             let press = resize_of(&h, &[(1, grown, narrower)]);
             assert!(!plays(&h.step(press)));
@@ -4996,7 +5942,10 @@ mod tests {
         fn folding() -> Harness {
             let mut h = Harness::new();
             let server = WindowServerId::new(1);
-            crate::windows::platform::window_server::set_window_frame_override(server, Some(start().to_cg()));
+            crate::windows::platform::window_server::set_window_frame_override(
+                server,
+                Some(start().to_cg()),
+            );
             let press = resize_of(&h, &[(1, start(), folded())]);
             h.step(press);
             h.advance(Duration::from_millis(5));
@@ -5017,18 +5966,35 @@ mod tests {
                     Render::Play { tiles, .. } => tiles.iter().find(|tile| tile.window == window),
                     _ => None,
                 })
-                .map(|tile| (tile.snapshot.coverage.covered, tile.from_corner.as_ref().map(|p| p.coverage.covered)))
+                .map(|tile| {
+                    (
+                        tile.snapshot.coverage.covered,
+                        tile.from_corner.as_ref().map(|p| p.coverage.covered),
+                    )
+                })
                 .collect()
         }
 
         /// The leg every play among `sent` adds `window`'s tile.
-        fn legs_of(sent: &[Sent], window: WindowId) -> Vec<crate::animation::domain::motion::score::Track> {
+        fn legs_of(
+            sent: &[Sent],
+            window: WindowId,
+        ) -> Vec<crate::animation::domain::motion::score::Track> {
             let plays = batches(sent).into_iter().flat_map(|batch| &batch.commands);
-            let edits = plays.filter_map(|command| if let Render::Play { edits, .. } = command { Some(edits) } else { None });
-            edits.flatten().filter_map(|edit| match edit {
-                Edit::Add(track) if track.node() == Node::Tile(window) => Some(track.clone()),
-                _ => None,
-            }).collect()
+            let edits = plays.filter_map(|command| {
+                if let Render::Play { edits, .. } = command {
+                    Some(edits)
+                } else {
+                    None
+                }
+            });
+            edits
+                .flatten()
+                .filter_map(|edit| match edit {
+                    Edit::Add(track) if track.node() == Node::Tile(window) => Some(track.clone()),
+                    _ => None,
+                })
+                .collect()
         }
 
         /// A fold's repaint landing before the motion is not posed at frame zero: the motion starts
@@ -5041,10 +6007,16 @@ mod tests {
             let landed = repainted(&h, &[(1, folded())]);
             let sent = h.step(landed);
             let order = kinds(only_batch(&sent));
-            assert!(!order.contains(&"stage") && !order.contains(&"swap"), "{order:?}");
+            assert!(
+                !order.contains(&"stage") && !order.contains(&"swap"),
+                "{order:?}"
+            );
             assert_eq!(carried(&sent, wid(1)), [(start().size, Some(folded().size))]);
             let legs = legs_of(&sent, wid(1));
-            assert!(legs.len() == 1 && tile::corner_key(&legs[0]).is_some(), "{legs:?}");
+            assert!(
+                legs.len() == 1 && tile::corner_key(&legs[0]).is_some(),
+                "{legs:?}"
+            );
         }
 
         /// A fold's repaint landing after its hold ran out, while its tile is still on the first
@@ -5052,13 +6024,20 @@ mod tests {
         /// repaint from the corner. One landing past the corner is cut in at once.
         #[test]
         fn a_folds_late_repaint_waits_for_the_corner_until_it_is_past() {
-            for (after, waits) in [(Duration::from_millis(5), true), (Duration::from_millis(100), false)] {
+            for (after, waits) in [
+                (Duration::from_millis(5), true),
+                (Duration::from_millis(100), false),
+            ] {
                 let mut h = folding();
                 h.advance(HOLD_CAP);
                 let ticked = h.step(Event::Tick);
                 let legs = legs_of(&ticked, wid(1));
-                assert!(legs.len() == 1 && tile::corner_key(&legs[0]).is_some(), "moving: {legs:?}");
-                let corner = h.engine.running.as_ref().and_then(|running| running.score.corner_at(wid(1)));
+                assert!(
+                    legs.len() == 1 && tile::corner_key(&legs[0]).is_some(),
+                    "moving: {legs:?}"
+                );
+                let corner =
+                    h.engine.running.as_ref().and_then(|running| running.score.corner_at(wid(1)));
                 h.advance(after);
                 let at = h.media.at(h.at());
                 assert_eq!(corner.is_some_and(|corner| at < corner), waits, "{after:?}");
@@ -5085,7 +6064,10 @@ mod tests {
             assert!(plays(&h.step(Event::Tick)), "moving");
             h.advance(Duration::from_millis(5));
             let landed = repainted(&h, &[(1, folded())]);
-            assert!(swapped(&h.step(landed), wid(1)).is_empty(), "held for the corner");
+            assert!(
+                swapped(&h.step(landed), wid(1)).is_empty(),
+                "held for the corner"
+            );
             let press = resize_of(&h, &[(1, folded(), rect(0.0, 564.0, 1148.0, 517.0))]);
             assert!(plays(&h.step(press)), "merged at once");
             let running = h.engine.running.as_ref().expect("running");
@@ -5098,22 +6080,43 @@ mod tests {
             let lift = lift_batch(&h.lifted()).expect("lifted").seq;
             assert!(h.engine.quiet.is_none(), "not armed at the lift's call");
             h.commit(lift);
-            assert_eq!(h.engine.quiet.as_ref().map(|(generation, _)| *generation), Some(Generation(1)));
+            assert_eq!(
+                h.engine.quiet.as_ref().map(|(generation, _)| *generation),
+                Some(Generation(1))
+            );
         }
 
         /// `wid(1)` wearing a 1.3pt ring where the flight ends, 1.5pt at 2x.
         fn ringed() -> Worn {
             use crate::decorations::domain::paint::{Colour, Paint};
             let solid = Paint::Solid(Colour::rgb(0x7fc8ff));
-            let ring = crate::decorations::domain::style::Band { width: 1.3, active: solid, inactive: solid, urgent: solid };
-            let decoration = crate::decorations::domain::style::Decoration { ring: Some(ring), ..Default::default() };
-            Worn { decoration, wears_ring: Ring::Active, holds_focus: true }
+            let ring = crate::decorations::domain::style::Band {
+                width: 1.3,
+                active: solid,
+                inactive: solid,
+                urgent: solid,
+            };
+            let decoration = crate::decorations::domain::style::Decoration {
+                ring: Some(ring),
+                ..Default::default()
+            };
+            Worn {
+                decoration,
+                wears_ring: Ring::Active,
+                holds_focus: true,
+            }
         }
 
         fn holes(sent: &[Sent]) -> Vec<f64> {
             let commands = batches(sent).into_iter().flat_map(|batch| &batch.commands);
             commands
-                .filter_map(|command| if let Render::Holes(holes) = command { Some(holes) } else { None })
+                .filter_map(|command| {
+                    if let Render::Holes(holes) = command {
+                        Some(holes)
+                    } else {
+                        None
+                    }
+                })
                 .flat_map(|holes| holes.iter().map(|(_, outset)| *outset))
                 .collect()
         }
@@ -5121,7 +6124,8 @@ mod tests {
         /// The overlay is holed over a ringed window's band too, as wide as the band is drawn on the
         /// display; with no display laid out it knows no scale, and holes the window alone.
         #[test]
-        fn the_overlay_is_holed_over_a_band_at_its_displays_scale_and_over_the_window_alone_without_one() {
+        fn the_overlay_is_holed_over_a_band_at_its_displays_scale_and_over_the_window_alone_without_one()
+         {
             for (displayed, outset) in [(true, 1.5), (false, 0.0)] {
                 let mut h = Harness::new();
                 h.worn = ringed();
@@ -5152,18 +6156,33 @@ mod tests {
         #[test]
         fn a_measured_lift_holds_its_lift_and_the_bar_until_the_journal_hides_it() {
             let taken = |h: &mut Harness| {
-                let tag = Tag { client: CLIENT, generation: h.generation() };
-                h.step(Event::Pictures(crate::pictures::event::Event::OverlayTaken { tag, taken: true }))
+                let tag = Tag {
+                    client: CLIENT,
+                    generation: h.generation(),
+                };
+                h.step(Event::Pictures(crate::pictures::event::Event::OverlayTaken {
+                    tag,
+                    taken: true,
+                }))
             };
             let patience = |h: &mut Harness| {
                 h.advance(OVERLAY_TAKE_PATIENCE);
                 h.step(Event::LiftPatience)
             };
             let moved = |h: &mut Harness| {
-                h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: 0.0, rests: true })
+                h.step(Event::SetDisplay {
+                    id: 1,
+                    frame: DISPLAY,
+                    scale: 2.0,
+                    top_band: 0.0,
+                    rests: true,
+                })
             };
-            let hearings: [(&str, &dyn Fn(&mut Harness) -> Vec<Sent>); 3] =
-                [("its picture", &taken), ("the patience", &patience), ("the overlay moving", &moved)];
+            let hearings: [(&str, &dyn Fn(&mut Harness) -> Vec<Sent>); 3] = [
+                ("its picture", &taken),
+                ("the patience", &patience),
+                ("the overlay moving", &moved),
+            ];
             for (what, hears) in hearings {
                 let mut h = Harness::measuring();
                 let sent = h.lifted();
@@ -5173,18 +6192,28 @@ mod tests {
                 });
                 let check = check.expect("measured");
                 assert_eq!(check.overlay, OVERLAY, "the window the renderer reported");
-                assert_eq!(check.overlay_origin, window_origin(DISPLAY, BAND), "the display last sent");
+                assert_eq!(
+                    check.overlay_origin,
+                    window_origin(DISPLAY, BAND),
+                    "the display last sent"
+                );
                 assert_eq!(check.windows, [(wid(1), end(), 0.0)], "wearing no ring, no band");
                 assert!(lift_batch(&sent).is_none(), "held");
                 assert!(!holds(&sent).contains(&Hold::Settling), "held with the lift");
 
                 let sent = hears(&mut h);
                 let batch = only_batch(&sent);
-                let lift = kinds(batch).iter().position(|kind| *kind == "lift").unwrap_or_else(|| panic!("{what}: hidden"));
+                let lift = kinds(batch)
+                    .iter()
+                    .position(|kind| *kind == "lift")
+                    .unwrap_or_else(|| panic!("{what}: hidden"));
                 if let Some(display) = kinds(batch).iter().position(|kind| *kind == "display") {
                     assert!(lift < display, "{what}: hidden before the overlay moves");
                 }
-                assert!(!holds(&sent).contains(&Hold::Settling), "{what}: owed to the hide");
+                assert!(
+                    !holds(&sent).contains(&Hold::Settling),
+                    "{what}: owed to the hide"
+                );
                 assert!(h.engine.quiet.is_none(), "{what}: owed to the hide");
                 let seq = batch.seq;
                 assert_eq!(holds(&h.commit(seq)), [Hold::Settling], "{what}");
@@ -5196,7 +6225,11 @@ mod tests {
             h.advance(Duration::from_millis(10));
             let pan = h.pan();
             let sent = h.step(pan);
-            assert_eq!(kinds(only_batch(&sent))[0], "lift", "a press never waits for the overlay's picture");
+            assert_eq!(
+                kinds(only_batch(&sent))[0],
+                "lift",
+                "a press never waits for the overlay's picture"
+            );
             assert_eq!(holds(&sent), [Hold::Transition]);
         }
 
@@ -5209,7 +6242,10 @@ mod tests {
             let pressed = h.step(pan);
             assert_eq!(holds(&pressed), [Hold::Transition]);
             let drawn = h.commit(lift);
-            assert!(holds(&drawn).is_empty(), "the last lift's bar is not pictured under the new flight");
+            assert!(
+                holds(&drawn).is_empty(),
+                "the last lift's bar is not pictured under the new flight"
+            );
             assert!(h.engine.quiet.is_none(), "nor its quiet armed");
         }
 
@@ -5224,7 +6260,10 @@ mod tests {
             let placed = only_batch(&sent).seq;
             h.commit(shown);
             h.advance(FRAME_INTERVAL);
-            assert!(lift_batch(&h.step(Event::Tick)).is_none(), "nor the rest windows' place");
+            assert!(
+                lift_batch(&h.step(Event::Tick)).is_none(),
+                "nor the rest windows' place"
+            );
             h.commit(placed);
             h.advance(FRAME_INTERVAL);
             assert!(lift_batch(&h.step(Event::Tick)).is_some());
@@ -5235,10 +6274,16 @@ mod tests {
             let mut h = Harness::new();
             let (begun, shown) = h.shown();
             assert!(batches(&h.commit(begun)).is_empty(), "a commit");
-            assert!(batches(&h.commit(shown)).is_empty(), "a commit releasing the writes");
+            assert!(
+                batches(&h.commit(shown)).is_empty(),
+                "a commit releasing the writes"
+            );
             h.advance(FRAME_INTERVAL);
             assert!(batches(&h.step(Event::Tick)).is_empty(), "a tick");
-            assert!(batches(&h.step(Event::LooksTurned(vec![(wid(1), end())]))).is_empty(), "a turned look");
+            assert!(
+                batches(&h.step(Event::LooksTurned(vec![(wid(1), end())]))).is_empty(),
+                "a turned look"
+            );
         }
 
         #[test]
@@ -5251,13 +6296,19 @@ mod tests {
             let frame_zero = h.frame_zero();
             let started = begins(&h.step(frame_zero));
             assert!(!started.is_empty());
-            assert!(started.iter().all(|begin| *begin == h.media.at(delivered)), "{started:?}: the motion at the drive's instant");
+            assert!(
+                started.iter().all(|begin| *begin == h.media.at(delivered)),
+                "{started:?}: the motion at the drive's instant"
+            );
             h.advance(Duration::from_millis(60));
             let pushed = h.at();
             let bounce = h.bounce();
             let bounced = begins(&h.step(bounce));
             assert!(!bounced.is_empty());
-            assert!(bounced.iter().all(|begin| *begin == h.media.at(pushed)), "{bounced:?}: a push at its press's");
+            assert!(
+                bounced.iter().all(|begin| *begin == h.media.at(pushed)),
+                "{bounced:?}: a push at its press's"
+            );
         }
 
         /// One reading an event would mark the compose and frame zero's wait for its show as taking
@@ -5275,7 +6326,12 @@ mod tests {
             h.step(Event::Quiet(Generation(h.generation())));
             let burst = bursts.try_recv().expect("the settled burst");
             let at = |wanted: fn(&Mark) -> bool| {
-                burst.marks.iter().find(|stamped| wanted(&stamped.mark)).map(|stamped| stamped.at).expect("marked")
+                burst
+                    .marks
+                    .iter()
+                    .find(|stamped| wanted(&stamped.mark))
+                    .map(|stamped| stamped.at)
+                    .expect("marked")
             };
             let begin = at(|mark| matches!(mark, Mark::Begin { .. }));
             let composed = at(|mark| matches!(mark, Mark::Merge { moved: false, .. }));
@@ -5290,17 +6346,31 @@ mod tests {
         #[test]
         fn a_flight_after_a_lift_is_dressed_again() {
             for mut h in [Harness::new(), Harness::measuring()] {
-                let display = Display { id: 1, frame: DISPLAY, scale: 2.0 };
+                let display = Display {
+                    id: 1,
+                    frame: DISPLAY,
+                    scale: 2.0,
+                };
                 h.engine.pictures.hold_desktop(display, test_picture(DISPLAY.size));
                 let mut sent = h.lifted();
                 h.advance(Duration::from_millis(10));
                 let pan = h.pan();
                 sent.extend(h.step(pan));
-                let commands: Vec<&Render> = batches(&sent).into_iter().flat_map(|batch| &batch.commands).collect();
-                let lift = commands.iter().rposition(|command| matches!(command, Render::Lift { .. })).expect("lifted");
-                let dress = commands.iter().rposition(|command| matches!(command, Render::Dress { .. })).expect("dressed");
+                let commands: Vec<&Render> =
+                    batches(&sent).into_iter().flat_map(|batch| &batch.commands).collect();
+                let lift = commands
+                    .iter()
+                    .rposition(|command| matches!(command, Render::Lift { .. }))
+                    .expect("lifted");
+                let dress = commands
+                    .iter()
+                    .rposition(|command| matches!(command, Render::Dress { .. }))
+                    .expect("dressed");
                 assert!(lift < dress, "dressed after the lift");
-                assert!(matches!(commands[dress], Render::Dress { desktop: Some(_), .. }), "with the desktop held");
+                assert!(
+                    matches!(commands[dress], Render::Dress { desktop: Some(_), .. }),
+                    "with the desktop held"
+                );
             }
         }
 
@@ -5320,7 +6390,11 @@ mod tests {
                 }
                 sent
             };
-            assert!(!batches(&tick(&mut h, left - Duration::from_millis(120))).iter().any(|batch| kinds(batch).contains(&"place_rest")));
+            assert!(
+                !batches(&tick(&mut h, left - Duration::from_millis(120)))
+                    .iter()
+                    .any(|batch| kinds(batch).contains(&"place_rest"))
+            );
             let sent = tick(&mut h, Duration::from_millis(115));
             assert_eq!(kinds(only_batch(&sent)), ["place_rest"], "a tick ahead");
             let sent = tick(&mut h, FRAME_INTERVAL);
@@ -5354,7 +6428,10 @@ mod tests {
             h.commit(only_batch(&placed).seq);
             h.advance(FRAME_INTERVAL);
             let lifted = h.step(Event::Tick);
-            assert_eq!([through(&placed), through(&lifted)].concat(), [("place_rest", pressed), ("lift", pressed)]);
+            assert_eq!([through(&placed), through(&lifted)].concat(), [
+                ("place_rest", pressed),
+                ("lift", pressed)
+            ]);
 
             let mut h = Harness::measuring();
             let pressed = Some(h.at());
@@ -5362,7 +6439,11 @@ mod tests {
             h.advance(Duration::from_millis(10));
             let pan = h.pan();
             let hidden = h.step(pan);
-            assert_eq!(through(&hidden), [("lift", pressed)], "the held lift's press, not the one hiding it");
+            assert_eq!(
+                through(&hidden),
+                [("lift", pressed)],
+                "the held lift's press, not the one hiding it"
+            );
         }
 
         /// With nothing drawn at rest no place is sent, so the lift waits behind no batch of its own,
@@ -5370,18 +6451,31 @@ mod tests {
         #[test]
         fn with_nothing_drawn_at_rest_no_place_is_sent_and_the_lift_waits_for_none() {
             let mut h = Harness::new();
-            let display = h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND, rests: false });
+            let display = h.step(Event::SetDisplay {
+                id: 1,
+                frame: DISPLAY,
+                scale: 2.0,
+                top_band: BAND,
+                rests: false,
+            });
             h.commit(only_batch(&display).seq);
             let (_, shown) = h.shown();
             h.commit(shown);
             let left = h.engine.flights.coordinator().remaining(h.at()).expect("moving");
             h.advance(left - Duration::from_millis(5));
-            assert!(!h.engine.flights.coordinator().wants_landing(h.at()), "the landing read only at the end");
+            assert!(
+                !h.engine.flights.coordinator().wants_landing(h.at()),
+                "the landing read only at the end"
+            );
             assert!(batches(&h.step(Event::Tick)).is_empty(), "no place a tick ahead");
             h.advance(FRAME_INTERVAL);
             let sent = h.step(Event::Tick);
             let lift = lift_batch(&sent).expect("lifted, with no place to wait for");
-            assert!(batches(&sent).iter().all(|batch| !kinds(batch).contains(&"place_rest")), "{:?}", kinds(lift));
+            assert!(
+                batches(&sent).iter().all(|batch| !kinds(batch).contains(&"place_rest")),
+                "{:?}",
+                kinds(lift)
+            );
         }
 
         #[test]
@@ -5392,13 +6486,20 @@ mod tests {
             let frame_zero = h.frame_zero();
             let shown = only_batch(&h.step(frame_zero)).seq;
             let sent = h.step(Event::Rendered(Unavailable { seq: begun }));
-            assert_eq!(placed(&sent), [vec![(wid(1), end())]], "at once: the show sent since draws nothing");
+            assert_eq!(
+                placed(&sent),
+                [vec![(wid(1), end())]],
+                "at once: the show sent since draws nothing"
+            );
             assert_eq!(kinds(only_batch(&sent)), ["lift"]);
             assert_eq!(holds(&sent), [Hold::Released]);
             assert!(sent.iter().any(|sent| matches!(sent, Sent::Flying(false))));
             assert!(!h.engine.flights.coordinator().is_flying());
             let sent = h.step(Event::Rendered(Unavailable { seq: shown }));
-            assert!(placed(&sent).is_empty() && batches(&sent).is_empty(), "abandoned once");
+            assert!(
+                placed(&sent).is_empty() && batches(&sent).is_empty(),
+                "abandoned once"
+            );
         }
 
         #[test]
@@ -5410,12 +6511,19 @@ mod tests {
             let lift = lift_batch(&sent).expect("overdue, lifted with nothing drawn").seq;
             assert!(placed(&sent).is_empty(), "the show is not drawn");
             let sent = h.step(Event::Rendered(Unavailable { seq: lift }));
-            assert_eq!(placed(&sent), [vec![(wid(1), end())]], "nothing will be drawn: written at once");
+            assert_eq!(
+                placed(&sent),
+                [vec![(wid(1), end())]],
+                "nothing will be drawn: written at once"
+            );
             assert_eq!(holds(&sent), [Hold::Settling]);
             let quiet = h.engine.quiet.as_ref().map(|(generation, _)| *generation);
             assert_eq!(quiet, Some(Generation(1)), "the quiet armed");
             let sent = h.step(Event::Quiet(Generation(1)));
-            assert!(sent.iter().any(|sent| matches!(sent, Sent::Flying(false))), "settled");
+            assert!(
+                sent.iter().any(|sent| matches!(sent, Sent::Flying(false))),
+                "settled"
+            );
         }
 
         #[test]
@@ -5461,20 +6569,49 @@ mod tests {
             h.advance(Duration::from_micros(1_500));
             let heard = h.at();
             let at = |us| handed + Duration::from_micros(us);
-            let crops = Crops { fills: 1, ground: Duration::from_micros(7_910) };
-            let answer = Committed { seq: shown, overlay: Some(OVERLAY), shown: Some(true), places: false, crops, sent: handed, began: at(400), flushed: at(700) };
+            let crops = Crops {
+                fills: 1,
+                ground: Duration::from_micros(7_910),
+            };
+            let answer = Committed {
+                seq: shown,
+                overlay: Some(OVERLAY),
+                shown: Some(true),
+                places: false,
+                crops,
+                sent: handed,
+                began: at(400),
+                flushed: at(700),
+            };
             assert_eq!(placed(&h.step(Event::Rendered(answer))), [vec![(wid(1), end())]]);
-            assert_eq!(h.at(), heard + Duration::from_millis(3), "the writes took their time");
+            assert_eq!(
+                h.at(),
+                heard + Duration::from_millis(3),
+                "the writes took their time"
+            );
 
             h.advance(Duration::from_millis(400));
             let lift = lift_batch(&h.step(Event::Tick)).expect("lifted").seq;
             h.commit(lift);
             h.step(Event::Quiet(Generation(h.generation())));
             let burst = bursts.try_recv().expect("the settled burst");
-            let drawn: Vec<_> = burst.marks.iter().filter(|stamped| matches!(stamped.mark, Mark::Drawn { seq, .. } if seq == shown)).collect();
+            let drawn: Vec<_> = burst
+                .marks
+                .iter()
+                .filter(|stamped| matches!(stamped.mark, Mark::Drawn { seq, .. } if seq == shown))
+                .collect();
             assert_eq!(drawn.len(), 1, "{:?}", burst.marks);
             assert_eq!(drawn[0].at, heard, "before the writes it released");
-            let mark = Mark::Drawn { seq: shown, shown: Some(true), places: false, crops: 1, ground_us: 7_910, queued_us: 400, applied_us: 300, flushed_before_us: 800 };
+            let mark = Mark::Drawn {
+                seq: shown,
+                shown: Some(true),
+                places: false,
+                crops: 1,
+                ground_us: 7_910,
+                queued_us: 400,
+                applied_us: 300,
+                flushed_before_us: 800,
+            };
             assert_eq!(drawn[0].mark, mark);
         }
 
@@ -5504,13 +6641,32 @@ mod tests {
             h.commit(lift);
             h.step(Event::Quiet(Generation(h.generation())));
             let burst = bursts.try_recv().expect("the settled burst");
-            let at = burst.marks.iter().position(|stamped| matches!(stamped.mark, Mark::MainTurn { .. })).expect("marked");
-            let marks: Vec<_> = burst.marks[at..at + 3].iter().map(|stamped| (stamped.at, stamped.mark)).collect();
-            assert_eq!(marks, [
-                Mark::MainTurn { busy_us: 260_000, outside_us: 258_000, actors: 1, changes: 1 },
-                Mark::TurnActor { actor: "renderer", us: 2_000 },
-                Mark::TurnChange { what: "overlay.show", before_us: 4_000 },
-            ].map(|mark| (began, mark)));
+            let at = burst
+                .marks
+                .iter()
+                .position(|stamped| matches!(stamped.mark, Mark::MainTurn { .. }))
+                .expect("marked");
+            let marks: Vec<_> = burst.marks[at..at + 3]
+                .iter()
+                .map(|stamped| (stamped.at, stamped.mark))
+                .collect();
+            assert_eq!(
+                marks,
+                [
+                    Mark::MainTurn {
+                        busy_us: 260_000,
+                        outside_us: 258_000,
+                        actors: 1,
+                        changes: 1
+                    },
+                    Mark::TurnActor { actor: "renderer", us: 2_000 },
+                    Mark::TurnChange {
+                        what: "overlay.show",
+                        before_us: 4_000
+                    },
+                ]
+                .map(|mark| (began, mark))
+            );
         }
 
         /// Every picture a tile takes is journalled with its route, its blur and its age: the cache's as
@@ -5523,9 +6679,13 @@ mod tests {
             h.step(pan);
             h.advance(Duration::from_millis(5));
             let mut baked = test_picture(start().size);
-            (baked.source, baked.carries_blur, baked.taken) = (Route::Baked, true, h.at() - Duration::from_millis(30));
+            (baked.source, baked.carries_blur, baked.taken) =
+                (Route::Baked, true, h.at() - Duration::from_millis(30));
             let frame_zero = Event::Pictures(crate::pictures::event::Event::Delivered {
-                tag: Tag { client: CLIENT, generation: h.generation() },
+                tag: Tag {
+                    client: CLIENT,
+                    generation: h.generation(),
+                },
                 why: Why::FrameZero,
                 sent: h.at(),
                 pictures: vec![(wid(1), baked, start())],
@@ -5544,14 +6704,27 @@ mod tests {
                 .marks
                 .iter()
                 .filter_map(|stamped| match stamped.mark {
-                    Mark::Wears { window, at, route, blur, taken_before_us } => Some((window, at, route, blur, taken_before_us)),
+                    Mark::Wears {
+                        window,
+                        at,
+                        route,
+                        blur,
+                        taken_before_us,
+                    } => Some((window, at, route, blur, taken_before_us)),
                     _ => None,
                 })
                 .collect();
             assert_eq!(worn.len(), 3, "{worn:?}");
-            assert_eq!((worn[0].0, worn[0].1, worn[0].2, worn[0].3), (wid(1), Wearing::Compose, Route::ScreenCaptureKit, false), "the cache's");
+            assert_eq!(
+                (worn[0].0, worn[0].1, worn[0].2, worn[0].3),
+                (wid(1), Wearing::Compose, Route::ScreenCaptureKit, false),
+                "the cache's"
+            );
             assert_eq!(worn[1], (wid(1), Wearing::FrameZero, Route::Baked, true, 30_000));
-            assert_eq!((worn[2].1, worn[2].2, worn[2].3), (Wearing::Swap, Route::ScreenCaptureKit, false));
+            assert_eq!(
+                (worn[2].1, worn[2].2, worn[2].3),
+                (Wearing::Swap, Route::ScreenCaptureKit, false)
+            );
         }
 
         #[test]
@@ -5560,17 +6733,26 @@ mod tests {
             let bursts = h.writing();
             let lift = lift_batch(&h.lifted()).expect("lifted").seq;
             h.commit(lift);
-            assert!(matches!(bursts.try_recv(), Err(TryRecvError::Empty)), "nothing while it settles");
+            assert!(
+                matches!(bursts.try_recv(), Err(TryRecvError::Empty)),
+                "nothing while it settles"
+            );
             h.step(Event::Quiet(Generation(h.generation())));
             let burst = bursts.try_recv().expect("the settled burst");
             assert!(!burst.marks.is_empty());
             assert!(matches!(bursts.try_recv(), Err(TryRecvError::Empty)), "once");
 
-            h.step(Event::Journal(JournalSettings { write: false, measure_handover: false }));
+            h.step(Event::Journal(JournalSettings {
+                write: false,
+                measure_handover: false,
+            }));
             let lift = lift_batch(&h.lifted()).expect("lifted").seq;
             h.commit(lift);
             h.step(Event::Quiet(Generation(h.generation())));
-            assert!(matches!(bursts.try_recv(), Err(TryRecvError::Disconnected)), "the writer let go, nothing sent");
+            assert!(
+                matches!(bursts.try_recv(), Err(TryRecvError::Disconnected)),
+                "the writer let go, nothing sent"
+            );
         }
     }
 }

@@ -12,14 +12,13 @@ use std::ffi::c_void;
 
 use once_cell::sync::Lazy;
 use parking_lot::{Mutex, RwLock};
-use tracing::{debug, trace, warn};
-
 use rini_runloop::channel as channels;
 use rini_skylight_sys::{
     KnownCGSEvent, SLSMainConnectionID, SLSRegisterConnectionNotifyProc,
     SLSRequestNotificationsForWindows, cid_t,
 };
 use rustc_hash::FxHashMap as HashMap;
+use tracing::{debug, trace, warn};
 
 type Wid = u32;
 type Sid = u64;

@@ -80,9 +80,7 @@ impl Text {
 
     /// Called once per round of drawing every bar, so a title that has gone is not kept for the
     /// life of the process.
-    pub fn sweep(&mut self) {
-        self.pictures.sweep();
-    }
+    pub fn sweep(&mut self) { self.pictures.sweep(); }
 }
 
 /// Keeps what was asked for this round or the one before, and nothing older.
@@ -110,9 +108,7 @@ impl<K: Eq + Hash, V: Clone> Recent<K, V> {
         value
     }
 
-    fn sweep(&mut self) {
-        self.previous = std::mem::take(&mut self.current);
-    }
+    fn sweep(&mut self) { self.previous = std::mem::take(&mut self.current); }
 }
 
 fn draw(label: &Label, scale: f64, missing: &mut HashSet<&'static str>) -> Option<Picture> {

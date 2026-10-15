@@ -82,7 +82,14 @@ impl Making {
     ) {
         self.push(Edit::Place(Node::Tile(window), Value::Rect(to)));
         if seconds > 0.0 {
-            self.push(Edit::Add(tile::leg(window, from, to, begin, seconds, MOTION_CURVE)));
+            self.push(Edit::Add(tile::leg(
+                window,
+                from,
+                to,
+                begin,
+                seconds,
+                MOTION_CURVE,
+            )));
         }
     }
 }
@@ -121,10 +128,7 @@ pub fn stage(cue: &Cue, strip: &Strip) -> Staging {
     staging.accent = steps
         .then(|| nudge(area.frame.size.width, direction))
         .flatten()
-        .map(|offset| Accent::Step {
-            offset,
-            seconds: strip.seconds,
-        });
+        .map(|offset| Accent::Step { offset, seconds: strip.seconds });
     staging
 }
 
@@ -771,13 +775,14 @@ mod tests {
         let stretched = PLAIN * NUDGE_STRETCH;
         for flies in [0.64, PLAIN, 0.2] {
             let mut flight = Flight::posed(&strip(1, 2, -863.0));
-            let edits = flight.start(flies, &[Accent::Step {
-                offset,
-                seconds: PLAIN,
-            }]);
+            let edits = flight.start(flies, &[Accent::Step { offset, seconds: PLAIN }]);
             let node = Node::Container(key_of(&flight.plan, wid(1)));
             let step = track_on(&edits, node, Channel::Nudge).expect("steps");
-            assert!((step.seconds() - stretched).abs() < 1e-9, "{flies}: {}", step.seconds());
+            assert!(
+                (step.seconds() - stretched).abs() < 1e-9,
+                "{flies}: {}",
+                step.seconds()
+            );
             let leg = track_on(&edits, node, Channel::Base).expect("flies");
             assert!(
                 (leg.seconds() - flies.max(stretched)).abs() < 1e-9,
@@ -811,7 +816,12 @@ mod tests {
             DISPLAY,
         );
         let pan = OverlayVector::new(-863.0, 0.0);
-        let bent = flight.merge(&incoming, Some(pan), Some(Accent::Step { offset, seconds: PLAIN }), now);
+        let bent = flight.merge(
+            &incoming,
+            Some(pan),
+            Some(Accent::Step { offset, seconds: PLAIN }),
+            now,
+        );
         let stretched = PLAIN * NUDGE_STRETCH;
         assert_eq!(
             track_on(&bent.edits, node, Channel::Nudge),
@@ -851,7 +861,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             DISPLAY,
         );
-        let bent = flight.merge(&incoming, Some(pan), Some(Accent::Step { offset, seconds: PLAIN }), now);
+        let bent = flight.merge(
+            &incoming,
+            Some(pan),
+            Some(Accent::Step { offset, seconds: PLAIN }),
+            now,
+        );
         assert_eq!(
             track_on(&bent.edits, node, Channel::Nudge),
             None,
@@ -954,7 +969,13 @@ mod tests {
             .expect("a container of its own");
         assert_eq!(opened.leaving, Some(strip_key));
         let to = point(flight.score.model(Node::Container(key)));
-        let carried = Leg::toward(Some(&leg), opened.install.rounded(), to, now, spring_omega(PLAIN));
+        let carried = Leg::toward(
+            Some(&leg),
+            opened.install.rounded(),
+            to,
+            now,
+            spring_omega(PLAIN),
+        );
         assert_eq!(
             track_on(&bent.edits, Node::Container(key), Channel::Base),
             Some(carried.track(key, SAMPLE_STEP))
@@ -998,15 +1019,26 @@ mod tests {
         let edits = flight.start(PLAIN, &[]);
         let node = Node::Tile(wid(1));
         let track = track_on(&edits, node, Channel::Base).expect("a leg");
-        assert_eq!(track, tile::leg(wid(1), held(column), held(folded), BEGIN, PLAIN, MOTION_CURVE));
+        assert_eq!(
+            track,
+            tile::leg(wid(1), held(column), held(folded), BEGIN, PLAIN, MOTION_CURVE)
+        );
         assert!(tile::corner_key(&track).is_some(), "in two steps");
         let now = BEGIN + 0.05;
-        let Some(Value::Rect(drawn)) = flight.score.sample(node, now) else { panic!("drawn") };
+        let Some(Value::Rect(drawn)) = flight.score.sample(node, now) else {
+            panic!("drawn")
+        };
         let unfolded = reflow_plan(&[(wid(1), folded, column, false)], DISPLAY);
         let bent = flight.merge(&unfolded, None, None, now);
         let track = track_on(&bent.edits, node, Channel::Base).expect("bent");
-        assert_eq!(track, tile::leg(wid(1), drawn, held(column), now, PLAIN, MOTION_CURVE));
-        assert!(tile::corner_key(&track).is_some(), "in two steps from where it is drawn");
+        assert_eq!(
+            track,
+            tile::leg(wid(1), drawn, held(column), now, PLAIN, MOTION_CURVE)
+        );
+        assert!(
+            tile::corner_key(&track).is_some(),
+            "in two steps from where it is drawn"
+        );
     }
 
     /// A column a second pan brings mid-leg starts beside the column it sits beside in the layout,
@@ -1230,8 +1262,14 @@ mod tests {
     /// opens the right side, where the column it passed was.
     #[test]
     fn the_step_goes_away_from_where_the_window_went() {
-        assert_eq!(nudge(1728.0, Direction::Right), Some(OverlayVector::new(-576.0, 0.0)));
-        assert_eq!(nudge(1728.0, Direction::Left), Some(OverlayVector::new(576.0, 0.0)));
+        assert_eq!(
+            nudge(1728.0, Direction::Right),
+            Some(OverlayVector::new(-576.0, 0.0))
+        );
+        assert_eq!(
+            nudge(1728.0, Direction::Left),
+            Some(OverlayVector::new(576.0, 0.0))
+        );
         assert_eq!(nudge(1728.0, Direction::Up), None);
         assert_eq!(nudge(1728.0, Direction::Down), None);
     }

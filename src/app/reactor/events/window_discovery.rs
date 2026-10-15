@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+
+use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use tracing::{debug, trace};
 
 use super::window;
@@ -9,11 +13,6 @@ use crate::windows::domain::transaction::TransactionManager;
 use crate::windows::platform::window_server::{compute_window_manageability, looks_gone};
 use crate::workspaces::domain::app_rules::AfterRules;
 use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowServerId;
-use rini_core::ids::{WindowId, pid_t};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use std::collections::BTreeMap;
 
 /// Handler for window discovery events, responsible for processing newly discovered windows
 /// and managing the lifecycle of window state in the reactor.
@@ -50,10 +49,12 @@ fn sync_existing_window_state(
 
     let outcome = match (was_minimized, info.is_minimized) {
         (false, true) => window::handle_window_minimized(state, wid)?,
-        (true, false) => window::handle_window_deminiaturized(
-            state,
-            window::WindowDeminiaturizedPayload { window: wid, active_space },
-        )?,
+        (true, false) => {
+            window::handle_window_deminiaturized(state, window::WindowDeminiaturizedPayload {
+                window: wid,
+                active_space,
+            })?
+        }
         _ => {
             let manageable = compute_window_manageability(
                 info.sys_id,
@@ -596,20 +597,15 @@ pub(crate) fn emit_layout_events(
 mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
+    use super::*;
     use crate::app::reactor::state::RiniState;
     use crate::app::reactor::testing::make_window_info;
     use crate::windows::domain::info::WindowServerInfo;
     use crate::windows::domain::state::WindowState;
 
-    use super::*;
+    fn wid(pid: pid_t, idx: u32) -> WindowId { WindowId::new(pid, idx) }
 
-    fn wid(pid: pid_t, idx: u32) -> WindowId {
-        WindowId::new(pid, idx)
-    }
-
-    fn frame() -> CGRect {
-        CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(100.0, 100.0))
-    }
+    fn frame() -> CGRect { CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(100.0, 100.0)) }
 
     /// One app with `count` windows, each tracked under a window-server id equal to its index.
     fn state_with(pid: pid_t, count: u32) -> RiniState {

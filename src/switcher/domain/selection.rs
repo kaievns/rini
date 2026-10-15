@@ -26,9 +26,7 @@ impl Selection {
         Some(Self { len, index: index.min(len - 1) })
     }
 
-    pub fn index(&self) -> usize {
-        self.index
-    }
+    pub fn index(&self) -> usize { self.index }
 
     /// Move by `delta` rows, wrapping at both ends.
     ///

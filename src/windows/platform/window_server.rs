@@ -168,9 +168,7 @@ impl WindowIterator {
     }
 
     #[inline]
-    pub fn count(&self) -> i32 {
-        unsafe { SLSWindowIteratorGetCount(self.iter) }
-    }
+    pub fn count(&self) -> i32 { unsafe { SLSWindowIteratorGetCount(self.iter) } }
 
     #[inline]
     pub fn advance<'a>(&'a self) -> Option<&'a Self> {
@@ -182,29 +180,19 @@ impl WindowIterator {
     }
 
     #[inline]
-    pub fn window_id(&self) -> u32 {
-        unsafe { SLSWindowIteratorGetWindowID(self.iter) }
-    }
+    pub fn window_id(&self) -> u32 { unsafe { SLSWindowIteratorGetWindowID(self.iter) } }
 
     #[inline]
-    pub fn level(&self) -> i32 {
-        unsafe { SLSWindowIteratorGetLevel(self.iter) }
-    }
+    pub fn level(&self) -> i32 { unsafe { SLSWindowIteratorGetLevel(self.iter) } }
 
     #[inline]
-    pub fn pid(&self) -> i32 {
-        unsafe { SLSWindowIteratorGetPID(self.iter) }
-    }
+    pub fn pid(&self) -> i32 { unsafe { SLSWindowIteratorGetPID(self.iter) } }
 
     #[inline]
-    pub fn parent_id(&self) -> u32 {
-        unsafe { SLSWindowIteratorGetParentID(self.iter) }
-    }
+    pub fn parent_id(&self) -> u32 { unsafe { SLSWindowIteratorGetParentID(self.iter) } }
 
     #[inline]
-    pub fn bounds(&self) -> CGRect {
-        unsafe { SLSWindowIteratorGetBounds(self.iter) }
-    }
+    pub fn bounds(&self) -> CGRect { unsafe { SLSWindowIteratorGetBounds(self.iter) } }
 
     /// The current window's title, from a query asked with flag bit 0.
     pub fn title(&self) -> Option<String> {
@@ -213,15 +201,11 @@ impl WindowIterator {
     }
 
     #[inline]
-    pub fn alpha(&self) -> f32 {
-        unsafe { SLSWindowIteratorGetAlpha(self.iter) }
-    }
+    pub fn alpha(&self) -> f32 { unsafe { SLSWindowIteratorGetAlpha(self.iter) } }
 
     #[inline]
     #[cfg_attr(test, allow(dead_code))]
-    pub fn attributes(&self) -> u64 {
-        unsafe { SLSWindowIteratorGetAttributes(self.iter) }
-    }
+    pub fn attributes(&self) -> u64 { unsafe { SLSWindowIteratorGetAttributes(self.iter) } }
 
     #[inline]
     pub fn constraints(&self) -> (CGSize, CGSize) {
@@ -248,17 +232,19 @@ impl WindowIterator {
     /// The current window's corner radii in points, as the window server reports them: empty when
     /// it answers none or has no such call.
     pub fn corner_radii(&self) -> Vec<f64> {
-        let Some(read) = *GET_CORNER_RADII else { return Vec::new() };
-        let Some(radii) = NonNull::new(unsafe { read(self.iter) }) else { return Vec::new() };
+        let Some(read) = *GET_CORNER_RADII else {
+            return Vec::new();
+        };
+        let Some(radii) = NonNull::new(unsafe { read(self.iter) }) else {
+            return Vec::new();
+        };
         let radii = unsafe { CFRetained::from_raw(radii) };
         radii.iter().filter_map(|corner| corner.as_f64()).collect()
     }
 }
 
 impl Drop for WindowIterator {
-    fn drop(&mut self) {
-        unsafe { CFRelease(self.iter) }
-    }
+    fn drop(&mut self) { unsafe { CFRelease(self.iter) } }
 }
 
 /// Server-side filter for `SLSWindowQueryRun`.
@@ -476,9 +462,7 @@ pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
 const ORDERED_IN_ATTRIBUTE: u64 = 1 << 1;
 
 /// Whether a window whose iterator attributes are `attributes` is ordered in.
-fn attributes_ordered_in(attributes: u64) -> bool {
-    attributes & ORDERED_IN_ATTRIBUTE != 0
-}
+fn attributes_ordered_in(attributes: u64) -> bool { attributes & ORDERED_IN_ATTRIBUTE != 0 }
 
 /// A window as a listing of the window server names it.
 #[derive(Debug, Clone, PartialEq)]
@@ -497,9 +481,7 @@ pub struct Listed {
 const DESKTOP_ICON_LEVEL: i32 = -2147483603;
 
 /// Whether a window at `level` is part of the desktop: its icons, the wallpaper, the backstop.
-pub fn is_desktop_element(level: i32) -> bool {
-    level <= DESKTOP_ICON_LEVEL
-}
+pub fn is_desktop_element(level: i32) -> bool { level <= DESKTOP_ICON_LEVEL }
 
 /// `described`, in the order `ids` lists the windows, and only those `ids` lists.
 fn in_listed_order(ids: &[u32], described: Vec<Listed>) -> Vec<Listed> {
@@ -810,9 +792,7 @@ fn find_window_at_point(point: &mut CGPoint, below_window_id: Option<u32>) -> Op
     (wid != 0).then_some((wid, wcid))
 }
 
-fn is_own_window(cid: i32) -> bool {
-    *G_CONNECTION == cid
-}
+fn is_own_window(cid: i32) -> bool { *G_CONNECTION == cid }
 
 pub fn get_window_at_point(mut point: CGPoint) -> Option<WindowServerId> {
     let (mut wid, cid) = find_window_at_point(&mut point, None)?;
@@ -848,9 +828,7 @@ pub fn set_window_under_cursor_override(window: Option<u32>) {
 }
 
 #[cfg(test)]
-pub fn window_level(_wid: u32) -> Option<NSWindowLevel> {
-    Some(0)
-}
+pub fn window_level(_wid: u32) -> Option<NSWindowLevel> { Some(0) }
 
 #[cfg(not(test))]
 pub fn window_level(wid: u32) -> Option<NSWindowLevel> {
@@ -1027,9 +1005,7 @@ pub fn set_window_ordered_in_override(id: WindowServerId, ordered: Option<bool>)
 /// `None` means unanswerable, which is no evidence either way, while `Some(false)` retires the window. A
 /// test gets `None`. See "A unit test must not read the live window server" in `docs/testing.md`.
 #[cfg(test)]
-pub fn app_window_suitability(_id: WindowServerId) -> Option<bool> {
-    None
-}
+pub fn app_window_suitability(_id: WindowServerId) -> Option<bool> { None }
 
 #[cfg(not(test))]
 pub fn app_window_suitability(id: WindowServerId) -> Option<bool> {
@@ -1071,14 +1047,18 @@ pub fn make_key_window(pid: pid_t, wsid: WindowServerId) -> Result<(), CGError> 
 mod tests {
     use super::{
         WindowServerId, app_window_suitability, corner_radius, set_corner_radii_override,
-        set_window_ordered_in_override, space_window_list_for_connection, window_ordered_in, window_spaces,
+        set_window_ordered_in_override, space_window_list_for_connection, window_ordered_in,
+        window_spaces,
     };
 
     #[test]
     fn one_windows_corner_radius_is_the_one_its_query_reports() {
         let (reported, silent) = (WindowServerId::new(10041), WindowServerId::new(10042));
         set_corner_radii_override(reported, Some(vec![12.0; 4]));
-        assert_eq!((corner_radius(reported), corner_radius(silent)), (Some(12.0), None));
+        assert_eq!(
+            (corner_radius(reported), corner_radius(silent)),
+            (Some(12.0), None)
+        );
         set_corner_radii_override(reported, None);
     }
 
@@ -1245,12 +1225,7 @@ mod stack_tests {
 
     use super::*;
 
-    fn place(
-        x: f64,
-        w: f64,
-        level: Option<NSWindowLevel>,
-        sub_level: Option<c_int>,
-    ) -> StackPlace {
+    fn place(x: f64, w: f64, level: Option<NSWindowLevel>, sub_level: Option<c_int>) -> StackPlace {
         StackPlace {
             frame: CGRect::new(CGPoint::new(x, 0.0), CGSize::new(w, 100.0)),
             level,
@@ -1261,23 +1236,29 @@ mod stack_tests {
     #[test]
     fn a_peer_wholly_inside_at_the_same_level_covers() {
         let candidate = place(0.0, 1000.0, Some(0), Some(0));
-        assert!(covered_by_peer_above(
-            candidate,
-            [place(100.0, 200.0, Some(0), Some(0))]
-        ));
+        assert!(covered_by_peer_above(candidate, [place(
+            100.0,
+            200.0,
+            Some(0),
+            Some(0)
+        )]));
     }
 
     #[test]
     fn a_peer_at_another_level_or_sub_level_or_overhanging_does_not() {
         let candidate = place(0.0, 1000.0, Some(0), Some(0));
-        assert!(!covered_by_peer_above(
-            candidate,
-            [place(100.0, 200.0, Some(3), Some(0))]
-        ));
-        assert!(!covered_by_peer_above(
-            candidate,
-            [place(100.0, 200.0, Some(0), Some(1))]
-        ));
+        assert!(!covered_by_peer_above(candidate, [place(
+            100.0,
+            200.0,
+            Some(3),
+            Some(0)
+        )]));
+        assert!(!covered_by_peer_above(candidate, [place(
+            100.0,
+            200.0,
+            Some(0),
+            Some(1)
+        )]));
         assert!(
             !covered_by_peer_above(candidate, [place(900.0, 200.0, Some(0), Some(0))]),
             "overhangs the edge"
@@ -1288,18 +1269,18 @@ mod stack_tests {
     #[test]
     fn an_unanswered_sub_level_is_no_evidence_of_a_shared_one() {
         let candidate = place(0.0, 1000.0, Some(0), Some(0));
-        assert!(!covered_by_peer_above(
-            candidate,
-            [place(100.0, 200.0, Some(0), None)]
-        ));
-        assert!(!covered_by_peer_above(
-            place(0.0, 1000.0, Some(0), None),
-            [place(100.0, 200.0, Some(0), Some(0))]
-        ));
-        assert!(!covered_by_peer_above(
-            place(0.0, 1000.0, Some(0), None),
-            [place(100.0, 200.0, Some(0), None)]
-        ));
+        assert!(!covered_by_peer_above(candidate, [place(
+            100.0,
+            200.0,
+            Some(0),
+            None
+        )]));
+        assert!(!covered_by_peer_above(place(0.0, 1000.0, Some(0), None), [
+            place(100.0, 200.0, Some(0), Some(0))
+        ]));
+        assert!(!covered_by_peer_above(place(0.0, 1000.0, Some(0), None), [
+            place(100.0, 200.0, Some(0), None)
+        ]));
     }
 
     #[test]
@@ -1308,7 +1289,9 @@ mod stack_tests {
         assert_eq!(stack_place_writes(Some(3), Some(1)), [Level(3), SubLevel(1)]);
         assert_eq!(stack_place_writes(Some(3), Some(0)), [Level(3), SubLevel(0)]);
         assert_eq!(stack_place_writes(Some(3), None), [Level(3)]);
-        assert_eq!(stack_place_writes(None, None), [Level(NSNormalWindowLevel as c_int)]);
+        assert_eq!(stack_place_writes(None, None), [Level(
+            NSNormalWindowLevel as c_int
+        )]);
     }
 
     fn info(layer: i32, w: f64, h: f64) -> WindowServerInfo {
@@ -1431,6 +1414,11 @@ mod stack_tests {
     #[test]
     fn an_unknown_level_never_covers() {
         let candidate = place(0.0, 1000.0, None, Some(0));
-        assert!(!covered_by_peer_above(candidate, [place(100.0, 200.0, None, Some(0))]));
+        assert!(!covered_by_peer_above(candidate, [place(
+            100.0,
+            200.0,
+            None,
+            Some(0)
+        )]));
     }
 }

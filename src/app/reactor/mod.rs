@@ -53,33 +53,23 @@ mod SpaceEventHandler {
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::thread;
 
-use crate::displays::domain::topology::display_set_delta;
-use crate::displays::platform::spaces::SpaceKinds;
-use crate::input::domain::switch_session::Signal as SwitchSignal;
-use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, switch_list};
-use crate::switcher::domain::entries::{Entry, entries};
-use crate::switcher::domain::selection::Selection;
-use crate::transitions::domain::request::Cause;
-use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
-use crate::windows::domain::raise_order::{self, StackGroup, regroup_tiled};
-use crate::windows::domain::rules::AppRuleDecision;
-use crate::windows::domain::transaction::{TransactionId, TransactionManager};
-use crate::workspaces::domain::display_affinity::SetupChange;
-use crate::workspaces::domain::display_memory::DisplayMemory;
-use crate::workspaces::domain::display_pin::display_for_role;
 use events::{
     EventOutcome, app as application_workflow, command as command_workflow, focus as focus_service,
     space as topology_workflow, system as system_workflow, window as window_workflow,
 };
 use managers::LayoutManager;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::space::{
     FromCg, ScreenPoint, ScreenRect, ScreenSize, SurfacePoint, SurfaceRect, ToCg,
 };
 use rini_ipc::protocol::SwitchScope;
+use rini_runloop::executor::Executor;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use space_affinity::SpaceAffinity;
 use tracing::{debug, info, instrument, trace, warn};
 
@@ -90,29 +80,37 @@ use crate::app::reactor::state::RiniState;
 pub use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::screen::order_visible_spaces_by_position;
 use crate::displays::domain::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
-use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind, TopologyWindowDelta};
+use crate::displays::domain::topology::{
+    ForwardedSpaceState, SpaceEventKind, TopologyWindowDelta, display_set_delta,
+};
+use crate::displays::platform::spaces::SpaceKinds;
+use crate::input::domain::switch_session::Signal as SwitchSignal;
 use crate::input::platform::input_tap as event_tap;
-use crate::windows::domain::info::WindowServerInfo;
-use crate::windows::domain::info::{AppInfo, WindowInfo};
+use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, switch_list};
+use crate::switcher::domain::entries::{Entry, entries};
+use crate::switcher::domain::selection::Selection;
+use crate::transitions::domain::request::Cause;
+use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
+use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::raise::{self as raise_manager, RaiseManager, RaiseRequest};
+use crate::windows::domain::raise_order::{self, StackGroup, regroup_tiled};
 use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
-use crate::windows::domain::transaction::WindowTxStore;
+use crate::windows::domain::rules::AppRuleDecision;
+use crate::windows::domain::transaction::{TransactionId, TransactionManager, WindowTxStore};
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server;
 use crate::windows::platform::window_server::{StackPlace, covered_by_peer_above};
 use crate::workspaces::domain::app_rules::AfterRules;
+use crate::workspaces::domain::display_affinity::SetupChange;
+use crate::workspaces::domain::display_memory::DisplayMemory;
+use crate::workspaces::domain::display_pin::display_for_role;
 use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
 use crate::workspaces::{self as layout, Direction, LayoutEngine, LayoutEvent};
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowServerId;
-use rini_core::ids::{WindowId, pid_t};
-use rini_runloop::executor::Executor;
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use std::collections::BTreeMap;
 
 pub type Sender = channels::Sender<Event>;
 type Receiver = channels::Receiver<Event>;
 pub use query::ReactorQueryHandle;
+pub use rini_ipc::protocol::Command;
 
 pub(crate) use crate::app::reactor::state::AppState;
 pub use crate::app::reactor::state::{
@@ -121,7 +119,6 @@ pub use crate::app::reactor::state::{
 };
 pub(crate) use crate::windows::domain::state::WindowFilter;
 pub use crate::windows::domain::transaction::Requested;
-pub use rini_ipc::protocol::Command;
 
 #[derive(Clone)]
 pub struct ReactorHandle {
@@ -130,13 +127,9 @@ pub struct ReactorHandle {
 }
 
 impl ReactorHandle {
-    pub fn new(sender: Sender, queries: ReactorQueryHandle) -> Self {
-        Self { sender, queries }
-    }
+    pub fn new(sender: Sender, queries: ReactorQueryHandle) -> Self { Self { sender, queries } }
 
-    pub fn sender(&self) -> Sender {
-        self.sender.clone()
-    }
+    pub fn sender(&self) -> Sender { self.sender.clone() }
 
     pub fn try_send(
         &self,
@@ -149,9 +142,7 @@ impl ReactorHandle {
 impl std::ops::Deref for ReactorHandle {
     type Target = ReactorQueryHandle;
 
-    fn deref(&self) -> &Self::Target {
-        &self.queries
-    }
+    fn deref(&self) -> &Self::Target { &self.queries }
 }
 
 #[derive(Debug, strum::IntoStaticStr)]
@@ -304,7 +295,9 @@ pub enum Event {
     ConfigUpdated(Config),
 
     /// The config file was read, and whether it could be used. While it cannot, every bar is marked.
-    ConfigFileRead { usable: bool },
+    ConfigFileRead {
+        usable: bool,
+    },
 }
 
 /// The displays context's events, one for one; the topology snapshot arrives as `SpaceStateChanged`.
@@ -585,7 +578,10 @@ impl Reactor {
         pictures: Option<crate::pictures::platform::service::Pictures>,
         switcher_tx: Option<crate::switcher::platform::actor::Sender>,
         bar_tx: Option<crate::bar::platform::actor::Sender>,
-        rest: Option<(crate::decorations::platform::rest::Sender, crate::displays::event::Following)>,
+        rest: Option<(
+            crate::decorations::platform::rest::Sender,
+            crate::displays::event::Following,
+        )>,
         window_tx_store: WindowTxStore,
     ) -> ReactorHandle {
         let (events_tx, events) = channels::channel();
@@ -645,7 +641,10 @@ impl Reactor {
             live_spaces: space_affinity::LiveSpaces::default(),
             pictured_windows: HashSet::default(),
             focused_as_event_began: None,
-            cause: Cause { at: std::time::Instant::now(), what: "start" },
+            cause: Cause {
+                at: std::time::Instant::now(),
+                what: "start",
+            },
             regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
@@ -727,9 +726,7 @@ impl Reactor {
         }
     }
 
-    fn is_space_active(&self, space: SpaceId) -> bool {
-        self.active_spaces.contains(&space)
-    }
+    fn is_space_active(&self, space: SpaceId) -> bool { self.active_spaces.contains(&space) }
 
     fn iter_active_spaces(&self) -> impl Iterator<Item = SpaceId> + '_ {
         self.active_spaces.iter().copied()
@@ -747,9 +744,7 @@ impl Reactor {
         }
     }
 
-    fn screens_for_current_spaces(&self) -> Vec<ScreenInfo> {
-        self.space_state.screens.clone()
-    }
+    fn screens_for_current_spaces(&self) -> Vec<ScreenInfo> { self.space_state.screens.clone() }
 
     fn display_uuids_for_current_screens(&self) -> Vec<Option<String>> {
         self.space_state
@@ -1212,7 +1207,10 @@ impl Reactor {
 
     #[instrument(name = "reactor::handle_event", skip(self), fields(event=?event))]
     fn handle_event(&mut self, event: Event) {
-        let cause = Cause { at: std::time::Instant::now(), what: event.what() };
+        let cause = Cause {
+            at: std::time::Instant::now(),
+            what: event.what(),
+        };
         let outer_cause = std::mem::replace(&mut self.cause, cause);
         let began = self.layout_manager.layout_engine.focused_window();
         let outer = std::mem::replace(&mut self.focused_as_event_began, began);
@@ -1258,7 +1256,8 @@ impl Reactor {
                 state.is_effectively_manageable().then_some((window, frame))
             })
             .collect();
-        if let (false, Some(tx)) = (windows.is_empty(), &self.communication_manager.transitions_tx) {
+        if let (false, Some(tx)) = (windows.is_empty(), &self.communication_manager.transitions_tx)
+        {
             _ = tx.send(crate::transitions::platform::engine::Event::LooksTurned(windows));
         }
     }
@@ -2331,14 +2330,11 @@ impl Reactor {
                     .windows
                     .get_window_server_info(wsid)
                     .or_else(|| window_server::get_window(wsid));
-                (
-                    wsid,
-                    window_discovery::StaleWindowObservation {
-                        info,
-                        suitable: window_server::app_window_suitability(wsid),
-                        ordered_in: window_server::window_ordered_in(wsid),
-                    },
-                )
+                (wsid, window_discovery::StaleWindowObservation {
+                    info,
+                    suitable: window_server::app_window_suitability(wsid),
+                    ordered_in: window_server::window_ordered_in(wsid),
+                })
             })
             .collect();
         let stale_snapshot = window_discovery::StaleCleanupSnapshot {
@@ -3411,7 +3407,10 @@ impl Reactor {
             .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
             .collect();
         let (writes, skipped) = crate::transitions::domain::frame_writes::writes_to_send(
-            frames.into_iter().map(|(wid, frame)| (wid, ScreenRect::from_cg(frame))).collect(),
+            frames
+                .into_iter()
+                .map(|(wid, frame)| (wid, ScreenRect::from_cg(frame)))
+                .collect(),
             ScreenRect::from_cg(display),
             |wid| {
                 let wsid = self.state.windows.window(wid)?.info.sys_id?;
@@ -3597,9 +3596,8 @@ impl Reactor {
         // A move's pair starts where the look stages it.
         if cue == Cue::Plain {
             let origin = ScreenPoint::from_cg(display_bounds.origin);
-            let at_rest = |frame| {
-                crate::transitions::domain::strip_stack::strip_frame(frame, origin, 0, 0.0)
-            };
+            let at_rest =
+                |frame| crate::transitions::domain::strip_stack::strip_frame(frame, origin, 0, 0.0);
             let standing: Vec<(WindowId, SurfaceRect)> =
                 standing.iter().map(|request| (request.window, at_rest(request.from))).collect();
             let laid_out: Vec<(WindowId, SurfaceRect)> = laid_out
@@ -3634,23 +3632,26 @@ impl Reactor {
             look,
         );
 
-        self.send_flight(space, crate::transitions::platform::engine::Event::AnimateSurface {
-            windows,
-            from_offset,
-            to_offset,
-            final_frames: final_frames
-                .into_iter()
-                .map(|(wid, frame)| (wid, ScreenRect::from_cg(frame)))
-                .collect(),
-            focus: self.layout_manager.layout_engine.focused_window(),
-            focused_before: self.focused_as_event_began,
-            key: self.main_window_tracker.key_window(),
-            duration,
-            look,
-            cue,
-            accent,
-            cause: self.cause,
-        });
+        self.send_flight(
+            space,
+            crate::transitions::platform::engine::Event::AnimateSurface {
+                windows,
+                from_offset,
+                to_offset,
+                final_frames: final_frames
+                    .into_iter()
+                    .map(|(wid, frame)| (wid, ScreenRect::from_cg(frame)))
+                    .collect(),
+                focus: self.layout_manager.layout_engine.focused_window(),
+                focused_before: self.focused_as_event_began,
+                key: self.main_window_tracker.key_window(),
+                duration,
+                look,
+                cue,
+                accent,
+                cause: self.cause,
+            },
+        );
         true
     }
 
@@ -3694,9 +3695,7 @@ impl Reactor {
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
     /// the real windows do not move. See "Edge bounce" in `src/transitions/docs/coordination.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
-        if !self.config.settings.animate
-            || crate::app::power::is_low_power_mode_enabled()
-        {
+        if !self.config.settings.animate || crate::app::power::is_low_power_mode_enabled() {
             return;
         }
         if self.communication_manager.transitions_tx.is_none() {
@@ -3824,8 +3823,7 @@ impl Reactor {
             }
             // Stacked below the workspace above it, separated by the menu bar inset, and expressed
             // relative to the display's own origin so the overlay's space needs no further translation.
-            let row =
-                crate::transitions::domain::strip_stack::row_of(index, from_index, to_index);
+            let row = crate::transitions::domain::strip_stack::row_of(index, from_index, to_index);
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else {
                     continue;
@@ -3874,8 +3872,7 @@ impl Reactor {
             return false;
         }
 
-        let travel =
-            crate::transitions::domain::strip_stack::travel(from_index, to_index, height);
+        let travel = crate::transitions::domain::strip_stack::travel(from_index, to_index, height);
         let (from_offset, to_offset) = (travel.from, travel.to);
         let duration = std::time::Duration::from_secs_f64(
             (self.config.settings.animation_duration.max(0.0)) * travel.duration_stretch,
@@ -3910,20 +3907,23 @@ impl Reactor {
             );
         }
 
-        self.send_flight(space, crate::transitions::platform::engine::Event::AnimateSurface {
-            windows,
-            from_offset,
-            to_offset,
-            final_frames,
-            focus: self.layout_manager.layout_engine.focused_window(),
-            focused_before: self.focused_as_event_began,
-            key: self.main_window_tracker.key_window(),
-            duration,
-            look: crate::animation::domain::choreography::Look::default(),
-            cue: crate::animation::domain::choreography::Cue::Plain,
-            accent: None,
-            cause: self.cause,
-        });
+        self.send_flight(
+            space,
+            crate::transitions::platform::engine::Event::AnimateSurface {
+                windows,
+                from_offset,
+                to_offset,
+                final_frames,
+                focus: self.layout_manager.layout_engine.focused_window(),
+                focused_before: self.focused_as_event_began,
+                key: self.main_window_tracker.key_window(),
+                duration,
+                look: crate::animation::domain::choreography::Look::default(),
+                cue: crate::animation::domain::choreography::Cue::Plain,
+                accent: None,
+                cause: self.cause,
+            },
+        );
         // Every workspace, so the next switch in any direction has both strips drawn. Stays here:
         // the pictures service holds a warm until the quiet after the flight (`src/transitions/docs/coordination.md`).
         self.warm_all_workspaces(space);
@@ -3970,14 +3970,14 @@ impl Reactor {
             screen.frame,
             &gaps,
         );
-        Some((self.last_strip_layout.insert((space, workspace), now.clone()), now))
+        Some((
+            self.last_strip_layout.insert((space, workspace), now.clone()),
+            now,
+        ))
     }
 
     /// The screen `space` is laid out on, the first one when it is on none, and its gaps.
-    fn strip_screen(
-        &self,
-        space: SpaceId,
-    ) -> Option<(ScreenInfo, crate::layout::settings::Gaps)> {
+    fn strip_screen(&self, space: SpaceId) -> Option<(ScreenInfo, crate::layout::settings::Gaps)> {
         let screen = self
             .space_state
             .screens
@@ -4007,9 +4007,7 @@ impl Reactor {
         self.moved_along_strip.take()
     }
 
-    pub(crate) fn publish_animation_display(&self) {
-        self.publish_animation_display_for(None);
-    }
+    pub(crate) fn publish_animation_display(&self) { self.publish_animation_display_for(None); }
 
     /// Hands the flight engine `event`, a flight over the display holding `space`, told first which
     /// display that is, and notes the display and the press for the rest windows, which hold what the
@@ -4020,7 +4018,9 @@ impl Reactor {
         event: crate::transitions::platform::engine::Event,
     ) -> bool {
         let display = self.publish_animation_display_for(Some(space));
-        let Some(tx) = &self.communication_manager.transitions_tx else { return false };
+        let Some(tx) = &self.communication_manager.transitions_tx else {
+            return false;
+        };
         let pressed = event.pressed();
         _ = tx.send(event);
         self.rest.flight = display.zip(pressed).or(self.rest.flight);
@@ -4029,7 +4029,10 @@ impl Reactor {
 
     /// The transitions engine the reactor drives, told at once whether to write its journal and
     /// measure each lift's handover: it writes nothing until it hears.
-    fn connect_transitions(&mut self, transitions_tx: Option<crate::transitions::platform::engine::Sender>) {
+    fn connect_transitions(
+        &mut self,
+        transitions_tx: Option<crate::transitions::platform::engine::Sender>,
+    ) {
         self.communication_manager.transitions_tx = transitions_tx;
         self.publish_journal();
     }
@@ -4037,7 +4040,9 @@ impl Reactor {
     /// Tells the transitions engine whether to write its journal and measure each lift's handover.
     fn publish_journal(&self) {
         if let Some(tx) = &self.communication_manager.transitions_tx {
-            _ = tx.send(crate::transitions::platform::engine::Event::Journal(self.config.settings.journal));
+            _ = tx.send(crate::transitions::platform::engine::Event::Journal(
+                self.config.settings.journal,
+            ));
         }
     }
 
@@ -4048,7 +4053,10 @@ impl Reactor {
     /// was over there: the external showed the built-in's windows sliding while the built-in's own windows
     /// snapped with no animation. `space` is `None` only for a config reload, which has no particular
     /// display in mind. The display's bounds, as the overlay covers them.
-    pub(crate) fn publish_animation_display_for(&self, space: Option<SpaceId>) -> Option<ScreenRect> {
+    pub(crate) fn publish_animation_display_for(
+        &self,
+        space: Option<SpaceId>,
+    ) -> Option<ScreenRect> {
         let wanted = space.or_else(|| self.active_display_space());
         let screen = self
             .space_state
@@ -4334,7 +4342,9 @@ impl Reactor {
         };
 
         // The stack from the top down to the candidate; only floating windows rini tracks count.
-        let order = crate::windows::platform::window_server::space_window_list_for_connection(&[space.get()]);
+        let order = crate::windows::platform::window_server::space_window_list_for_connection(&[
+            space.get(),
+        ]);
         let candidate_u32 = candidate_wsid.as_u32();
         let above = order.into_iter().take_while(|&id| id != candidate_u32).filter_map(|id| {
             let wsid = WindowServerId::new(id);
@@ -5361,9 +5371,7 @@ impl Reactor {
     // Uses the same "pending refresh" path as Mission Control recovery so a bulk
     // visibility rediscovery can reconcile tracked windows without treating a
     // transient empty AX window list as authoritative removal.
-    fn force_refresh_all_windows(&mut self) {
-        self.request_visible_windows_for_apps(true);
-    }
+    fn force_refresh_all_windows(&mut self) { self.request_visible_windows_for_apps(true); }
 
     fn has_user_space_context(&self) -> bool {
         self.raw_command_space().is_some_and(|space| !self.is_fullscreen_space(space))
@@ -5382,9 +5390,7 @@ impl Reactor {
         }
     }
 
-    pub(crate) fn main_window(&self) -> Option<WindowId> {
-        self.main_window_tracker.main_window()
-    }
+    pub(crate) fn main_window(&self) -> Option<WindowId> { self.main_window_tracker.main_window() }
 
     /// Resolves rather than caches. Three callers, each once per event, and resolving reads the
     /// window server — so this is a real cost but not a hot one, and a cache here would be a second
@@ -5405,9 +5411,7 @@ impl Reactor {
         (self.workspace_command_space() == Some(space)).then_some((space, window))
     }
 
-    fn raw_command_space(&self) -> Option<SpaceId> {
-        self.space_state.command_space
-    }
+    fn raw_command_space(&self) -> Option<SpaceId> { self.space_state.command_space }
 
     fn active_display_space(&self) -> Option<SpaceId> {
         self.raw_command_space()
@@ -5525,7 +5529,10 @@ impl Reactor {
     }
 
     /// Write the layout file immediately, bypassing the debounce.
-    pub(crate) fn save_layout_before_exit(&mut self, path: std::path::PathBuf) -> std::io::Result<()> {
+    pub(crate) fn save_layout_before_exit(
+        &mut self,
+        path: std::path::PathBuf,
+    ) -> std::io::Result<()> {
         let active_space = self.active_display_space();
         command_workflow::save_layout_before_exit(
             &self.state,

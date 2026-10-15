@@ -112,9 +112,7 @@ fn is_anonymous(name: &str) -> bool {
     name.strip_prefix("Item-").is_some_and(|rest| rest.parse::<u32>().is_ok())
 }
 
-fn is_bundle_id(name: &str) -> bool {
-    name.contains('.')
-}
+fn is_bundle_id(name: &str) -> bool { name.contains('.') }
 
 /// The extras to draw, in menu-bar order left to right, each with its index in `windows`.
 ///
@@ -230,17 +228,34 @@ impl Composite {
             (((points - origin) * self.scale).round().max(0.0) as usize).min(limit)
         };
         let x0 = pixel(bounds.origin.x, self.union.origin.x, self.width);
-        let x1 = pixel(bounds.origin.x + bounds.size.width, self.union.origin.x, self.width);
+        let x1 = pixel(
+            bounds.origin.x + bounds.size.width,
+            self.union.origin.x,
+            self.width,
+        );
         let y0 = pixel(bounds.origin.y, self.union.origin.y, self.height);
-        let y1 = pixel(bounds.origin.y + bounds.size.height, self.union.origin.y, self.height);
-        (x1 > x0 && y1 > y0).then_some(PixelRect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 })
+        let y1 = pixel(
+            bounds.origin.y + bounds.size.height,
+            self.union.origin.y,
+            self.height,
+        );
+        (x1 > x0 && y1 > y0).then_some(PixelRect {
+            x: x0,
+            y: y0,
+            width: x1 - x0,
+            height: y1 - y0,
+        })
     }
 }
 
 /// `rect`'s rows of an RGBA8 picture laid out `stride` bytes a row, top row first.
 fn rows(pixels: &[u8], stride: usize, rect: PixelRect) -> impl Iterator<Item = &[u8]> {
     let span = rect.x * 4..(rect.x + rect.width) * 4;
-    pixels.chunks(stride).skip(rect.y).take(rect.height).filter_map(move |row| row.get(span.clone()))
+    pixels
+        .chunks(stride)
+        .skip(rect.y)
+        .take(rect.height)
+        .filter_map(move |row| row.get(span.clone()))
 }
 
 /// Each column's greatest alpha within `rect`, alpha being every pixel's last byte.
@@ -275,9 +290,7 @@ pub struct Stamp {
 
 /// Whether the extras differ from the ones last sent: another window, kind or order, or a picture
 /// that changed. Nothing sent yet is a change.
-pub fn changed(last: Option<&[Stamp]>, now: &[Stamp]) -> bool {
-    last != Some(now)
-}
+pub fn changed(last: Option<&[Stamp]>, now: &[Stamp]) -> bool { last != Some(now) }
 
 /// For each extra now, the index of the one last sent with the same stamp, whose picture it is sent
 /// with again. The bar sets a layer's contents only when its picture is another one, so a fresh copy
@@ -314,7 +327,11 @@ pub struct Schedule {
 impl Schedule {
     /// Running, with the first picture due at once.
     pub fn new(now: Instant) -> Schedule {
-        Schedule { paused: false, due: now, taken: None }
+        Schedule {
+            paused: false,
+            due: now,
+            taken: None,
+        }
     }
 
     /// How long to wait for a command before picturing. `None` while paused: wait for one.
@@ -353,9 +370,7 @@ impl Schedule {
     }
 
     /// A pass taken that pictured nothing does not count: the next tick tries again.
-    pub fn missed(&mut self) {
-        self.taken = None;
-    }
+    pub fn missed(&mut self) { self.taken = None; }
 
     /// Whether a pass taken may go on to capture, given the pause as it stands now rather than as the
     /// last command read said. A pause that landed since calls the capture off and holds from here,
@@ -382,20 +397,36 @@ mod tests {
             asked.push(pid);
             format!("app {pid}")
         };
-        assert_eq!(names.of(&[10, 10, 20], &mut look_up), vec!["app 10", "app 10", "app 20"]);
+        assert_eq!(names.of(&[10, 10, 20], &mut look_up), vec![
+            "app 10", "app 10", "app 20"
+        ]);
         assert_eq!(names.of(&[20, 10], &mut look_up), vec!["app 20", "app 10"]);
         assert_eq!(names.of(&[20], &mut look_up), vec!["app 20"]);
         assert_eq!(names.of(&[10, 20], &mut look_up), vec!["app 10", "app 20"]);
-        assert_eq!(asked, vec![10, 20, 10], "10 again only once a listing went without it");
+        assert_eq!(
+            asked,
+            vec![10, 20, 10],
+            "10 again only once a listing went without it"
+        );
     }
 
     /// On the built-in display's hidden menu bar.
     fn status(name: &str, x: f64) -> StatusWindow {
-        StatusWindow { owner: HOST.into(), name: name.into(), x, y: -33.0, width: 38.0, height: 33.0 }
+        StatusWindow {
+            owner: HOST.into(),
+            name: name.into(),
+            x,
+            y: -33.0,
+            width: 38.0,
+            height: 33.0,
+        }
     }
 
     fn names(windows: &[StatusWindow]) -> Vec<(&str, Kind)> {
-        select(windows).into_iter().map(|(index, kind)| (windows[index].name.as_str(), kind)).collect()
+        select(windows)
+            .into_iter()
+            .map(|(index, kind)| (windows[index].name.as_str(), kind))
+            .collect()
     }
 
     /// The enumeration this machine gave, right to left as the window server lists it.
@@ -448,17 +479,14 @@ mod tests {
     /// Drawn left to right, as the menu bar has them.
     #[test]
     fn extras_come_out_in_menu_bar_order() {
-        assert_eq!(
-            names(&session()),
-            vec![
-                ("AudioVideoModule", Kind::Tray),
-                ("Item-0", Kind::Tray),
-                ("Item-0", Kind::Tray),
-                ("Battery", Kind::Vital(Vital::Battery)),
-                ("WiFi", Kind::Vital(Vital::WiFi)),
-                ("Sound", Kind::Vital(Vital::Sound)),
-            ]
-        );
+        assert_eq!(names(&session()), vec![
+            ("AudioVideoModule", Kind::Tray),
+            ("Item-0", Kind::Tray),
+            ("Item-0", Kind::Tray),
+            ("Battery", Kind::Vital(Vital::Battery)),
+            ("WiFi", Kind::Vital(Vital::WiFi)),
+            ("Sound", Kind::Vital(Vital::Sound)),
+        ]);
     }
 
     /// With both blocks listed, the anonymous one is kept: it is the one whose captures draw.
@@ -482,15 +510,20 @@ mod tests {
             status("us.zoom.xos", 140.0),
             status("Item-0", 200.0),
         ];
-        let kept: Vec<&str> =
-            select(&windows).iter().map(|(index, _)| windows[*index].name.as_str()).collect();
+        let kept: Vec<&str> = select(&windows)
+            .iter()
+            .map(|(index, _)| windows[*index].name.as_str())
+            .collect();
         assert_eq!(kept, vec!["com.microsoft.Outlook", "us.zoom.xos"]);
     }
 
     /// Named extras alone are all kept: some sessions resolve every name.
     #[test]
     fn a_session_of_named_extras_keeps_them() {
-        let windows = vec![status("com.amazon.ACME", 100.0), status("us.zoom.xos", 140.0)];
+        let windows = vec![
+            status("com.amazon.ACME", 100.0),
+            status("us.zoom.xos", 140.0),
+        ];
         assert_eq!(select(&windows).len(), 2);
     }
 
@@ -533,13 +566,14 @@ mod tests {
         assert!(on_display(&window, external));
     }
 
-    fn at(x: f64, y: f64) -> StatusWindow {
-        StatusWindow { y, ..status("WiFi", x) }
-    }
+    fn at(x: f64, y: f64) -> StatusWindow { StatusWindow { y, ..status("WiFi", x) } }
 
     /// The external display stacked above the built-in, wider on both sides.
     fn stacked() -> (CGRect, CGRect) {
-        (rect(0.0, 0.0, 1728.0, 1117.0), rect(-670.0, -1692.0, 3008.0, 1692.0))
+        (
+            rect(0.0, 0.0, 1728.0, 1117.0),
+            rect(-670.0, -1692.0, 3008.0, 1692.0),
+        )
     }
 
     /// Stacked, the two share an x range, so an extra belongs to the display whose top edge it is on.
@@ -547,11 +581,20 @@ mod tests {
     fn a_stacked_display_keeps_only_the_extras_on_its_own_top_edge() {
         let (builtin, external) = stacked();
         assert!(on_display(&at(2200.0, -1725.0), external));
-        assert!(!on_display(&at(2200.0, -1725.0), builtin), "right of the built-in");
+        assert!(
+            !on_display(&at(2200.0, -1725.0), builtin),
+            "right of the built-in"
+        );
         assert!(on_display(&at(1500.0, -33.0), builtin));
-        assert!(!on_display(&at(1500.0, -33.0), external), "under the external, at the built-in's top");
+        assert!(
+            !on_display(&at(1500.0, -33.0), external),
+            "under the external, at the built-in's top"
+        );
         assert!(on_display(&at(500.0, -1725.0), external));
-        assert!(!on_display(&at(500.0, -1725.0), builtin), "over the built-in, at the external's top");
+        assert!(
+            !on_display(&at(500.0, -1725.0), builtin),
+            "over the built-in, at the external's top"
+        );
     }
 
     /// Hidden a window's height above the top edge, shown at it, and anywhere between as it slides.
@@ -568,7 +611,10 @@ mod tests {
 
     /// The hidden menu bar's items at 2x: 14 windows, 33pt tall, at y = -33.
     fn composite() -> Composite {
-        let bounds = [rect(1100.0, -33.0, 62.0, 33.0), rect(1680.0, -33.0, 48.0, 33.0)];
+        let bounds = [
+            rect(1100.0, -33.0, 62.0, 33.0),
+            rect(1680.0, -33.0, 48.0, 33.0),
+        ];
         Composite::new(&bounds, (1256, 66)).expect("the union at 2x")
     }
 
@@ -586,7 +632,11 @@ mod tests {
         assert_eq!(Composite::new(&bounds, (0, 0)), None);
         assert_eq!(Composite::new(&bounds, (1, 1)), None);
         assert_eq!(Composite::new(&bounds, (1256, 40)), None, "not 33pt at 2x");
-        assert_eq!(Composite::new(&bounds, (1256, 67)).map(|c| c.scale), Some(2.0), "a pixel over");
+        assert_eq!(
+            Composite::new(&bounds, (1256, 67)).map(|c| c.scale),
+            Some(2.0),
+            "a pixel over"
+        );
         assert_eq!(Composite::new(&[], (1256, 66)), None);
         assert_eq!(Composite::new(&[rect(0.0, 0.0, 0.0, 33.0)], (0, 66)), None);
     }
@@ -596,11 +646,21 @@ mod tests {
         let composite = composite();
         assert_eq!(
             composite.crop(rect(1100.0, -33.0, 62.0, 33.0)),
-            Some(PixelRect { x: 0, y: 0, width: 124, height: 66 })
+            Some(PixelRect {
+                x: 0,
+                y: 0,
+                width: 124,
+                height: 66
+            })
         );
         assert_eq!(
             composite.crop(rect(1680.0, -33.0, 48.0, 33.0)),
-            Some(PixelRect { x: 1160, y: 0, width: 96, height: 66 })
+            Some(PixelRect {
+                x: 1160,
+                y: 0,
+                width: 96,
+                height: 66
+            })
         );
     }
 
@@ -621,7 +681,12 @@ mod tests {
         let composite = composite();
         assert_eq!(
             composite.crop(rect(1700.0, -40.0, 60.0, 40.0)),
-            Some(PixelRect { x: 1200, y: 0, width: 56, height: 66 })
+            Some(PixelRect {
+                x: 1200,
+                y: 0,
+                width: 56,
+                height: 66
+            })
         );
         assert_eq!(composite.crop(rect(900.0, -33.0, 40.0, 33.0)), None);
         assert_eq!(composite.crop(rect(1200.0, -33.0, 0.0, 33.0)), None);
@@ -633,7 +698,12 @@ mod tests {
         let mut out = vec![0xEE; stride * 2];
         for (y, row) in alpha.iter().enumerate() {
             for (x, &a) in row.iter().enumerate() {
-                out[y * stride + x * 4..y * stride + x * 4 + 4].copy_from_slice(&[a / 2, a / 3, a / 4, a]);
+                out[y * stride + x * 4..y * stride + x * 4 + 4].copy_from_slice(&[
+                    a / 2,
+                    a / 3,
+                    a / 4,
+                    a,
+                ]);
             }
         }
         (out, stride)
@@ -642,9 +712,19 @@ mod tests {
     #[test]
     fn a_column_is_as_opaque_as_its_most_opaque_pixel() {
         let (bytes, stride) = pixels([[0, 10, 200, 0], [5, 90, 30, 0]]);
-        let whole = PixelRect { x: 0, y: 0, width: 4, height: 2 };
+        let whole = PixelRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 2,
+        };
         assert_eq!(column_alpha(&bytes, stride, whole), vec![5, 90, 200, 0]);
-        let inner = PixelRect { x: 1, y: 1, width: 2, height: 1 };
+        let inner = PixelRect {
+            x: 1,
+            y: 1,
+            width: 2,
+            height: 1,
+        };
         assert_eq!(column_alpha(&bytes, stride, inner), vec![90, 30]);
     }
 
@@ -652,22 +732,44 @@ mod tests {
     #[test]
     fn a_fingerprint_is_of_the_crop_alone() {
         let (bytes, stride) = pixels([[0, 10, 200, 0], [5, 90, 30, 0]]);
-        let left = PixelRect { x: 0, y: 0, width: 2, height: 2 };
+        let left = PixelRect {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 2,
+        };
         let mut other = bytes.clone();
         other[3 * 4 + 3] = 255;
         other[4 * 4] = 0;
-        assert_eq!(fingerprint(&bytes, stride, left), fingerprint(&other, stride, left));
+        assert_eq!(
+            fingerprint(&bytes, stride, left),
+            fingerprint(&other, stride, left)
+        );
         other[4 + 3] = 11;
-        assert_ne!(fingerprint(&bytes, stride, left), fingerprint(&other, stride, left));
-        let wide = PixelRect { x: 0, y: 0, width: 4, height: 1 };
-        let tall = PixelRect { x: 0, y: 0, width: 2, height: 2 };
+        assert_ne!(
+            fingerprint(&bytes, stride, left),
+            fingerprint(&other, stride, left)
+        );
+        let wide = PixelRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 1,
+        };
+        let tall = PixelRect {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 2,
+        };
         let blank = vec![0; stride * 2];
-        assert_ne!(fingerprint(&blank, stride, wide), fingerprint(&blank, stride, tall));
+        assert_ne!(
+            fingerprint(&blank, stride, wide),
+            fingerprint(&blank, stride, tall)
+        );
     }
 
-    fn stamp(window: u32, kind: Kind, hash: u64) -> Stamp {
-        Stamp { window, kind, hash }
-    }
+    fn stamp(window: u32, kind: Kind, hash: u64) -> Stamp { Stamp { window, kind, hash } }
 
     #[test]
     fn the_first_pictures_are_always_sent() {
@@ -678,20 +780,32 @@ mod tests {
     /// Only a change is sent: a picture, the set of extras, their kinds or their order.
     #[test]
     fn only_a_change_is_sent() {
-        let last = [stamp(7, Kind::Tray, 1), stamp(9, Kind::Vital(Vital::WiFi), 2)];
+        let last = [
+            stamp(7, Kind::Tray, 1),
+            stamp(9, Kind::Vital(Vital::WiFi), 2),
+        ];
         assert!(!changed(Some(&last), &last));
-        assert!(changed(Some(&last), &[last[0], stamp(9, Kind::Vital(Vital::WiFi), 3)]));
+        assert!(changed(Some(&last), &[
+            last[0],
+            stamp(9, Kind::Vital(Vital::WiFi), 3)
+        ]));
         assert!(changed(Some(&last), &[last[0]]));
         assert!(changed(Some(&last), &[last[1], last[0]]));
         assert!(changed(Some(&last), &[last[0], stamp(9, Kind::Tray, 2)]));
-        assert!(changed(Some(&last), &[last[0], stamp(10, Kind::Vital(Vital::WiFi), 2)]));
+        assert!(changed(Some(&last), &[
+            last[0],
+            stamp(10, Kind::Vital(Vital::WiFi), 2)
+        ]));
     }
 
     /// An extra is sent with the picture last sent for it unless its window, kind or pixels changed,
     /// wherever it now is in the row.
     #[test]
     fn an_unchanged_extra_keeps_the_picture_last_sent() {
-        let last = [stamp(7, Kind::Tray, 1), stamp(9, Kind::Vital(Vital::WiFi), 2)];
+        let last = [
+            stamp(7, Kind::Tray, 1),
+            stamp(9, Kind::Vital(Vital::WiFi), 2),
+        ];
         let now = [
             stamp(9, Kind::Vital(Vital::WiFi), 2),
             stamp(7, Kind::Tray, 5),
@@ -727,7 +841,10 @@ mod tests {
         schedule.on(Command::Refresh, start + TICK * 5);
         assert!(!schedule.take(start + TICK * 5, Duration::ZERO));
         schedule.on(Command::Pause(false), start + TICK * 6);
-        assert!(schedule.take(start + TICK * 6, Duration::ZERO), "the picture that fell due while paused");
+        assert!(
+            schedule.take(start + TICK * 6, Duration::ZERO),
+            "the picture that fell due while paused"
+        );
     }
 
     /// A flight that starts between a pass's listing and its capture calls the capture off. The thread
@@ -743,7 +860,10 @@ mod tests {
         assert!(!schedule.take(start + TICK * 3, Duration::ZERO));
         schedule.on(Command::Pause(true), listed);
         schedule.on(Command::Pause(false), start + TICK / 2);
-        assert!(schedule.take(start + TICK / 2, Duration::ZERO), "the pass called off, at once");
+        assert!(
+            schedule.take(start + TICK / 2, Duration::ZERO),
+            "the pass called off, at once"
+        );
     }
 
     #[test]
@@ -775,13 +895,25 @@ mod tests {
     fn with_no_input_for_a_minute_the_extras_are_pictured_every_thirty_seconds() {
         let start = Instant::now();
         let mut schedule = Schedule::new(start);
-        assert!(schedule.take(start, AWAY_AFTER), "the first pass whatever the idle");
-        let ticks = (1..AWAY_TICK.as_secs() as u32).filter(|&n| schedule.take(start + TICK * n, AWAY_AFTER)).count();
+        assert!(
+            schedule.take(start, AWAY_AFTER),
+            "the first pass whatever the idle"
+        );
+        let ticks = (1..AWAY_TICK.as_secs() as u32)
+            .filter(|&n| schedule.take(start + TICK * n, AWAY_AFTER))
+            .count();
         assert_eq!(ticks, 0);
-        assert_eq!(schedule.wait(start + TICK * 29), Some(TICK), "every tick is still looked at");
+        assert_eq!(
+            schedule.wait(start + TICK * 29),
+            Some(TICK),
+            "every tick is still looked at"
+        );
         assert!(schedule.take(start + AWAY_TICK, AWAY_AFTER));
         let back = start + AWAY_TICK + TICK;
-        assert!(schedule.take(back, Duration::from_millis(300)), "input since the last pass");
+        assert!(
+            schedule.take(back, Duration::from_millis(300)),
+            "input since the last pass"
+        );
         assert!(schedule.take(back + TICK, AWAY_AFTER - TICK));
     }
 

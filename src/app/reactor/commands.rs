@@ -7,17 +7,14 @@
 //! Commands whose payload arrives already settled are dispatched straight from
 //! `super::Reactor::dispatch_workflow` and are not here.
 
-use tracing::warn;
-
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::centered_in;
 use rini_ipc::protocol::{DisplaySelector, LayoutCommand};
-
-use crate::displays::domain::screen::ScreenInfo;
+use tracing::warn;
 
 use super::Reactor;
-use super::events::EventOutcome;
-use super::events::command as command_workflow;
+use super::events::{EventOutcome, command as command_workflow};
+use crate::displays::domain::screen::ScreenInfo;
 
 impl Reactor {
     pub(super) fn on_toggle_space_activated(&mut self) -> anyhow::Result<EventOutcome> {

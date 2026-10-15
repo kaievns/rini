@@ -18,9 +18,7 @@ pub struct LoadedLayout {
 }
 
 impl LayoutEngine {
-    pub fn load(path: PathBuf) -> anyhow::Result<Self> {
-        Self::load_file(&path)?.layout
-    }
+    pub fn load(path: PathBuf) -> anyhow::Result<Self> { Self::load_file(&path)?.layout }
 
     /// Load the saved snapshot used for process startup and report its persisted coverage.
     /// Validation and menu previews continue to use `load` without emitting restore logs.

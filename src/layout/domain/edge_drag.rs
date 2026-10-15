@@ -94,13 +94,9 @@ pub fn dragged_width(start_width: f64, now_width: f64, centred: bool) -> f64 {
     }
 }
 
-fn max_x(frame: CGRect) -> f64 {
-    frame.origin.x + frame.size.width
-}
+fn max_x(frame: CGRect) -> f64 { frame.origin.x + frame.size.width }
 
-fn max_y(frame: CGRect) -> f64 {
-    frame.origin.y + frame.size.height
-}
+fn max_y(frame: CGRect) -> f64 { frame.origin.y + frame.size.height }
 
 #[cfg(test)]
 mod tests {
@@ -155,7 +151,11 @@ mod tests {
         let start = frame_y(374.0, 368.0);
         let out = Drag::report(start, frame_y(274.0, 468.0), None);
         assert_eq!(out.end, Some(End::Top), "moved");
-        assert_eq!(Drag::report(start, start, out.end).end, Some(End::Top), "back at the start");
+        assert_eq!(
+            Drag::report(start, start, out.end).end,
+            Some(End::Top),
+            "back at the start"
+        );
         assert_eq!(
             Drag::report(start, frame_y(374.0, 468.0), out.end).end,
             Some(End::Bottom),

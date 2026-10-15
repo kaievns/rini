@@ -2,12 +2,12 @@ use std::io::{self, Write};
 use std::process::{self};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use rini_core::ids::WindowId as InternalWindowId;
-use rini_core::ids::WindowServerId;
+use rini_core::ids::{WindowId as InternalWindowId, WindowServerId};
 use rini_ipc::RiniMachClient;
-use rini_ipc::protocol::WorkspaceSelector;
-use rini_ipc::protocol::{self as reactor, DisplaySelector};
-use rini_ipc::protocol::{RiniCommand, RiniRequest, RiniResponse, SwitchScope};
+use rini_ipc::protocol::{
+    self as reactor, DisplaySelector, RiniCommand, RiniRequest, RiniResponse, SwitchScope,
+    WorkspaceSelector,
+};
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -419,22 +419,20 @@ fn map_window_command(cmd: WindowCommands) -> Result<RiniCommand, String> {
             (Some(direction), None) => {
                 RiniCommand::Layout(LC::MoveFocus(parse_direction(&direction)?))
             }
-            (None, Some(window_id)) => {
-                RiniCommand::Reactor(reactor::ReactorCommand::FocusWindow {
-                    window_id: parse_window_id(&window_id)?.into(),
-                    window_server_id: window_server_id
-                        .as_deref()
-                        .map(parse_window_server_id)
-                        .map(|result| result.map(|id| id.as_u32()))
-                        .transpose()?,
-                })
-            }
+            (None, Some(window_id)) => RiniCommand::Reactor(reactor::ReactorCommand::FocusWindow {
+                window_id: parse_window_id(&window_id)?.into(),
+                window_server_id: window_server_id
+                    .as_deref()
+                    .map(parse_window_server_id)
+                    .map(|result| result.map(|id| id.as_u32()))
+                    .transpose()?,
+            }),
             (None, None) => {
                 return Err("window focus requires a direction or --window-id".to_string());
             }
             (Some(_), Some(_)) => {
                 return Err(
-                    "window focus accepts either a direction or --window-id, not both".to_string()
+                    "window focus accepts either a direction or --window-id, not both".to_string(),
                 );
             }
         },
@@ -445,9 +443,12 @@ fn map_window_command(cmd: WindowCommands) -> Result<RiniCommand, String> {
         WindowCommands::ToggleFold { direction } => {
             RiniCommand::Layout(LC::ToggleFold(parse_direction(&direction)?))
         }
-        WindowCommands::ResizeBy { amount, orientation } => RiniCommand::Layout(
-            LC::ResizeWindowBy { amount, orientation: orientation.into() },
-        ),
+        WindowCommands::ResizeBy { amount, orientation } => {
+            RiniCommand::Layout(LC::ResizeWindowBy {
+                amount,
+                orientation: orientation.into(),
+            })
+        }
         WindowCommands::Close { window_id } => {
             let window_server_id = window_id.as_deref().map(parse_window_server_id).transpose()?;
             RiniCommand::Reactor(reactor::ReactorCommand::CloseWindow {
@@ -536,7 +537,9 @@ fn map_config_command(cmd: ConfigCommands) -> RiniRequest {
         ConfigCommands::Set { kdl } => ConfigCommand::Set(kdl),
         ConfigCommands::Reload => ConfigCommand::ReloadConfig,
     };
-    RiniRequest::ExecuteCommand { command: RiniCommand::Config(command) }
+    RiniRequest::ExecuteCommand {
+        command: RiniCommand::Config(command),
+    }
 }
 
 fn map_space_command(cmd: SpaceCommands) -> RiniCommand {
@@ -645,7 +648,9 @@ mod tests {
     #[test]
     fn config_commands_are_not_embedded_as_json_strings() {
         let request = build_execute_request(ExecuteCommands::Config {
-            config_cmd: ConfigCommands::Set { kdl: "layout { gaps 8; }".into() },
+            config_cmd: ConfigCommands::Set {
+                kdl: "layout { gaps 8; }".into(),
+            },
         })
         .unwrap();
 
@@ -714,7 +719,8 @@ mod tests {
             &["execute", "workspace", "move-window", "--help"],
             &["query", "layout", "--help"],
         ] {
-            let parsed = Cli::try_parse_from(std::iter::once("rini-cli").chain(args.iter().copied()));
+            let parsed =
+                Cli::try_parse_from(std::iter::once("rini-cli").chain(args.iter().copied()));
             let help = match parsed {
                 Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => {
                     error.to_string()
@@ -732,7 +738,11 @@ mod tests {
             let error = Cli::try_parse_from(["rini-cli", "execute", subcommand, "--saved"])
                 .err()
                 .unwrap_or_else(|| panic!("{subcommand} parsed"));
-            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand, "{subcommand}");
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::InvalidSubcommand,
+                "{subcommand}"
+            );
         }
     }
 
@@ -773,30 +783,23 @@ mod tests {
         let commands = vec![
             ("next", WindowCommands::Next),
             ("prev", WindowCommands::Prev),
-            (
-                "focus",
-                WindowCommands::Focus {
-                    direction: Some("left".into()),
-                    window_id: None,
-                    window_server_id: None,
-                },
-            ),
+            ("focus", WindowCommands::Focus {
+                direction: Some("left".into()),
+                window_id: None,
+                window_server_id: None,
+            }),
             ("toggle-float", WindowCommands::ToggleFloat),
             (
                 "toggle-fullscreen-within-gaps",
                 WindowCommands::ToggleFullscreenWithinGaps,
             ),
-            (
-                "toggle-fold",
-                WindowCommands::ToggleFold { direction: "left".into() },
-            ),
-            (
-                "resize-by",
-                WindowCommands::ResizeBy {
-                    amount: 0.05,
-                    orientation: CliResizeOrientation::Horizontal,
-                },
-            ),
+            ("toggle-fold", WindowCommands::ToggleFold {
+                direction: "left".into(),
+            }),
+            ("resize-by", WindowCommands::ResizeBy {
+                amount: 0.05,
+                orientation: CliResizeOrientation::Horizontal,
+            }),
         ];
         let mut seen: Vec<(&str, serde_json::Value)> = Vec::new();
         for (label, command) in commands {
@@ -888,9 +891,10 @@ mod tests {
     /// `config get` asks for the running config; it is not a command the config actor runs.
     #[test]
     fn config_get_is_the_config_query() {
-        let request =
-            build_execute_request(ExecuteCommands::Config { config_cmd: ConfigCommands::Get })
-                .unwrap();
+        let request = build_execute_request(ExecuteCommands::Config {
+            config_cmd: ConfigCommands::Get,
+        })
+        .unwrap();
         assert_eq!(request, RiniRequest::GetConfig);
     }
 

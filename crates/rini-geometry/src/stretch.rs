@@ -85,7 +85,10 @@ mod tests {
             ScreenSize::new(400.0, 400.0),
             ScreenSize::new(401.0, 400.0)
         ));
-        assert!(is_a_resize(ScreenSize::new(40.0, 400.0), ScreenSize::new(41.0, 400.0)));
+        assert!(is_a_resize(
+            ScreenSize::new(40.0, 400.0),
+            ScreenSize::new(41.0, 400.0)
+        ));
     }
 
     /// A grow on either axis grows, one shrinking on the other included; a shrink and a point of
@@ -111,8 +114,14 @@ mod tests {
 
     #[test]
     fn nothing_stretches_onto_an_empty_size() {
-        assert!(!within_stretch(ScreenSize::new(859.0, 1081.0), ScreenSize::new(0.0, 1081.0)));
-        assert!(!within_stretch(ScreenSize::new(0.0, 0.0), ScreenSize::new(0.0, 0.0)));
+        assert!(!within_stretch(
+            ScreenSize::new(859.0, 1081.0),
+            ScreenSize::new(0.0, 1081.0)
+        ));
+        assert!(!within_stretch(
+            ScreenSize::new(0.0, 0.0),
+            ScreenSize::new(0.0, 0.0)
+        ));
         assert!(is_a_resize(ScreenSize::new(0.0, 0.0), ScreenSize::new(0.0, 0.0)));
     }
 }

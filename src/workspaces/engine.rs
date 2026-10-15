@@ -1,6 +1,9 @@
 use std::cmp::Ordering;
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_core::ids::{SpaceId, WindowId, pid_t};
+use rini_ipc::protocol::WorkspaceSelector;
+use rustc_hash::FxHashMap as HashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
@@ -11,7 +14,7 @@ use crate::layout::domain::edge_drag::Drag;
 use crate::layout::domain::tile::Borders;
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::info::AppInfo;
-use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext, RuleState};
+use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, RuleState, WindowRuleContext};
 use crate::windows::domain::state::WindowState;
 use crate::workspaces::domain::app_rules::{
     AfterRules, AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus, BeforeRules,
@@ -21,10 +24,6 @@ use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
 use crate::workspaces::domain::workspace_focus;
 use crate::workspaces::{AppRuleEffects, AppRuleResult, FloatingPositionStore, WindowStore};
-use rini_core::ids::SpaceId;
-use rini_core::ids::{WindowId, pid_t};
-use rini_ipc::protocol::WorkspaceSelector;
-use rustc_hash::FxHashMap as HashMap;
 
 mod commands;
 mod persistence;
@@ -114,9 +113,7 @@ pub struct LayoutEventOutcome {
 impl std::ops::Deref for LayoutEventOutcome {
     type Target = EventResponse;
 
-    fn deref(&self) -> &Self::Target {
-        &self.response
-    }
+    fn deref(&self) -> &Self::Target { &self.response }
 }
 
 pub struct LayoutEngine {
@@ -147,9 +144,7 @@ pub struct WorkspaceLayoutQuerySnapshot {
 }
 
 impl LayoutEngine {
-    pub fn focused_window(&self) -> Option<WindowId> {
-        self.focused_window
-    }
+    pub fn focused_window(&self) -> Option<WindowId> { self.focused_window }
 
     /// Resolve an optional workspace index and snapshot its layout for read-only consumers.
     pub fn query_workspace_layout(
@@ -679,11 +674,7 @@ impl LayoutEngine {
         self.window_layout_constraints.remove(&wid);
     }
 
-    fn remove_window_layout_membership(
-        &mut self,
-        window_store: &WindowStore,
-        wid: WindowId,
-    ) {
+    fn remove_window_layout_membership(&mut self, window_store: &WindowStore, wid: WindowId) {
         let tiled_workspaces =
             self.virtual_workspace_manager.workspaces_for_window(window_store, wid);
 
@@ -1474,7 +1465,15 @@ impl LayoutEngine {
         let border = self.borders.of(resize.window);
         let tree = self.workspace_tree_mut(resize.workspace_id);
         let _ = tree.select_window(layout, resize.window);
-        tree.on_window_resized(layout, resize.window, None, new_frame, border, screen_frame, &gaps);
+        tree.on_window_resized(
+            layout,
+            resize.window,
+            None,
+            new_frame,
+            border,
+            screen_frame,
+            &gaps,
+        );
         if let Some(previous) = previous_selection.filter(|window| *window != resize.window) {
             let _ = tree.select_window(layout, previous);
         }
@@ -1482,14 +1481,15 @@ impl LayoutEngine {
             .mark_last_saved(resize.space, resize.workspace_id, layout);
     }
 
-    pub fn debug_tree(&self, space: SpaceId) {
-        self.debug_tree_desc(space, "");
-    }
+    pub fn debug_tree(&self, space: SpaceId) { self.debug_tree_desc(space, ""); }
 
     pub fn debug_tree_desc(&self, space: SpaceId, desc: &'static str) {
         if let Some(workspace_id) = self.virtual_workspace_manager.active_workspace(space) {
             if let Some(layout) = self.workspace_layouts.active(space, workspace_id) {
-                debug!("Tree {desc}\n{}", self.workspace_tree(workspace_id).draw_tree(layout).trim());
+                debug!(
+                    "Tree {desc}\n{}",
+                    self.workspace_tree(workspace_id).draw_tree(layout).trim()
+                );
             } else {
                 debug!("No layout for workspace {workspace_id:?} on space {space:?}");
             }
@@ -1774,12 +1774,7 @@ impl LayoutEngine {
                     );
                 }
             }
-            LayoutEvent::WindowResized {
-                wid,
-                drag,
-                new_frame,
-                screens,
-            } => {
+            LayoutEvent::WindowResized { wid, drag, new_frame, screens } => {
                 for (space, screen_frame, display_uuid) in screens {
                     let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
                         debug!(
@@ -2041,11 +2036,12 @@ impl LayoutEngine {
                 target,
                 command,
             ),
-            LayoutCommand::ResizeWindowBy { .. }
-            | LayoutCommand::CyclePresetColumnWidth => {
+            LayoutCommand::ResizeWindowBy { .. } | LayoutCommand::CyclePresetColumnWidth => {
                 self.handle_resize_command(memory, target, is_floating, command)
             }
-            LayoutCommand::SnapStrip | LayoutCommand::CenterSelection => self.handle_strip_command(target, command),
+            LayoutCommand::SnapStrip | LayoutCommand::CenterSelection => {
+                self.handle_strip_command(target, command)
+            }
             LayoutCommand::ToggleFullscreenWithinGaps => {
                 self.handle_floating_command(memory, target, command)
             }
@@ -2591,9 +2587,7 @@ impl LayoutEngine {
         self.switch_to_workspace(window_store, space, workspace_index, Some(focus_window))
     }
 
-    pub fn virtual_workspace_manager(&self) -> &WorkspaceStore {
-        &self.virtual_workspace_manager
-    }
+    pub fn virtual_workspace_manager(&self) -> &WorkspaceStore { &self.virtual_workspace_manager }
 
     pub fn virtual_workspace_manager_mut(&mut self) -> &mut WorkspaceStore {
         &mut self.virtual_workspace_manager
@@ -3062,13 +3056,13 @@ mod tests {
     use std::panic::AssertUnwindSafe;
 
     use objc2_core_foundation::{CGPoint, CGSize};
+    use rini_ipc::protocol::WorkspaceSelector;
+    use rustc_hash::FxHashMap as HashMap;
 
     use super::*;
     use crate::layout::settings::LayoutSettings;
     use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RuleMatch, WindowRule};
     use crate::workspaces::settings::VirtualWorkspaceSettings;
-    use rini_ipc::protocol::WorkspaceSelector;
-    use rustc_hash::FxHashMap as HashMap;
 
     fn test_engine() -> LayoutEngine {
         LayoutEngine::new(&VirtualWorkspaceSettings::default(), &LayoutSettings::default())
@@ -3251,7 +3245,10 @@ mod tests {
         let settings = VirtualWorkspaceSettings {
             app_rules: vec![WindowRule {
                 open_floating: Some(true),
-                ..WindowRule::when(RuleMatch { is_modal: Some(true), ..RuleMatch::default() })
+                ..WindowRule::when(RuleMatch {
+                    is_modal: Some(true),
+                    ..RuleMatch::default()
+                })
             }],
             ..VirtualWorkspaceSettings::default()
         };
@@ -3320,7 +3317,11 @@ mod tests {
         settings.app_rules = vec![WindowRule {
             open_on_workspace: Some("Development".into()),
             open_floating: Some(true),
-            default_floating_position: Some(FloatingPosition { x: 40.0, y: 30.0, ..Default::default() }),
+            default_floating_position: Some(FloatingPosition {
+                x: 40.0,
+                y: 30.0,
+                ..Default::default()
+            }),
             default_column_width: Some(640.0),
             default_window_height: Some(480.0),
             open_focused: Some(true),
@@ -3368,7 +3369,11 @@ mod tests {
         assert_eq!(placement[0].window, window);
         assert_eq!(
             placement[0].position,
-            Some(FloatingPosition { x: 40.0, y: 30.0, ..Default::default() })
+            Some(FloatingPosition {
+                x: 40.0,
+                y: 30.0,
+                ..Default::default()
+            })
         );
         assert_eq!(
             placement[0].size,
@@ -3384,13 +3389,10 @@ mod tests {
         // `changed` because this discovery is where the window's size limits were learned. The
         // fixture window is locked to 300x200, and a layout computed before that was known is the
         // clipping this reports.
-        assert_eq!(
-            layout_outcome.response,
-            EventResponse {
-                changed: true,
-                ..EventResponse::default()
-            }
-        );
+        assert_eq!(layout_outcome.response, EventResponse {
+            changed: true,
+            ..EventResponse::default()
+        });
         let focus = focus.expect("focus rule should request a workspace switch");
         assert_eq!(focus.window, window);
         assert_eq!(focus.space, space);
@@ -3462,22 +3464,26 @@ mod tests {
         let new_frame = CGRect::new(old_frame.origin, CGSize::new(234.0, 500.0));
         engine.apply_app_rule_resize(resizes[0], new_frame, screen, None);
 
-        let frames = engine.calculate_layout(space, screen, &layout_settings.gaps.effective_for_display(None));
+        let frames = engine.calculate_layout(
+            space,
+            screen,
+            &layout_settings.gaps.effective_for_display(None),
+        );
         let frame = frames.iter().find(|(wid, _)| *wid == window).unwrap().1;
         assert_eq!(frame.size.width, 234.0);
 
         let user_frame = CGRect::new(new_frame.origin, CGSize::new(400.0, new_frame.size.height));
-        let _ = engine.handle_event(
-            &mut window_store,
-            &mut memory,
-            LayoutEvent::WindowResized {
-                wid: window,
-                drag: Some(Drag::report(new_frame, user_frame, None)),
-                new_frame: user_frame,
-                screens: vec![(space, screen, None)],
-            },
+        let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowResized {
+            wid: window,
+            drag: Some(Drag::report(new_frame, user_frame, None)),
+            new_frame: user_frame,
+            screens: vec![(space, screen, None)],
+        });
+        let frames = engine.calculate_layout(
+            space,
+            screen,
+            &layout_settings.gaps.effective_for_display(None),
         );
-        let frames = engine.calculate_layout(space, screen, &layout_settings.gaps.effective_for_display(None));
         let frame = frames.iter().find(|(wid, _)| *wid == window).unwrap().1;
         assert_eq!(frame.size.width, 400.0);
     }
@@ -3536,8 +3542,11 @@ mod tests {
             },
         );
 
-        let resized_layout =
-            engine.calculate_layout(space_a, screen, &LayoutSettings::default().gaps.effective_for_display(None));
+        let resized_layout = engine.calculate_layout(
+            space_a,
+            screen,
+            &LayoutSettings::default().gaps.effective_for_display(None),
+        );
 
         let _ = engine.handle_event(
             &mut window_store,
@@ -3550,8 +3559,11 @@ mod tests {
             LayoutEvent::WindowsOnScreenUpdated(space_b, 2, vec![window_info(window_c)], None),
         );
 
-        let after_other_space_sync =
-            engine.calculate_layout(space_a, screen, &LayoutSettings::default().gaps.effective_for_display(None));
+        let after_other_space_sync = engine.calculate_layout(
+            space_a,
+            screen,
+            &LayoutSettings::default().gaps.effective_for_display(None),
+        );
         assert_eq!(
             resized_layout, after_other_space_sync,
             "membership sync on one space must not rebalance saved layouts on another space"
@@ -4607,7 +4619,10 @@ mod tests {
 
         assert_eq!(response.focus_window, None);
         assert!(engine.floating.is_floating(wid));
-        assert_eq!(engine.virtual_workspace_manager.active_workspace(uninitialised), None);
+        assert_eq!(
+            engine.virtual_workspace_manager.active_workspace(uninitialised),
+            None
+        );
     }
 
     #[test]
@@ -4830,16 +4845,12 @@ mod tests {
         let tiling = crate::layout::domain::area::compute_tiling_area(screen, &gaps);
         let dragged = (tiling.size.width * 0.95).round();
         let wider = CGRect::new(start.origin, CGSize::new(dragged, start.size.height));
-        let _ = engine.handle_event(
-            &mut window_store,
-            &mut memory,
-            LayoutEvent::WindowResized {
-                wid,
-                drag: Some(Drag::report(start, wider, None)),
-                new_frame: wider,
-                screens: vec![(space, screen, None)],
-            },
-        );
+        let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowResized {
+            wid,
+            drag: Some(Drag::report(start, wider, None)),
+            new_frame: wider,
+            screens: vec![(space, screen, None)],
+        });
         assert_eq!(width_of(&mut engine), dragged);
 
         let _ = engine.handle_virtual_workspace_command(

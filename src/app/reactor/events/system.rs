@@ -1,3 +1,4 @@
+use rini_core::ids::WindowId;
 use tracing::debug;
 
 use crate::app::hotkeys::Sender as WmSender;
@@ -5,12 +6,8 @@ use crate::app::reactor::MenuState;
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::{CommunicationManager, MenuManager};
 use crate::windows::domain::raise as raise_manager;
-use rini_core::ids::WindowId;
 
-pub fn handle_menu_opened(
-    menu: &mut MenuManager,
-    pid: i32,
-) -> EventOutcome {
+pub fn handle_menu_opened(menu: &mut MenuManager, pid: i32) -> EventOutcome {
     menu.menu_state = match menu.menu_state {
         MenuState::Closed => {
             debug!(pid, "menu opened");
@@ -35,10 +32,7 @@ pub fn handle_menu_opened(
     EventOutcome::focus_changed(None, false).with_focus_follows_mouse_refresh()
 }
 
-pub fn handle_menu_closed(
-    menu: &mut MenuManager,
-    pid: i32,
-) -> EventOutcome {
+pub fn handle_menu_closed(menu: &mut MenuManager, pid: i32) -> EventOutcome {
     let refresh = match menu.menu_state {
         MenuState::Closed => {
             debug!(pid, "menu closed while no menu was marked open");
@@ -58,12 +52,14 @@ pub fn handle_menu_closed(
         }
     };
     let outcome = EventOutcome::focus_changed(None, false);
-    if refresh { outcome.with_focus_follows_mouse_refresh() } else { outcome }
+    if refresh {
+        outcome.with_focus_follows_mouse_refresh()
+    } else {
+        outcome
+    }
 }
 
-pub fn handle_system_woke() -> EventOutcome {
-    EventOutcome::window_notification_refresh()
-}
+pub fn handle_system_woke() -> EventOutcome { EventOutcome::window_notification_refresh() }
 
 #[derive(Debug, Clone, Copy)]
 pub struct RaiseCompletedPayload {
@@ -71,9 +67,7 @@ pub struct RaiseCompletedPayload {
     pub sequence: u64,
 }
 
-pub fn handle_raise_completed(
-    payload: RaiseCompletedPayload,
-) -> EventOutcome {
+pub fn handle_raise_completed(payload: RaiseCompletedPayload) -> EventOutcome {
     let RaiseCompletedPayload {
         window: window_id,
         sequence: sequence_id,
@@ -82,9 +76,7 @@ pub fn handle_raise_completed(
         .with_raise_request(raise_manager::Event::RaiseCompleted { window_id, sequence_id })
 }
 
-pub fn handle_raise_timeout(
-    sequence_id: u64,
-) -> EventOutcome {
+pub fn handle_raise_timeout(sequence_id: u64) -> EventOutcome {
     EventOutcome::no_change().with_raise_request(raise_manager::Event::RaiseTimeout { sequence_id })
 }
 

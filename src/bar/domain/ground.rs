@@ -31,9 +31,7 @@ pub fn capture_rect(display: CGRect) -> CGRect {
 }
 
 /// How many pixel rows of a capture at `scale` are the bar itself, the rest being margin.
-pub fn bar_rows(scale: f64) -> usize {
-    (HEIGHT * scale).round() as usize
-}
+pub fn bar_rows(scale: f64) -> usize { (HEIGHT * scale).round() as usize }
 
 /// Blurs an RGBA picture in place: three box blurs each way, which together come within a few per
 /// cent of a Gaussian of `spread` pixels. Beyond the picture's edges its edge pixels carry on.
@@ -54,7 +52,14 @@ pub fn blur(pixels: &mut [u8], width: usize, height: usize, stride: usize, sprea
 }
 
 /// One box blur of radius `radius` along `count` pixels starting at byte `start`, `step` bytes apart.
-fn box_line(pixels: &mut [u8], start: usize, step: usize, count: usize, radius: usize, line: &mut Vec<[u8; 4]>) {
+fn box_line(
+    pixels: &mut [u8],
+    start: usize,
+    step: usize,
+    count: usize,
+    radius: usize,
+    line: &mut Vec<[u8; 4]>,
+) {
     line.clear();
     line.extend((0..count).map(|i| {
         let at = start + i * step;
@@ -73,7 +78,10 @@ fn box_line(pixels: &mut [u8], start: usize, step: usize, count: usize, radius: 
         for channel in 0..4 {
             pixels[at + channel] = ((sums[channel] + window / 2) / window) as u8;
         }
-        let (leaving, entering) = (clamped(i as isize - radius as isize), clamped(i as isize + radius as isize + 1));
+        let (leaving, entering) = (
+            clamped(i as isize - radius as isize),
+            clamped(i as isize + radius as isize + 1),
+        );
         for channel in 0..4 {
             sums[channel] = sums[channel] + entering[channel] as u32 - leaving[channel] as u32;
         }
@@ -101,14 +109,10 @@ pub struct Timer {
 
 impl Timer {
     /// Due at once.
-    pub fn new(now: Instant) -> Timer {
-        Timer { due: now }
-    }
+    pub fn new(now: Instant) -> Timer { Timer { due: now } }
 
     /// Picture at the next chance: the displays changed, or the machine woke.
-    pub fn now(&mut self, now: Instant) {
-        self.due = now;
-    }
+    pub fn now(&mut self, now: Instant) { self.due = now; }
 
     /// Whether to picture now. Taking one puts the next `EVERY` away.
     pub fn take(&mut self, now: Instant) -> bool {
@@ -185,7 +189,8 @@ mod tests {
         let mut pixels = vec![255, 255, 255, 255, 0, 0, 0, 255];
         tint(&mut pixels, N1);
         let (red, ..) = N1.rgb();
-        let expect_white = (red * 255.0 * BAR_GROUND_ALPHA + 255.0 * (1.0 - BAR_GROUND_ALPHA)).round() as u8;
+        let expect_white =
+            (red * 255.0 * BAR_GROUND_ALPHA + 255.0 * (1.0 - BAR_GROUND_ALPHA)).round() as u8;
         let expect_black = (red * 255.0 * BAR_GROUND_ALPHA).round() as u8;
         assert_eq!((pixels[0], pixels[3]), (expect_white, 255));
         assert_eq!((pixels[4], pixels[7]), (expect_black, 255));

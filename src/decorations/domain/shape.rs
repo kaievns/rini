@@ -97,7 +97,10 @@ pub fn outset(decoration: &Decoration, ringed: bool, scale: f64) -> f64 {
 /// band, as niri's `expanded_by` keeps 0 at 0; and the corner is clamped to half the band's shorter
 /// side, since Core Animation draws one past it as given.
 pub fn band(size: TileSize, corner: f64, width: f64) -> (TileRect, f64) {
-    let size = TileSize::new(size.width.max(0.0) + 2.0 * width, size.height.max(0.0) + 2.0 * width);
+    let size = TileSize::new(
+        size.width.max(0.0) + 2.0 * width,
+        size.height.max(0.0) + 2.0 * width,
+    );
     let rect = TileRect::new(Point::new(-width, -width), size);
     let outer = if corner > 0.0 { corner + width } else { 0.0 };
     (rect, outer.min(size.width.min(size.height) / 2.0))
@@ -155,10 +158,15 @@ pub fn rounded_rect(rect: TileRect, corner: f64) -> Vec<Segment> {
     ];
     let mut path = vec![Segment::Move(Point::new(x0 + CONTINUOUS_REACH * r, y0))];
     for ((cx, cy), (ux, uy), (vx, vy)) in corners {
-        let at = |(a, b): (f64, f64)| Point::new(cx + (a * ux + b * vx) * r, cy + (a * uy + b * vy) * r);
+        let at =
+            |(a, b): (f64, f64)| Point::new(cx + (a * ux + b * vx) * r, cy + (a * uy + b * vy) * r);
         path.push(Segment::Line(at(CONTINUOUS[0])));
         for i in [1, 4, 7] {
-            path.push(Segment::Cubic(at(CONTINUOUS[i]), at(CONTINUOUS[i + 1]), at(CONTINUOUS[i + 2])));
+            path.push(Segment::Cubic(
+                at(CONTINUOUS[i]),
+                at(CONTINUOUS[i + 1]),
+                at(CONTINUOUS[i + 2]),
+            ));
         }
     }
     path.push(Segment::Close);
@@ -180,9 +188,19 @@ mod tests {
     #[test]
     fn a_rest_frame_is_cut_to_its_display() {
         let display = on_screen(0.0, 0.0, 1728.0, 1117.0);
-        assert_eq!(rest_frame(on_screen(3.0, 35.0, 859.0, 1079.0), 4.0, display), Some(on_screen(0.0, 31.0, 866.0, 1086.0)));
-        assert_eq!(rest_frame(on_screen(300.0, 300.0, 400.0, 300.0), 4.0, display), Some(on_screen(296.0, 296.0, 408.0, 308.0)));
-        assert_eq!(rest_frame(on_screen(1800.0, 35.0, 859.0, 1079.0), 4.0, display), None, "on the next display");
+        assert_eq!(
+            rest_frame(on_screen(3.0, 35.0, 859.0, 1079.0), 4.0, display),
+            Some(on_screen(0.0, 31.0, 866.0, 1086.0))
+        );
+        assert_eq!(
+            rest_frame(on_screen(300.0, 300.0, 400.0, 300.0), 4.0, display),
+            Some(on_screen(296.0, 296.0, 408.0, 308.0))
+        );
+        assert_eq!(
+            rest_frame(on_screen(1800.0, 35.0, 859.0, 1079.0), 4.0, display),
+            None,
+            "on the next display"
+        );
     }
 
     #[test]
@@ -196,38 +214,79 @@ mod tests {
 
     #[test]
     fn the_ring_band_rounds_r_plus_its_width_and_square_stays_square() {
-        assert_eq!(band(TileSize::new(859.0, 1081.0), 16.0, 4.0), (rect(-4.0, -4.0, 867.0, 1089.0), 20.0));
+        assert_eq!(
+            band(TileSize::new(859.0, 1081.0), 16.0, 4.0),
+            (rect(-4.0, -4.0, 867.0, 1089.0), 20.0)
+        );
         assert_eq!(band(TileSize::new(859.0, 1081.0), 0.0, 4.0).1, 0.0);
     }
 
     #[test]
     fn the_border_band_rounds_r_plus_its_width() {
-        assert_eq!(band(TileSize::new(859.0, 1081.0), 16.0, 4.0), (rect(-4.0, -4.0, 867.0, 1089.0), 20.0));
-        assert_eq!(band(TileSize::new(859.0, 1081.0), 26.0, 1.5), (rect(-1.5, -1.5, 862.0, 1084.0), 27.5));
+        assert_eq!(
+            band(TileSize::new(859.0, 1081.0), 16.0, 4.0),
+            (rect(-4.0, -4.0, 867.0, 1089.0), 20.0)
+        );
+        assert_eq!(
+            band(TileSize::new(859.0, 1081.0), 26.0, 1.5),
+            (rect(-1.5, -1.5, 862.0, 1084.0), 27.5)
+        );
     }
 
     #[test]
     fn with_a_border_on_the_ring_reaches_under_it_to_the_window() {
         use crate::decorations::domain::paint::{Colour, Paint};
         use crate::decorations::domain::style::Band;
-        let band = |width| Some(Band { width, active: Paint::Solid(Colour::rgb(0x7fc8ff)), inactive: Paint::Solid(Colour::rgb(0x505050)), urgent: Paint::Solid(Colour::rgb(0x9b0000)) });
-        let both = Decoration { ring: band(2.0), border: band(4.0), ..Decoration::default() };
+        let band = |width| {
+            Some(Band {
+                width,
+                active: Paint::Solid(Colour::rgb(0x7fc8ff)),
+                inactive: Paint::Solid(Colour::rgb(0x505050)),
+                urgent: Paint::Solid(Colour::rgb(0x9b0000)),
+            })
+        };
+        let both = Decoration {
+            ring: band(2.0),
+            border: band(4.0),
+            ..Decoration::default()
+        };
         assert_eq!(widths(&both, 2.0), Widths { border: 4.0, ring: 6.0 });
         let (ring, corner) = band_of(widths(&both, 2.0).ring);
-        assert_eq!((ring, corner), (rect(-6.0, -6.0, 871.0, 1093.0), 22.0), "outside the border, its inner edge the window's");
+        assert_eq!(
+            (ring, corner),
+            (rect(-6.0, -6.0, 871.0, 1093.0), 22.0),
+            "outside the border, its inner edge the window's"
+        );
         assert_eq!(outset(&both, true, 2.0), 6.0);
         assert_eq!(outset(&both, false, 2.0), 4.0, "the ring not worn");
-        let ring_only = Decoration { ring: band(2.0), ..Decoration::default() };
+        let ring_only = Decoration {
+            ring: band(2.0),
+            ..Decoration::default()
+        };
         assert_eq!(widths(&ring_only, 2.0), Widths { border: 0.0, ring: 2.0 });
         assert_eq!(outset(&ring_only, false, 2.0), 0.0);
-        assert_eq!(outset(&Decoration { border: band(1.3), ..Decoration::default() }, true, 2.0), 1.5, "whole device pixels");
+        assert_eq!(
+            outset(
+                &Decoration {
+                    border: band(1.3),
+                    ..Decoration::default()
+                },
+                true,
+                2.0
+            ),
+            1.5,
+            "whole device pixels"
+        );
     }
 
     fn band_of(width: f64) -> (TileRect, f64) { band(TileSize::new(859.0, 1081.0), 16.0, width) }
 
     #[test]
     fn the_ring_bands_radius_is_clamped_to_half_its_shorter_side() {
-        assert_eq!(band(TileSize::new(12.0, 400.0), 6.0, 4.0), (rect(-4.0, -4.0, 20.0, 408.0), 10.0));
+        assert_eq!(
+            band(TileSize::new(12.0, 400.0), 6.0, 4.0),
+            (rect(-4.0, -4.0, 20.0, 408.0), 10.0)
+        );
         assert_eq!(band(TileSize::new(2.0, 400.0), 1.0, 4.0).1, 5.0);
     }
 
@@ -312,9 +371,16 @@ mod tests {
     fn a_silhouette_never_turns_inside_out() {
         for width in [0.0, -3.0] {
             let size = TileSize::new(width, 1081.0);
-            assert_eq!(silhouette(size, radius(Some(16.0), size)), (rect(0.0, 0.0, 0.0, 1081.0), 0.0), "{width} wide");
+            assert_eq!(
+                silhouette(size, radius(Some(16.0), size)),
+                (rect(0.0, 0.0, 0.0, 1081.0), 0.0),
+                "{width} wide"
+            );
         }
-        assert_eq!(silhouette(TileSize::new(859.0, 1081.0), -1.0), (rect(0.0, 0.0, 859.0, 1081.0), 0.0));
+        assert_eq!(
+            silhouette(TileSize::new(859.0, 1081.0), -1.0),
+            (rect(0.0, 0.0, 859.0, 1081.0), 0.0)
+        );
     }
 
     #[test]
@@ -344,26 +410,36 @@ mod tests {
             .collect()
     }
 
-    fn close(a: Point<Tile>, b: Point<Tile>) -> bool { (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6 }
+    fn close(a: Point<Tile>, b: Point<Tile>) -> bool {
+        (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6
+    }
 
     /// The midpoint of the cubic through a corner's diagonal, from the corner's own point.
     fn diagonal(path: &[Segment], from: Point<Tile>) -> Point<Tile> {
         let (Segment::Cubic(_, _, p0), Segment::Cubic(c1, c2, p3)) = (path[2], path[3]) else {
             panic!("{path:?}")
         };
-        let mid = (p0.to_vector() + c1.to_vector() * 3.0 + c2.to_vector() * 3.0 + p3.to_vector()) / 8.0;
+        let mid =
+            (p0.to_vector() + c1.to_vector() * 3.0 + c2.to_vector() * 3.0 + p3.to_vector()) / 8.0;
         Point::new(from.x - mid.x, mid.y - from.y)
     }
 
     /// Core Animation's continuous corner leaves the side 1.528665 radii from the corner, where a
     /// circular one leaves it at one, and crosses the diagonal 0.2915r in, against 0.2929r.
     #[test]
-    fn a_continuous_corner_leaves_the_side_at_its_reach_and_crosses_the_diagonal_where_core_animation_does() {
+    fn a_continuous_corner_leaves_the_side_at_its_reach_and_crosses_the_diagonal_where_core_animation_does()
+     {
         let rect = TileRect::new(Point::origin(), Size::new(860.0, 1079.0));
         let continuous = rounded_rect(rect, 26.0);
-        assert!(close(ends(&continuous)[1], Point::new(860.0 - 26.0 * CONTINUOUS_REACH, 0.0)));
+        assert!(close(
+            ends(&continuous)[1],
+            Point::new(860.0 - 26.0 * CONTINUOUS_REACH, 0.0)
+        ));
         let d = diagonal(&continuous, Point::new(860.0, 0.0));
-        assert!((d.x - 0.291_51 * 26.0).abs() < 1e-3 && (d.x - d.y).abs() < 1e-9, "{d:?}");
+        assert!(
+            (d.x - 0.291_51 * 26.0).abs() < 1e-3 && (d.x - d.y).abs() < 1e-9,
+            "{d:?}"
+        );
     }
 
     #[test]
@@ -403,7 +479,12 @@ mod tests {
             assert!(close(corner(2)[k], Point::new(x0 + dx, y1 - dy)), "{k}");
             assert!(close(corner(3)[k], Point::new(x0 + dy, y0 + dx)), "{k}");
         }
-        assert!(path.iter().all(|p| p.x >= x0 - 1e-9 && p.x <= x1 + 1e-9 && p.y >= y0 - 1e-9 && p.y <= y1 + 1e-9));
+        assert!(
+            path.iter().all(|p| p.x >= x0 - 1e-9
+                && p.x <= x1 + 1e-9
+                && p.y >= y0 - 1e-9
+                && p.y <= y1 + 1e-9)
+        );
     }
 
     /// Core Animation draws a continuous corner whose reach passes half a side at its full reach,
@@ -413,6 +494,9 @@ mod tests {
         let rect = TileRect::new(Point::origin(), Size::new(20.0, 400.0));
         let path = ends(&rounded_rect(rect, 10.0));
         let reach = 10.0 * CONTINUOUS_REACH;
-        assert!(close(path[0], Point::new(reach, 0.0)) && close(path[1], Point::new(20.0 - reach, 0.0)), "{path:?}");
+        assert!(
+            close(path[0], Point::new(reach, 0.0)) && close(path[1], Point::new(20.0 - reach, 0.0)),
+            "{path:?}"
+        );
     }
 }

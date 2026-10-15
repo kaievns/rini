@@ -4,7 +4,6 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use objc2_core_graphics::{CGEvent, CGEventField, CGEventFlags};
-
 use rini_core::ids::pid_t;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -18,9 +17,7 @@ static MOUSE_STATE: AtomicU8 = AtomicU8::new(MOUSE_STATE_UNKNOWN);
 const RINI_SYNTHETIC_EVENT_MARKER: i64 = 0x5249_4654;
 const KEYCODE_W: u16 = 0x0d;
 impl From<MouseState> for u8 {
-    fn from(state: MouseState) -> u8 {
-        state as u8
-    }
+    fn from(state: MouseState) -> u8 { state as u8 }
 }
 impl TryFrom<u8> for MouseState {
     type Error = ();
@@ -33,9 +30,7 @@ impl TryFrom<u8> for MouseState {
         }
     }
 }
-pub fn set_mouse_state(state: MouseState) {
-    MOUSE_STATE.store(state.into(), Ordering::Relaxed);
-}
+pub fn set_mouse_state(state: MouseState) { MOUSE_STATE.store(state.into(), Ordering::Relaxed); }
 pub fn get_mouse_state() -> Option<MouseState> {
     match MouseState::try_from(MOUSE_STATE.load(Ordering::Relaxed)) {
         Ok(s) => Some(s),

@@ -1,8 +1,8 @@
 use objc2_core_foundation::CGSize;
+use rini_core::ids::SpaceId;
 use serde::{Deserialize, Serialize};
 
 use crate::workspaces::{LayoutId, ScrollingLayoutSystem};
-use rini_core::ids::SpaceId;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct WorkspaceLayouts {
@@ -17,9 +17,7 @@ struct SpaceLayoutInfo {
 }
 
 impl SpaceLayoutInfo {
-    fn active(&self) -> Option<LayoutId> {
-        self.configurations.get(&self.active_size).copied()
-    }
+    fn active(&self) -> Option<LayoutId> { self.configurations.get(&self.active_size).copied() }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd, Debug)]
@@ -361,10 +359,10 @@ mod tests {
         let saved = [1, 22, 30, 382, 4615].map(SpaceId::new).into_iter().collect();
         let kept = spaces(&[1, 22]);
         let occupied = spaces(&[382]);
-        assert_eq!(
-            vacant_spaces(&saved, &kept, &occupied),
-            vec![SpaceId::new(30), SpaceId::new(4615)]
-        );
+        assert_eq!(vacant_spaces(&saved, &kept, &occupied), vec![
+            SpaceId::new(30),
+            SpaceId::new(4615)
+        ]);
     }
 
     /// A display's remembered space comes back under the display's new id at the next start, with

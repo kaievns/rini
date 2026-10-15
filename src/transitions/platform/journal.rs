@@ -50,9 +50,7 @@ impl Writer {
         (Writer { bursts }, sent)
     }
 
-    pub fn send(&self, burst: Burst) {
-        _ = self.bursts.send(burst);
-    }
+    pub fn send(&self, burst: Burst) { _ = self.bursts.send(burst); }
 }
 
 /// The burst's lines, appended to `path` once the file before them is moved aside if it is past
@@ -82,7 +80,9 @@ pub fn uptime_ns() -> u64 {
 }
 
 fn unix_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64)
 }
 
 #[cfg(test)]
@@ -95,23 +95,44 @@ mod tests {
 
     fn burst(marks: usize, lost: u64) -> Burst {
         let at = Instant::now();
-        Burst { marks: vec![Stamped { at, generation: Generation(7), mark: Mark::Hold }; marks], lost }
+        Burst {
+            marks: vec![
+                Stamped {
+                    at,
+                    generation: Generation(7),
+                    mark: Mark::Hold
+                };
+                marks
+            ],
+            lost,
+        }
     }
 
     fn lines(path: &Path) -> Vec<serde_json::Value> {
-        fs::read_to_string(path).unwrap().lines().map(|text| serde_json::from_str(text).unwrap()).collect()
+        fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|text| serde_json::from_str(text).unwrap())
+            .collect()
     }
 
     #[test]
     fn a_burst_appends_a_header_and_its_lines() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rini").join("transitions.jsonl");
-        let anchor = Anchor { at: Instant::now(), uptime_ns: 1_000 };
+        let anchor = Anchor {
+            at: Instant::now(),
+            uptime_ns: 1_000,
+        };
         append(&path, ROTATE_PAST, &anchor, 42, &burst(2, 0)).unwrap();
         append(&path, ROTATE_PAST, &anchor, 43, &burst(1, 5)).unwrap();
         let written = lines(&path);
         let marks: Vec<&str> = written.iter().map(|line| line["mark"].as_str().unwrap()).collect();
-        assert_eq!(marks, ["burst", "hold", "hold", "burst", "hold"], "appended, the directory made");
+        assert_eq!(
+            marks,
+            ["burst", "hold", "hold", "burst", "hold"],
+            "appended, the directory made"
+        );
         assert_eq!(written[3]["unix_ms"], 43);
         assert_eq!(written[3]["lost"], 5);
         assert_eq!(written[1]["g"], 7);
@@ -121,18 +142,28 @@ mod tests {
     fn the_file_rotates_past_its_limit() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("transitions.jsonl");
-        let anchor = Anchor { at: Instant::now(), uptime_ns: 1_000 };
+        let anchor = Anchor {
+            at: Instant::now(),
+            uptime_ns: 1_000,
+        };
         append(&path, ROTATE_PAST, &anchor, 1, &burst(1, 0)).unwrap();
         let limit = fs::metadata(&path).unwrap().len();
         append(&path, limit, &anchor, 2, &burst(1, 0)).unwrap();
-        assert!(!dir.path().join("transitions.1.jsonl").exists(), "not past it yet");
+        assert!(
+            !dir.path().join("transitions.1.jsonl").exists(),
+            "not past it yet"
+        );
         append(&path, limit, &anchor, 3, &burst(1, 0)).unwrap();
         let before = lines(&dir.path().join("transitions.1.jsonl"));
         assert_eq!(before.len(), 4, "the two bursts before it, kept beside");
         assert_eq!(lines(&path).len(), 2, "started afresh");
         assert_eq!(lines(&path)[0]["unix_ms"], 3);
         append(&path, 0, &anchor, 4, &burst(1, 0)).unwrap();
-        assert_eq!(lines(&dir.path().join("transitions.1.jsonl"))[0]["unix_ms"], 3, "only the one before is kept");
+        assert_eq!(
+            lines(&dir.path().join("transitions.1.jsonl"))[0]["unix_ms"],
+            3,
+            "only the one before is kept"
+        );
     }
 
     /// `Instant`'s `Debug` is the clock it reads, `{ tv_sec, tv_nsec }`; it must be `uptime_ns`'s.
@@ -144,9 +175,17 @@ mod tests {
         let debug = format!("{instant:?}");
         let field = |name: &str| -> u64 {
             let rest = &debug[debug.find(name).unwrap_or_else(|| panic!("{debug}")) + name.len()..];
-            rest.trim_start_matches([':', ' ']).split(|c: char| !c.is_ascii_digit()).next().unwrap().parse().unwrap()
+            rest.trim_start_matches([':', ' '])
+                .split(|c: char| !c.is_ascii_digit())
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
         };
         let read = field("tv_sec") * 1_000_000_000 + field("tv_nsec");
-        assert!(uptime >= read && uptime - read < Duration::from_millis(1).as_nanos() as u64, "{debug} against {uptime}");
+        assert!(
+            uptime >= read && uptime - read < Duration::from_millis(1).as_nanos() as u64,
+            "{debug} against {uptime}"
+        );
     }
 }

@@ -54,13 +54,9 @@ impl Value {
         }
     }
 
-    fn lerp(self, to: Value, progress: f64) -> Value {
-        self.zip(to, |a, b| a + (b - a) * progress)
-    }
+    fn lerp(self, to: Value, progress: f64) -> Value { self.zip(to, |a, b| a + (b - a) * progress) }
 
-    fn plus(self, offset: Value) -> Value {
-        self.zip(offset, |a, b| a + b)
-    }
+    fn plus(self, offset: Value) -> Value { self.zip(offset, |a, b| a + b) }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -91,9 +87,7 @@ pub enum Channel {
 impl Channel {
     const ALL: [Channel; 3] = [Channel::Base, Channel::Bounce, Channel::Nudge];
 
-    pub fn is_additive(self) -> bool {
-        self != Channel::Base
-    }
+    pub fn is_additive(self) -> bool { self != Channel::Base }
 }
 
 /// Which constructor made a track, and so which Core Animation class plays it.
@@ -198,17 +192,11 @@ impl Track {
         }
     }
 
-    pub fn node(&self) -> Node {
-        self.node
-    }
+    pub fn node(&self) -> Node { self.node }
 
-    pub fn channel(&self) -> Channel {
-        self.channel
-    }
+    pub fn channel(&self) -> Channel { self.channel }
 
-    pub fn form(&self) -> Form {
-        self.form
-    }
+    pub fn form(&self) -> Form { self.form }
 
     /// The same track, its timing, curves and every other key kept, ending at `to`. Panics if `to`
     /// is not the kind its node holds.
@@ -221,25 +209,15 @@ impl Track {
         track
     }
 
-    pub fn begin(&self) -> f64 {
-        self.begin
-    }
+    pub fn begin(&self) -> f64 { self.begin }
 
-    pub fn seconds(&self) -> f64 {
-        self.seconds
-    }
+    pub fn seconds(&self) -> f64 { self.seconds }
 
-    pub fn keys(&self) -> &[(f64, Value)] {
-        &self.keys
-    }
+    pub fn keys(&self) -> &[(f64, Value)] { &self.keys }
 
-    pub fn curves(&self) -> &[Curve] {
-        &self.curves
-    }
+    pub fn curves(&self) -> &[Curve] { &self.curves }
 
-    pub fn ends(&self) -> f64 {
-        self.begin + self.seconds
-    }
+    pub fn ends(&self) -> f64 { self.begin + self.seconds }
 
     /// The value at media time `at` while the track plays, from `begin` up to but not including
     /// its end, and none outside it: Core Animation's default fill mode draws nothing there. A
@@ -323,9 +301,7 @@ impl Score {
     }
 
     /// Where `node` is drawn once its tracks have ended.
-    pub fn model(&self, node: Node) -> Option<Value> {
-        self.models.get(&node).copied()
-    }
+    pub fn model(&self, node: Node) -> Option<Value> { self.models.get(&node).copied() }
 
     pub fn track(&self, node: Node, channel: Channel) -> Option<&Track> {
         self.tracks.get(&(node, channel))
@@ -422,9 +398,7 @@ impl Score {
     }
 
     /// Every track has ended, so every node is drawn at its model.
-    pub fn settled(&self, at: f64) -> bool {
-        self.tracks.values().all(|track| track.ends() <= at)
-    }
+    pub fn settled(&self, at: f64) -> bool { self.tracks.values().all(|track| track.ends() <= at) }
 
     /// Seconds from `at` until `settled`.
     pub fn remaining(&self, at: f64) -> f64 {
@@ -450,7 +424,9 @@ impl MediaClock {
         reads
             .into_iter()
             .min_by_key(|(before, _, after)| after.saturating_duration_since(*before))
-            .map(|(before, media, after)| Self::anchored(before + after.saturating_duration_since(before) / 2, media))
+            .map(|(before, media, after)| {
+                Self::anchored(before + after.saturating_duration_since(before) / 2, media)
+            })
     }
 
     /// The media time at `now`, before the anchor as after it.
@@ -475,17 +451,11 @@ mod tests {
         Curve::Bezier(EASE_IN_OUT),
     ];
 
-    fn strip() -> Node {
-        Node::Container(GroupKey::Rigid(1))
-    }
+    fn strip() -> Node { Node::Container(GroupKey::Rigid(1)) }
 
-    fn tile() -> Node {
-        Node::Tile(WindowId::new(1, 1))
-    }
+    fn tile() -> Node { Node::Tile(WindowId::new(1, 1)) }
 
-    fn point(x: f64, y: f64) -> Value {
-        Value::Point(Point::new(x, y))
-    }
+    fn point(x: f64, y: f64) -> Value { Value::Point(Point::new(x, y)) }
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> Value {
         Value::Rect(GroupRect::new(Point::new(x, y), Size::new(w, h)))
@@ -668,10 +638,12 @@ mod tests {
         }
         let track = score.track(strip(), Channel::Base).unwrap();
         assert_eq!(track.curves(), [Curve::Linear; 3]);
-        assert_eq!(
-            track.keys().iter().map(|(t, _)| *t).collect::<Vec<_>>(),
-            [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]
-        );
+        assert_eq!(track.keys().iter().map(|(t, _)| *t).collect::<Vec<_>>(), [
+            0.0,
+            1.0 / 3.0,
+            2.0 / 3.0,
+            1.0
+        ]);
     }
 
     /// Before its begin and from its end on, a movement draws the model, as Core Animation's
@@ -1101,7 +1073,10 @@ mod tests {
         let along = x(score.along(strip(), 0.25));
         assert_eq!(
             score.drawn(a, 0.25),
-            Some(OverlayRect::new(Point::new(865.0 + along, 32.0), Size::new(859.0, 1081.0)))
+            Some(OverlayRect::new(
+                Point::new(865.0 + along, 32.0),
+                Size::new(859.0, 1081.0)
+            ))
         );
         score.apply(&Edit::Ride(a, loose));
         assert_eq!(score.parent(a), Some(loose));
@@ -1215,13 +1190,9 @@ mod tests {
             (self.0 >> 11) as f64 / (1u64 << 53) as f64
         }
 
-        fn within(&mut self, lo: f64, hi: f64) -> f64 {
-            lo + (hi - lo) * self.next()
-        }
+        fn within(&mut self, lo: f64, hi: f64) -> f64 { lo + (hi - lo) * self.next() }
 
-        fn curve(&mut self) -> Curve {
-            CURVES[(self.next() * 3.0) as usize]
-        }
+        fn curve(&mut self) -> Curve { CURVES[(self.next() * 3.0) as usize] }
 
         fn value(&mut self, node: Node) -> Value {
             match node {
@@ -1362,13 +1333,28 @@ mod tests {
         let base = Instant::now();
         let truth = |at: Instant| 1_000.0 + (at - base).as_secs_f64();
         let us = Duration::from_micros;
-        let read = |before: Instant, media_at: Instant, after: Instant| (before, truth(media_at), after);
-        let preempted = read(base, base + Duration::from_millis(5), base + Duration::from_millis(5) + us(1));
+        let read =
+            |before: Instant, media_at: Instant, after: Instant| (before, truth(media_at), after);
+        let preempted = read(
+            base,
+            base + Duration::from_millis(5),
+            base + Duration::from_millis(5) + us(1),
+        );
         let tight = |from: Instant, wide: Duration| read(from, from + wide / 2, from + wide);
-        let reads = [preempted, tight(base + us(5_010), us(30)), tight(base + us(5_050), us(20)), tight(base + us(5_080), us(40))];
+        let reads = [
+            preempted,
+            tight(base + us(5_010), us(30)),
+            tight(base + us(5_050), us(20)),
+            tight(base + us(5_080), us(40)),
+        ];
         let clock = MediaClock::tightest(reads).unwrap();
         for at in [base, base + Duration::from_millis(200)] {
-            assert!((clock.at(at) - truth(at)).abs() < 1e-6, "{} against {}", clock.at(at), truth(at));
+            assert!(
+                (clock.at(at) - truth(at)).abs() < 1e-6,
+                "{} against {}",
+                clock.at(at),
+                truth(at)
+            );
         }
         assert_eq!(MediaClock::tightest([]), None);
     }

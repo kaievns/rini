@@ -49,9 +49,7 @@ pub fn block_on<T: 'static>(
         sem: Managed,
     }
     impl ArcWake for GcdWaker {
-        fn wake_by_ref(this: &Arc<Self>) {
-            this.sem.signal();
-        }
+        fn wake_by_ref(this: &Arc<Self>) { this.sem.signal(); }
     }
 
     let sem = Managed::new(0);

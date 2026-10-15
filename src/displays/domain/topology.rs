@@ -379,18 +379,17 @@ mod tests {
         }
     }
 
-    fn rect(x: f64, y: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(1000., 1000.))
-    }
+    fn rect(x: f64, y: f64) -> CGRect { CGRect::new(CGPoint::new(x, y), CGSize::new(1000., 1000.)) }
 
     #[test]
     fn index_selector_orders_screens_left_to_right_then_top_to_bottom() {
         let s = state(&[rect(2000., 0.), rect(0., 1000.), rect(0., 0.)]);
         let ordered: Vec<_> = s.screens_in_physical_order().iter().map(|sc| sc.id).collect();
-        assert_eq!(
-            ordered,
-            vec![ScreenId::new(3), ScreenId::new(2), ScreenId::new(1)]
-        );
+        assert_eq!(ordered, vec![
+            ScreenId::new(3),
+            ScreenId::new(2),
+            ScreenId::new(1)
+        ]);
         assert_eq!(
             s.screen_for_selector(&DisplaySelector::Index(1), None).map(|sc| sc.id),
             Some(ScreenId::new(2))
@@ -482,7 +481,8 @@ mod tests {
     #[test]
     fn the_listed_spaces_are_the_desktops_off_screen_and_the_ones_on_it() {
         let mut s = state(&[rect(0., 0.), rect(1000., 0.)]);
-        s.display_space_ids.insert("uuid-0".into(), vec![SpaceId::new(1), SpaceId::new(7)]);
+        s.display_space_ids
+            .insert("uuid-0".into(), vec![SpaceId::new(1), SpaceId::new(7)]);
         assert_eq!(
             s.listed_spaces(),
             Some(vec![SpaceId::new(1), SpaceId::new(2), SpaceId::new(7)])
@@ -556,9 +556,7 @@ mod tests {
         assert!(!a.command_space_only_update, "the effective active set changed");
     }
 
-    fn uuids(list: &[&str]) -> Vec<String> {
-        list.iter().map(|uuid| uuid.to_string()).collect()
-    }
+    fn uuids(list: &[&str]) -> Vec<String> { list.iter().map(|uuid| uuid.to_string()).collect() }
 
     #[test]
     fn nothing_attached_or_detached_is_no_delta() {
@@ -640,9 +638,7 @@ mod tests {
         assert!(delta.departed.is_empty());
     }
 
-    fn never_fullscreen(_: SpaceId) -> bool {
-        false
-    }
+    fn never_fullscreen(_: SpaceId) -> bool { false }
 
     /// One user space on two screens at once is what macOS reports mid-transition. Committing it
     /// assigns one space's windows to two displays.

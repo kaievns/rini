@@ -50,9 +50,7 @@ impl AppThreads {
 
     /// Every application running when rini started has been looked at. Until then an activation is
     /// left to that first look.
-    pub fn discovered(&mut self) {
-        self.discovered = true;
-    }
+    pub fn discovered(&mut self) { self.discovered = true; }
 
     /// Whether an application that has just become frontmost is to be looked at again.
     pub fn look_on_activation(&self, pid: pid_t) -> bool {
@@ -60,9 +58,7 @@ impl AppThreads {
     }
 
     /// The thread gave up on the application, or the application quit. The next sighting asks again.
-    pub fn ended(&mut self, pid: pid_t) {
-        self.running.remove(&pid);
-    }
+    pub fn ended(&mut self, pid: pid_t) { self.running.remove(&pid); }
 }
 
 #[cfg(test)]

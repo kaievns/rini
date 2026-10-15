@@ -1,10 +1,8 @@
-use serde::{Deserialize, Serialize};
-
-use rini_core::ids::BTreeExt;
-use rini_core::ids::SpaceId;
-use rini_core::ids::{WindowId, pid_t};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeSet;
+
+use rini_core::ids::{BTreeExt, SpaceId, WindowId, pid_t};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct FloatingManager {
@@ -19,9 +17,7 @@ pub struct FloatingManager {
 }
 
 impl FloatingManager {
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     pub fn is_floating(&self, window_id: WindowId) -> bool {
         self.floating_windows.contains(&window_id)
@@ -31,9 +27,7 @@ impl FloatingManager {
         self.floating_windows.iter().copied().collect()
     }
 
-    pub fn add_floating(&mut self, window_id: WindowId) {
-        self.floating_windows.insert(window_id);
-    }
+    pub fn add_floating(&mut self, window_id: WindowId) { self.floating_windows.insert(window_id); }
 
     pub fn remove_floating(&mut self, window_id: WindowId) {
         self.floating_windows.remove(&window_id);
@@ -133,13 +127,9 @@ impl FloatingManager {
             .unwrap_or_default()
     }
 
-    pub fn set_last_focus(&mut self, wid: Option<WindowId>) {
-        self.last_floating_focus = wid;
-    }
+    pub fn set_last_focus(&mut self, wid: Option<WindowId>) { self.last_floating_focus = wid; }
 
-    pub fn last_focus(&self) -> Option<WindowId> {
-        self.last_floating_focus
-    }
+    pub fn last_focus(&self) -> Option<WindowId> { self.last_floating_focus }
 
     pub fn normalize_persisted_focus(&mut self) {
         if self

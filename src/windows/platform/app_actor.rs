@@ -2,9 +2,6 @@
 //! One actor per running app, on its own thread: observes the app through Accessibility and
 //! carries out the reactor's `Request`s (frames, raises, close). Emits `crate::windows::event::Event`.
 
-use crate::windows::domain::admissible;
-use crate::windows::domain::frame_write::{FrameWrite, frame_write};
-use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use std::cell::RefCell;
 use std::fmt::Debug;
 use std::num::NonZeroU32;
@@ -15,36 +12,35 @@ use std::time::{Duration, Instant};
 use objc2_app_kit::NSRunningApplication;
 use objc2_application_services::AXError;
 use objc2_core_foundation::CGRect;
-use tokio::sync::oneshot;
+use rini_core::ids::{WindowId, WindowServerId, pid_t};
+use rini_runloop::channel as channels;
+use rini_runloop::executor::Executor;
+use rini_runloop::timer::Timer;
+use rustc_hash::FxHashMap as HashMap;
 use tokio::select;
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Span, debug, info, instrument, trace, warn};
 
-use crate::windows::domain::transaction::{Requested, TransactionId, WindowTxStore};
-use crate::windows::event::{Event, EventSink};
-use crate::windows::platform::app::NSRunningApplicationExt;
-use rini_core::ids::{WindowId, pid_t};
-use rini_runloop::channel as channels;
-use rustc_hash::FxHashMap as HashMap;
-
+use crate::windows::domain::admissible;
 use crate::windows::domain::ax_events::{
     AxFailure, AxNotificationKind, Handling, decode_notification_data, encode_notification_data,
     handling, is_gone,
 };
-use crate::windows::domain::info::WindowServerInfo;
-use crate::windows::domain::info::{AppInfo, WindowInfo};
+use crate::windows::domain::frame_write::{FrameWrite, frame_write};
+use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
+use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
+use crate::windows::domain::transaction::{Requested, TransactionId, WindowTxStore};
+use crate::windows::event::{Event, EventSink};
+use crate::windows::platform::app::NSRunningApplicationExt;
+use crate::windows::platform::ax::ask_again::AskAgain;
 use crate::windows::platform::ax::element::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
-use crate::windows::platform::ax::ask_again::AskAgain;
 use crate::windows::platform::ax::observer::Observer;
 use crate::windows::platform::ax::world::{AxWorld, MacAx};
-use crate::windows::platform::mouse;
 use crate::windows::platform::process::ProcessInfo;
-use crate::windows::platform::window_server;
-use rini_core::ids::WindowServerId;
-use rini_runloop::executor::Executor;
-use rini_runloop::timer::Timer;
+use crate::windows::platform::{mouse, window_server};
 
 const kAXApplicationActivatedNotification: &str = "AXApplicationActivated";
 const kAXApplicationDeactivatedNotification: &str = "AXApplicationDeactivated";
@@ -777,15 +773,14 @@ enum RaiseError {
 }
 
 impl From<AxError> for RaiseError {
-    fn from(value: AxError) -> Self {
-        Self::AXError(value)
-    }
+    fn from(value: AxError) -> Self { Self::AXError(value) }
 }
 
 impl<W: AxWorld> State<W> {
     /// `wids` without another application's windows, each dropped with a warning.
     fn own_windows(&self, wids: Vec<WindowId>) -> Vec<WindowId> {
-        let (own, foreign): (Vec<_>, Vec<_>) = wids.into_iter().partition(|wid| wid.pid == self.pid);
+        let (own, foreign): (Vec<_>, Vec<_>) =
+            wids.into_iter().partition(|wid| wid.pid == self.pid);
         if !foreign.is_empty() {
             warn!(pid = ?self.pid, ?foreign, "dropped another application's windows from a raise");
         }
@@ -1204,16 +1199,13 @@ impl<W: AxWorld> State<W> {
         let hidden_by_app = self.is_hidden;
         let last_seen_txid = self.txid_from_store(window_server_id).unwrap_or_default();
 
-        let old = self.windows.insert(
-            wid,
-            AppWindowState {
-                elem: elem.clone(),
-                last_seen_txid,
-                hidden_by_app,
-                window_server_id,
-                title: info.title.clone(),
-            },
-        );
+        let old = self.windows.insert(wid, AppWindowState {
+            elem: elem.clone(),
+            last_seen_txid,
+            hidden_by_app,
+            window_server_id,
+            title: info.title.clone(),
+        });
         debug_assert!(old.is_none(), "Duplicate window id {wid:?}");
         self.elem_to_wid.insert(elem, wid);
         if hidden_by_app {
@@ -1376,9 +1368,7 @@ impl<W: AxWorld> State<W> {
         }
     }
 
-    fn send_event(&self, event: Event) {
-        self.events_tx.send(event);
-    }
+    fn send_event(&self, event: Event) { self.events_tx.send(event); }
 
     fn window(&self, wid: WindowId) -> Result<&AppWindowState<W::Element>, AxError> {
         self.check_own(wid)?;
@@ -1578,9 +1568,7 @@ mod tests {
     unsafe impl Send for Sink {}
 
     impl EventSink for Sink {
-        fn send(&self, event: Event) {
-            self.0.borrow_mut().push(event);
-        }
+        fn send(&self, event: Event) { self.0.borrow_mut().push(event); }
     }
 
     const PID: pid_t = 501;
@@ -1890,7 +1878,12 @@ mod tests {
         let (requests_tx, requests_rx) = channels::channel();
         let (_notifications_tx, notifications_rx) = channels::channel();
         let (raises_tx, raises_rx) = channels::channel();
-        raises_tx.send(RaiseRequest(vec![raised], CancellationToken::new(), 1, Quiet::No));
+        raises_tx.send(RaiseRequest(
+            vec![raised],
+            CancellationToken::new(),
+            1,
+            Quiet::No,
+        ));
         state.raises_tx = raises_tx;
         for request in requests {
             requests_tx.send(request);
@@ -1919,7 +1912,10 @@ mod tests {
     }
 
     fn raised(sink: &Sink) -> bool {
-        sink.0.borrow().iter().any(|event| matches!(event, Event::RaiseCompleted { .. }))
+        sink.0
+            .borrow()
+            .iter()
+            .any(|event| matches!(event, Event::RaiseCompleted { .. }))
     }
 
     fn completed(sink: &Sink) -> Vec<WindowId> {
@@ -1942,15 +1938,31 @@ mod tests {
         let state = RefCell::new(state);
         let token = CancellationToken::new();
 
-        let mut raise =
-            std::pin::pin!(State::handle_raise_request(&state, vec![foreign, wid], &token, 1, Quiet::No));
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            vec![foreign, wid],
+            &token,
+            1,
+            Quiet::No
+        ));
         let done = raise
             .as_mut()
             .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
 
-        assert!(matches!(done, std::task::Poll::Ready(Ok(()))), "the raise finished");
-        assert_eq!(*state.borrow().ax.raised.borrow(), [7], "only its own window was raised");
-        assert_eq!(completed(&sink), [wid], "and only its own window reported raised");
+        assert!(
+            matches!(done, std::task::Poll::Ready(Ok(()))),
+            "the raise finished"
+        );
+        assert_eq!(
+            *state.borrow().ax.raised.borrow(),
+            [7],
+            "only its own window was raised"
+        );
+        assert_eq!(
+            completed(&sink),
+            [wid],
+            "and only its own window reported raised"
+        );
     }
 
     #[test]
@@ -2075,7 +2087,10 @@ mod tests {
         ax.busy_watches.set(1);
         let (mut state, sink) = state_with(ax);
 
-        assert!(state.register_window(window, None).is_none(), "left out while busy");
+        assert!(
+            state.register_window(window, None).is_none(),
+            "left out while busy"
+        );
         assert!(state.windows.is_empty());
 
         state.handle_request(Request::GetVisibleWindows).expect("refreshed");

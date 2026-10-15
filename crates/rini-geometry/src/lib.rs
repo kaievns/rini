@@ -62,15 +62,11 @@ impl IsWithin for ic::CGSize {
 }
 
 impl IsWithin for f64 {
-    fn is_within(&self, how_much: f64, other: Self) -> bool {
-        (self - other).abs() < how_much
-    }
+    fn is_within(&self, how_much: f64, other: Self) -> bool { (self - other).abs() < how_much }
 }
 
 pub trait SameAs: IsWithin + Sized {
-    fn same_as(&self, other: Self) -> bool {
-        self.is_within(0.1, other)
-    }
+    fn same_as(&self, other: Self) -> bool { self.is_within(0.1, other) }
 }
 
 impl SameAs for ic::CGRect {}
@@ -130,9 +126,7 @@ impl CGRectExt for ic::CGRect {
             && other.min().y < self.max().y
     }
 
-    fn area(&self) -> f64 {
-        self.size.width * self.size.height
-    }
+    fn area(&self) -> f64 { self.size.width * self.size.height }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -160,18 +154,14 @@ pub struct CGSizeDef {
 
 impl SerializeAs<ic::CGRect> for CGRectDef {
     fn serialize_as<S>(value: &ic::CGRect, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
+    where S: serde::Serializer {
         CGRectDef::serialize(value, serializer)
     }
 }
 
 impl<'de> DeserializeAs<'de, ic::CGRect> for CGRectDef {
     fn deserialize_as<D>(deserializer: D) -> Result<ic::CGRect, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
+    where D: Deserializer<'de> {
         CGRectDef::deserialize(deserializer)
     }
 }
@@ -395,12 +385,30 @@ mod tests {
     #[test]
     fn a_window_shows_on_the_display_from_min_shown_of_itself_each_way() {
         let display = screen(0.0, 0.0, 1728.0, 1117.0);
-        assert!(shows_on(screen(3.0, 35.0, 860.0, 1079.0), display), "wholly on it");
-        assert!(shows_on(screen(-285.0, 35.0, 1148.0, 1079.0), display), "cut by the left edge");
-        assert!(shows_on(screen(1728.0 - MIN_SHOWN, 35.0, 860.0, 1079.0), display), "exactly MIN_SHOWN");
-        assert!(!shows_on(screen(1728.0 - MIN_SHOWN + 1.0, 35.0, 860.0, 1079.0), display), "narrower");
-        assert!(!shows_on(screen(1728.0 - 52.0, 35.0, 860.0, 1079.0), display), "Finder's clamp");
-        assert!(!shows_on(screen(1800.0, 35.0, 860.0, 1079.0), display), "wholly off it");
+        assert!(
+            shows_on(screen(3.0, 35.0, 860.0, 1079.0), display),
+            "wholly on it"
+        );
+        assert!(
+            shows_on(screen(-285.0, 35.0, 1148.0, 1079.0), display),
+            "cut by the left edge"
+        );
+        assert!(
+            shows_on(screen(1728.0 - MIN_SHOWN, 35.0, 860.0, 1079.0), display),
+            "exactly MIN_SHOWN"
+        );
+        assert!(
+            !shows_on(screen(1728.0 - MIN_SHOWN + 1.0, 35.0, 860.0, 1079.0), display),
+            "narrower"
+        );
+        assert!(
+            !shows_on(screen(1728.0 - 52.0, 35.0, 860.0, 1079.0), display),
+            "Finder's clamp"
+        );
+        assert!(
+            !shows_on(screen(1800.0, 35.0, 860.0, 1079.0), display),
+            "wholly off it"
+        );
     }
 
     #[test]
@@ -463,7 +471,10 @@ mod tests {
     fn overlay_space_subtracts_the_display_origin() {
         let display = screen(1728.0, -300.0, 3008.0, 1692.0);
         let window = screen(1732.0, -268.0, 859.0, 1081.0);
-        assert_eq!(to_overlay_space(window, display), overlay(4.0, 32.0, 859.0, 1081.0));
+        assert_eq!(
+            to_overlay_space(window, display),
+            overlay(4.0, 32.0, 859.0, 1081.0)
+        );
     }
 
     #[test]
@@ -480,8 +491,14 @@ mod tests {
     fn from_overlay_space_undoes_to_overlay_space() {
         let display = screen(1728.0, -300.0, 3008.0, 1692.0);
         let tile = overlay(-860.0, 32.0, 859.0, 1081.0);
-        assert_eq!(from_overlay_space(tile, display), screen(868.0, -268.0, 859.0, 1081.0));
-        assert_eq!(to_overlay_space(from_overlay_space(tile, display), display), tile);
+        assert_eq!(
+            from_overlay_space(tile, display),
+            screen(868.0, -268.0, 859.0, 1081.0)
+        );
+        assert_eq!(
+            to_overlay_space(from_overlay_space(tile, display), display),
+            tile
+        );
     }
 
     #[test]

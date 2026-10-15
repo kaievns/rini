@@ -82,9 +82,7 @@ impl Evidence {
         }
     }
 
-    pub fn window(&self) -> WindowId {
-        self.window
-    }
+    pub fn window(&self) -> WindowId { self.window }
 
     fn is_believed(&self, now: Instant) -> bool {
         now.saturating_duration_since(self.at) < Self::BELIEVED_FOR
@@ -156,9 +154,7 @@ mod tests {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
     }
 
-    fn window(idx: u32) -> WindowId {
-        WindowId::new(1, idx)
-    }
+    fn window(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
     const COLUMN: CGRect = CGRect {
         origin: CGPoint { x: 8.0, y: 33.0 },
@@ -179,9 +175,7 @@ mod tests {
         }
     }
 
-    fn clicked(at: Instant) -> Option<Evidence> {
-        Some(Evidence::new(window(1), at))
-    }
+    fn clicked(at: Instant) -> Option<Evidence> { Some(Evidence::new(window(1), at)) }
 
     #[test]
     fn a_double_click_in_the_top_band_is_on_that_window_s_title_bar() {
@@ -288,21 +282,15 @@ mod tests {
         let zoomed = rect(0.0, 25.0, 1440.0, 875.0);
         let moved = rect(100.0, 33.0, 997.0, 859.0);
         let cases = [
-            (
-                "floating",
-                SizeReport {
-                    column: false,
-                    ..report(zoomed)
-                },
-            ),
+            ("floating", SizeReport {
+                column: false,
+                ..report(zoomed)
+            }),
             ("moved, not resized", report(moved)),
-            (
-                "rini's own write",
-                SizeReport {
-                    pending: Some(zoomed),
-                    ..report(zoomed)
-                },
-            ),
+            ("rini's own write", SizeReport {
+                pending: Some(zoomed),
+                ..report(zoomed)
+            }),
         ];
         for (case, report) in cases {
             let mut evidence = clicked(at);

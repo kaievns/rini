@@ -6,24 +6,24 @@ mod lower;
 use dispatchr::queue;
 use dispatchr::time::Time;
 use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication};
+use rini_core::ids::pid_t;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::app::config::actor as config;
 use crate::input::domain::binding::{Action, Bind};
 use crate::windows::platform::app::NSRunningApplicationExt;
-use rini_core::ids::pid_t;
 
 pub type Sender = channels::Sender<WmEvent>;
 
 type Receiver = channels::Receiver<WmEvent>;
 
-use crate::app::channels;
-use crate::app::reactor;
+use rini_runloop::dispatch::DispatchExt;
+
+use crate::app::{channels, reactor};
 use crate::input::platform::input_tap as event_tap;
 use crate::windows::domain::app_threads::{AppThreads, Next, Readiness};
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::transaction::WindowTxStore;
-use rini_runloop::dispatch::DispatchExt;
 
 #[derive(Debug)]
 pub enum WmEvent {
@@ -48,15 +48,11 @@ pub enum WmEvent {
 }
 
 impl From<crate::input::event::Event> for WmEvent {
-    fn from(event: crate::input::event::Event) -> Self {
-        WmEvent::Input(event)
-    }
+    fn from(event: crate::input::event::Event) -> Self { WmEvent::Input(event) }
 }
 
 impl From<crate::displays::event::Event> for WmEvent {
-    fn from(event: crate::displays::event::Event) -> Self {
-        WmEvent::Displays(event)
-    }
+    fn from(event: crate::displays::event::Event) -> Self { WmEvent::Displays(event) }
 }
 
 impl From<crate::windows::platform::lifecycle::AppLifecycle> for WmEvent {
@@ -88,7 +84,7 @@ impl WmController {
         config_tx: config::Sender,
         events_tx: reactor::Sender,
         event_tap_tx: event_tap::Sender,
-            window_tx_store: Option<WindowTxStore>,
+        window_tx_store: Option<WindowTxStore>,
     ) -> (Self, channels::Sender<WmEvent>) {
         let (sender, receiver) = channels::channel();
         crate::windows::platform::app::set_application_callback({
@@ -180,16 +176,12 @@ impl WmController {
             }
             AppThreadGaveUp(pid) => self.app_threads.ended(pid),
             ConfigUpdated(new_cfg) => {
-                let binds_changed =
-                    Registration::of(&self.config) != Registration::of(&new_cfg);
+                let binds_changed = Registration::of(&self.config) != Registration::of(&new_cfg);
 
                 self.config = new_cfg;
 
-                let input_settings =
-                    crate::input::settings::InputSettings::from(&self.config);
-                _ = self
-                    .event_tap_tx
-                    .send(event_tap::Request::SettingsUpdated(input_settings));
+                let input_settings = crate::input::settings::InputSettings::from(&self.config);
+                _ = self.event_tap_tx.send(event_tap::Request::SettingsUpdated(input_settings));
 
                 if !self.hotkeys_installed {
                     debug!(
@@ -304,9 +296,9 @@ impl WmController {
                 Some((hotkey.modifiers, hotkey.key_code))
             });
         _ = self.event_tap_tx.send(event_tap::Request::SetSwitchKeys(switch_keys));
-        _ = self
-            .event_tap_tx
-            .send(event_tap::Request::SetHotkeys(binds.into_iter().chain(switcher_binds).collect()));
+        _ = self.event_tap_tx.send(event_tap::Request::SetHotkeys(
+            binds.into_iter().chain(switcher_binds).collect(),
+        ));
     }
 
     fn reload_config(&self) {
@@ -364,9 +356,7 @@ mod tests {
         Registration::of(&config)
     }
 
-    fn keys(binds: &[Bind]) -> Vec<&str> {
-        binds.iter().map(|bind| bind.key.as_str()).collect()
-    }
+    fn keys(binds: &[Bind]) -> Vec<&str> { binds.iter().map(|bind| bind.key.as_str()).collect() }
 
     const BINDS: &str = concat!(
         "binds {\n    Mod+J { focus-column-left; }\n    Alt+K { close-window; }\n}\n",

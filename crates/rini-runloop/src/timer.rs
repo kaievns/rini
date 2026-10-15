@@ -39,17 +39,20 @@ impl Timer {
         let fire_time = CFAbsoluteTimeGetCurrent() + duration.as_secs_f64();
         Self::new(fire_time, 0.0)
     }
+
     /// Fires after `initial_delay`, then every `interval`.
     fn repeating(initial_delay: Duration, interval: Duration) -> Self {
         let fire_time = CFAbsoluteTimeGetCurrent() + initial_delay.as_secs_f64();
         Self::new(fire_time, interval.as_secs_f64())
     }
+
     /// A repeating timer whose next fire is set by `set_next_fire`; cheaper than a new timer per deadline.
     pub fn manual() -> Self {
         // Apple recommends a far-future repeating timer for this use:
         // https://developer.apple.com/documentation/corefoundation/cfrunlooptimersetnextfiredate(_:_:)
         Self::repeating(Duration::MAX, Duration::MAX)
     }
+
     /// `interval` of 0.0 makes a one-shot timer.
     fn new(fire_date: CFAbsoluteTime, interval: CFTimeInterval) -> Self {
         let inner = Arc::new(Mutex::new(TimerState {
@@ -136,6 +139,7 @@ impl Timer {
         let fire_time = CFAbsoluteTimeGetCurrent() + delay.as_secs_f64();
         cf_timer.set_next_fire_date(fire_time);
     }
+
     /// Awaiting a cancelled timer completes immediately; `next()` returns `None`.
     pub fn cancel(&self) {
         let mut state = self.inner.lock();
@@ -147,6 +151,7 @@ impl Timer {
             waker.wake();
         }
     }
+
     pub fn next(&mut self) -> impl Future<Output = Option<()>> {
         tokio_stream::StreamExt::next(self)
     }
@@ -180,9 +185,7 @@ impl Future for Timer {
 }
 
 impl Drop for Timer {
-    fn drop(&mut self) {
-        self.cancel();
-    }
+    fn drop(&mut self) { self.cancel(); }
 }
 
 #[cfg(test)]

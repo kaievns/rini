@@ -44,7 +44,5 @@ pub trait EventSink: Send {
 }
 
 impl<T: From<Event> + Send> EventSink for rini_runloop::channel::Sender<T> {
-    fn send(&self, event: Event) {
-        rini_runloop::channel::Sender::send(self, event.into())
-    }
+    fn send(&self, event: Event) { rini_runloop::channel::Sender::send(self, event.into()) }
 }

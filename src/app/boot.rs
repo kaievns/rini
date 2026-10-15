@@ -89,7 +89,10 @@ pub fn validate_config(path: &Path) -> Result<String, String> {
     if !path.exists() {
         return match leftover_toml(path) {
             Some(complaint) => Err(complaint),
-            None => Ok(format!("No config at {}; rini uses its built-in defaults", path.display())),
+            None => Ok(format!(
+                "No config at {}; rini uses its built-in defaults",
+                path.display()
+            )),
         };
     }
     Config::read(path)
@@ -167,7 +170,10 @@ mod tests {
 
         let complaint = complaint.expect("a refused config has to say why");
         assert!(complaint.contains("built-in defaults"), "{complaint}");
-        assert!(complaint.contains("config.kdl:2:"), "the report names the line: {complaint}");
+        assert!(
+            complaint.contains("config.kdl:2:"),
+            "the report names the line: {complaint}"
+        );
         assert_eq!(
             config.settings.animate,
             Config::default().settings.animate,
@@ -184,7 +190,8 @@ mod tests {
         let (_, complaint) = config_or_default(&path);
 
         assert!(
-            complaint.is_some_and(|complaint| complaint.contains("unknown action `no-such-action`")),
+            complaint
+                .is_some_and(|complaint| complaint.contains("unknown action `no-such-action`")),
             "an unknown action is a refusal, not a silent ignore"
         );
     }

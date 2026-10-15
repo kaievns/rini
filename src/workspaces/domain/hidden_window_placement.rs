@@ -22,6 +22,11 @@ impl HideCorner {
 pub struct HiddenWindowPlacement;
 
 impl HiddenWindowPlacement {
+    /// The least of a floating window that must show on each axis for its frame to be worth keeping.
+    ///
+    /// About a title bar's grab area. Not a guess at what looks nice: below this there is nothing left
+    /// to click, so the user cannot drag the window back either.
+    const FLOATING_USABLE_PX: f64 = 64.0;
     const REVEAL_PX: f64 = 1.0;
     const VISIBLE_THRESHOLD_PX: f64 = 3.0;
 
@@ -61,7 +66,12 @@ impl HiddenWindowPlacement {
         preferred_corner: HideCorner,
         all_screens: &[CGRect],
     ) -> CGRect {
-        Self::calculate(screen, window, preferred_corner, &Self::others(screen, all_screens))
+        Self::calculate(
+            screen,
+            window,
+            preferred_corner,
+            &Self::others(screen, all_screens),
+        )
     }
 
     /// `is_hidden` against every attached display, `screen` among them.
@@ -77,12 +87,6 @@ impl HiddenWindowPlacement {
     pub fn is_off_screen(screen: CGRect, window: CGRect) -> bool {
         rini_geometry::is_off_screen(ScreenRect::from_cg(screen), ScreenRect::from_cg(window))
     }
-
-    /// The least of a floating window that must show on each axis for its frame to be worth keeping.
-    ///
-    /// About a title bar's grab area. Not a guess at what looks nice: below this there is nothing left
-    /// to click, so the user cannot drag the window back either.
-    const FLOATING_USABLE_PX: f64 = 64.0;
 
     /// Whether a remembered floating frame still puts enough of the window on screen to use it.
     ///
@@ -274,7 +278,9 @@ mod tests {
         let frame = rect(20.0, 37.0, 30.0, 20.0);
 
         let hidden =
-            HiddenWindowPlacement::calculate_among(screen, frame, HideCorner::BottomRight, &[screen]);
+            HiddenWindowPlacement::calculate_among(screen, frame, HideCorner::BottomRight, &[
+                screen,
+            ]);
 
         assert_eq!(hidden.origin.y, screen.max().y - 1.0);
         assert_eq!(hidden.origin.x, screen.max().x - 1.0);
@@ -286,12 +292,11 @@ mod tests {
         let right_neighbor = rect(100.0, 0.0, 100.0, 100.0);
         let frame = rect(20.0, 25.0, 30.0, 20.0);
 
-        let hidden = HiddenWindowPlacement::calculate_among(
-            primary,
-            frame,
-            HideCorner::BottomRight,
-            &[primary, right_neighbor],
-        );
+        let hidden =
+            HiddenWindowPlacement::calculate_among(primary, frame, HideCorner::BottomRight, &[
+                primary,
+                right_neighbor,
+            ]);
 
         assert_eq!(hidden.origin.y, primary.max().y - 1.0);
         assert_eq!(hidden.origin.x, primary.origin.x - frame.size.width + 1.0);

@@ -108,7 +108,9 @@ fn parse_mods_and_optional_key(s: &str) -> Result<(Modifiers, Option<KeyCode>), 
         }
         let code = KeyCode::from_str(part)?;
         if let Some((first, _)) = key_opt {
-            return Err(anyhow!("`{s}` names two keys, `{first}` and `{part}`; a binding has one"));
+            return Err(anyhow!(
+                "`{s}` names two keys, `{first}` and `{part}`; a binding has one"
+            ));
         }
         key_opt = Some((part, code));
     }
@@ -558,10 +560,9 @@ mod tests {
     #[test]
     fn a_generic_modifier_expands_to_left_right_and_both() {
         assert_eq!(Modifiers::ALT.expand_to_specific().len(), 3);
-        assert_eq!(
-            Modifiers::ALT_LEFT.expand_to_specific(),
-            vec![Modifiers::ALT_LEFT]
-        );
+        assert_eq!(Modifiers::ALT_LEFT.expand_to_specific(), vec![
+            Modifiers::ALT_LEFT
+        ]);
         let mut alt_shift = Modifiers::ALT;
         alt_shift.insert(Modifiers::SHIFT);
         assert_eq!(alt_shift.expand_to_specific().len(), 9);

@@ -1,6 +1,3 @@
-use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-
-use crate::windows::domain::info::{AppInfo, WindowInfo};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -13,16 +10,17 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, DefinedClass, define_class, exception, msg_send};
 use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication, NSWorkspace};
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSObject, NSObjectProtocol, NSString, ns_string};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use rini_core::ids::WindowServerId;
 pub use rini_core::ids::pid_t;
 
-use crate::windows::domain::info::WindowServerInfo;
+use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::platform::ax::element::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
-use rini_core::ids::WindowServerId;
 
 const NS_KEY_VALUE_OBSERVING_OPTION_NEW: usize = 1 << 0;
 const NS_KEY_VALUE_OBSERVING_OPTION_INITIAL: usize = 1 << 2;
@@ -40,6 +38,8 @@ enum Observed {
 }
 
 impl Observed {
+    const ALL: [Self; 2] = [Self::ActivationPolicy, Self::FinishedLaunching];
+
     fn key_path(self) -> &'static NSString {
         match self {
             Self::ActivationPolicy => ns_string!("activationPolicy"),
@@ -57,8 +57,6 @@ impl Observed {
             Self::FinishedLaunching => app.isFinishedLaunching(),
         }
     }
-
-    const ALL: [Self; 2] = [Self::ActivationPolicy, Self::FinishedLaunching];
 }
 
 struct ApplicationObserverIvars {
@@ -71,13 +69,9 @@ struct ApplicationObserverIvars {
 }
 
 impl ApplicationObserverIvars {
-    fn observing(&self, what: Observed) -> &Cell<bool> {
-        &self.observing[what as usize]
-    }
+    fn observing(&self, what: Observed) -> &Cell<bool> { &self.observing[what as usize] }
 
-    fn notified(&self, what: Observed) -> &Cell<bool> {
-        &self.notified[what as usize]
-    }
+    fn notified(&self, what: Observed) -> &Cell<bool> { &self.notified[what as usize] }
 }
 
 define_class!(
@@ -190,9 +184,7 @@ static APPLICATION_OBSERVERS: Lazy<Mutex<HashMap<pid_t, usize>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 pub fn set_application_callback<F>(callback: F)
-where
-    F: Fn(pid_t, AppInfo) + Send + Sync + 'static,
-{
+where F: Fn(pid_t, AppInfo) + Send + Sync + 'static {
     *APPLICATION_CALLBACK.lock() = Some(Arc::new(callback));
 }
 
@@ -318,17 +310,11 @@ impl NSRunningApplicationExt for NSRunningApplication {
         NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
     }
 
-    fn pid(&self) -> pid_t {
-        self.processIdentifier()
-    }
+    fn pid(&self) -> pid_t { self.processIdentifier() }
 
-    fn bundle_id(&self) -> Option<Retained<NSString>> {
-        self.bundleIdentifier()
-    }
+    fn bundle_id(&self) -> Option<Retained<NSString>> { self.bundleIdentifier() }
 
-    fn localized_name(&self) -> Option<Retained<NSString>> {
-        self.localizedName()
-    }
+    fn localized_name(&self) -> Option<Retained<NSString>> { self.localizedName() }
 
     fn icon_image(&self, size: f64) -> Option<Retained<objc2_core_graphics::CGImage>> {
         image_pixels(&*self.icon()?, size)

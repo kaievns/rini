@@ -302,8 +302,13 @@ impl Anchor {
 }
 
 /// A burst as it is written: its header, then one line a mark, oldest first.
-pub fn lines<'a>(anchor: &'a Anchor, unix_ms: u64, burst: &'a Burst) -> impl Iterator<Item = String> + 'a {
-    std::iter::once(header(anchor, unix_ms, burst)).chain(burst.marks.iter().map(|stamped| line(anchor, stamped)))
+pub fn lines<'a>(
+    anchor: &'a Anchor,
+    unix_ms: u64,
+    burst: &'a Burst,
+) -> impl Iterator<Item = String> + 'a {
+    std::iter::once(header(anchor, unix_ms, burst))
+        .chain(burst.marks.iter().map(|stamped| line(anchor, stamped)))
 }
 
 /// The line ahead of a burst's marks: when it was written, on both clocks, and how many marks it lost.
@@ -316,7 +321,13 @@ fn header(anchor: &Anchor, unix_ms: u64, burst: &Burst) -> String {
         unix_ms: u64,
         lost: u64,
     }
-    json(&Header { t: anchor.uptime_ns, mark: "burst", journal: FORMAT, unix_ms, lost: burst.lost })
+    json(&Header {
+        t: anchor.uptime_ns,
+        mark: "burst",
+        journal: FORMAT,
+        unix_ms,
+        lost: burst.lost,
+    })
 }
 
 fn line(anchor: &Anchor, stamped: &Stamped) -> String {
@@ -327,7 +338,11 @@ fn line(anchor: &Anchor, stamped: &Stamped) -> String {
         #[serde(flatten)]
         mark: &'a Mark,
     }
-    json(&Line { t: anchor.ns(stamped.at), g: stamped.generation, mark: &stamped.mark })
+    json(&Line {
+        t: anchor.ns(stamped.at),
+        g: stamped.generation,
+        mark: &stamped.mark,
+    })
 }
 
 fn json(value: &impl Serialize) -> String {
@@ -349,21 +364,21 @@ struct Xywh;
 impl<U> SerializeAs<Rect<U>> for Xywh {
     fn serialize_as<S: Serializer>(rect: &Rect<U>, serializer: S) -> Result<S::Ok, S::Error> {
         let (origin, size) = (rect.origin, rect.size);
-        [origin.x as f32, origin.y as f32, size.width as f32, size.height as f32].serialize(serializer)
+        [
+            origin.x as f32,
+            origin.y as f32,
+            size.width as f32,
+            size.height as f32,
+        ]
+        .serialize(serializer)
     }
 }
 
-fn nanos(span: Duration) -> u64 {
-    u64::try_from(span.as_nanos()).unwrap_or(u64::MAX)
-}
+fn nanos(span: Duration) -> u64 { u64::try_from(span.as_nanos()).unwrap_or(u64::MAX) }
 
-fn millis(span: Duration) -> u32 {
-    u32::try_from(span.as_millis()).unwrap_or(u32::MAX)
-}
+fn millis(span: Duration) -> u32 { u32::try_from(span.as_millis()).unwrap_or(u32::MAX) }
 
-fn micros(span: Duration) -> u32 {
-    u32::try_from(span.as_micros()).unwrap_or(u32::MAX)
-}
+fn micros(span: Duration) -> u32 { u32::try_from(span.as_micros()).unwrap_or(u32::MAX) }
 
 /// `later - earlier` in microseconds, either way round.
 fn signed_micros(earlier: Instant, later: Instant) -> i32 {
@@ -373,16 +388,17 @@ fn signed_micros(earlier: Instant, later: Instant) -> i32 {
     }
 }
 
-fn count(n: usize) -> u16 {
-    u16::try_from(n).unwrap_or(u16::MAX)
-}
+fn count(n: usize) -> u16 { u16::try_from(n).unwrap_or(u16::MAX) }
 
 /// An event's marks, read before the coordinator takes it.
 enum Pending {
     Nothing,
     One(Mark),
     /// A tick's reading, taken only once the clock has run out: before that the engine reads nothing.
-    Tick { settled: bool, landed: bool },
+    Tick {
+        settled: bool,
+        landed: bool,
+    },
     LooksTurned(Vec<WindowId>),
 }
 
@@ -415,7 +431,12 @@ struct Journal {
 
 impl Default for Journal {
     fn default() -> Self {
-        Journal { ring: VecDeque::with_capacity(RING), first: 0, written: 0, edges: Edges::default() }
+        Journal {
+            ring: VecDeque::with_capacity(RING),
+            first: 0,
+            written: 0,
+            edges: Edges::default(),
+        }
     }
 }
 
@@ -445,22 +466,37 @@ impl Journal {
                 focused_look: stage.focused_look,
                 duration_ms: millis(stage.duration),
             }),
-            Event::HoldMerge { grows, writes } => {
-                Pending::One(Mark::HoldMerge { grows: count(grows.len()), writes: count(writes.len()) })
-            }
+            Event::HoldMerge { grows, writes } => Pending::One(Mark::HoldMerge {
+                grows: count(grows.len()),
+                writes: count(writes.len()),
+            }),
             Event::FrameZero(_) | Event::Picture { .. } => Pending::Nothing,
-            Event::Lost { generation, window } => Pending::One(Mark::Lost { of: *generation, window: *window }),
+            Event::Lost { generation, window } => Pending::One(Mark::Lost {
+                of: *generation,
+                window: *window,
+            }),
             Event::Extend(needs) => Pending::One(Mark::Extend { ms: millis(*needs) }),
-            Event::Tick { settled, landed } if reads_landing => Pending::Tick { settled: *settled, landed: *landed },
+            Event::Tick { settled, landed } if reads_landing => Pending::Tick {
+                settled: *settled,
+                landed: *landed,
+            },
             Event::Tick { .. } => Pending::Nothing,
             Event::Quiet(of) => Pending::One(Mark::Quiet { of: *of }),
             Event::Abandon => Pending::One(Mark::Abandon),
-            Event::LooksTurned(windows) => Pending::LooksTurned(windows.iter().map(|(window, _)| *window).collect()),
+            Event::LooksTurned(windows) => {
+                Pending::LooksTurned(windows.iter().map(|(window, _)| *window).collect())
+            }
         }
     }
 
     /// The event's marks and one per command, stamped `now` and the generation the drive left.
-    fn after(&mut self, now: Instant, generation: Generation, pending: Pending, commands: &[Command]) {
+    fn after(
+        &mut self,
+        now: Instant,
+        generation: Generation,
+        pending: Pending,
+        commands: &[Command],
+    ) {
         let mut read = (false, false);
         match pending {
             Pending::Nothing => {}
@@ -509,15 +545,23 @@ impl Journal {
             Command::StopWatches => Mark::StopWatches,
             Command::StartMoving => Mark::StartMoving,
             Command::Retarget { held } => Mark::Retarget { waited_ms: millis(*held) },
-            Command::AskFinal { windows, behind, .. } => {
-                Mark::AskFinal { windows: count(windows.len()), behind: count(behind.len()) }
-            }
-            Command::Swap { generation, window } => Mark::Swap { of: *generation, window: *window },
+            Command::AskFinal { windows, behind, .. } => Mark::AskFinal {
+                windows: count(windows.len()),
+                behind: count(behind.len()),
+            },
+            Command::Swap { generation, window } => Mark::Swap {
+                of: *generation,
+                window: *window,
+            },
             Command::Snap { window, frame } => Mark::Snap { window: *window, frame: *frame },
-            Command::KeepFocusedLook { generation, window } => {
-                Mark::KeepFocusedLook { of: *generation, window: *window }
-            }
-            Command::Focus { window, focused } => Mark::Focus { window: *window, focused: *focused },
+            Command::KeepFocusedLook { generation, window } => Mark::KeepFocusedLook {
+                of: *generation,
+                window: *window,
+            },
+            Command::Focus { window, focused } => Mark::Focus {
+                window: *window,
+                focused: *focused,
+            },
             Command::PlaceRest => Mark::PlaceRest,
             Command::Lift { .. } => Mark::Lift { at_rest, landed },
             Command::Warm(windows) => Mark::Warm { windows: count(windows.len()) },
@@ -539,10 +583,19 @@ impl Journal {
         pictures: impl ExactSizeIterator<Item = (WindowId, ScreenRect, Instant)>,
     ) {
         let before = |at: Instant| micros(now.saturating_duration_since(at));
-        let delivery = Mark::Delivery { of, why, pictures: count(pictures.len()), sent_before_us: before(sent) };
+        let delivery = Mark::Delivery {
+            of,
+            why,
+            pictures: count(pictures.len()),
+            sent_before_us: before(sent),
+        };
         self.push(now, generation, delivery);
         for (window, frame, taken) in pictures {
-            self.push(now, generation, Mark::Delivered { window, frame, taken_before_us: before(taken) });
+            self.push(now, generation, Mark::Delivered {
+                window,
+                frame,
+                taken_before_us: before(taken),
+            });
         }
     }
 
@@ -553,9 +606,30 @@ impl Journal {
     }
 
     /// One window of the handover of `of`'s lift, stamped `now`, when the engine heard it.
-    fn handover(&mut self, now: Instant, generation: Generation, of: Generation, window: WindowId, diff: HandoverDiff) {
-        let HandoverDiff { interior, interior_over, edge_in, edge_out, band } = diff;
-        self.push(now, generation, Mark::Handover { of, window, interior, interior_over, edge_in, edge_out, band });
+    fn handover(
+        &mut self,
+        now: Instant,
+        generation: Generation,
+        of: Generation,
+        window: WindowId,
+        diff: HandoverDiff,
+    ) {
+        let HandoverDiff {
+            interior,
+            interior_over,
+            edge_in,
+            edge_out,
+            band,
+        } = diff;
+        self.push(now, generation, Mark::Handover {
+            of,
+            window,
+            interior,
+            interior_over,
+            edge_in,
+            edge_out,
+            band,
+        });
     }
 
     fn push(&mut self, at: Instant, generation: Generation, mark: Mark) {
@@ -568,9 +642,7 @@ impl Journal {
 
     /// Writing turns on: the cursor moves up to the oldest mark held, so what the ring overwrote while
     /// nothing was written is not counted lost.
-    fn start_writing(&mut self) {
-        self.written = self.written.max(self.first);
-    }
+    fn start_writing(&mut self) { self.written = self.written.max(self.first); }
 
     fn unwritten(&mut self) -> Option<Burst> {
         let end = self.first + self.ring.len() as u64;
@@ -608,9 +680,7 @@ pub struct Journalled {
 }
 
 impl Journalled {
-    pub fn coordinator(&self) -> &Coordinator {
-        &self.coordinator
-    }
+    pub fn coordinator(&self) -> &Coordinator { &self.coordinator }
 
     /// Tells the coordinator `event`: the commands to carry out, in order, and the burst to write
     /// when one is due.
@@ -624,21 +694,21 @@ impl Journalled {
         self.journal.after(now, generation, pending, &commands);
         let settled = commands.contains(&Command::ReportSettled);
         self.up = (self.up || commands.contains(&Command::ReportUp)) && !settled;
-        let burst = if self.writing && settled { self.journal.unwritten() } else { None };
+        let burst = if self.writing && settled {
+            self.journal.unwritten()
+        } else {
+            None
+        };
         (commands, burst)
     }
 
     /// The engine takes a request answering `cause`: its next drive marks the press, ahead of that
     /// event's own marks.
-    pub fn pressed(&mut self, cause: Cause) {
-        self.pressed = Some(cause);
-    }
+    pub fn pressed(&mut self, cause: Cause) { self.pressed = Some(cause); }
 
     /// The engine is done with the request: a press no drive marked, a request it declined, is
     /// dropped.
-    pub fn answered(&mut self) {
-        self.pressed = None;
-    }
+    pub fn answered(&mut self) { self.pressed = None; }
 
     /// A delivery of the pictures service under the engine's tag, heard `now`, before the engine turns
     /// it into events: `of` the generation it was for, `sent` when the service sent it, and each picture's
@@ -651,14 +721,29 @@ impl Journalled {
         sent: Instant,
         pictures: impl ExactSizeIterator<Item = (WindowId, ScreenRect, Instant)>,
     ) {
-        self.journal.delivery(now, self.coordinator.generation(), of, why, sent, pictures);
+        self.journal
+            .delivery(now, self.coordinator.generation(), of, why, sent, pictures);
     }
 
     /// `window`'s tile took a picture `at` that moment of the flight, heard `now`: taken by `route`,
     /// carrying its window's blur or not (`blur`), its capture started at `taken`.
-    pub fn wears(&mut self, now: Instant, window: WindowId, at: Wearing, route: Route, blur: bool, taken: Instant) {
+    pub fn wears(
+        &mut self,
+        now: Instant,
+        window: WindowId,
+        at: Wearing,
+        route: Route,
+        blur: bool,
+        taken: Instant,
+    ) {
         let taken_before_us = micros(now.saturating_duration_since(taken));
-        let mark = Mark::Wears { window, at, route, blur, taken_before_us };
+        let mark = Mark::Wears {
+            window,
+            at,
+            route,
+            blur,
+            taken_before_us,
+        };
         self.journal.push(now, self.coordinator.generation(), mark);
     }
 
@@ -707,10 +792,14 @@ impl Journalled {
         };
         self.journal.push(began, generation, turn);
         for &(actor, took) in actors {
-            self.journal.push(began, generation, Mark::TurnActor { actor, us: micros(took) });
+            self.journal
+                .push(began, generation, Mark::TurnActor { actor, us: micros(took) });
         }
         for &(what, at) in changes {
-            self.journal.push(began, generation, Mark::TurnChange { what, before_us: signed_micros(at, began) });
+            self.journal.push(began, generation, Mark::TurnChange {
+                what,
+                before_us: signed_micros(at, began),
+            });
         }
     }
 
@@ -723,19 +812,29 @@ impl Journalled {
     /// hid on its own picture is measured.
     pub fn heard(&mut self, heard: Heard, now: Instant) -> bool {
         let Some(waiting) = self.waiting else { return false };
-        let Some(hide) = hides(waiting, heard, now) else { return false };
+        let Some(hide) = hides(waiting, heard, now) else {
+            return false;
+        };
         self.waiting = None;
         let measured = hide == Hide::Measured;
         self.measured = measured.then_some(waiting.generation);
         let waited_us = micros(now.saturating_duration_since(waiting.since));
-        self.journal.push(now, self.coordinator.generation(), Mark::Hide { measured, waited_us });
+        self.journal.push(now, self.coordinator.generation(), Mark::Hide {
+            measured,
+            waited_us,
+        });
         true
     }
 
     /// The handover of `of`'s lift, as the pictures service compared it, heard `now`: one mark a
     /// window when that lift hid on its own picture, and none when it did not, since the overlay may
     /// have been gone from its picture.
-    pub fn handover(&mut self, now: Instant, of: Generation, windows: impl IntoIterator<Item = (WindowId, HandoverDiff)>) {
+    pub fn handover(
+        &mut self,
+        now: Instant,
+        of: Generation,
+        windows: impl IntoIterator<Item = (WindowId, HandoverDiff)>,
+    ) {
         if self.measured != Some(of) {
             return;
         }
@@ -755,7 +854,11 @@ impl Journalled {
             return None;
         }
         self.journal.start_writing();
-        if self.up { None } else { self.journal.unwritten() }
+        if self.up {
+            None
+        } else {
+            self.journal.unwritten()
+        }
     }
 }
 
@@ -804,10 +907,16 @@ enum Hide {
 /// Whether the lift `waiting` hides on what it `heard` at `now`, and how.
 fn hides(waiting: LiftWait, heard: Heard, now: Instant) -> Option<Hide> {
     match heard {
-        Heard::OverlayTaken { generation, taken } => (generation == waiting.generation)
-            .then_some(if taken { Hide::Measured } else { Hide::Unmeasured }),
+        Heard::OverlayTaken { generation, taken } => {
+            (generation == waiting.generation).then_some(if taken {
+                Hide::Measured
+            } else {
+                Hide::Unmeasured
+            })
+        }
         Heard::Request | Heard::Moved => Some(Hide::Unmeasured),
-        Heard::Patience => (now.saturating_duration_since(waiting.since) >= OVERLAY_TAKE_PATIENCE).then_some(Hide::Unmeasured),
+        Heard::Patience => (now.saturating_duration_since(waiting.since) >= OVERLAY_TAKE_PATIENCE)
+            .then_some(Hide::Unmeasured),
     }
 }
 
@@ -816,10 +925,10 @@ mod tests {
     use rini_geometry::space::{Point, Size};
 
     use super::*;
+    use crate::pictures::domain::route::Route;
     use crate::transitions::domain::lifecycle::EndWatch;
     use crate::transitions::domain::lifecycle::testing::{PLAYS, pan, r, w};
     use crate::transitions::domain::timing::{LIFT_GRACE, SETTLE_BEFORE_CAPTURES};
-    use crate::pictures::domain::route::Route;
 
     fn name(mark: &Mark) -> String {
         serde_json::to_value(mark).unwrap()["mark"].as_str().unwrap().to_owned()
@@ -837,22 +946,25 @@ mod tests {
         names(journal.ring.make_contiguous())
     }
 
-    fn extend(ms: u32) -> Mark {
-        Mark::Extend { ms }
-    }
+    fn extend(ms: u32) -> Mark { Mark::Extend { ms } }
 
     /// Every mark the journalled lifecycle holds.
-    fn held(flights: &Journalled) -> Vec<Stamped> {
-        flights.journal.ring.iter().copied().collect()
-    }
+    fn held(flights: &Journalled) -> Vec<Stamped> { flights.journal.ring.iter().copied().collect() }
 
     /// A press the reactor took `before` `at`.
     fn pressed(at: Instant, before: Duration) -> Cause {
-        Cause { at: at - before, what: "move_focus" }
+        Cause {
+            at: at - before,
+            what: "move_focus",
+        }
     }
 
     fn presses(marks: &[Stamped]) -> Vec<Stamped> {
-        marks.iter().copied().filter(|stamped| matches!(stamped.mark, Mark::Press { .. })).collect()
+        marks
+            .iter()
+            .copied()
+            .filter(|stamped| matches!(stamped.mark, Mark::Press { .. }))
+            .collect()
     }
 
     /// The pan from its press to its quiet, landing as soon as the clock runs out: every burst each
@@ -890,18 +1002,41 @@ mod tests {
             (Command::Hold, "hold"),
             (Command::Settle, "settle"),
             (Command::Release, "release"),
-            (Command::AskFrameZero { generation: g, strip: frames.clone(), background: Vec::new(), behind: Vec::new() }, "ask_frame_zero"),
+            (
+                Command::AskFrameZero {
+                    generation: g,
+                    strip: frames.clone(),
+                    background: Vec::new(),
+                    behind: Vec::new(),
+                },
+                "ask_frame_zero",
+            ),
             (Command::Show, "show"),
             (Command::Write(frames.clone()), "write"),
             (Command::Holes(vec![(w(1), snap)]), "holes"),
             (Command::Watch(watch.clone()), "watch"),
             (Command::StopWatches, "stop_watches"),
             (Command::StartMoving, "start_moving"),
-            (Command::Retarget { held: Duration::from_millis(140) }, "retarget"),
-            (Command::AskFinal { generation: g, windows: frames.clone(), behind: Vec::new() }, "ask_final"),
+            (
+                Command::Retarget {
+                    held: Duration::from_millis(140),
+                },
+                "retarget",
+            ),
+            (
+                Command::AskFinal {
+                    generation: g,
+                    windows: frames.clone(),
+                    behind: Vec::new(),
+                },
+                "ask_final",
+            ),
             (Command::Swap { generation: g, window: w(1) }, "swap"),
             (Command::Snap { window: w(1), frame: snap }, "snap"),
-            (Command::KeepFocusedLook { generation: g, window: w(1) }, "keep_focused_look"),
+            (
+                Command::KeepFocusedLook { generation: g, window: w(1) },
+                "keep_focused_look",
+            ),
             (Command::Focus { window: w(1), focused: false }, "focus"),
             (Command::PlaceRest, "place_rest"),
             (Command::Lift { generation: g }, "lift"),
@@ -911,15 +1046,33 @@ mod tests {
             (Command::ReportSettled, "report_settled"),
         ];
         for (command, expected) in table {
-            assert_eq!(name(&Journal::mark(&command, (true, false))), expected, "{command:?}");
+            assert_eq!(
+                name(&Journal::mark(&command, (true, false))),
+                expected,
+                "{command:?}"
+            );
         }
         assert_eq!(
             Journal::mark(&Command::Watch(watch), (false, false)),
-            Mark::Watch { landing: 1, awaiting: 0, background: 0, focus: Some(w(2)), losing_focus: Some(w(1)) }
+            Mark::Watch {
+                landing: 1,
+                awaiting: 0,
+                background: 0,
+                focus: Some(w(2)),
+                losing_focus: Some(w(1))
+            }
         );
-        assert_eq!(Journal::mark(&Command::Lift { generation: g }, (true, false)), Mark::Lift { at_rest: true, landed: false });
         assert_eq!(
-            Journal::mark(&Command::Retarget { held: Duration::from_micros(140_900) }, (false, false)),
+            Journal::mark(&Command::Lift { generation: g }, (true, false)),
+            Mark::Lift { at_rest: true, landed: false }
+        );
+        assert_eq!(
+            Journal::mark(
+                &Command::Retarget {
+                    held: Duration::from_micros(140_900)
+                },
+                (false, false)
+            ),
             Mark::Retarget { waited_ms: 140 }
         );
     }
@@ -930,20 +1083,43 @@ mod tests {
         let frame = r(0.0, 0.0, 200.0, 200.0);
         assert_eq!(marks_of(Event::Begin(pan())), ["begin"]);
         assert_eq!(marks_of(Event::Merge { stage: pan(), moved: true }), ["merge"]);
-        let hold = Event::HoldMerge { grows: vec![(w(2), frame)], writes: vec![(w(1), frame), (w(2), frame)] };
+        let hold = Event::HoldMerge {
+            grows: vec![(w(2), frame)],
+            writes: vec![(w(1), frame), (w(2), frame)],
+        };
         assert_eq!(marks_of(hold.clone()), ["hold_merge"]);
-        let Pending::One(held) = Journal::before(&hold, false) else { panic!() };
+        let Pending::One(held) = Journal::before(&hold, false) else {
+            panic!()
+        };
         assert_eq!(held, Mark::HoldMerge { grows: 1, writes: 2 });
         assert_eq!(marks_of(Event::Lost { generation: g, window: w(1) }), ["lost"]);
         assert_eq!(marks_of(Event::Extend(Duration::from_millis(5))), ["extend"]);
-        assert_eq!(marks_of(Event::Tick { settled: true, landed: true }), ["at_rest", "landed"]);
+        assert_eq!(marks_of(Event::Tick { settled: true, landed: true }), [
+            "at_rest", "landed"
+        ]);
         assert_eq!(marks_of(Event::Quiet(g)), ["quiet"]);
         assert_eq!(marks_of(Event::Abandon), ["abandon"]);
-        assert_eq!(marks_of(Event::LooksTurned(vec![(w(1), frame), (w(2), frame)])), ["looks_turned", "looks_turned"]);
-        assert!(marks_of(Event::FrameZero(g)).is_empty(), "the delivery is the record");
-        assert!(marks_of(Event::Picture { generation: g, window: w(1), frame, why: Why::Landed }).is_empty());
+        assert_eq!(
+            marks_of(Event::LooksTurned(vec![(w(1), frame), (w(2), frame)])),
+            ["looks_turned", "looks_turned"]
+        );
+        assert!(
+            marks_of(Event::FrameZero(g)).is_empty(),
+            "the delivery is the record"
+        );
+        assert!(
+            marks_of(Event::Picture {
+                generation: g,
+                window: w(1),
+                frame,
+                why: Why::Landed
+            })
+            .is_empty()
+        );
 
-        let Pending::One(begin) = Journal::before(&Event::Begin(pan()), false) else { panic!() };
+        let Pending::One(begin) = Journal::before(&Event::Begin(pan()), false) else {
+            panic!()
+        };
         assert_eq!(begin, Mark::Begin {
             kind: Kind::Pan,
             coalesced: false,
@@ -963,14 +1139,30 @@ mod tests {
         let mut flights = Journalled::default();
         flights.drive(Event::Begin(pan()), now);
         flights.drive(Event::FrameZero(flights.coordinator().generation()), now);
-        flights.drive(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
+        flights.drive(
+            Event::Tick { settled: false, landed: false },
+            now + Duration::from_millis(240),
+        );
         let before = held(&flights).len();
         let end = now + PLAYS;
         flights.drive(Event::Tick { settled: true, landed: false }, end);
-        flights.drive(Event::Tick { settled: true, landed: false }, end + Duration::from_millis(16));
-        flights.drive(Event::Tick { settled: true, landed: true }, end + Duration::from_millis(32));
+        flights.drive(
+            Event::Tick { settled: true, landed: false },
+            end + Duration::from_millis(16),
+        );
+        flights.drive(
+            Event::Tick { settled: true, landed: true },
+            end + Duration::from_millis(32),
+        );
         let marks = held(&flights);
-        assert_eq!(names(&marks[before..]), ["at_rest", "landed", "place_rest", "stop_watches", "lift", "settle"]);
+        assert_eq!(names(&marks[before..]), [
+            "at_rest",
+            "landed",
+            "place_rest",
+            "stop_watches",
+            "lift",
+            "settle"
+        ]);
         assert_eq!(marks[before].at, end, "stamped with the tick that first read it");
     }
 
@@ -981,8 +1173,15 @@ mod tests {
         flights.drive(Event::Begin(pan()), now);
         flights.drive(Event::FrameZero(flights.coordinator().generation()), now);
         let before = held(&flights).len();
-        flights.drive(Event::Tick { settled: true, landed: true }, now + Duration::from_millis(10));
-        assert_eq!(held(&flights).len(), before, "the engine read nothing, whatever the tick says");
+        flights.drive(
+            Event::Tick { settled: true, landed: true },
+            now + Duration::from_millis(10),
+        );
+        assert_eq!(
+            held(&flights).len(),
+            before,
+            "the engine read nothing, whatever the tick says"
+        );
     }
 
     /// A pass growing a window while the flight moves is marked as it is held, and again as it merges,
@@ -999,12 +1198,35 @@ mod tests {
         let before = held(&flights).len();
         let grown = r(3.0, 35.0, 1723.0, 1079.0);
         let arrives = now + Duration::from_millis(100);
-        flights.drive(Event::HoldMerge { grows: vec![(w(2), grown)], writes: vec![(w(2), grown)] }, arrives);
-        flights.drive(Event::Picture { generation: g, window: w(2), frame: grown, why: Why::Landed }, arrives + Duration::from_millis(137));
+        flights.drive(
+            Event::HoldMerge {
+                grows: vec![(w(2), grown)],
+                writes: vec![(w(2), grown)],
+            },
+            arrives,
+        );
+        flights.drive(
+            Event::Picture {
+                generation: g,
+                window: w(2),
+                frame: grown,
+                why: Why::Landed,
+            },
+            arrives + Duration::from_millis(137),
+        );
         let marks = held(&flights);
-        assert_eq!(names(&marks[before..]), ["hold_merge", "write", "holes", "watch", "retarget"]);
+        assert_eq!(names(&marks[before..]), [
+            "hold_merge",
+            "write",
+            "holes",
+            "watch",
+            "retarget"
+        ]);
         assert_eq!(marks[before].mark, Mark::HoldMerge { grows: 1, writes: 1 });
-        assert_eq!(marks.last().map(|stamped| (stamped.mark, stamped.generation)), Some((Mark::Retarget { waited_ms: 137 }, g)));
+        assert_eq!(
+            marks.last().map(|stamped| (stamped.mark, stamped.generation)),
+            Some((Mark::Retarget { waited_ms: 137 }, g))
+        );
     }
 
     #[test]
@@ -1016,10 +1238,16 @@ mod tests {
         let end = now + PLAYS;
         flights.drive(Event::Tick { settled: false, landed: true }, end);
         let first = flights.coordinator().generation();
-        flights.drive(Event::Merge { stage: pan(), moved: false }, end + Duration::from_millis(5));
+        flights.drive(
+            Event::Merge { stage: pan(), moved: false },
+            end + Duration::from_millis(5),
+        );
         let merged = flights.coordinator().generation();
         assert_ne!(first, merged);
-        flights.drive(Event::Tick { settled: false, landed: true }, end + Duration::from_millis(16));
+        flights.drive(
+            Event::Tick { settled: false, landed: true },
+            end + Duration::from_millis(16),
+        );
         let landed: Vec<Generation> = held(&flights)
             .iter()
             .filter(|stamped| stamped.mark == Mark::Landed)
@@ -1036,11 +1264,24 @@ mod tests {
             flights.drive(Event::Begin(pan()), now);
             flights.drive(Event::FrameZero(flights.coordinator().generation()), now);
             flights.drive(Event::Tick { settled, landed }, at);
-            held(&flights).into_iter().find(|stamped| matches!(stamped.mark, Mark::Lift { .. })).map(|stamped| stamped.mark)
+            held(&flights)
+                .into_iter()
+                .find(|stamped| matches!(stamped.mark, Mark::Lift { .. }))
+                .map(|stamped| stamped.mark)
         };
-        assert_eq!(lift(true, true, now + PLAYS), Some(Mark::Lift { at_rest: true, landed: true }));
-        assert_eq!(lift(true, false, now + PLAYS + LIFT_GRACE), Some(Mark::Lift { at_rest: true, landed: false }), "overdue");
-        assert_eq!(lift(false, false, now + PLAYS + LIFT_GRACE), Some(Mark::Lift { at_rest: false, landed: false }));
+        assert_eq!(
+            lift(true, true, now + PLAYS),
+            Some(Mark::Lift { at_rest: true, landed: true })
+        );
+        assert_eq!(
+            lift(true, false, now + PLAYS + LIFT_GRACE),
+            Some(Mark::Lift { at_rest: true, landed: false }),
+            "overdue"
+        );
+        assert_eq!(
+            lift(false, false, now + PLAYS + LIFT_GRACE),
+            Some(Mark::Lift { at_rest: false, landed: false })
+        );
     }
 
     #[test]
@@ -1060,12 +1301,31 @@ mod tests {
             (w(2), frame(864.0), heard - Duration::from_millis(37)),
         ];
         let before = held(&flights).len();
-        flights.delivery(heard, first, Why::Landed, heard - Duration::from_micros(4_100), pictures.into_iter());
+        flights.delivery(
+            heard,
+            first,
+            Why::Landed,
+            heard - Duration::from_micros(4_100),
+            pictures.into_iter(),
+        );
         let marks = &held(&flights)[before..];
         assert_eq!(marks.iter().map(|stamped| stamped.mark).collect::<Vec<_>>(), [
-            Mark::Delivery { of: first, why: Why::Landed, pictures: 2, sent_before_us: 4_100 },
-            Mark::Delivered { window: w(1), frame: frame(0.0), taken_before_us: 37_500 },
-            Mark::Delivered { window: w(2), frame: frame(864.0), taken_before_us: 37_000 },
+            Mark::Delivery {
+                of: first,
+                why: Why::Landed,
+                pictures: 2,
+                sent_before_us: 4_100
+            },
+            Mark::Delivered {
+                window: w(1),
+                frame: frame(0.0),
+                taken_before_us: 37_500
+            },
+            Mark::Delivered {
+                window: w(2),
+                frame: frame(864.0),
+                taken_before_us: 37_000
+            },
         ]);
         assert_ne!(first, merged);
         assert!(
@@ -1081,10 +1341,21 @@ mod tests {
         flights.drive(Event::Begin(pan()), now);
         let g = flights.coordinator().generation();
         let before = held(&flights).len();
-        flights.delivery(now + Duration::from_millis(30), g, Why::FrameZero, now + Duration::from_millis(28), std::iter::empty());
+        flights.delivery(
+            now + Duration::from_millis(30),
+            g,
+            Why::FrameZero,
+            now + Duration::from_millis(28),
+            std::iter::empty(),
+        );
         let marks = &held(&flights)[before..];
         assert_eq!(marks.iter().map(|stamped| stamped.mark).collect::<Vec<_>>(), [
-            Mark::Delivery { of: g, why: Why::FrameZero, pictures: 0, sent_before_us: 2_000 },
+            Mark::Delivery {
+                of: g,
+                why: Why::FrameZero,
+                pictures: 0,
+                sent_before_us: 2_000
+            },
         ]);
     }
 
@@ -1097,10 +1368,35 @@ mod tests {
         let sent = now + Duration::from_micros(200);
         let at = |us| sent + Duration::from_micros(us);
         let before = held(&flights).len();
-        let crops = Crops { fills: 2, ground: Duration::from_micros(7_910) };
-        flights.drawn(at(2_000), 4, (Some(true), false, crops), (sent, at(1_300), at(1_700)));
-        let mark = Mark::Drawn { seq: 4, shown: Some(true), places: false, crops: 2, ground_us: 7_910, queued_us: 1_300, applied_us: 400, flushed_before_us: 300 };
-        assert_eq!(held(&flights)[before..], [Stamped { at: at(2_000), generation: g, mark }], "stamped when the engine heard it");
+        let crops = Crops {
+            fills: 2,
+            ground: Duration::from_micros(7_910),
+        };
+        flights.drawn(
+            at(2_000),
+            4,
+            (Some(true), false, crops),
+            (sent, at(1_300), at(1_700)),
+        );
+        let mark = Mark::Drawn {
+            seq: 4,
+            shown: Some(true),
+            places: false,
+            crops: 2,
+            ground_us: 7_910,
+            queued_us: 1_300,
+            applied_us: 400,
+            flushed_before_us: 300,
+        };
+        assert_eq!(
+            held(&flights)[before..],
+            [Stamped {
+                at: at(2_000),
+                generation: g,
+                mark
+            }],
+            "stamped when the engine heard it"
+        );
     }
 
     #[test]
@@ -1114,18 +1410,43 @@ mod tests {
         flights.drive(Event::FrameZero(g), now);
         let began = now + ms(20);
         let actors = [("renderer", Duration::from_micros(2_500)), ("rest", ms(1))];
-        let changes = [("overlay.show", began - ms(12)), ("rest.frame", began + Duration::from_micros(300))];
+        let changes = [
+            ("overlay.show", began - ms(12)),
+            ("rest.frame", began + Duration::from_micros(300)),
+        ];
         flights.main_turn(began, ms(262), &actors, Duration::from_micros(258_500), &changes);
         flights.drive(Event::Tick { settled: true, landed: true }, now + PLAYS);
-        let burst = flights.drive(Event::Quiet(g), now + PLAYS + SETTLE_BEFORE_CAPTURES).1.expect("settled");
-        let at = burst.marks.iter().position(|stamped| matches!(stamped.mark, Mark::MainTurn { .. })).expect("marked");
-        assert_eq!(burst.marks[at..at + 5], [
-            Mark::MainTurn { busy_us: 262_000, outside_us: 258_500, actors: 2, changes: 2 },
-            Mark::TurnActor { actor: "renderer", us: 2_500 },
-            Mark::TurnActor { actor: "rest", us: 1_000 },
-            Mark::TurnChange { what: "overlay.show", before_us: 12_000 },
-            Mark::TurnChange { what: "rest.frame", before_us: -300 },
-        ].map(|mark| Stamped { at: began, generation: g, mark }));
+        let burst = flights
+            .drive(Event::Quiet(g), now + PLAYS + SETTLE_BEFORE_CAPTURES)
+            .1
+            .expect("settled");
+        let at = burst
+            .marks
+            .iter()
+            .position(|stamped| matches!(stamped.mark, Mark::MainTurn { .. }))
+            .expect("marked");
+        assert_eq!(
+            burst.marks[at..at + 5],
+            [
+                Mark::MainTurn {
+                    busy_us: 262_000,
+                    outside_us: 258_500,
+                    actors: 2,
+                    changes: 2
+                },
+                Mark::TurnActor { actor: "renderer", us: 2_500 },
+                Mark::TurnActor { actor: "rest", us: 1_000 },
+                Mark::TurnChange {
+                    what: "overlay.show",
+                    before_us: 12_000
+                },
+                Mark::TurnChange {
+                    what: "rest.frame",
+                    before_us: -300
+                },
+            ]
+            .map(|mark| Stamped { at: began, generation: g, mark })
+        );
 
         let rest = now + ms(900);
         flights.main_turn(rest, ms(9), &actors, ms(6), &[]);
@@ -1134,10 +1455,22 @@ mod tests {
         let g = flights.coordinator().generation();
         flights.drive(Event::FrameZero(g), next);
         flights.drive(Event::Tick { settled: true, landed: true }, next + PLAYS);
-        let burst = flights.drive(Event::Quiet(g), next + PLAYS + SETTLE_BEFORE_CAPTURES).1.expect("settled");
-        let turn = burst.marks.iter().position(|stamped| matches!(stamped.mark, Mark::MainTurn { .. }));
-        let begin = burst.marks.iter().position(|stamped| matches!(stamped.mark, Mark::Begin { .. }));
-        assert!(turn < begin && turn.is_some(), "a turn at rest goes with the next burst, ahead of its flight");
+        let burst = flights
+            .drive(Event::Quiet(g), next + PLAYS + SETTLE_BEFORE_CAPTURES)
+            .1
+            .expect("settled");
+        let turn = burst
+            .marks
+            .iter()
+            .position(|stamped| matches!(stamped.mark, Mark::MainTurn { .. }));
+        let begin = burst
+            .marks
+            .iter()
+            .position(|stamped| matches!(stamped.mark, Mark::Begin { .. }));
+        assert!(
+            turn < begin && turn.is_some(),
+            "a turn at rest goes with the next burst, ahead of its flight"
+        );
         assert_eq!(burst.marks[turn.unwrap()].at, rest);
     }
 
@@ -1150,8 +1483,15 @@ mod tests {
         journal.press(cause, Generation(2));
         let press = *journal.ring.back().unwrap();
         let mark = Mark::Press { what: "move_focus" };
-        assert_eq!(press, Stamped { at: cause.at, generation: Generation(2), mark });
-        assert!(press.at < journal.ring[0].at, "pushed after a mark it came before: `t` is unsorted");
+        assert_eq!(press, Stamped {
+            at: cause.at,
+            generation: Generation(2),
+            mark
+        });
+        assert!(
+            press.at < journal.ring[0].at,
+            "pushed after a mark it came before: `t` is unsorted"
+        );
     }
 
     #[test]
@@ -1181,7 +1521,10 @@ mod tests {
         journal.push(now, Generation(2), extend(3));
         journal.push(now, Generation(2), extend(4));
         let burst = journal.unwritten().unwrap();
-        assert_eq!(burst.marks.iter().map(|stamped| stamped.mark).collect::<Vec<_>>(), [extend(3), extend(4)]);
+        assert_eq!(
+            burst.marks.iter().map(|stamped| stamped.mark).collect::<Vec<_>>(),
+            [extend(3), extend(4)]
+        );
         assert_eq!(burst.lost, 0);
         assert_eq!(journal.unwritten(), None);
     }
@@ -1196,31 +1539,51 @@ mod tests {
         journal.start_writing();
         let burst = journal.unwritten().unwrap();
         assert_eq!(burst.marks.len(), RING, "every mark the ring still holds");
-        assert_eq!(burst.lost, 0, "what it overwrote while off was never going to be written");
+        assert_eq!(
+            burst.lost, 0,
+            "what it overwrote while off was never going to be written"
+        );
         assert_eq!(burst.marks[0].mark, extend(5));
     }
 
     #[test]
     fn the_anchor_converts_either_side_of_it() {
         let base = Instant::now();
-        let anchor = Anchor { at: base + Duration::from_secs(1), uptime_ns: 5_000_000_000 };
+        let anchor = Anchor {
+            at: base + Duration::from_secs(1),
+            uptime_ns: 5_000_000_000,
+        };
         assert_eq!(anchor.ns(anchor.at), 5_000_000_000);
         assert_eq!(anchor.ns(anchor.at + Duration::from_millis(3)), 5_003_000_000);
         assert_eq!(anchor.ns(anchor.at - Duration::from_micros(2)), 4_999_998_000);
-        assert_eq!(Anchor { at: anchor.at, uptime_ns: 5 }.ns(base), 0, "never before the clock's start");
+        assert_eq!(
+            Anchor { at: anchor.at, uptime_ns: 5 }.ns(base),
+            0,
+            "never before the clock's start"
+        );
     }
 
     #[test]
     fn a_line_is_one_object_with_t_g_and_mark() {
         let at = Instant::now();
-        let anchor = Anchor { at, uptime_ns: 81_234_567_890_123 };
-        let stamped = |mark| Stamped { at: at + Duration::from_micros(5), generation: Generation(42), mark };
+        let anchor = Anchor {
+            at,
+            uptime_ns: 81_234_567_890_123,
+        };
+        let stamped = |mark| Stamped {
+            at: at + Duration::from_micros(5),
+            generation: Generation(42),
+            mark,
+        };
         let frame = OverlayRect::new(Point::new(0.0, 32.0), Size::new(864.0, 1085.5));
         assert_eq!(
             line(&anchor, &stamped(Mark::Snap { window: w(3104), frame })),
             r#"{"t":81234567895123,"g":42,"mark":"snap","window":[1,3104],"frame":[0.0,32.0,864.0,1085.5]}"#
         );
-        assert_eq!(line(&anchor, &stamped(Mark::Hold)), r#"{"t":81234567895123,"g":42,"mark":"hold"}"#);
+        assert_eq!(
+            line(&anchor, &stamped(Mark::Hold)),
+            r#"{"t":81234567895123,"g":42,"mark":"hold"}"#
+        );
         assert_eq!(
             line(&anchor, &stamped(Mark::Press { what: "focus_window" })),
             r#"{"t":81234567895123,"g":42,"mark":"press","what":"focus_window"}"#
@@ -1230,16 +1593,19 @@ mod tests {
             r#"{"t":81234567895123,"g":42,"mark":"focus","window":[1,2],"focused":true}"#
         );
         assert_eq!(
-            line(&anchor, &stamped(Mark::Merge {
-                kind: Kind::LayoutPass,
-                moved: false,
-                tiles: 2,
-                awaiting: 1,
-                repainting: 0,
-                focus: Some(w(7)),
-                focused_look: None,
-                duration_ms: 350,
-            })),
+            line(
+                &anchor,
+                &stamped(Mark::Merge {
+                    kind: Kind::LayoutPass,
+                    moved: false,
+                    tiles: 2,
+                    awaiting: 1,
+                    repainting: 0,
+                    focus: Some(w(7)),
+                    focused_look: None,
+                    duration_ms: 350,
+                })
+            ),
             concat!(
                 r#"{"t":81234567895123,"g":42,"mark":"merge","kind":"layout_pass","moved":false,"tiles":2,"#,
                 r#""awaiting":1,"repainting":0,"focus":[1,7],"focused_look":null,"duration_ms":350}"#
@@ -1250,31 +1616,65 @@ mod tests {
             r#"{"t":81234567895123,"g":42,"mark":"quiet","of":41}"#
         );
         assert_eq!(
-            line(&anchor, &stamped(Mark::Delivery {
-                of: Generation(42),
-                why: Why::FrameZero,
-                pictures: 1,
-                sent_before_us: 4_100,
-            })),
+            line(
+                &anchor,
+                &stamped(Mark::Delivery {
+                    of: Generation(42),
+                    why: Why::FrameZero,
+                    pictures: 1,
+                    sent_before_us: 4_100,
+                })
+            ),
             r#"{"t":81234567895123,"g":42,"mark":"delivery","of":42,"why":"frame_zero","pictures":1,"sent_before_us":4100}"#
         );
         let taken_at = r(0.0, 32.0, 864.0, 1085.0);
         assert_eq!(
-            line(&anchor, &stamped(Mark::Delivered { window: w(3104), frame: taken_at, taken_before_us: 31_200 })),
+            line(
+                &anchor,
+                &stamped(Mark::Delivered {
+                    window: w(3104),
+                    frame: taken_at,
+                    taken_before_us: 31_200
+                })
+            ),
             r#"{"t":81234567895123,"g":42,"mark":"delivered","window":[1,3104],"frame":[0.0,32.0,864.0,1085.0],"taken_before_us":31200}"#
         );
-        let whys = [Why::FrameZero, Why::Landed, Why::FocusChanged, Why::Background, Why::Final];
+        let whys = [
+            Why::FrameZero,
+            Why::Landed,
+            Why::FocusChanged,
+            Why::Background,
+            Why::Final,
+        ];
+        assert_eq!(whys.map(|why| serde_json::to_value(why).unwrap()), [
+            "frame_zero",
+            "landed",
+            "focus_changed",
+            "background",
+            "final"
+        ]);
+        let wearing = [
+            Wearing::Compose,
+            Wearing::FrameZero,
+            Wearing::FocusedLook,
+            Wearing::Swap,
+            Wearing::Corner,
+        ];
+        assert_eq!(wearing.map(|at| serde_json::to_value(at).unwrap()), [
+            "compose",
+            "frame_zero",
+            "focused_look",
+            "swap",
+            "corner"
+        ]);
         assert_eq!(
-            whys.map(|why| serde_json::to_value(why).unwrap()),
-            ["frame_zero", "landed", "focus_changed", "background", "final"]
-        );
-        let wearing = [Wearing::Compose, Wearing::FrameZero, Wearing::FocusedLook, Wearing::Swap, Wearing::Corner];
-        assert_eq!(
-            wearing.map(|at| serde_json::to_value(at).unwrap()),
-            ["compose", "frame_zero", "focused_look", "swap", "corner"]
-        );
-        assert_eq!(
-            line(&anchor, &stamped(Mark::Hide { measured: true, waited_us: 31_400 })),
+            line(
+                &anchor,
+                &stamped(Mark::Hide {
+                    measured: true,
+                    waited_us: 31_400
+                })
+            ),
             r#"{"t":81234567895123,"g":42,"mark":"hide","measured":true,"waited_us":31400}"#
         );
         let handover = Mark::Handover {
@@ -1317,9 +1717,15 @@ mod tests {
         fly(&mut flights, Instant::now());
         let marks = held(&flights);
         let order = ["hold", "show", "write", "watch", "lift", "report_settled"];
-        let found: Vec<String> = names(&marks).into_iter().filter(|name| order.contains(&name.as_str())).collect();
+        let found: Vec<String> = names(&marks)
+            .into_iter()
+            .filter(|name| order.contains(&name.as_str()))
+            .collect();
         assert_eq!(found, order);
-        assert!(marks.iter().all(|stamped| stamped.generation == Generation(1)), "one generation: {marks:?}");
+        assert!(
+            marks.iter().all(|stamped| stamped.generation == Generation(1)),
+            "one generation: {marks:?}"
+        );
         assert_eq!(
             names(&marks[..5]),
             ["press", "begin", "hold", "ask_frame_zero", "report_up"],
@@ -1340,7 +1746,11 @@ mod tests {
         let marks = held(&flights);
         assert_eq!(names(&marks[..2]), ["press", "begin"]);
         let mark = Mark::Press { what: "move_focus" };
-        assert_eq!(presses(&marks), [Stamped { at: cause.at, generation: first, mark }]);
+        assert_eq!(presses(&marks), [Stamped {
+            at: cause.at,
+            generation: first,
+            mark
+        }]);
 
         flights.drive(Event::Tick { settled: false, landed: false }, now + PLAYS);
         let before = held(&flights).len();
@@ -1352,7 +1762,11 @@ mod tests {
         assert_ne!(first, merged);
         let marks = &held(&flights)[before..];
         assert_eq!(names(&marks[..2]), ["press", "merge"]);
-        assert_eq!(presses(marks).len(), 1, "once, by the first of the request's drives");
+        assert_eq!(
+            presses(marks).len(),
+            1,
+            "once, by the first of the request's drives"
+        );
         assert_eq!(marks[0].generation, merged, "in the generation its drive left");
     }
 
@@ -1371,7 +1785,12 @@ mod tests {
 
     /// Drives `event` at `at` through a bare coordinator and through each journalled one: every drive
     /// gives what the bare one says, in its order.
-    fn drives_alike(bare: &mut Coordinator, journalled: &mut [Journalled], event: Event, at: Instant) -> usize {
+    fn drives_alike(
+        bare: &mut Coordinator,
+        journalled: &mut [Journalled],
+        event: Event,
+        at: Instant,
+    ) -> usize {
         let said = bare.on(event.clone(), at);
         for flights in journalled.iter_mut() {
             assert_eq!(flights.drive(event.clone(), at).0, said, "{event:?}");
@@ -1394,14 +1813,39 @@ mod tests {
         let mut bare = Coordinator::default();
         let mut said = drives_alike(&mut bare, &mut journalled, Event::Begin(pan()), now);
         let at = |ms| now + Duration::from_millis(ms);
-        said += drives_alike(&mut bare, &mut journalled, Event::Merge { stage: pan(), moved: false }, at(5));
+        said += drives_alike(
+            &mut bare,
+            &mut journalled,
+            Event::Merge { stage: pan(), moved: false },
+            at(5),
+        );
         let g = bare.generation();
         said += drives_alike(&mut bare, &mut journalled, Event::FrameZero(g), at(30));
-        said += drives_alike(&mut bare, &mut journalled, Event::Tick { settled: false, landed: false }, at(100));
+        said += drives_alike(
+            &mut bare,
+            &mut journalled,
+            Event::Tick { settled: false, landed: false },
+            at(100),
+        );
         let frame = r(0.0, 0.0, 200.0, 200.0);
-        said += drives_alike(&mut bare, &mut journalled, Event::LooksTurned(vec![(w(2), frame)]), at(120));
-        said += drives_alike(&mut bare, &mut journalled, Event::Tick { settled: true, landed: true }, now + PLAYS);
-        said += drives_alike(&mut bare, &mut journalled, Event::Quiet(g), now + PLAYS + SETTLE_BEFORE_CAPTURES);
+        said += drives_alike(
+            &mut bare,
+            &mut journalled,
+            Event::LooksTurned(vec![(w(2), frame)]),
+            at(120),
+        );
+        said += drives_alike(
+            &mut bare,
+            &mut journalled,
+            Event::Tick { settled: true, landed: true },
+            now + PLAYS,
+        );
+        said += drives_alike(
+            &mut bare,
+            &mut journalled,
+            Event::Quiet(g),
+            now + PLAYS + SETTLE_BEFORE_CAPTURES,
+        );
         assert!(said > 10, "a whole flight said something: {said}");
         assert!(journalled.iter().all(|flights| flights.coordinator().generation() == g));
     }
@@ -1411,11 +1855,22 @@ mod tests {
         let mut flights = Journalled::default();
         assert_eq!(flights.set_writing(true), None, "an empty ring");
         let bursts = fly(&mut flights, Instant::now());
-        assert!(bursts[..3].iter().all(Option::is_none), "nothing is written while a burst is up");
+        assert!(
+            bursts[..3].iter().all(Option::is_none),
+            "nothing is written while a burst is up"
+        );
         let burst = bursts[3].as_ref().expect("given at its settle");
-        assert_eq!(burst.marks, held(&flights), "every mark of it, its own settle included");
+        assert_eq!(
+            burst.marks,
+            held(&flights),
+            "every mark of it, its own settle included"
+        );
         assert_eq!(name(&burst.marks.last().unwrap().mark), "report_settled");
-        assert_eq!(flights.drive(Event::Quiet(Generation(1)), Instant::now()).1, None, "once");
+        assert_eq!(
+            flights.drive(Event::Quiet(Generation(1)), Instant::now()).1,
+            None,
+            "once"
+        );
     }
 
     #[test]
@@ -1449,23 +1904,52 @@ mod tests {
         flights.drive(Event::Tick { settled: true, landed: true }, now + PLAYS);
         let (_, burst) = flights.drive(Event::Quiet(g), now + PLAYS + SETTLE_BEFORE_CAPTURES);
         let burst = burst.expect("given at the settle");
-        assert_eq!(names(&burst.marks[..1]), ["begin"], "from before writing turned on");
+        assert_eq!(
+            names(&burst.marks[..1]),
+            ["begin"],
+            "from before writing turned on"
+        );
         assert_eq!(burst.marks, held(&flights));
     }
 
     #[test]
     fn hides_on_its_overlay_picture_a_request_or_patience_only() {
         let since = Instant::now();
-        let waiting = LiftWait { generation: Generation(4), since };
+        let waiting = LiftWait {
+            generation: Generation(4),
+            since,
+        };
         let at = |ms| since + Duration::from_millis(ms);
-        let taken = |generation, taken| Heard::OverlayTaken { generation: Generation(generation), taken };
+        let taken = |generation, taken| Heard::OverlayTaken {
+            generation: Generation(generation),
+            taken,
+        };
         assert_eq!(hides(waiting, taken(4, true), at(31)), Some(Hide::Measured));
-        assert_eq!(hides(waiting, taken(4, false), at(31)), Some(Hide::Unmeasured), "no picture to compare");
+        assert_eq!(
+            hides(waiting, taken(4, false), at(31)),
+            Some(Hide::Unmeasured),
+            "no picture to compare"
+        );
         assert_eq!(hides(waiting, taken(3, true), at(31)), None, "another lift's");
-        assert_eq!(hides(waiting, Heard::Request, at(5)), Some(Hide::Unmeasured), "a press never waits");
-        assert_eq!(hides(waiting, Heard::Moved, at(5)), Some(Hide::Unmeasured), "never moved with its tiles on");
-        assert_eq!(hides(waiting, Heard::Patience, at(59)), None, "early, or another wait's timer");
-        assert_eq!(hides(waiting, Heard::Patience, since + OVERLAY_TAKE_PATIENCE), Some(Hide::Unmeasured));
+        assert_eq!(
+            hides(waiting, Heard::Request, at(5)),
+            Some(Hide::Unmeasured),
+            "a press never waits"
+        );
+        assert_eq!(
+            hides(waiting, Heard::Moved, at(5)),
+            Some(Hide::Unmeasured),
+            "never moved with its tiles on"
+        );
+        assert_eq!(
+            hides(waiting, Heard::Patience, at(59)),
+            None,
+            "early, or another wait's timer"
+        );
+        assert_eq!(
+            hides(waiting, Heard::Patience, since + OVERLAY_TAKE_PATIENCE),
+            Some(Hide::Unmeasured)
+        );
     }
 
     /// A lift is held only while the handover is measured, and only with a window ending wholly on
@@ -1490,10 +1974,22 @@ mod tests {
         (g, lifted)
     }
 
-    fn diff(interior: f32) -> HandoverDiff { HandoverDiff { interior, interior_over: 0.0, edge_in: 0.4, edge_out: 1.5, band: None } }
+    fn diff(interior: f32) -> HandoverDiff {
+        HandoverDiff {
+            interior,
+            interior_over: 0.0,
+            edge_in: 0.4,
+            edge_out: 1.5,
+            band: None,
+        }
+    }
 
     fn found(marks: &[Stamped], name: &str) -> Vec<Mark> {
-        marks.iter().filter(|stamped| self::name(&stamped.mark) == name).map(|stamped| stamped.mark).collect()
+        marks
+            .iter()
+            .filter(|stamped| self::name(&stamped.mark) == name)
+            .map(|stamped| stamped.mark)
+            .collect()
     }
 
     #[test]
@@ -1502,19 +1998,52 @@ mod tests {
         let mut flights = Journalled::default();
         flights.set_writing(true);
         let (g, lifted) = held_lift(&mut flights, now);
-        assert!(!flights.heard(Heard::Patience, lifted + Duration::from_millis(20)), "held");
+        assert!(
+            !flights.heard(Heard::Patience, lifted + Duration::from_millis(20)),
+            "held"
+        );
         let taken = lifted + Duration::from_millis(31);
-        assert!(!flights.heard(Heard::OverlayTaken { generation: Generation(g.0 + 1), taken: true }, taken), "another lift's");
+        assert!(
+            !flights.heard(
+                Heard::OverlayTaken {
+                    generation: Generation(g.0 + 1),
+                    taken: true
+                },
+                taken
+            ),
+            "another lift's"
+        );
         assert!(flights.heard(Heard::OverlayTaken { generation: g, taken: true }, taken));
         assert!(!flights.heard(Heard::Request, taken), "hidden once");
-        flights.handover(taken + Duration::from_millis(70), g, [(w(2), diff(0.3)), (w(1), diff(0.8))]);
+        flights.handover(taken + Duration::from_millis(70), g, [
+            (w(2), diff(0.3)),
+            (w(1), diff(0.8)),
+        ]);
         let (_, burst) = flights.drive(Event::Quiet(g), lifted + SETTLE_BEFORE_CAPTURES);
         let marks = burst.expect("given at the settle").marks;
-        assert_eq!(found(&marks, "hide"), [Mark::Hide { measured: true, waited_us: 31_000 }]);
-        let handover = |window, interior| Mark::Handover { of: g, window, interior, interior_over: 0.0, edge_in: 0.4, edge_out: 1.5, band: None };
-        assert_eq!(found(&marks, "handover"), [handover(w(2), 0.3), handover(w(1), 0.8)]);
+        assert_eq!(found(&marks, "hide"), [Mark::Hide {
+            measured: true,
+            waited_us: 31_000
+        }]);
+        let handover = |window, interior| Mark::Handover {
+            of: g,
+            window,
+            interior,
+            interior_over: 0.0,
+            edge_in: 0.4,
+            edge_out: 1.5,
+            band: None,
+        };
+        assert_eq!(found(&marks, "handover"), [
+            handover(w(2), 0.3),
+            handover(w(1), 0.8)
+        ]);
         let at = |name: &str| names(&marks).iter().position(|found| found == name).unwrap();
-        assert!(at("lift") < at("hide") && at("hide") < at("handover"), "{:?}", names(&marks));
+        assert!(
+            at("lift") < at("hide") && at("hide") < at("handover"),
+            "{:?}",
+            names(&marks)
+        );
         assert!(at("handover") < at("report_settled"), "in its own burst");
     }
 
@@ -1526,10 +2055,16 @@ mod tests {
         let mut flights = Journalled::default();
         let (g, lifted) = held_lift(&mut flights, now);
         assert!(flights.heard(Heard::Patience, lifted + OVERLAY_TAKE_PATIENCE));
-        assert!(!flights.heard(Heard::OverlayTaken { generation: g, taken: true }, lifted + OVERLAY_TAKE_PATIENCE));
+        assert!(!flights.heard(
+            Heard::OverlayTaken { generation: g, taken: true },
+            lifted + OVERLAY_TAKE_PATIENCE
+        ));
         flights.handover(lifted + Duration::from_millis(120), g, [(w(2), diff(0.3))]);
         let marks = held(&flights);
-        assert_eq!(found(&marks, "hide"), [Mark::Hide { measured: false, waited_us: 60_000 }]);
+        assert_eq!(found(&marks, "hide"), [Mark::Hide {
+            measured: false,
+            waited_us: 60_000
+        }]);
         assert!(found(&marks, "handover").is_empty());
     }
 
@@ -1543,7 +2078,10 @@ mod tests {
         assert!(flights.heard(Heard::Request, pressed));
         flights.handover(pressed + Duration::from_millis(80), g, [(w(2), diff(0.3))]);
         let marks = held(&flights);
-        assert_eq!(found(&marks, "hide"), [Mark::Hide { measured: false, waited_us: 5_000 }]);
+        assert_eq!(found(&marks, "hide"), [Mark::Hide {
+            measured: false,
+            waited_us: 5_000
+        }]);
         assert!(found(&marks, "handover").is_empty());
         assert!(!flights.heard(Heard::Request, pressed), "nothing waits any more");
     }
@@ -1559,7 +2097,10 @@ mod tests {
         assert!(flights.heard(Heard::Moved, moved));
         flights.handover(moved + Duration::from_millis(80), g, [(w(2), diff(0.3))]);
         let marks = held(&flights);
-        assert_eq!(found(&marks, "hide"), [Mark::Hide { measured: false, waited_us: 12_000 }]);
+        assert_eq!(found(&marks, "hide"), [Mark::Hide {
+            measured: false,
+            waited_us: 12_000
+        }]);
         assert!(found(&marks, "handover").is_empty());
     }
 
@@ -1571,7 +2112,10 @@ mod tests {
         let (g, lifted) = held_lift(&mut flights, now);
         let taken = lifted + Duration::from_millis(31);
         assert!(flights.heard(Heard::OverlayTaken { generation: g, taken: true }, taken));
-        flights.handover(taken + Duration::from_millis(70), Generation(g.0 - 1), [(w(2), diff(0.3))]);
+        flights.handover(taken + Duration::from_millis(70), Generation(g.0 - 1), [(
+            w(2),
+            diff(0.3),
+        )]);
         assert!(found(&held(&flights), "handover").is_empty(), "another lift's");
         flights.handover(taken + Duration::from_millis(71), g, [(w(2), diff(0.3))]);
         flights.handover(taken + Duration::from_millis(72), g, [(w(2), diff(0.4))]);
@@ -1589,7 +2133,11 @@ mod tests {
     impl Script {
         fn at(&self, us: i64) -> Instant {
             let span = Duration::from_micros(us.unsigned_abs());
-            if us < 0 { self.base - span } else { self.base + span }
+            if us < 0 {
+                self.base - span
+            } else {
+                self.base + span
+            }
         }
 
         fn press(&mut self, us: i64, what: &'static str) {
@@ -1603,8 +2151,16 @@ mod tests {
             }
         }
 
-        fn deliver(&mut self, us: i64, of: Generation, why: Why, sent: i64, pictures: &[(WindowId, ScreenRect, i64)]) {
-            let taken = pictures.iter().map(|&(window, frame, taken)| (window, frame, self.at(taken)));
+        fn deliver(
+            &mut self,
+            us: i64,
+            of: Generation,
+            why: Why,
+            sent: i64,
+            pictures: &[(WindowId, ScreenRect, i64)],
+        ) {
+            let taken =
+                pictures.iter().map(|&(window, frame, taken)| (window, frame, self.at(taken)));
             let taken: Vec<_> = taken.collect();
             self.flights.delivery(self.at(us), of, why, self.at(sent), taken.into_iter());
         }
@@ -1624,32 +2180,77 @@ mod tests {
 
         /// The renderer's commit of the drain up to `seq`, heard at `us`, `crops` tiles drawn on the
         /// crop grid in it, their grounds read in `ground_us`.
-        fn drawn(&mut self, us: i64, seq: u64, (shown, places, crops, ground_us): (Option<bool>, bool, u32, u64), (sent, began, flushed): (i64, i64, i64)) {
+        fn drawn(
+            &mut self,
+            us: i64,
+            seq: u64,
+            (shown, places, crops, ground_us): (Option<bool>, bool, u32, u64),
+            (sent, began, flushed): (i64, i64, i64),
+        ) {
             let (sent, began, flushed) = (self.at(sent), self.at(began), self.at(flushed));
-            let crops = Crops { fills: crops, ground: Duration::from_micros(ground_us) };
-            self.flights.drawn(self.at(us), seq, (shown, places, crops), (sent, began, flushed));
+            let crops = Crops {
+                fills: crops,
+                ground: Duration::from_micros(ground_us),
+            };
+            self.flights
+                .drawn(self.at(us), seq, (shown, places, crops), (sent, began, flushed));
         }
 
         /// The picture `window`'s tile took `at` that moment, heard at `us`, its capture started at `taken`.
-        fn wears(&mut self, us: i64, window: WindowId, at: Wearing, route: Route, blur: bool, taken: i64) {
+        fn wears(
+            &mut self,
+            us: i64,
+            window: WindowId,
+            at: Wearing,
+            route: Route,
+            blur: bool,
+            taken: i64,
+        ) {
             self.flights.wears(self.at(us), window, at, route, blur, self.at(taken));
         }
 
         /// A turn of the main thread from `us` for `busy`, its actors' polls and its window changes,
         /// each at its `us`.
-        fn turn(&mut self, us: i64, busy: u64, actors: &[(&'static str, u64)], changes: &[(&'static str, i64)]) {
-            let actors: Vec<_> = actors.iter().map(|&(actor, took)| (actor, Duration::from_micros(took))).collect();
+        fn turn(
+            &mut self,
+            us: i64,
+            busy: u64,
+            actors: &[(&'static str, u64)],
+            changes: &[(&'static str, i64)],
+        ) {
+            let actors: Vec<_> = actors
+                .iter()
+                .map(|&(actor, took)| (actor, Duration::from_micros(took)))
+                .collect();
             let changes: Vec<_> = changes.iter().map(|&(what, at)| (what, self.at(at))).collect();
             let polled: u64 = actors.iter().map(|(_, took)| took.as_micros() as u64).sum();
             let outside = Duration::from_micros(busy - polled);
-            self.flights.main_turn(self.at(us), Duration::from_micros(busy), &actors, outside, &changes);
+            self.flights.main_turn(
+                self.at(us),
+                Duration::from_micros(busy),
+                &actors,
+                outside,
+                &changes,
+            );
         }
 
         /// A delivery and the pictures the engine offers the coordinator from it, 0.1ms later.
-        fn offer(&mut self, us: i64, of: Generation, why: Why, sent: i64, pictures: &[(WindowId, ScreenRect, i64)]) {
+        fn offer(
+            &mut self,
+            us: i64,
+            of: Generation,
+            why: Why,
+            sent: i64,
+            pictures: &[(WindowId, ScreenRect, i64)],
+        ) {
             self.deliver(us, of, why, sent, pictures);
             for &(window, frame, _) in pictures {
-                self.drive(us + 100, Event::Picture { generation: of, window, frame, why });
+                self.drive(us + 100, Event::Picture {
+                    generation: of,
+                    window,
+                    frame,
+                    why,
+                });
             }
         }
     }
@@ -1664,7 +2265,11 @@ mod tests {
     /// just after the first show, and one at rest before the second press.
     #[test]
     fn the_sample_the_tools_read_is_what_the_journal_writes() {
-        let mut script = Script { flights: Journalled::default(), base: Instant::now(), bursts: Vec::new() };
+        let mut script = Script {
+            flights: Journalled::default(),
+            base: Instant::now(),
+            bursts: Vec::new(),
+        };
         script.flights.set_writing(true);
         let starts = r(3.0, 35.0, 860.0, 1079.0);
         let left = r(866.0, 35.0, 860.0, 1079.0);
@@ -1674,29 +2279,54 @@ mod tests {
         script.press(-2_400, "move_focus");
         script.drive(0, Event::Begin(pan()));
         script.wears(6_000, w(1), Wearing::Compose, Route::Baked, true, -2_100_000);
-        script.wears(6_000, w(2), Wearing::Compose, Route::ScreenCaptureKit, false, -900_000);
+        script.wears(
+            6_000,
+            w(2),
+            Wearing::Compose,
+            Route::ScreenCaptureKit,
+            false,
+            -900_000,
+        );
         script.wears(6_000, w(9), Wearing::Compose, Route::SkyLight, false, -1_600_000);
         script.drive(6_100, Event::Merge { stage: pan(), moved: false });
         script.flights.answered();
         script.drawn(7_000, 2, (None, false, 0, 0), (6_200, 6_400, 6_800));
         let g = script.flights.coordinator().generation();
-        script.deliver(33_200, g, Why::FrameZero, 31_000, &[(w(1), starts, 1_300), (w(9), floating, 16_500)]);
+        script.deliver(33_200, g, Why::FrameZero, 31_000, &[
+            (w(1), starts, 1_300),
+            (w(9), floating, 16_500),
+        ]);
         script.wears(33_300, w(1), Wearing::FrameZero, Route::Baked, true, 1_300);
         script.wears(33_300, w(9), Wearing::FrameZero, Route::SkyLight, false, 16_500);
         script.drive(33_600, Event::FrameZero(g));
         script.drive(34_500, Event::Extend(Duration::from_millis(349)));
-        script.drawn(35_500, 3, (Some(true), false, 1, 7_910), (34_600, 34_900, 35_200));
-        script.turn(36_000, 11_800, &[("renderer", 400), ("rest", 3_100), ("window_notify", 0)], &[
-            ("overlay.show", 35_100),
-            ("rest.frame", 36_500),
-        ]);
+        script.drawn(
+            35_500,
+            3,
+            (Some(true), false, 1, 7_910),
+            (34_600, 34_900, 35_200),
+        );
+        script.turn(
+            36_000,
+            11_800,
+            &[("renderer", 400), ("rest", 3_100), ("window_notify", 0)],
+            &[("overlay.show", 35_100), ("rest.frame", 36_500)],
+        );
         script.offer(95_000, g, Why::Landed, 93_100, &[(w(2), target, 88_400)]);
         script.wears(95_100, w(2), Wearing::Swap, Route::Baked, true, 88_400);
         script.offer(112_000, g, Why::Landed, 110_200, &[(w(1), left, 104_000)]);
         script.wears(112_100, w(1), Wearing::Swap, Route::Baked, true, 104_000);
-        script.offer(141_000, g, Why::FocusChanged, 139_000, &[(w(2), target, 131_500)]);
+        script.offer(141_000, g, Why::FocusChanged, 139_000, &[(
+            w(2),
+            target,
+            131_500,
+        )]);
         script.drive(156_100, Event::Tick { settled: false, landed: false });
-        script.offer(160_000, g, Why::Background, 158_400, &[(w(9), floating, 152_000)]);
+        script.offer(160_000, g, Why::Background, 158_400, &[(
+            w(9),
+            floating,
+            152_000,
+        )]);
         script.drive(273_600, Event::Tick { settled: false, landed: false });
         script.offer(312_000, g, Why::Final, 309_500, &[(w(1), left, 280_200)]);
         script.drive(370_000, Event::Tick { settled: false, landed: true });
@@ -1704,9 +2334,23 @@ mod tests {
         script.drive(383_700, Event::Tick { settled: true, landed: true });
         script.lifted(383_700, g);
         script.heard(415_100, Heard::OverlayTaken { generation: g, taken: true });
-        script.drawn(416_000, 9, (Some(false), false, 0, 0), (415_200, 415_400, 415_700));
-        let diff = |interior, interior_over, edge_in, edge_out, band| HandoverDiff { interior, interior_over, edge_in, edge_out, band };
-        let measured = [(w(2), diff(0.26, 0.0012, 0.37, 1.56, None)), (w(1), diff(0.79, 0.004, 1.08, 2.26, Some(0.42)))];
+        script.drawn(
+            416_000,
+            9,
+            (Some(false), false, 0, 0),
+            (415_200, 415_400, 415_700),
+        );
+        let diff = |interior, interior_over, edge_in, edge_out, band| HandoverDiff {
+            interior,
+            interior_over,
+            edge_in,
+            edge_out,
+            band,
+        };
+        let measured = [
+            (w(2), diff(0.26, 0.0012, 0.37, 1.56, None)),
+            (w(1), diff(0.79, 0.004, 1.08, 2.26, Some(0.42))),
+        ];
         script.handover(480_300, g, &measured);
         script.drive(783_700, Event::Quiet(g));
         script.turn(1_500_000, 9_200, &[("bar", 8_700)], &[("bar.frame", 1_492_000)]);
@@ -1718,14 +2362,33 @@ mod tests {
         script.press(2_998_200, "move_focus");
         script.drive(3_000_000, Event::Begin(pan()));
         script.wears(3_004_900, w(1), Wearing::Compose, Route::Baked, true, 1_002_000);
-        script.wears(3_004_900, w(2), Wearing::FocusedLook, Route::Baked, true, 2_104_000);
-        script.wears(3_004_900, w(9), Wearing::Compose, Route::StandIn, false, 3_004_900);
+        script.wears(
+            3_004_900,
+            w(2),
+            Wearing::FocusedLook,
+            Route::Baked,
+            true,
+            2_104_000,
+        );
+        script.wears(
+            3_004_900,
+            w(9),
+            Wearing::Compose,
+            Route::StandIn,
+            false,
+            3_004_900,
+        );
         script.drive(3_005_000, Event::Merge { stage: pan(), moved: false });
         script.flights.answered();
         let first = script.flights.coordinator().generation();
         script.drive(3_080_000, Event::Tick { settled: false, landed: false });
         script.drive(3_080_900, Event::Extend(Duration::from_millis(349)));
-        script.drawn(3_082_300, 12, (Some(true), false, 0, 0), (3_081_000, 3_081_400, 3_081_900));
+        script.drawn(
+            3_082_300,
+            12,
+            (Some(true), false, 0, 0),
+            (3_081_000, 3_081_400, 3_081_900),
+        );
         let late = [(w(1), starts, 3_002_000), (w(9), floating, 3_002_000)];
         script.offer(3_096_000, first, Why::FrameZero, 3_093_500, &late);
         script.wears(3_096_100, w(1), Wearing::Swap, Route::Baked, true, 3_002_000);
@@ -1734,18 +2397,37 @@ mod tests {
         script.drive(3_150_000, Event::Merge { stage: resized, moved: true });
         script.flights.answered();
         let merged = script.flights.coordinator().generation();
-        script.offer(3_170_000, first, Why::Landed, 3_168_000, &[(w(2), target, 3_141_000)]);
-        script.offer(3_200_000, merged, Why::Landed, 3_197_500, &[(w(2), target, 3_190_000)]);
-        script.drive(3_330_000, Event::Lost { generation: merged, window: w(1) });
+        script.offer(3_170_000, first, Why::Landed, 3_168_000, &[(
+            w(2),
+            target,
+            3_141_000,
+        )]);
+        script.offer(3_200_000, merged, Why::Landed, 3_197_500, &[(
+            w(2),
+            target,
+            3_190_000,
+        )]);
+        script.drive(3_330_000, Event::Lost {
+            generation: merged,
+            window: w(1),
+        });
         script.drive(3_390_000, Event::Tick { settled: false, landed: false });
         script.drive(3_500_100, Event::Tick { settled: true, landed: false });
         script.drive(3_850_000, Event::Tick { settled: true, landed: false });
         script.lifted(3_850_000, merged);
         script.heard(3_910_000, Heard::Patience);
-        script.drawn(3_911_000, 17, (Some(false), false, 0, 0), (3_910_100, 3_910_300, 3_910_700));
+        script.drawn(
+            3_911_000,
+            17,
+            (Some(false), false, 0, 0),
+            (3_910_100, 3_910_300, 3_910_700),
+        );
         script.drive(4_250_000, Event::Quiet(merged));
 
-        let anchor = |at: Instant| Anchor { at, uptime_ns: 81_234_560_000_000 + nanos(at - script.base) };
+        let anchor = |at: Instant| Anchor {
+            at,
+            uptime_ns: 81_234_560_000_000 + nanos(at - script.base),
+        };
         let mut written = String::new();
         for (settled, burst) in &script.bursts {
             let anchor = anchor(*settled + Duration::from_micros(300));
@@ -1756,7 +2438,10 @@ mod tests {
             }
         }
         assert_eq!(script.bursts.len(), 2, "one burst a flight, each at its quiet");
-        assert_eq!(written, include_str!("../../../tools/focuslab/testdata/journal-sample.jsonl"));
+        assert_eq!(
+            written,
+            include_str!("../../../tools/focuslab/testdata/journal-sample.jsonl")
+        );
     }
 
     /// Run with `CARGO_TARGET_DIR=target-dev cargo test --release --lib a_push_costs -- --ignored

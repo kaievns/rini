@@ -60,11 +60,13 @@ pub trait Respace {
 
 impl<A: PointSpace> Respace for Size<A> {
     type In<B> = Size<B>;
+
     fn respace<B: PointSpace>(self) -> Size<B> { self.cast_unit() }
 }
 
 impl<A: PointSpace> Respace for Vector<A> {
     type In<B> = Vector<B>;
+
     fn respace<B: PointSpace>(self) -> Vector<B> { self.cast_unit() }
 }
 
@@ -80,7 +82,9 @@ pub trait ToCg {
 }
 
 impl<U> FromCg<ic::CGRect> for Rect<U> {
-    fn from_cg(cg: ic::CGRect) -> Self { Rect::new(Point::from_cg(cg.origin), Size::from_cg(cg.size)) }
+    fn from_cg(cg: ic::CGRect) -> Self {
+        Rect::new(Point::from_cg(cg.origin), Size::from_cg(cg.size))
+    }
 }
 
 impl<U> FromCg<ic::CGPoint> for Point<U> {
@@ -93,16 +97,19 @@ impl<U> FromCg<ic::CGSize> for Size<U> {
 
 impl<U> ToCg for Rect<U> {
     type Cg = ic::CGRect;
+
     fn to_cg(self) -> ic::CGRect { ic::CGRect::new(self.origin.to_cg(), self.size.to_cg()) }
 }
 
 impl<U> ToCg for Point<U> {
     type Cg = ic::CGPoint;
+
     fn to_cg(self) -> ic::CGPoint { ic::CGPoint::new(self.x, self.y) }
 }
 
 impl<U> ToCg for Size<U> {
     type Cg = ic::CGSize;
+
     fn to_cg(self) -> ic::CGSize { ic::CGSize::new(self.width, self.height) }
 }
 
@@ -170,7 +177,11 @@ mod tests {
         /// that are none of those.
         fn coordinate(&mut self, span: f64) -> f64 {
             let raw = (self.next() * 2.0 - 1.0) * span;
-            let value = if self.next() < 0.8 { (raw * 4.0).round() / 4.0 } else { raw };
+            let value = if self.next() < 0.8 {
+                (raw * 4.0).round() / 4.0
+            } else {
+                raw
+            };
             // No -0.0: `f64::min` and euclid's comparison pick different zeros of the two.
             value + 0.0
         }
@@ -194,7 +205,10 @@ mod tests {
         assert_eq!(bits(typed.to_cg()), bits(frame));
 
         let negative_zero = cg(-0.0, -1e-300, 0.1, 3.0e8);
-        assert_eq!(bits(Rect::<Overlay>::from_cg(negative_zero).to_cg()), bits(negative_zero));
+        assert_eq!(
+            bits(Rect::<Overlay>::from_cg(negative_zero).to_cg()),
+            bits(negative_zero)
+        );
 
         let point = ic::CGPoint::new(-1680.75, 0.5);
         assert_eq!(ScreenPoint::from_cg(point).to_cg(), point);
@@ -222,7 +236,11 @@ mod tests {
     fn rounded_takes_halves_away_from_zero() {
         let rounded = typed(-860.5, 31.5, 859.0, 1081.0).rounded();
         assert_eq!((rounded.origin.x, rounded.origin.y), (-861.0, 32.0));
-        assert_eq!((rounded.size.width, rounded.size.height), (859.0, 1081.0), "both edges snap");
+        assert_eq!(
+            (rounded.size.width, rounded.size.height),
+            (859.0, 1081.0),
+            "both edges snap"
+        );
         assert_eq!(cg(-860.5, 31.5, 859.0, 1081.0).rounded(), rounded.to_cg());
         assert_eq!(ScreenPoint::new(-0.5, 0.5).rounded(), Point::new(-1.0, 1.0));
     }
@@ -264,12 +282,26 @@ mod tests {
     #[test]
     fn euclid_differs_from_the_cg_ops_at_the_edges() {
         let (window, typed_window) = (cg(0.0, 0.0, 10.0, 10.0), typed(0.0, 0.0, 10.0, 10.0));
-        assert!(window.contains(ic::CGPoint::new(10.0, 10.0)), "CG: inclusive at the max edge");
-        assert!(!typed_window.contains(Point::new(10.0, 10.0)), "euclid: exclusive");
+        assert!(
+            window.contains(ic::CGPoint::new(10.0, 10.0)),
+            "CG: inclusive at the max edge"
+        );
+        assert!(
+            !typed_window.contains(Point::new(10.0, 10.0)),
+            "euclid: exclusive"
+        );
 
         let empty = cg(100.0, 100.0, 0.0, 0.0);
-        assert_eq!(window.union(&empty), cg(0.0, 0.0, 100.0, 100.0), "CG spans an empty rect");
-        assert_eq!(typed_window.union(&ScreenRect::from_cg(empty)), typed_window, "euclid skips it");
+        assert_eq!(
+            window.union(&empty),
+            cg(0.0, 0.0, 100.0, 100.0),
+            "CG spans an empty rect"
+        );
+        assert_eq!(
+            typed_window.union(&ScreenRect::from_cg(empty)),
+            typed_window,
+            "euclid skips it"
+        );
 
         let sliver = cg(5.0, 2.0, 0.0, 4.0);
         assert_eq!(window.intersection(&sliver).area(), 0.0);

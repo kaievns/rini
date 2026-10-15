@@ -123,14 +123,10 @@ impl Metrics {
             .collect()
     }
 
-    fn row_height(&self) -> f64 {
-        self.tile_height + self.caption_gap + self.caption
-    }
+    fn row_height(&self) -> f64 { self.tile_height + self.caption_gap + self.caption }
 
     /// The panel's height: the row, with `padding` above it and `bottom_padding` below.
-    fn panel_height(&self) -> f64 {
-        self.padding + self.row_height() + self.bottom_padding
-    }
+    fn panel_height(&self) -> f64 { self.padding + self.row_height() + self.bottom_padding }
 }
 
 /// Where everything goes for one open switch.
@@ -232,13 +228,9 @@ fn scroll_for(left: f64, width: f64, strip: f64, visible: f64) -> f64 {
 mod tests {
     use super::*;
 
-    fn screen() -> CGRect {
-        CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0))
-    }
+    fn screen() -> CGRect { CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0)) }
 
-    fn metrics() -> Metrics {
-        Metrics::default()
-    }
+    fn metrics() -> Metrics { Metrics::default() }
 
     fn tile(width: f64, height: f64) -> Tile {
         Tile {
@@ -248,21 +240,13 @@ mod tests {
     }
 
     /// A maximised window on the built-in display, and a third-width column beside it.
-    fn wide() -> Tile {
-        tile(1720.0, 1081.0)
-    }
+    fn wide() -> Tile { tile(1720.0, 1081.0) }
 
-    fn third() -> Tile {
-        tile(573.0, 1081.0)
-    }
+    fn third() -> Tile { tile(573.0, 1081.0) }
 
-    fn square() -> Tile {
-        tile(800.0, 800.0)
-    }
+    fn square() -> Tile { tile(800.0, 800.0) }
 
-    fn stack(tile: Tile, depth: usize) -> Tile {
-        Tile { depth, ..tile }
-    }
+    fn stack(tile: Tile, depth: usize) -> Tile { Tile { depth, ..tile } }
 
     #[test]
     fn nothing_to_show_is_no_strip() {
@@ -380,13 +364,10 @@ mod tests {
         let strip = lay_out(&[wide()], 0, screen(), m).expect("strip");
         let row = strip.rows[0];
 
-        assert_eq!(
-            m.cards(row, 0),
-            vec![CGRect::new(
-                row.origin,
-                CGSize::new(row.size.width, m.tile_height)
-            )]
-        );
+        assert_eq!(m.cards(row, 0), vec![CGRect::new(
+            row.origin,
+            CGSize::new(row.size.width, m.tile_height)
+        )]);
         assert_eq!(row.size.width, m.card_width(wide().size, 0));
     }
 

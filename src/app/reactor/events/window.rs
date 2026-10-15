@@ -1,22 +1,19 @@
 use objc2_core_foundation::CGRect;
+use rini_core::ids::{SpaceId, WindowId};
+use rini_geometry::SameAs;
 use tracing::{debug, trace};
 
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::DragManager;
 use crate::app::reactor::{DragState, Quiet};
 use crate::layout::domain::edge_drag::Drag;
-use crate::windows::domain::info::WindowInfo as Window;
-use crate::windows::domain::info::WindowServerInfo;
-use crate::windows::domain::state::WindowFilter;
-use crate::windows::domain::state::WindowState;
+use crate::windows::domain::info::{WindowInfo as Window, WindowServerInfo};
+use crate::windows::domain::state::{WindowFilter, WindowState};
 use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 use crate::windows::domain::zoom::Zoom;
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server::compute_window_manageability;
 use crate::workspaces::LayoutEvent;
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowId;
-use rini_geometry::SameAs;
 
 #[derive(Debug)]
 pub struct WindowCreatedPayload {
@@ -471,7 +468,9 @@ pub fn handle_window_title_changed(
             return Ok(crate::app::reactor::events::EventOutcome::no_change());
         }
         window.info.title = new_title;
-        return Ok(crate::app::reactor::events::EventOutcome::no_change().with_app_rule_reapply(wid));
+        return Ok(
+            crate::app::reactor::events::EventOutcome::no_change().with_app_rule_reapply(wid)
+        );
     }
     Ok(crate::app::reactor::events::EventOutcome::no_change())
 }
@@ -547,26 +546,21 @@ fn handle_mouse_up_if_needed(drag: &DragManager, mouse_state: Option<MouseState>
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::{CGPoint, CGSize};
+    use rini_core::ids::WindowServerId;
 
+    use super::*;
     use crate::app::reactor::DragState;
     use crate::app::reactor::managers::DragManager;
     use crate::app::reactor::state::RiniState;
     use crate::app::reactor::testing::make_window_info;
     use crate::windows::domain::state::WindowState;
     use crate::windows::domain::transaction::WindowTxStore;
-    use rini_core::ids::WindowServerId;
-
-    use super::*;
 
     const WSID: u32 = 7;
 
-    fn rect(x: f64, y: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(100.0, 100.0))
-    }
+    fn rect(x: f64, y: f64) -> CGRect { CGRect::new(CGPoint::new(x, y), CGSize::new(100.0, 100.0)) }
 
-    fn wid() -> WindowId {
-        WindowId::new(1, 1)
-    }
+    fn wid() -> WindowId { WindowId::new(1, 1) }
 
     fn state() -> RiniState {
         let mut state = RiniState::default();
@@ -637,9 +631,7 @@ mod tests {
         )
     }
 
-    fn handled(d: &FrameChangeDisposition) -> bool {
-        matches!(d, FrameChangeDisposition::Handled)
-    }
+    fn handled(d: &FrameChangeDisposition) -> bool { matches!(d, FrameChangeDisposition::Handled) }
 
     #[test]
     fn a_frame_report_for_an_unknown_window_is_nothing_to_analyse() {

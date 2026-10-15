@@ -324,9 +324,7 @@ impl BarPanel {
         }
     }
 
-    pub fn visible(&self) -> bool {
-        self.visible
-    }
+    pub fn visible(&self) -> bool { self.visible }
 
     /// Draws `bar`, setting only what changed. Runs inside the caller's transaction.
     pub fn draw(&mut self, bar: &DisplayBar, context: Context, extras: &Extras, text: &mut Text) {
@@ -580,9 +578,7 @@ fn picture_size(extra: &Extra) -> CGSize {
     )
 }
 
-fn address(image: &CGImage) -> usize {
-    image as *const CGImage as usize
-}
+fn address(image: &CGImage) -> usize { image as *const CGImage as usize }
 
 fn cg_colour(colour: Colour, alpha: f64) -> Retained<CGColor> {
     let (red, green, blue) = colour.rgb();

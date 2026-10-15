@@ -51,16 +51,15 @@ impl Drawn {
     pub fn committed(&mut self, seq: u64) -> Vec<Owed> {
         self.committed = self.committed.max(seq);
         let committed = self.committed;
-        let (due, waiting): (Vec<_>, Vec<_>) =
-            std::mem::take(&mut self.owed).into_iter().partition(|(after, _, _)| *after <= committed);
+        let (due, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.owed)
+            .into_iter()
+            .partition(|(after, _, _)| *after <= committed);
         self.owed = waiting;
         due.into_iter().map(|(_, _, owed)| owed).collect()
     }
 
     /// Whether every batch handed over is committed.
-    pub fn caught_up(&self) -> bool {
-        self.committed >= self.next
-    }
+    pub fn caught_up(&self) -> bool { self.committed >= self.next }
 
     /// The renderer could not draw the batches up to `seq`, and never will: they count as drawn, and
     /// what they release goes out all the same, but for what the flight running owes when it is
@@ -88,7 +87,8 @@ mod tests {
     use super::*;
 
     fn write(idx: u32) -> Owed {
-        let frame = ScreenRect::new(Point::new(4.0 + f64::from(idx), 32.0), Size::new(859.0, 1081.0));
+        let frame =
+            ScreenRect::new(Point::new(4.0 + f64::from(idx), 32.0), Size::new(859.0, 1081.0));
         Owed::Write(vec![(WindowId::new(7, idx), frame)])
     }
 
@@ -97,7 +97,10 @@ mod tests {
         let mut drawn = Drawn::default();
         let shown = drawn.batch();
         assert_eq!(drawn.owe(shown, write(1)), None);
-        assert!(drawn.committed(shown - 1).is_empty(), "an earlier batch releases nothing of it");
+        assert!(
+            drawn.committed(shown - 1).is_empty(),
+            "an earlier batch releases nothing of it"
+        );
         assert_eq!(drawn.committed(shown), vec![write(1)]);
         assert!(drawn.committed(shown).is_empty(), "released once");
     }
@@ -110,7 +113,11 @@ mod tests {
         assert_eq!(drawn.owe(first, write(1)), None);
         assert_eq!(drawn.owe(third, Owed::Quiet(Generation(3))), None);
         assert_eq!(drawn.owe(second, write(2)), None);
-        assert_eq!(drawn.committed(second), vec![Owed::Settle, write(1), write(2)], "a drain acknowledges its highest");
+        assert_eq!(
+            drawn.committed(second),
+            vec![Owed::Settle, write(1), write(2)],
+            "a drain acknowledges its highest"
+        );
         assert_eq!(drawn.committed(third), vec![Owed::Quiet(Generation(3))]);
     }
 
@@ -144,7 +151,11 @@ mod tests {
         drawn.owe(shown, write(1));
         drawn.owe(lifted, Owed::Settle);
         drawn.owe(lifted, Owed::Quiet(Generation(1)));
-        assert_eq!(drawn.undrawn(lifted, false), vec![write(1), Owed::Settle, Owed::Quiet(Generation(1))]);
+        assert_eq!(drawn.undrawn(lifted, false), vec![
+            write(1),
+            Owed::Settle,
+            Owed::Quiet(Generation(1))
+        ]);
         assert!(drawn.caught_up(), "the batches count as drawn");
     }
 
@@ -157,7 +168,11 @@ mod tests {
         drawn.begun();
         let shown = drawn.batch();
         drawn.owe(shown, write(2));
-        assert_eq!(drawn.undrawn(shown, true), vec![write(1)], "only the flight before it's");
+        assert_eq!(
+            drawn.undrawn(shown, true),
+            vec![write(1)],
+            "only the flight before it's"
+        );
         assert!(drawn.caught_up(), "the batches still count as drawn");
     }
 

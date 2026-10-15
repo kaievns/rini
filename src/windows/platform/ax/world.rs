@@ -16,19 +16,16 @@
 use std::fmt::Debug;
 use std::hash::Hash;
 
-use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-
-use rini_core::ids::WindowServerId;
-
 use objc2::rc::Retained;
 use objc2_app_kit::NSRunningApplication;
-
-use crate::windows::domain::info::{WindowInfo, WindowServerInfo};
-use crate::windows::platform::window_server;
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_core::ids::WindowServerId;
 
 use super::element::{AXUIElement, Error as AxError};
 use super::enhanced_ui::EnhancedUi;
 use super::observer::Observer;
+use crate::windows::domain::info::{WindowInfo, WindowServerInfo};
+use crate::windows::platform::window_server;
 
 /// One window or application, as the world in use names it.
 pub trait AxElement: Clone + Eq + Hash + Debug {}
@@ -155,29 +152,17 @@ impl MacAx {
 impl AxWorld for MacAx {
     type Element = AXUIElement;
 
-    fn app(&self) -> AXUIElement {
-        self.app.clone()
-    }
+    fn app(&self) -> AXUIElement { self.app.clone() }
 
-    fn windows(&self, app: &AXUIElement) -> Result<Vec<AXUIElement>, AxError> {
-        app.windows()
-    }
+    fn windows(&self, app: &AXUIElement) -> Result<Vec<AXUIElement>, AxError> { app.windows() }
 
-    fn main_window(&self, app: &AXUIElement) -> Result<AXUIElement, AxError> {
-        app.main_window()
-    }
+    fn main_window(&self, app: &AXUIElement) -> Result<AXUIElement, AxError> { app.main_window() }
 
-    fn frontmost(&self, app: &AXUIElement) -> Result<bool, AxError> {
-        app.frontmost()
-    }
+    fn frontmost(&self, app: &AXUIElement) -> Result<bool, AxError> { app.frontmost() }
 
-    fn app_has_quit(&self) -> bool {
-        self.running_app.isTerminated()
-    }
+    fn app_has_quit(&self) -> bool { self.running_app.isTerminated() }
 
-    fn frame(&self, elem: &AXUIElement) -> Result<CGRect, AxError> {
-        elem.frame()
-    }
+    fn frame(&self, elem: &AXUIElement) -> Result<CGRect, AxError> { elem.frame() }
 
     fn set_position(&self, elem: &AXUIElement, position: CGPoint) -> Result<(), AxError> {
         elem.set_position(position)
@@ -187,25 +172,15 @@ impl AxWorld for MacAx {
         elem.set_size(size)
     }
 
-    fn role(&self, elem: &AXUIElement) -> Result<String, AxError> {
-        elem.role()
-    }
+    fn role(&self, elem: &AXUIElement) -> Result<String, AxError> { elem.role() }
 
-    fn subrole(&self, elem: &AXUIElement) -> Result<String, AxError> {
-        elem.subrole()
-    }
+    fn subrole(&self, elem: &AXUIElement) -> Result<String, AxError> { elem.subrole() }
 
-    fn title(&self, elem: &AXUIElement) -> Result<String, AxError> {
-        elem.title()
-    }
+    fn title(&self, elem: &AXUIElement) -> Result<String, AxError> { elem.title() }
 
-    fn minimized(&self, elem: &AXUIElement) -> Result<bool, AxError> {
-        elem.minimized()
-    }
+    fn minimized(&self, elem: &AXUIElement) -> Result<bool, AxError> { elem.minimized() }
 
-    fn raise(&self, elem: &AXUIElement) -> Result<(), AxError> {
-        elem.raise()
-    }
+    fn raise(&self, elem: &AXUIElement) -> Result<(), AxError> { elem.raise() }
 
     fn window_info(
         &self,
@@ -219,9 +194,7 @@ impl AxWorld for MacAx {
         WindowServerId::try_from(elem).ok()
     }
 
-    fn server_frame(&self, id: WindowServerId) -> Option<CGRect> {
-        window_server::server_frame(id)
-    }
+    fn server_frame(&self, id: WindowServerId) -> Option<CGRect> { window_server::server_frame(id) }
 
     fn watch(
         &self,
@@ -356,9 +329,7 @@ impl FakeAx {
 impl AxWorld for FakeAx {
     type Element = u32;
 
-    fn app(&self) -> u32 {
-        self.app
-    }
+    fn app(&self) -> u32 { self.app }
 
     fn windows(&self, _app: &u32) -> Result<Vec<u32>, AxError> {
         if self.busy {
@@ -371,13 +342,9 @@ impl AxWorld for FakeAx {
         self.main_window.ok_or(AxError::NotFound)
     }
 
-    fn frontmost(&self, _app: &u32) -> Result<bool, AxError> {
-        Ok(self.frontmost)
-    }
+    fn frontmost(&self, _app: &u32) -> Result<bool, AxError> { Ok(self.frontmost) }
 
-    fn app_has_quit(&self) -> bool {
-        self.has_quit
-    }
+    fn app_has_quit(&self) -> bool { self.has_quit }
 
     fn frame(&self, elem: &u32) -> Result<CGRect, AxError> {
         if !self.busy
@@ -405,21 +372,13 @@ impl AxWorld for FakeAx {
         Ok(())
     }
 
-    fn role(&self, elem: &u32) -> Result<String, AxError> {
-        self.read(&self.roles, elem)
-    }
+    fn role(&self, elem: &u32) -> Result<String, AxError> { self.read(&self.roles, elem) }
 
-    fn subrole(&self, elem: &u32) -> Result<String, AxError> {
-        self.read(&self.subroles, elem)
-    }
+    fn subrole(&self, elem: &u32) -> Result<String, AxError> { self.read(&self.subroles, elem) }
 
-    fn title(&self, elem: &u32) -> Result<String, AxError> {
-        self.read(&self.titles, elem)
-    }
+    fn title(&self, elem: &u32) -> Result<String, AxError> { self.read(&self.titles, elem) }
 
-    fn minimized(&self, elem: &u32) -> Result<bool, AxError> {
-        self.read(&self.minimized, elem)
-    }
+    fn minimized(&self, elem: &u32) -> Result<bool, AxError> { self.read(&self.minimized, elem) }
 
     fn raise(&self, elem: &u32) -> Result<(), AxError> {
         if !self.frames.contains_key(elem) {
@@ -487,15 +446,9 @@ impl AxWorld for FakeAx {
         Ok(())
     }
 
-    fn suppress_enhanced_ui(&mut self) {
-        self.enhanced_ui_depth += 1;
-    }
+    fn suppress_enhanced_ui(&mut self) { self.enhanced_ui_depth += 1; }
 
-    fn restore_enhanced_ui(&mut self) {
-        self.enhanced_ui_depth -= 1;
-    }
+    fn restore_enhanced_ui(&mut self) { self.enhanced_ui_depth -= 1; }
 
-    fn restore_enhanced_ui_if_needed(&mut self) {
-        self.enhanced_ui_depth = 0;
-    }
+    fn restore_enhanced_ui_if_needed(&mut self) { self.enhanced_ui_depth = 0; }
 }

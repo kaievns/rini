@@ -2,9 +2,7 @@
 
 use std::ffi::c_void;
 use std::mem;
-use std::time::Duration;
-
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{
     CFAbsoluteTimeGetCurrent, CFIndex, CFRetained, CFRunLoop, CFRunLoopActivity, CFRunLoopObserver,
@@ -202,11 +200,21 @@ pub struct TurnObserver {
 
 impl TurnObserver {
     pub fn install<F: Fn(MainTurn) + 'static>(handler: F) -> Option<Self> {
-        unsafe extern "C-unwind" fn woke(_: *mut CFRunLoopObserver, _: CFRunLoopActivity, _: *mut c_void) {
+        unsafe extern "C-unwind" fn woke(
+            _: *mut CFRunLoopObserver,
+            _: CFRunLoopActivity,
+            _: *mut c_void,
+        ) {
             turns::woke(Instant::now());
         }
-        unsafe extern "C-unwind" fn sleeps(_: *mut CFRunLoopObserver, _: CFRunLoopActivity, info: *mut c_void) {
-            let Some(turn) = turns::sleeps(Instant::now()) else { return };
+        unsafe extern "C-unwind" fn sleeps(
+            _: *mut CFRunLoopObserver,
+            _: CFRunLoopActivity,
+            info: *mut c_void,
+        ) {
+            let Some(turn) = turns::sleeps(Instant::now()) else {
+                return;
+            };
             // SAFETY: `info` is the handler `install` boxed, freed only after `Drop` invalidated
             // this observer, which is what stops it being called.
             let handler = unsafe { &*(info as *const Box<dyn Fn(MainTurn)>) };
@@ -215,16 +223,36 @@ impl TurnObserver {
 
         let handler: Box<dyn Fn(MainTurn)> = Box::new(handler);
         let handler_ptr = Box::into_raw(Box::new(handler));
-        let observer = |activity: CFRunLoopActivity, order, callout: unsafe extern "C-unwind" fn(_, _, _), info| {
-            let mut context =
-                CFRunLoopObserverContext { version: 0, info, retain: None, release: None, copyDescription: None };
+        let observer = |activity: CFRunLoopActivity,
+                        order,
+                        callout: unsafe extern "C-unwind" fn(_, _, _),
+                        info| {
+            let mut context = CFRunLoopObserverContext {
+                version: 0,
+                info,
+                retain: None,
+                release: None,
+                copyDescription: None,
+            };
             // SAFETY: the callout matches CFRunLoopObserverCallBack and the context outlives the call,
             // which copies it.
-            unsafe { CFRunLoopObserver::new(None, activity.0, true, order, Some(callout), &mut context) }
+            unsafe {
+                CFRunLoopObserver::new(None, activity.0, true, order, Some(callout), &mut context)
+            }
         };
         let observers = (
-            observer(CFRunLoopActivity::AfterWaiting, CFIndex::MIN, woke, std::ptr::null_mut()),
-            observer(CFRunLoopActivity::BeforeWaiting, CFIndex::MAX, sleeps, handler_ptr as *mut c_void),
+            observer(
+                CFRunLoopActivity::AfterWaiting,
+                CFIndex::MIN,
+                woke,
+                std::ptr::null_mut(),
+            ),
+            observer(
+                CFRunLoopActivity::BeforeWaiting,
+                CFIndex::MAX,
+                sleeps,
+                handler_ptr as *mut c_void,
+            ),
             CFRunLoop::current(),
         );
         let (Some(woke), Some(sleeps), Some(run_loop)) = observers else {
@@ -235,7 +263,12 @@ impl TurnObserver {
         let modes = unsafe { kCFRunLoopCommonModes };
         run_loop.add_observer(Some(&woke), modes);
         run_loop.add_observer(Some(&sleeps), modes);
-        Some(Self { woke, sleeps, run_loop, handler: handler_ptr })
+        Some(Self {
+            woke,
+            sleeps,
+            run_loop,
+            handler: handler_ptr,
+        })
     }
 }
 
@@ -281,7 +314,9 @@ mod tests {
         assert_eq!(turns.len(), 1, "{turns:?}");
         let (busy, actors) = &turns[0];
         assert!(*busy >= Duration::from_millis(12), "{busy:?}");
-        assert_eq!(actors.iter().map(|(actor, _)| *actor).collect::<Vec<_>>(), ["busy"]);
+        assert_eq!(actors.iter().map(|(actor, _)| *actor).collect::<Vec<_>>(), [
+            "busy"
+        ]);
         assert!(actors[0].1 >= Duration::from_millis(12));
     }
 }

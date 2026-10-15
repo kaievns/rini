@@ -1,10 +1,10 @@
 use std::cmp::Ordering;
 
 use objc2_core_foundation::CGRect;
-
-use crate::input::settings::WindowSnappingSettings;
 use rini_core::ids::WindowId;
 use rini_geometry::CGRectExt;
+
+use crate::input::settings::WindowSnappingSettings;
 
 // less overlap once activated for a sticky
 const STICK_RATIO: f64 = 0.6;
@@ -35,9 +35,7 @@ pub struct DragManager {
 }
 
 impl Default for DragManager {
-    fn default() -> Self {
-        Self::new(WindowSnappingSettings::default())
-    }
+    fn default() -> Self { Self::new(WindowSnappingSettings::default()) }
 }
 
 impl DragManager {
@@ -166,25 +164,19 @@ impl DragManager {
         self.active_candidate.map(|candidate| candidate.window)
     }
 
-    pub fn dragged(&self) -> Option<WindowId> {
-        self.dragged_window
-    }
+    pub fn dragged(&self) -> Option<WindowId> { self.dragged_window }
 
-    pub fn origin_frame(&self) -> Option<CGRect> {
-        self.drag_origin_frame
-    }
+    pub fn origin_frame(&self) -> Option<CGRect> { self.drag_origin_frame }
 
-    pub fn update_config(&mut self, config: WindowSnappingSettings) {
-        self.config = config;
-    }
+    pub fn update_config(&mut self, config: WindowSnappingSettings) { self.config = config; }
 }
 
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use rini_core::ids::WindowId;
 
     use super::*;
-    use rini_core::ids::WindowId;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect {

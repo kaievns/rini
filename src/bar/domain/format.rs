@@ -33,9 +33,7 @@ pub fn date_label(weekday: u32, day: u32) -> String {
 
 /// "17:54". 24-hour, and no seconds: seconds move once a second, and nothing on the bar may move at
 /// rest.
-pub fn clock_label(hour: u32, minute: u32) -> String {
-    format!("{hour:02}:{minute:02}")
-}
+pub fn clock_label(hour: u32, minute: u32) -> String { format!("{hour:02}:{minute:02}") }
 
 /// How long until the minute turns over, from how far into the minute it is.
 ///

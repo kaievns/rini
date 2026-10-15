@@ -22,6 +22,7 @@ use rini_geometry::is_off_screen;
 use rini_geometry::space::{FromCg, ScreenRect};
 use slotmap::Key;
 
+use super::Reactor;
 use crate::decorations::domain::rest::{Group, Held, RestDisplay, RestModel, RestWindow};
 use crate::decorations::domain::rules;
 use crate::decorations::domain::style::{Decoration, Rings, Worn};
@@ -30,8 +31,6 @@ use crate::displays::event::Following;
 use crate::layout::domain::tile::Borders;
 use crate::windows::domain::rules::{RuleState, WindowRuleContext};
 use crate::workspaces::VirtualWorkspaceId;
-
-use super::Reactor;
 
 /// Where the rest windows are drawn, whether the window server's frames and orders are followed for
 /// them, the display of the last flight this batch handed the engine with the press it answers, and
@@ -80,7 +79,9 @@ impl Reactor {
     pub(super) fn borders(&self) -> Borders {
         let settings = &self.config.settings.decorations;
         let screens = &self.space_state.screens;
-        let Some(first) = screens.first().map(|screen| screen.scale) else { return Borders::default() };
+        let Some(first) = screens.first().map(|screen| screen.scale) else {
+            return Borders::default();
+        };
         let layout = |scale| rules::border_width(settings, WindowRuleContext::default(), scale);
         let mut borders = Borders::every(layout(first));
         let one_width = screens.iter().all(|screen| layout(screen.scale) == borders.every);
@@ -89,8 +90,12 @@ impl Reactor {
         }
         let workspaces = self.layout_manager.layout_engine.virtual_workspace_manager();
         let scale_of = |window| {
-            let space = workspaces.workspace_info_for_window_any(&self.state.windows, window)?.space;
-            screens.iter().find(|screen| screen.space == Some(space)).map(|screen| screen.scale)
+            let space =
+                workspaces.workspace_info_for_window_any(&self.state.windows, window)?.space;
+            screens
+                .iter()
+                .find(|screen| screen.space == Some(space))
+                .map(|screen| screen.scale)
         };
         borders.windows = self
             .state
@@ -99,7 +104,10 @@ impl Reactor {
             .filter(|(_, state)| state.is_effectively_manageable())
             .map(|(window, _)| {
                 let scale = scale_of(window).unwrap_or(first);
-                (window, rules::border_width(settings, self.rule_context(window), scale))
+                (
+                    window,
+                    rules::border_width(settings, self.rule_context(window), scale),
+                )
             })
             .filter(|(_, width)| *width != borders.every)
             .collect();
@@ -130,7 +138,11 @@ impl Reactor {
             .filter(|space| self.is_space_active(*space))
             .flat_map(|space| {
                 workspaces.existing_workspaces().into_iter().map(move |(workspace, _)| {
-                    (space, workspace, engine.active_window(&self.state.windows, space, workspace))
+                    (
+                        space,
+                        workspace,
+                        engine.active_window(&self.state.windows, space, workspace),
+                    )
                 })
             })
             .collect();
@@ -182,10 +194,16 @@ impl Reactor {
         let screens = &self.space_state.screens;
         let displays = screens
             .iter()
-            .map(|screen| RestDisplay { bounds: ScreenRect::from_cg(screen.bounds), scale: screen.scale })
+            .map(|screen| RestDisplay {
+                bounds: ScreenRect::from_cg(screen.bounds),
+                scale: screen.scale,
+            })
             .collect();
         let managed = |window: &WindowId| {
-            self.state.windows.window(*window).is_some_and(|state| state.is_effectively_manageable())
+            self.state
+                .windows
+                .window(*window)
+                .is_some_and(|state| state.is_effectively_manageable())
         };
         let key = self.main_window_tracker.key_window().filter(managed);
         let rings = self.rings_with(key);
@@ -200,18 +218,25 @@ impl Reactor {
             .filter_map(|(window, info)| {
                 let server_id = self.state.windows.window(window)?.info.sys_id?;
                 let screen = screens.iter().find(|screen| screen.space == Some(info.space));
-                let shown_workspace = engine.active_workspace(info.space) == Some(info.workspace_id);
+                let shown_workspace =
+                    engine.active_workspace(info.space) == Some(info.workspace_id);
                 let off_strip = !engine.is_window_floating(window)
-                    && screen.zip(self.last_strip_layout.get(&(info.space, info.workspace_id))).is_some_and(
-                        |(screen, strip)| {
+                    && screen
+                        .zip(self.last_strip_layout.get(&(info.space, info.workspace_id)))
+                        .is_some_and(|(screen, strip)| {
                             strip.iter().find(|(w, _)| *w == window).is_some_and(|(_, frame)| {
-                                is_off_screen(ScreenRect::from_cg(screen.bounds), ScreenRect::from_cg(*frame))
+                                is_off_screen(
+                                    ScreenRect::from_cg(screen.bounds),
+                                    ScreenRect::from_cg(*frame),
+                                )
                             })
-                        },
-                    );
+                        });
                 Some(RestWindow {
                     window: server_id,
-                    group: Group { space: info.space, workspace: info.workspace_id.data().as_ffi() },
+                    group: Group {
+                        space: info.space,
+                        workspace: info.workspace_id.data().as_ffi(),
+                    },
                     decoration: self.decoration_of(window, &rings),
                     focused: rings.focused(window),
                     ring: rings.ring(window),

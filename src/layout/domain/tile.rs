@@ -20,9 +20,16 @@ pub struct Borders {
 
 impl Borders {
     /// One width for every window.
-    pub fn every(width: f64) -> Borders { Borders { every: width, windows: HashMap::default() } }
+    pub fn every(width: f64) -> Borders {
+        Borders {
+            every: width,
+            windows: HashMap::default(),
+        }
+    }
 
-    pub fn of(&self, window: WindowId) -> f64 { self.windows.get(&window).copied().unwrap_or(self.every) }
+    pub fn of(&self, window: WindowId) -> f64 {
+        self.windows.get(&window).copied().unwrap_or(self.every)
+    }
 }
 
 /// The window laid out in `slot` under a border `border` wide on every side.
@@ -48,7 +55,13 @@ pub fn slot_of(frame: CGRect, border: f64) -> CGRect {
 /// the border on both sides. A limit the window does not report stays unreported.
 pub fn slot_limits(window: WindowLayoutConstraints, border: f64) -> WindowLayoutConstraints {
     let window = window.normalized();
-    let with = |limit: f64| if limit > 0.0 { limit + 2.0 * border } else { limit };
+    let with = |limit: f64| {
+        if limit > 0.0 {
+            limit + 2.0 * border
+        } else {
+            limit
+        }
+    };
     WindowLayoutConstraints {
         is_resizable: window.is_resizable,
         locked_width: with(window.locked_width),
@@ -64,7 +77,9 @@ pub fn slot_limits(window: WindowLayoutConstraints, border: f64) -> WindowLayout
 mod tests {
     use super::*;
 
-    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect { CGRect::new(CGPoint::new(x, y), CGSize::new(w, h)) }
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
 
     #[test]
     fn a_slot_and_its_window_convert_both_ways() {
@@ -72,13 +87,20 @@ mod tests {
         let window = window_in(slot, 4.0);
         assert_eq!(window, rect(604.0, 7.0, 874.0, 1103.0));
         assert_eq!(slot_of(window, 4.0), slot);
-        assert_eq!(window_in(rect(0.0, 0.0, 6.0, 400.0), 4.0).size.width, 0.0, "never inside out");
+        assert_eq!(
+            window_in(rect(0.0, 0.0, 6.0, 400.0), 4.0).size.width,
+            0.0,
+            "never inside out"
+        );
     }
 
     #[test]
     fn a_window_a_rule_names_wears_its_own_border_and_the_rest_every_windows() {
         let (named, other) = (WindowId::new(1, 1), WindowId::new(1, 2));
-        let borders = Borders { every: 4.0, windows: [(named, 0.0)].into_iter().collect() };
+        let borders = Borders {
+            every: 4.0,
+            windows: [(named, 0.0)].into_iter().collect(),
+        };
         assert_eq!((borders.of(named), borders.of(other)), (0.0, 4.0));
         assert_eq!(Borders::default().of(other), 0.0, "borders off");
     }
@@ -88,7 +110,11 @@ mod tests {
         let frame = rect(600.0, 3.0, 882.0, 1111.0);
         assert_eq!(window_in(frame, 0.0), frame);
         assert_eq!(slot_of(frame, 0.0), frame);
-        let limits = WindowLayoutConstraints { min_width: 400.0, max_height: 900.0, ..Default::default() };
+        let limits = WindowLayoutConstraints {
+            min_width: 400.0,
+            max_height: 900.0,
+            ..Default::default()
+        };
         assert_eq!(slot_limits(limits, 0.0), limits.normalized());
     }
 
@@ -104,7 +130,19 @@ mod tests {
             max_height: 900.0,
         };
         let slot = slot_limits(limits, 4.0);
-        assert_eq!((slot.locked_width, slot.min_width, slot.min_height, slot.max_height), (708.0, 408.0, 308.0, 908.0));
-        assert_eq!((slot.locked_height, slot.max_width), (0.0, 0.0), "no lock and no maximum stay none");
+        assert_eq!(
+            (
+                slot.locked_width,
+                slot.min_width,
+                slot.min_height,
+                slot.max_height
+            ),
+            (708.0, 408.0, 308.0, 908.0)
+        );
+        assert_eq!(
+            (slot.locked_height, slot.max_width),
+            (0.0, 0.0),
+            "no lock and no maximum stay none"
+        );
     }
 }

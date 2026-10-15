@@ -1,13 +1,13 @@
 //! Where an application's windows go when it comes back, keyed so it survives the process.
 
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_core::ids::WindowServerId;
 
 use super::*;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::state::WindowState;
 use crate::workspaces::LayoutEvent;
-use rini_core::ids::WindowServerId;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 
 /// The whole point of the durable key is that it outlives the process, so it has to be in the file. A
 /// window's own records are keyed by pid and are expected to be useless on the next boot; these are not.
@@ -22,32 +22,24 @@ fn launch_memory_survives_a_save_and_load() {
     let mut memory = DisplayMemory::default();
     let docked = topology_key(&["built-in".into(), "external".into()]);
     let alone = topology_key(&["built-in".into()]);
-    memory.launch.remember(
-        "com.mitchellh.ghostty",
-        &docked,
-        vec![
-            Slot {
-                title: Some("~/projects/rini".into()),
-                display_uuid: "external".into(),
-                workspace_index: 2,
-                width: Some(ColumnWidth::Offset(0.25)),
-            }
-            .into(),
-        ],
-    );
-    memory.launch.remember(
-        "com.mitchellh.ghostty",
-        &alone,
-        vec![
-            Slot {
-                title: Some("~/projects/rini".into()),
-                display_uuid: "built-in".into(),
-                workspace_index: 0,
-                width: Some(ColumnWidth::FullWidth),
-            }
-            .into(),
-        ],
-    );
+    memory.launch.remember("com.mitchellh.ghostty", &docked, vec![
+        Slot {
+            title: Some("~/projects/rini".into()),
+            display_uuid: "external".into(),
+            workspace_index: 2,
+            width: Some(ColumnWidth::Offset(0.25)),
+        }
+        .into(),
+    ]);
+    memory.launch.remember("com.mitchellh.ghostty", &alone, vec![
+        Slot {
+            title: Some("~/projects/rini".into()),
+            display_uuid: "built-in".into(),
+            workspace_index: 0,
+            width: Some(ColumnWidth::FullWidth),
+        }
+        .into(),
+    ]);
 
     let path =
         std::env::temp_dir().join(format!("rini-launch-memory-test-{}.ron", std::process::id()));
@@ -91,30 +83,27 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
 
     let insert = |store: &mut WindowStore, window: WindowId| {
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
-        store.insert_window(
-            window,
-            WindowState {
-                info: WindowInfo {
-                    is_standard: true,
-                    is_root: true,
-                    is_minimized: false,
-                    is_resizable: true,
-                    min_size: None,
-                    max_size: None,
-                    title: "~/projects/rini".into(),
-                    frame,
-                    sys_id: Some(WindowServerId::new(window.idx.get())),
-                    bundle_id: Some("com.mitchellh.ghostty".into()),
-                    path: None,
-                    ax_role: None,
-                    ax_subrole: None,
-                    is_modal: false,
-                },
-                frame_monotonic: frame,
-                is_manageable: true,
-                ignore_app_rule: false,
+        store.insert_window(window, WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "~/projects/rini".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(window.idx.get())),
+                bundle_id: Some("com.mitchellh.ghostty".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+                is_modal: false,
             },
-        );
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
+        });
     };
 
     // The window as it was before the application quit: moved off the active workspace and made full
@@ -209,30 +198,27 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
-    window_store.insert_window(
-        window,
-        WindowState {
-            info: WindowInfo {
-                is_standard: true,
-                is_root: true,
-                is_minimized: false,
-                is_resizable: true,
-                min_size: None,
-                max_size: None,
-                title: "Untitled".into(),
-                frame,
-                sys_id: Some(WindowServerId::new(8571)),
-                bundle_id: Some("com.apple.TextEdit".into()),
-                path: None,
-                ax_role: None,
-                ax_subrole: None,
-                is_modal: false,
-            },
-            frame_monotonic: frame,
-            is_manageable: true,
-            ignore_app_rule: false,
+    window_store.insert_window(window, WindowState {
+        info: WindowInfo {
+            is_standard: true,
+            is_root: true,
+            is_minimized: false,
+            is_resizable: true,
+            min_size: None,
+            max_size: None,
+            title: "Untitled".into(),
+            frame,
+            sys_id: Some(WindowServerId::new(8571)),
+            bundle_id: Some("com.apple.TextEdit".into()),
+            path: None,
+            ax_role: None,
+            ax_subrole: None,
+            is_modal: false,
         },
-    );
+        frame_monotonic: frame,
+        is_manageable: true,
+        ignore_app_rule: false,
+    });
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
@@ -298,30 +284,27 @@ fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
-    window_store.insert_window(
-        window,
-        WindowState {
-            info: WindowInfo {
-                is_standard: true,
-                is_root: true,
-                is_minimized: false,
-                is_resizable: true,
-                min_size: None,
-                max_size: None,
-                title: "Untitled".into(),
-                frame,
-                sys_id: Some(WindowServerId::new(8610)),
-                bundle_id: Some("com.apple.TextEdit".into()),
-                path: None,
-                ax_role: None,
-                ax_subrole: None,
-                is_modal: false,
-            },
-            frame_monotonic: frame,
-            is_manageable: true,
-            ignore_app_rule: false,
+    window_store.insert_window(window, WindowState {
+        info: WindowInfo {
+            is_standard: true,
+            is_root: true,
+            is_minimized: false,
+            is_resizable: true,
+            min_size: None,
+            max_size: None,
+            title: "Untitled".into(),
+            frame,
+            sys_id: Some(WindowServerId::new(8610)),
+            bundle_id: Some("com.apple.TextEdit".into()),
+            path: None,
+            ax_role: None,
+            ax_subrole: None,
+            is_modal: false,
         },
-    );
+        frame_monotonic: frame,
+        is_manageable: true,
+        ignore_app_rule: false,
+    });
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
@@ -371,45 +354,38 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
-    window_store.insert_window(
-        window,
-        WindowState {
-            info: WindowInfo {
-                is_standard: true,
-                is_root: true,
-                is_minimized: false,
-                is_resizable: true,
-                min_size: None,
-                max_size: None,
-                title: String::new(),
-                frame,
-                sys_id: Some(WindowServerId::new(8769)),
-                bundle_id: None,
-                path: None,
-                ax_role: None,
-                ax_subrole: None,
-                is_modal: false,
-            },
-            frame_monotonic: frame,
-            is_manageable: true,
-            ignore_app_rule: false,
+    window_store.insert_window(window, WindowState {
+        info: WindowInfo {
+            is_standard: true,
+            is_root: true,
+            is_minimized: false,
+            is_resizable: true,
+            min_size: None,
+            max_size: None,
+            title: String::new(),
+            frame,
+            sys_id: Some(WindowServerId::new(8769)),
+            bundle_id: None,
+            path: None,
+            ax_role: None,
+            ax_subrole: None,
+            is_modal: false,
         },
-    );
+        frame_monotonic: frame,
+        is_manageable: true,
+        ignore_app_rule: false,
+    });
 
     let topology = topology_key(&[DISPLAY.to_owned()]);
-    memory.launch.remember(
-        "com.apple.TextEdit",
-        &topology,
-        vec![
-            Slot {
-                title: Some("Untitled".into()),
-                display_uuid: DISPLAY.to_owned(),
-                workspace_index: 1,
-                width: Some(ColumnWidth::FullWidth),
-            }
-            .into(),
-        ],
-    );
+    memory.launch.remember("com.apple.TextEdit", &topology, vec![
+        Slot {
+            title: Some("Untitled".into()),
+            display_uuid: DISPLAY.to_owned(),
+            workspace_index: 1,
+            width: Some(ColumnWidth::FullWidth),
+        }
+        .into(),
+    ]);
 
     let result = engine
         .assign_window_with_app_info(
@@ -473,30 +449,27 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
-    window_store.insert_window(
-        window,
-        WindowState {
-            info: WindowInfo {
-                is_standard: true,
-                is_root: true,
-                is_minimized: false,
-                is_resizable: true,
-                min_size: None,
-                max_size: None,
-                title: "Zen Browser".into(),
-                frame,
-                sys_id: Some(WindowServerId::new(9002)),
-                bundle_id: Some("app.zen-browser.zen".into()),
-                path: None,
-                ax_role: None,
-                ax_subrole: None,
-                is_modal: false,
-            },
-            frame_monotonic: frame,
-            is_manageable: true,
-            ignore_app_rule: false,
+    window_store.insert_window(window, WindowState {
+        info: WindowInfo {
+            is_standard: true,
+            is_root: true,
+            is_minimized: false,
+            is_resizable: true,
+            min_size: None,
+            max_size: None,
+            title: "Zen Browser".into(),
+            frame,
+            sys_id: Some(WindowServerId::new(9002)),
+            bundle_id: Some("app.zen-browser.zen".into()),
+            path: None,
+            ax_role: None,
+            ax_subrole: None,
+            is_modal: false,
         },
-    );
+        frame_monotonic: frame,
+        is_manageable: true,
+        ignore_app_rule: false,
+    });
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
@@ -550,30 +523,27 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
-    window_store.insert_window(
-        window,
-        WindowState {
-            info: WindowInfo {
-                is_standard: true,
-                is_root: true,
-                is_minimized: false,
-                is_resizable: true,
-                min_size: None,
-                max_size: None,
-                title: "~/projects/rini".into(),
-                frame,
-                sys_id: Some(WindowServerId::new(9012)),
-                bundle_id: Some("com.mitchellh.ghostty".into()),
-                path: None,
-                ax_role: None,
-                ax_subrole: None,
-                is_modal: false,
-            },
-            frame_monotonic: frame,
-            is_manageable: true,
-            ignore_app_rule: false,
+    window_store.insert_window(window, WindowState {
+        info: WindowInfo {
+            is_standard: true,
+            is_root: true,
+            is_minimized: false,
+            is_resizable: true,
+            min_size: None,
+            max_size: None,
+            title: "~/projects/rini".into(),
+            frame,
+            sys_id: Some(WindowServerId::new(9012)),
+            bundle_id: Some("com.mitchellh.ghostty".into()),
+            path: None,
+            ax_role: None,
+            ax_subrole: None,
+            is_modal: false,
         },
-    );
+        frame_monotonic: frame,
+        is_manageable: true,
+        ignore_app_rule: false,
+    });
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
@@ -581,20 +551,28 @@ fn a_dragged_width_is_remembered_dragged_for_a_relaunch_and_kept_across_a_save()
     );
     let ws_id = engine.virtual_workspace_manager.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
-    engine.workspace_tree_mut(ws_id).set_column_width_offset(layout, window, 0.33797, true);
+    engine
+        .workspace_tree_mut(ws_id)
+        .set_column_width_offset(layout, window, 0.33797, true);
 
     engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
 
     let topology = topology_key(&[DISPLAY.to_owned()]);
     let dragged = Some(ColumnWidth::Unbounded(0.33797));
-    assert_eq!(memory.launch.slots("com.mitchellh.ghostty", &topology)[0].width, dragged);
+    assert_eq!(
+        memory.launch.slots("com.mitchellh.ghostty", &topology)[0].width,
+        dragged
+    );
 
     let path =
         std::env::temp_dir().join(format!("rini-dragged-slot-test-{}.ron", std::process::id()));
     engine.save(&mut memory, path.clone()).unwrap();
     let loaded = LayoutEngine::load_file(&path).unwrap().memory;
     let _ = std::fs::remove_file(path);
-    assert_eq!(loaded.launch.slots("com.mitchellh.ghostty", &topology)[0].width, dragged);
+    assert_eq!(
+        loaded.launch.slots("com.mitchellh.ghostty", &topology)[0].width,
+        dragged
+    );
 }
 
 /// "Full width and height" in `specs/strip.md`: `Mod+R`'s 100% comes back after a restart as a width
@@ -625,30 +603,27 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
 
     let insert = |store: &mut WindowStore, window: WindowId| {
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
-        store.insert_window(
-            window,
-            WindowState {
-                info: WindowInfo {
-                    is_standard: true,
-                    is_root: true,
-                    is_minimized: false,
-                    is_resizable: true,
-                    min_size: None,
-                    max_size: None,
-                    title: "~/projects/rini".into(),
-                    frame,
-                    sys_id: Some(WindowServerId::new(window.idx.get())),
-                    bundle_id: Some(APP.into()),
-                    path: None,
-                    ax_role: None,
-                    ax_subrole: None,
-                    is_modal: false,
-                },
-                frame_monotonic: frame,
-                is_manageable: true,
-                ignore_app_rule: false,
+        store.insert_window(window, WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "~/projects/rini".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(window.idx.get())),
+                bundle_id: Some(APP.into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+                is_modal: false,
             },
-        );
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
+        });
     };
     insert(&mut window_store, before_quit);
     let _ = engine.handle_event(
@@ -659,19 +634,22 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
     let ws_id = engine.virtual_workspace_manager.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
     engine.workspace_tree_mut(ws_id).cycle_preset_column_width(layout);
-    assert!(!engine.workspace_tree(ws_id).is_window_full_width(layout, before_quit), "setup");
+    assert!(
+        !engine.workspace_tree(ws_id).is_window_full_width(layout, before_quit),
+        "setup"
+    );
 
     engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
 
     let topology = topology_key(&[DISPLAY.to_owned()]);
-    let unbounded = |width: Option<ColumnWidth>| {
-        matches!(width, Some(ColumnWidth::Unbounded(offset)) if (offset - 0.3).abs() < 1e-9)
-    };
+    let unbounded = |width: Option<ColumnWidth>| matches!(width, Some(ColumnWidth::Unbounded(offset)) if (offset - 0.3).abs() < 1e-9);
     let remembered = memory.launch.slots(APP, &topology)[0].width;
     assert!(unbounded(remembered), "{remembered:?}");
 
-    let path =
-        std::env::temp_dir().join(format!("rini-full-viewport-slot-test-{}.ron", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "rini-full-viewport-slot-test-{}.ron",
+        std::process::id()
+    ));
     engine.save(&mut memory, path.clone()).unwrap();
     let loaded = LayoutEngine::load_file(&path).unwrap().memory;
     let _ = std::fs::remove_file(path);
@@ -694,7 +672,10 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
     let tiling = compute_tiling_area(screen, &gaps);
     let frames = engine.calculate_layout(space, screen, &gaps);
     let frame = frames.iter().find(|(wid, _)| *wid == after_relaunch).expect("laid out").1;
-    assert_eq!((frame.origin.x, frame.size.width), (tiling.origin.x, tiling.size.width));
+    assert_eq!(
+        (frame.origin.x, frame.size.width),
+        (tiling.origin.x, tiling.size.width)
+    );
     let ws_id = engine.virtual_workspace_manager.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
     assert!(!engine.workspace_tree(ws_id).is_window_full_width(layout, after_relaunch));
@@ -718,30 +699,27 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
 
     let insert = |store: &mut WindowStore, window: WindowId| {
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
-        store.insert_window(
-            window,
-            WindowState {
-                info: WindowInfo {
-                    is_standard: true,
-                    is_root: true,
-                    is_minimized: false,
-                    is_resizable: true,
-                    min_size: None,
-                    max_size: None,
-                    title: "~/projects/rini".into(),
-                    frame,
-                    sys_id: Some(WindowServerId::new(window.idx.get())),
-                    bundle_id: Some(APP.into()),
-                    path: None,
-                    ax_role: None,
-                    ax_subrole: None,
-                    is_modal: false,
-                },
-                frame_monotonic: frame,
-                is_manageable: true,
-                ignore_app_rule: false,
+        store.insert_window(window, WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "~/projects/rini".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(window.idx.get())),
+                bundle_id: Some(APP.into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+                is_modal: false,
             },
-        );
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
+        });
     };
 
     let mut engine = test_engine();

@@ -201,10 +201,8 @@ fn windows_in(
     entrances: &[(WindowId, GroupRect, GroupRect)],
     floating: &[(WindowId, GroupRect, GroupRect)],
 ) -> Vec<WindowId> {
-    let mut out: Vec<WindowId> = groups
-        .iter()
-        .flat_map(|g| g.members.iter().map(|m| m.window))
-        .collect();
+    let mut out: Vec<WindowId> =
+        groups.iter().flat_map(|g| g.members.iter().map(|m| m.window)).collect();
     out.extend(changing.iter().map(|(w, _, _)| *w));
     out.extend(entrances.iter().map(|(w, _, _)| *w));
     out.extend(floating.iter().map(|(w, _, _)| *w));
@@ -227,9 +225,7 @@ pub struct FlightPlan {
 impl FlightPlan {
     /// A flight with nothing in it: the still group only.
     #[cfg(test)]
-    pub fn empty() -> Self {
-        FlightPlan::from(ReflowPlan::empty())
-    }
+    pub fn empty() -> Self { FlightPlan::from(ReflowPlan::empty()) }
 
     /// How `window` takes part. Floating frames are in the floating container's space.
     pub fn member(&self, window: WindowId) -> Option<Member> {
@@ -337,9 +333,7 @@ pub struct PlanDelta {
 
 impl PlanDelta {
     /// A merge that changed nothing: the redundant pass of a rapid press.
-    pub fn is_empty(&self) -> bool {
-        !self.moves_anything() && !self.focus_changed
-    }
+    pub fn is_empty(&self) -> bool { !self.moves_anything() && !self.focus_changed }
 
     /// Whether any geometry changed: what restarts the flight's clock.
     pub fn moves_anything(&self) -> bool {
@@ -388,9 +382,7 @@ impl FlightPlan {
     }
 
     /// Model position of container `key`: where its members' `rel` frames land.
-    pub fn position_of(&self, key: GroupKey) -> OverlayPoint {
-        self.position(key)
-    }
+    pub fn position_of(&self, key: GroupKey) -> OverlayPoint { self.position(key) }
 
     fn group_mut(&mut self, key: GroupKey) -> &mut RigidGroup {
         self.groups.iter_mut().find(|g| g.key == key).expect("a key the plan allocated")
@@ -789,7 +781,10 @@ fn container_at(position: OverlayPoint) -> Translation<Group, Overlay> {
 
 /// `frame` in a container of a fresh plan, which installs at the overlay's origin: the same place.
 pub fn installed(frame: OverlayRect) -> GroupRect {
-    Rect::new(frame.origin.to_vector().respace().to_point(), frame.size.respace())
+    Rect::new(
+        frame.origin.to_vector().respace().to_point(),
+        frame.size.respace(),
+    )
 }
 
 /// The inverse of [`installed`]: a fresh plan's frame on the overlay.
@@ -975,7 +970,10 @@ mod tests {
 
     /// `frame` moved by `delta`.
     fn shifted<U>(frame: Rect<U>, delta: Vector<U>) -> Rect<U> {
-        Rect::new(Point::new(frame.origin.x + delta.x, frame.origin.y + delta.y), frame.size)
+        Rect::new(
+            Point::new(frame.origin.x + delta.x, frame.origin.y + delta.y),
+            frame.size,
+        )
     }
 
     /// A frame on `DISPLAY`, which sits at the origin, on the overlay over it.
@@ -1005,9 +1003,7 @@ mod tests {
             }
         }
 
-        fn column(i: f64) -> ScreenRect {
-            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
-        }
+        fn column(i: f64) -> ScreenRect { rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0) }
 
         fn shifted(frame: ScreenRect, dx: f64) -> ScreenRect {
             super::shifted(frame, ScreenVector::new(dx, 0.0))
@@ -1045,14 +1041,11 @@ mod tests {
                 (wid(2), b, shifted(b, -859.0), false),
             ]);
             let targets = animation_targets(&plan);
-            assert_eq!(
-                targets,
-                vec![AnimationTarget::Container {
-                    key: GroupKey::Rigid(1),
-                    from: OverlayPoint::new(0.0, 0.0),
-                    to: OverlayPoint::new(-859.0, 0.0),
-                }]
-            );
+            assert_eq!(targets, vec![AnimationTarget::Container {
+                key: GroupKey::Rigid(1),
+                from: OverlayPoint::new(0.0, 0.0),
+                to: OverlayPoint::new(-859.0, 0.0),
+            }]);
         }
 
         #[test]
@@ -1064,10 +1057,10 @@ mod tests {
                 (wid(3), c, shifted(c, -300.0), false),
             ]);
             let targets = animation_targets(&plan);
-            assert_eq!(
-                containers(&targets),
-                vec![GroupKey::Rigid(1), GroupKey::Rigid(2)]
-            );
+            assert_eq!(containers(&targets), vec![
+                GroupKey::Rigid(1),
+                GroupKey::Rigid(2)
+            ]);
             assert!(tiles(&targets).is_empty(), "no rigid member is a tile target");
         }
 
@@ -1100,14 +1093,11 @@ mod tests {
 
             plan.floating_travel = OverlayVector::new(0.0, -1117.0);
             plan.positions.insert(GroupKey::Floating, plan.floating_travel.to_point());
-            assert_eq!(
-                animation_targets(&plan),
-                vec![AnimationTarget::Container {
-                    key: GroupKey::Floating,
-                    from: OverlayPoint::new(0.0, 0.0),
-                    to: OverlayPoint::new(0.0, -1117.0),
-                }]
-            );
+            assert_eq!(animation_targets(&plan), vec![AnimationTarget::Container {
+                key: GroupKey::Floating,
+                from: OverlayPoint::new(0.0, 0.0),
+                to: OverlayPoint::new(0.0, -1117.0),
+            }]);
 
             let moved = shifted(settings, -100.0);
             let plan = flight(&[(wid(1), settings, moved, true)]);
@@ -1139,7 +1129,10 @@ mod tests {
         let sideways = OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0);
         let upward = OverlayVector::new(0.0, -EDGE_BOUNCE_OVERSHOOT);
         let share = 1728.0 * crate::animation::domain::motion::nudge::NUDGE_SHARE;
-        let steps = [OverlayVector::new(-share, 0.0), OverlayVector::new(share, 0.0)];
+        let steps = [
+            OverlayVector::new(-share, 0.0),
+            OverlayVector::new(share, 0.0),
+        ];
         for key in [GroupKey::Rigid(0), GroupKey::Rigid(3), GroupKey::Loose] {
             assert!(carries_out_and_back(key, sideways), "{key:?}");
             assert!(carries_out_and_back(key, upward), "{key:?}");
@@ -1159,19 +1152,25 @@ mod tests {
     #[test]
     fn an_edge_bounce_moves_the_content_the_way_it_would_have_gone() {
         let o = EDGE_BOUNCE_OVERSHOOT;
-        assert_eq!(edge_bounce_overshoot(Direction::Right), OverlayVector::new(-o, 0.0));
-        assert_eq!(edge_bounce_overshoot(Direction::Left), OverlayVector::new(o, 0.0));
-        assert_eq!(edge_bounce_overshoot(Direction::Down), OverlayVector::new(0.0, -o));
+        assert_eq!(
+            edge_bounce_overshoot(Direction::Right),
+            OverlayVector::new(-o, 0.0)
+        );
+        assert_eq!(
+            edge_bounce_overshoot(Direction::Left),
+            OverlayVector::new(o, 0.0)
+        );
+        assert_eq!(
+            edge_bounce_overshoot(Direction::Down),
+            OverlayVector::new(0.0, -o)
+        );
         assert_eq!(edge_bounce_overshoot(Direction::Up), OverlayVector::new(0.0, o));
         assert!(o < 100.0, "a nudge, not a scroll");
     }
 
     #[test]
     fn a_tile_the_plan_still_names_is_kept() {
-        let tiles = [
-            (WindowId::new(1, 1), 7u8),
-            (WindowId::new(1, 2), 7),
-        ];
+        let tiles = [(WindowId::new(1, 1), 7u8), (WindowId::new(1, 2), 7)];
         let keep = [WindowId::new(1, 1), WindowId::new(1, 2)];
         let (stale, empty) = stale_overlay_layers(&tiles, &keep, &[7]);
         assert!(stale.is_empty());
@@ -1180,10 +1179,7 @@ mod tests {
 
     #[test]
     fn a_tile_the_plan_dropped_is_stale() {
-        let tiles = [
-            (WindowId::new(1, 1), 7u8),
-            (WindowId::new(1, 2), 7),
-        ];
+        let tiles = [(WindowId::new(1, 1), 7u8), (WindowId::new(1, 2), 7)];
         let keep = [WindowId::new(1, 1)];
         let (stale, empty) = stale_overlay_layers(&tiles, &keep, &[7]);
         assert_eq!(stale, [WindowId::new(1, 2)]);
@@ -1195,10 +1191,7 @@ mod tests {
     /// only tile just left, and an empty container is a layer the compositor keeps compositing.
     #[test]
     fn a_container_whose_last_tile_left_is_empty() {
-        let tiles = [
-            (WindowId::new(1, 1), 7u8),
-            (WindowId::new(1, 2), 8),
-        ];
+        let tiles = [(WindowId::new(1, 1), 7u8), (WindowId::new(1, 2), 8)];
         let keep = [WindowId::new(1, 1)];
         let (stale, empty) = stale_overlay_layers(&tiles, &keep, &[7, 8]);
         assert_eq!(stale, [WindowId::new(1, 2)]);
@@ -1269,9 +1262,7 @@ mod tests {
             }
         }
 
-        fn column(i: f64) -> ScreenRect {
-            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
-        }
+        fn column(i: f64) -> ScreenRect { rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0) }
 
         fn flight_of(requests: &[(WindowId, ScreenRect, ScreenRect, bool)]) -> FlightPlan {
             FlightPlan::from(reflow_plan(requests, DISPLAY))
@@ -1297,9 +1288,7 @@ mod tests {
         }
 
         /// Model positions as the presented ones: a flight that has not started drawing.
-        fn at_model(plan: &FlightPlan) -> HashMap<GroupKey, OverlayPoint> {
-            plan.positions.clone()
-        }
+        fn at_model(plan: &FlightPlan) -> HashMap<GroupKey, OverlayPoint> { plan.positions.clone() }
 
         /// Halfway between install (`p - travel`) and destination, per container.
         fn midway(plan: &FlightPlan) -> HashMap<GroupKey, OverlayPoint> {
@@ -1316,7 +1305,10 @@ mod tests {
                             .map(|g| g.travel)
                             .unwrap_or(OverlayVector::zero()),
                     };
-                    (*key, OverlayPoint::new(p.x - travel.x / 2.0, p.y - travel.y / 2.0))
+                    (
+                        *key,
+                        OverlayPoint::new(p.x - travel.x / 2.0, p.y - travel.y / 2.0),
+                    )
                 })
                 .collect()
         }
@@ -1384,7 +1376,10 @@ mod tests {
             assert!(delta.reparented.is_empty());
             assert!(delta.new_groups.is_empty(), "the pan names known windows only");
             assert_eq!(merged.entrances[0].2, shifted(slot, d.respace()));
-            assert_eq!(delta.retargeted_tiles, vec![(wid(9), shifted(slot, d.respace()))]);
+            assert_eq!(delta.retargeted_tiles, vec![(
+                wid(9),
+                shifted(slot, d.respace())
+            )]);
             assert_eq!(
                 dest(&merged, wid(3)),
                 Some(shifted(on(c), OverlayVector::new(859.0 + d.x, 0.0))),
@@ -1549,7 +1544,10 @@ mod tests {
                 Some(Member::Rigid { key, rel }) if key == group => rel,
                 other => panic!("{window:?} is {other:?}"),
             };
-            assert_eq!(rel(wid(2)), group_relative(on(beside), current.position_of(group)));
+            assert_eq!(
+                rel(wid(2)),
+                group_relative(on(beside), current.position_of(group))
+            );
             assert_eq!(rel(wid(2)).origin.x - rel(wid(1)).origin.x, 863.0, "beside 1");
             assert!(dest(&merged, wid(2)).unwrap().same_as(on(shifted(beside, further))));
         }
@@ -1591,7 +1589,10 @@ mod tests {
             let Some(Member::Floating { from, .. }) = merged.member(wid(2)) else {
                 panic!("floating")
             };
-            assert_eq!(from, group_relative(to_overlay_space(panel, DISPLAY), up.to_point()));
+            assert_eq!(
+                from,
+                group_relative(to_overlay_space(panel, DISPLAY), up.to_point())
+            );
         }
 
         #[test]
@@ -1651,8 +1652,11 @@ mod tests {
                     from: None,
                 })
                 .collect();
-            let pan =
-                surface_plan(&windows, SurfacePoint::new(-574.0, 0.0), SurfacePoint::new(0.0, 0.0));
+            let pan = surface_plan(
+                &windows,
+                SurfacePoint::new(-574.0, 0.0),
+                SurfacePoint::new(0.0, 0.0),
+            );
             let (merged, delta) =
                 merge_plans(&current, &pan, Some(d), &midway(&current).into(), None, VIEWPORT);
 
@@ -1695,7 +1699,10 @@ mod tests {
             );
             let (merged, delta) =
                 merge_plans(&current, &pass, None, &midway(&current).into(), None, VIEWPORT);
-            assert_eq!(delta.retargeted_groups, vec![(group, OverlayPoint::new(-400.0, 0.0))]);
+            assert_eq!(delta.retargeted_groups, vec![(
+                group,
+                OverlayPoint::new(-400.0, 0.0)
+            )]);
             assert!(delta.reparented.is_empty() && delta.joined_tiles.is_empty());
             assert!(
                 dest(&merged, wid(2)).unwrap().same_as(on(shifted(b, further))),
@@ -1975,9 +1982,7 @@ mod tests {
             super::shifted(frame, Vector::new(dx, dy))
         }
 
-        fn column<U>(i: f64) -> Rect<U> {
-            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
-        }
+        fn column<U>(i: f64) -> Rect<U> { rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0) }
 
         fn moving(plan: &ReflowPlan) -> Vec<&RigidGroup> {
             plan.groups
@@ -2087,13 +2092,10 @@ mod tests {
                 vec![wid(1)],
                 "the same vector does not pull it in"
             );
-            assert_eq!(
-                plan.floating,
-                vec![
-                    (wid(2), held(settings), held(shifted(settings, -100.0, 0.0))),
-                    (wid(3), held(settings), held(settings))
-                ]
-            );
+            assert_eq!(plan.floating, vec![
+                (wid(2), held(settings), held(shifted(settings, -100.0, 0.0))),
+                (wid(3), held(settings), held(settings))
+            ]);
             assert!(plan.group_of(wid(2)).is_none() && plan.group_of(wid(3)).is_none());
             assert_eq!(
                 plan.floating_travel,
@@ -2118,7 +2120,10 @@ mod tests {
             assert_eq!(members(&plan.groups[0]), vec![wid(1)]);
             assert_eq!(
                 plan.member(wid(1)),
-                Some(Member::Rigid { key: GroupKey::STILL, rel: held(a) })
+                Some(Member::Rigid {
+                    key: GroupKey::STILL,
+                    rel: held(a)
+                })
             );
             assert_eq!(members(moving(&plan)[0]), vec![wid(2)]);
         }
@@ -2158,8 +2163,11 @@ mod tests {
                 strip_window(1, column(0.0), false, false),
                 strip_window(2, settings, true, true),
             ];
-            let plan =
-                surface_plan(&windows, SurfacePoint::new(-574.0, 0.0), SurfacePoint::new(0.0, 0.0));
+            let plan = surface_plan(
+                &windows,
+                SurfacePoint::new(-574.0, 0.0),
+                SurfacePoint::new(0.0, 0.0),
+            );
             let standing: GroupRect = rect(500.0, 300.0, 700.0, 500.0);
             assert_eq!(plan.floating, vec![(wid(2), standing, standing)]);
             assert_eq!(plan.floating_travel, OverlayVector::zero());
@@ -2230,9 +2238,15 @@ mod tests {
             let flight = FlightPlan::from(plan.clone());
             assert_eq!(flight.groups, plan.groups);
             assert_eq!(flight.positions[&GroupKey::STILL], OverlayPoint::new(0.0, 0.0));
-            assert_eq!(flight.positions[&GroupKey::Rigid(1)], OverlayPoint::new(-100.0, 0.0));
+            assert_eq!(
+                flight.positions[&GroupKey::Rigid(1)],
+                OverlayPoint::new(-100.0, 0.0)
+            );
             assert_eq!(flight.positions[&GroupKey::Loose], OverlayPoint::new(0.0, 0.0));
-            assert_eq!(flight.positions[&GroupKey::Floating], OverlayPoint::new(0.0, 0.0));
+            assert_eq!(
+                flight.positions[&GroupKey::Floating],
+                OverlayPoint::new(0.0, 0.0)
+            );
             assert_eq!(flight.next_key, 2);
             assert!(PlanDelta::default().is_empty());
         }
@@ -2397,10 +2411,11 @@ mod tests {
             );
             assert!(moving(&plan).is_empty());
             assert!(plan.groups[0].members.is_empty());
-            assert_eq!(
-                plan.floating,
-                vec![(wid(1), held(settings), held(shifted(settings, 40.0, 20.0)))]
-            );
+            assert_eq!(plan.floating, vec![(
+                wid(1),
+                held(settings),
+                held(shifted(settings, 40.0, 20.0))
+            )]);
             let flight = FlightPlan::from(plan);
             let targets = animation_targets(&flight);
             assert_eq!(targets.len(), 1, "the floating tile flies on its own");

@@ -3,14 +3,13 @@
 //! from LaunchServices. The reactor converts these into its own event type; this crate never
 //! imports the reactor.
 use objc2_core_foundation::CGRect;
+use rini_core::ids::{WindowId, pid_t};
 
 use crate::windows::domain::attention::Attention;
-use crate::windows::domain::info::WindowServerInfo;
-use crate::windows::domain::info::{AppInfo, WindowInfo};
+use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
 use crate::windows::domain::transaction::{Requested, TransactionId};
 use crate::windows::platform::mouse::MouseState;
-use rini_core::ids::{WindowId, pid_t};
 
 #[derive(Debug)]
 pub enum Event {
@@ -79,9 +78,7 @@ pub trait EventSink: Send {
 }
 
 impl<T: From<Event> + Send> EventSink for rini_runloop::channel::Sender<T> {
-    fn send(&self, event: Event) {
-        rini_runloop::channel::Sender::send(self, event.into())
-    }
+    fn send(&self, event: Event) { rini_runloop::channel::Sender::send(self, event.into()) }
 }
 
 #[cfg(test)]
@@ -93,9 +90,7 @@ mod tests {
         Window(Event),
     }
     impl From<Event> for AppEvent {
-        fn from(event: Event) -> Self {
-            AppEvent::Window(event)
-        }
+        fn from(event: Event) -> Self { AppEvent::Window(event) }
     }
 
     #[test]

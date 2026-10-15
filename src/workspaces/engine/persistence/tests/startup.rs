@@ -1,10 +1,10 @@
 //! Restoring at launch, where nothing is running yet and macOS has renumbered the spaces.
 
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::CGSize;
 
 use super::*;
 use crate::workspaces::LayoutEvent;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 
 #[test]
 fn startup_validation_preserves_stale_ids_when_the_app_can_still_fuzzy_match() {
@@ -27,16 +27,13 @@ fn startup_validation_preserves_stale_ids_when_the_app_can_still_fuzzy_match() {
             &mut memory,
             LayoutEvent::WindowAdded(space, window),
         );
-        engine.persistence.windows.insert(
-            window,
-            WindowFingerprint {
-                window_server_id: Some(window.idx.get()),
-                title: Some(format!("window-{}", window.idx.get())),
-                width: 600.0,
-                height: 800.0,
-                app_id: Some(format!("com.example.{}", window.pid)),
-            },
-        );
+        engine.persistence.windows.insert(window, WindowFingerprint {
+            window_server_id: Some(window.idx.get()),
+            title: Some(format!("window-{}", window.idx.get())),
+            width: 600.0,
+            height: 800.0,
+            app_id: Some(format!("com.example.{}", window.pid)),
+        });
         engine.persistence.pending_windows.insert(window);
     }
 
@@ -84,17 +81,16 @@ fn completed_app_discovery_discards_a_ghost_from_a_dormant_display_size() {
         small_layout,
     );
     assert_ne!(small_layout, large_layout);
-    snapshot.workspace_tree_mut(workspace).add_window_after_selection(small_layout, ghost);
-    snapshot.persistence.windows.insert(
-        ghost,
-        WindowFingerprint {
-            window_server_id: Some(82684),
-            title: Some("Music".into()),
-            width: 1512.0,
-            height: 944.0,
-            app_id: Some("com.apple.Music".into()),
-        },
-    );
+    snapshot
+        .workspace_tree_mut(workspace)
+        .add_window_after_selection(small_layout, ghost);
+    snapshot.persistence.windows.insert(ghost, WindowFingerprint {
+        window_server_id: Some(82684),
+        title: Some("Music".into()),
+        width: 1512.0,
+        height: 944.0,
+        app_id: Some("com.apple.Music".into()),
+    });
     let path = std::env::temp_dir().join(format!(
         "rini-dormant-size-ghost-test-{}-{}.ron",
         std::process::id(),
@@ -110,7 +106,10 @@ fn completed_app_discovery_discards_a_ghost_from_a_dormant_display_size() {
         &mut memory,
         LayoutEvent::SpaceExposed(space, large),
     );
-    assert!(engine.persistence.pending_windows.contains(&ghost), "fixture: a candidate");
+    assert!(
+        engine.persistence.pending_windows.contains(&ghost),
+        "fixture: a candidate"
+    );
 
     let _ = engine.handle_event(
         &mut window_store,
@@ -144,16 +143,13 @@ fn completed_app_discovery_discards_unmatched_startup_ghosts() {
         &mut memory,
         LayoutEvent::WindowAdded(space, ghost),
     );
-    engine.persistence.windows.insert(
-        ghost,
-        WindowFingerprint {
-            window_server_id: Some(9000),
-            title: Some("Closed window".into()),
-            width: 800.0,
-            height: 600.0,
-            app_id: Some("com.example.closed-window".into()),
-        },
-    );
+    engine.persistence.windows.insert(ghost, WindowFingerprint {
+        window_server_id: Some(9000),
+        title: Some("Closed window".into()),
+        width: 800.0,
+        height: 600.0,
+        app_id: Some("com.example.closed-window".into()),
+    });
     engine.persistence.pending_windows.insert(ghost);
     let _ = engine.handle_event(
         &mut window_store,
@@ -165,16 +161,13 @@ fn completed_app_discovery_discards_unmatched_startup_ghosts() {
         &mut memory,
         LayoutEvent::WindowAdded(inactive_space, inactive_ghost),
     );
-    engine.persistence.windows.insert(
-        inactive_ghost,
-        WindowFingerprint {
-            window_server_id: Some(9001),
-            title: Some("Inactive-space window".into()),
-            width: 800.0,
-            height: 600.0,
-            app_id: Some("com.example.closed-window".into()),
-        },
-    );
+    engine.persistence.windows.insert(inactive_ghost, WindowFingerprint {
+        window_server_id: Some(9001),
+        title: Some("Inactive-space window".into()),
+        width: 800.0,
+        height: 600.0,
+        app_id: Some("com.example.closed-window".into()),
+    });
     engine.persistence.pending_windows.insert(inactive_ghost);
     let workspace = engine.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, workspace).unwrap();
@@ -309,16 +302,13 @@ fn startup_restore_handles_space_id_swaps_between_displays() {
             &mut memory,
             LayoutEvent::WindowAdded(space, window),
         );
-        snapshot.persistence.windows.insert(
-            window,
-            WindowFingerprint {
-                window_server_id: Some(window.idx.get()),
-                title: Some(display.to_string()),
-                width: 600.0,
-                height: 400.0,
-                app_id: Some("com.example.app".into()),
-            },
-        );
+        snapshot.persistence.windows.insert(window, WindowFingerprint {
+            window_server_id: Some(window.idx.get()),
+            title: Some(display.to_string()),
+            width: 600.0,
+            height: 400.0,
+            app_id: Some("com.example.app".into()),
+        });
     }
     // Each display's strip holds its own window before the swap.
     let workspace = snapshot.active_workspace(space_a).unwrap();
@@ -399,16 +389,13 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
             &mut memory,
             LayoutEvent::WindowAdded(space, window),
         );
-        snapshot.persistence.windows.insert(
-            window,
-            WindowFingerprint {
-                window_server_id: Some(server_id),
-                title: Some(format!("window-{server_id}")),
-                width: 600.0,
-                height: 400.0,
-                app_id: Some("com.example.app".into()),
-            },
-        );
+        snapshot.persistence.windows.insert(window, WindowFingerprint {
+            window_server_id: Some(server_id),
+            title: Some(format!("window-{server_id}")),
+            width: 600.0,
+            height: 400.0,
+            app_id: Some("com.example.app".into()),
+        });
     }
     let path = std::env::temp_dir().join(format!(
         "rini-absent-display-release-test-{}.ron",

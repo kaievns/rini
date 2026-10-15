@@ -108,9 +108,7 @@ mod tests {
     const PLAYS: Duration = Duration::from_millis(350);
     const WALL: OverlayVector = OverlayVector::new(-72.0, 0.0);
 
-    fn ms(n: u64) -> Duration {
-        Duration::from_millis(n)
-    }
+    fn ms(n: u64) -> Duration { Duration::from_millis(n) }
 
     fn close(a: OverlayVector, b: OverlayVector) -> bool {
         (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6
@@ -264,14 +262,15 @@ mod tests {
     fn a_bounce_from_rest_is_the_keyframes_the_overlay_installs() {
         let track = Bounce::from_rest(WALL, PLAYS).track(GroupKey::STILL, 7.0);
         let rest = Value::Point(OverlayPoint::origin());
-        assert_eq!(
-            track.keys(),
-            [(0.0, rest), (BOUNCE_TURN, Value::Point(WALL.to_point())), (1.0, rest)]
-        );
-        assert_eq!(
-            track.curves(),
-            [Curve::Bezier(MOTION_CURVE), Curve::Bezier(EASE_IN_OUT)]
-        );
+        assert_eq!(track.keys(), [
+            (0.0, rest),
+            (BOUNCE_TURN, Value::Point(WALL.to_point())),
+            (1.0, rest)
+        ]);
+        assert_eq!(track.curves(), [
+            Curve::Bezier(MOTION_CURVE),
+            Curve::Bezier(EASE_IN_OUT)
+        ]);
         assert_eq!(track.node(), Node::Container(GroupKey::STILL));
         assert_eq!(track.channel(), Channel::Bounce);
         assert_eq!((track.begin(), track.seconds()), (7.0, 0.35));

@@ -49,9 +49,7 @@ impl Fade {
 
 impl Folding {
     /// Whether the glyphs are laid out unfolded.
-    pub fn expanded(self) -> bool {
-        self != Folding::Folded
-    }
+    pub fn expanded(self) -> bool { self != Folding::Folded }
 
     /// A click on the fold indicator: where the fold goes, and the fade that takes it there. A
     /// click while the tail is fading out brings it back.

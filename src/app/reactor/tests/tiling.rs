@@ -11,13 +11,13 @@ use test_log::test;
 
 use super::fixtures::*;
 use crate::animation::domain::motion::surface::SurfaceGeometry;
-use crate::layout::settings::Edges;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::input::event::LeftPress;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::edge_drag::End;
 use crate::layout::domain::tile::window_in;
+use crate::layout::settings::Edges;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::request::Request;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
@@ -433,13 +433,10 @@ fn discovery_minimize_transition_removes_window_from_layout() {
 
     reactor.discover_test_windows(
         1,
-        vec![(
-            wid,
-            WindowInfo {
-                is_minimized: true,
-                ..make_window(1)
-            },
-        )],
+        vec![(wid, WindowInfo {
+            is_minimized: true,
+            ..make_window(1)
+        })],
         vec![],
     );
 
@@ -466,13 +463,10 @@ fn discovery_manageability_loss_removes_window_from_layout() {
 
     reactor.discover_test_windows(
         1,
-        vec![(
-            wid,
-            WindowInfo {
-                is_root: false,
-                ..make_window(1)
-            },
-        )],
+        vec![(wid, WindowInfo {
+            is_root: false,
+            ..make_window(1)
+        })],
         vec![wid],
     );
 
@@ -517,11 +511,11 @@ fn repeated_ordered_out_ax_replacement_does_not_accumulate_layout_ghosts() {
 
         reactor.track_test_window_server_info(wsid, pid, middle_info.frame);
         reactor.mark_test_window_visible_in_space(wsid, space);
-        reactor.discover_test_windows(
-            pid,
-            vec![(middle, middle_info.clone())],
-            vec![WindowId::new(pid, 1), middle, WindowId::new(pid, 3)],
-        );
+        reactor.discover_test_windows(pid, vec![(middle, middle_info.clone())], vec![
+            WindowId::new(pid, 1),
+            middle,
+            WindowId::new(pid, 3),
+        ]);
         assert_eq!(
             test_layout(&mut reactor, space, screen).len(),
             3,
@@ -742,10 +736,10 @@ mod strip_regroup {
     use test_log::test;
 
     use super::*;
-    use crate::windows::domain::raise_order::StackGroup::{Floating, Tiled};
     use crate::app::reactor::{StackedWindow, strip_group_to_lift_for};
     use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
     use crate::windows::domain::raise_order::AppBatch;
+    use crate::windows::domain::raise_order::StackGroup::{Floating, Tiled};
 
     const SCREEN: CGRect = CGRect {
         origin: CGPoint { x: 0., y: 0. },
@@ -1173,10 +1167,10 @@ mod strip_regroup {
         crate::windows::platform::window_server::set_front_to_back_override(None);
 
         let request = raise_request(&mut raise_rx).expect("a raise request");
-        assert_eq!(
-            request.raise_windows,
-            vec![AppBatch::of(&[WindowId::new(1, 2), WindowId::new(1, 1)])]
-        );
+        assert_eq!(request.raise_windows, vec![AppBatch::of(&[
+            WindowId::new(1, 2),
+            WindowId::new(1, 1)
+        ])]);
         assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 1)));
         assert_eq!(
             request.focus_quiet,
@@ -1304,14 +1298,19 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
 /// and moves the third's place on the strip while its park stays put.
 #[test]
 fn a_pass_s_requests_carry_each_tiled_window_s_place_on_the_strip() {
-    use crate::transitions::platform::engine::Event as Engine;
     use rini_geometry::Round;
     use rini_geometry::space::FromCg;
 
+    use crate::transitions::platform::engine::Event as Engine;
+
     let (mut apps, mut reactor, mut rx) = moving_strip(0.5, 4);
     let space = SpaceId::new(1);
-    let (first, second, third, floating) =
-        (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3), WindowId::new(1, 4));
+    let (first, second, third, floating) = (
+        WindowId::new(1, 1),
+        WindowId::new(1, 2),
+        WindowId::new(1, 3),
+        WindowId::new(1, 4),
+    );
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, floating));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
@@ -1329,11 +1328,17 @@ fn a_pass_s_requests_carry_each_tiled_window_s_place_on_the_strip() {
             passes.push(windows);
         }
     }
-    let [requests] = &passes[..] else { panic!("one pass: {passes:?}") };
-    let place = |layout: &[(WindowId, CGRect)], window| {
-        layout.iter().find(|(w, _)| *w == window).map(|(_, f)| ScreenRect::from_cg(*f).rounded())
+    let [requests] = &passes[..] else {
+        panic!("one pass: {passes:?}")
     };
-    let places: Vec<_> = requests.iter().map(|r| (r.window, r.strip_before, r.strip_after)).collect();
+    let place = |layout: &[(WindowId, CGRect)], window| {
+        layout
+            .iter()
+            .find(|(w, _)| *w == window)
+            .map(|(_, f)| ScreenRect::from_cg(*f).rounded())
+    };
+    let places: Vec<_> =
+        requests.iter().map(|r| (r.window, r.strip_before, r.strip_after)).collect();
     let expected: Vec<_> = requests
         .iter()
         .map(|r| match r.window == floating {
@@ -1347,12 +1352,22 @@ fn a_pass_s_requests_carry_each_tiled_window_s_place_on_the_strip() {
     let request = |window| requests.iter().find(|r| r.window == window).expect("in the pass");
     let parked = request(second);
     assert_ne!(parked.strip_before, parked.strip_after, "{parked:?}");
-    assert_eq!(parked.strip_before, Some(parked.from), "seen where the strip had it");
+    assert_eq!(
+        parked.strip_before,
+        Some(parked.from),
+        "seen where the strip had it"
+    );
     let kept = request(third);
     assert_eq!(kept.from, kept.to, "its park stays put");
-    assert!(kept.strip_before.is_some() && kept.strip_before != kept.strip_after, "{kept:?}");
+    assert!(
+        kept.strip_before.is_some() && kept.strip_before != kept.strip_after,
+        "{kept:?}"
+    );
     assert_eq!(request(floating).from, request(floating).to);
-    assert!(place(&after, floating).is_some(), "the strip's layout holds the floating window's frame");
+    assert!(
+        place(&after, floating).is_some(),
+        "the strip's layout holds the floating window's frame"
+    );
 }
 
 /// Focus moved from the first window to the second since the last batch: the second wears the ring
@@ -1380,10 +1395,19 @@ fn a_request_carries_the_ring_and_focus_its_window_ends_with() {
         .map(|wid| {
             let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
             let shift = if wid == first { 120. } else { -120. };
-            (wid, CGRect::new(CGPoint::new(frame.origin.x + shift, frame.origin.y), frame.size))
+            (
+                wid,
+                CGRect::new(CGPoint::new(frame.origin.x + shift, frame.origin.y), frame.size),
+            )
         })
         .collect();
-    crate::app::reactor::animation::AnimationManager::animate_layout(&mut reactor, space, &layout, false, None);
+    crate::app::reactor::animation::AnimationManager::animate_layout(
+        &mut reactor,
+        space,
+        &layout,
+        false,
+        None,
+    );
 
     let mut animated = Vec::new();
     while let Ok((_, event)) = animation_rx.try_recv() {
@@ -1397,7 +1421,11 @@ fn a_request_carries_the_ring_and_focus_its_window_ends_with() {
         ..Default::default()
     };
     use crate::decorations::domain::style::Ring;
-    for (wid, wears, holds) in [(first, Ring::None, false), (second, Ring::Active, true), (third, Ring::None, false)] {
+    for (wid, wears, holds) in [
+        (first, Ring::None, false),
+        (second, Ring::Active, true),
+        (third, Ring::None, false),
+    ] {
         let worn = worn(wid);
         assert_eq!((worn.wears_ring, worn.holds_focus), (wears, holds), "{wid:?}");
         assert_eq!(worn.decoration, decoration);
@@ -1589,9 +1617,7 @@ struct Strip {
 impl Strip {
     /// Two columns and gaps all round, so rini's full width is smaller than the screen an app
     /// zooms to.
-    fn new() -> Self {
-        Self::with_columns(2)
-    }
+    fn new() -> Self { Self::with_columns(2) }
 
     /// `count` columns of one window each, `window` the first and `other` the second.
     fn with_columns(count: usize) -> Self {
@@ -1633,11 +1659,15 @@ impl Strip {
     }
 
     fn laid_out(&mut self, window: WindowId) -> CGRect {
-        laid_out_frame(&mut self.reactor, self.space, VISIBLE, window).expect("the window is laid out")
+        laid_out_frame(&mut self.reactor, self.space, VISIBLE, window)
+            .expect("the window is laid out")
     }
 
     fn tiling(&self) -> CGRect {
-        compute_tiling_area(VISIBLE, &self.reactor.config.settings.layout.gaps.effective_for_display(None))
+        compute_tiling_area(
+            VISIBLE,
+            &self.reactor.config.settings.layout.gaps.effective_for_display(None),
+        )
     }
 
     fn frame_of(&self, window: WindowId) -> CGRect {
@@ -1681,9 +1711,7 @@ impl Strip {
         }
     }
 
-    fn on_screen(&self, window: WindowId) -> CGRect {
-        self.apps.windows[&window].frame
-    }
+    fn on_screen(&self, window: WindowId) -> CGRect { self.apps.windows[&window].frame }
 
     /// The config reloaded with niri's border on at `width`, and what that writes carried out.
     fn with_border(mut self, width: f64) -> Self {
@@ -1710,7 +1738,11 @@ fn a_reload_changing_the_border_width_lays_the_strip_out_again() {
     reload_with_border(&mut strip.reactor, 4.);
     let inset = window_in(before, 4.);
     assert_eq!(strip.laid_out(strip.window), inset);
-    assert_eq!(strip.settle(strip.window).last(), Some(&inset), "written by the reload");
+    assert_eq!(
+        strip.settle(strip.window).last(),
+        Some(&inset),
+        "written by the reload"
+    );
     assert_eq!(strip.on_screen(strip.window), inset);
 }
 
@@ -1731,11 +1763,22 @@ fn a_window_at_its_written_frame_is_not_taken_for_a_user_resize_with_a_border_on
     let written = strip.laid_out(strip.window);
     strip.app_reports(strip.window, written, MouseState::Up);
     assert_eq!(strip.laid_out(strip.window), written);
-    assert_eq!(strip.settle(strip.window), Vec::<CGRect>::new(), "nothing to write back");
+    assert_eq!(
+        strip.settle(strip.window),
+        Vec::<CGRect>::new(),
+        "nothing to write back"
+    );
 
-    let narrower = CGRect::new(written.origin, CGSize::new(written.size.width - 100., written.size.height));
+    let narrower = CGRect::new(
+        written.origin,
+        CGSize::new(written.size.width - 100., written.size.height),
+    );
     strip.app_reports(strip.window, narrower, MouseState::Up);
-    assert_eq!(strip.laid_out(strip.window).size, narrower.size, "the window at the app's width, not 8pt less");
+    assert_eq!(
+        strip.laid_out(strip.window).size,
+        narrower.size,
+        "the window at the app's width, not 8pt less"
+    );
 }
 
 #[test]
@@ -1754,10 +1797,19 @@ fn a_floating_window_keeps_its_frame_under_a_border() {
     reload_with_border(&mut reactor, 4.);
     apps.simulate_until_quiet(&mut reactor);
     let after = test_layout(&mut reactor, space, screen);
-    let frame = |frames: &[(WindowId, CGRect)], window| frames.iter().find(|(w, _)| *w == window).map(|(_, f)| *f);
-    assert_eq!(frame(&after, floating), frame(&before, floating), "it wears the band outside");
+    let frame = |frames: &[(WindowId, CGRect)], window| {
+        frames.iter().find(|(w, _)| *w == window).map(|(_, f)| *f)
+    };
+    assert_eq!(
+        frame(&after, floating),
+        frame(&before, floating),
+        "it wears the band outside"
+    );
     let tiled = WindowId::new(1, 2);
-    assert_eq!(frame(&after, tiled), frame(&before, tiled).map(|slot| window_in(slot, 4.)));
+    assert_eq!(
+        frame(&after, tiled),
+        frame(&before, tiled).map(|slot| window_in(slot, 4.))
+    );
 }
 
 #[test]
@@ -1766,7 +1818,12 @@ fn the_drag_session_keeps_the_frame_its_window_started_from() {
     let start = strip.frame_of(strip.window);
     let mut last = start;
     for grown in [30., 60., 90.] {
-        last = rect(start.origin.x, start.origin.y, start.size.width + grown, start.size.height);
+        last = rect(
+            start.origin.x,
+            start.origin.y,
+            start.size.width + grown,
+            start.size.height,
+        );
         strip.app_reports(strip.window, last, MouseState::Down);
     }
     let session = active_session(&strip);
@@ -1776,7 +1833,10 @@ fn the_drag_session_keeps_the_frame_its_window_started_from() {
 
 fn active_session(strip: &Strip) -> &DragSession {
     let DragState::Active { session } = &strip.reactor.drag_manager.drag_state else {
-        panic!("a drag under the held button: {:?}", strip.reactor.drag_manager.drag_state);
+        panic!(
+            "a drag under the held button: {:?}",
+            strip.reactor.drag_manager.drag_state
+        );
     };
     session
 }
@@ -1787,16 +1847,30 @@ fn active_session(strip: &Strip) -> &DragSession {
 fn the_drag_session_keeps_the_end_its_reports_moved_last_until_the_release() {
     let mut strip = Strip::new();
     let start = strip.frame_of(strip.window);
-    let shorter = rect(start.origin.x, start.origin.y, start.size.width, start.size.height - 40.);
+    let shorter = rect(
+        start.origin.x,
+        start.origin.y,
+        start.size.width,
+        start.size.height - 40.,
+    );
     strip.app_reports(strip.window, shorter, MouseState::Down);
     assert_eq!(active_session(&strip).dragged_end, Some(End::Bottom), "moved");
     strip.app_reports(strip.window, start, MouseState::Down);
-    assert_eq!(active_session(&strip).dragged_end, Some(End::Bottom), "back at the start");
+    assert_eq!(
+        active_session(&strip).dragged_end,
+        Some(End::Bottom),
+        "back at the start"
+    );
 
     strip.reactor.handle_event(Event::MouseUp);
     strip.settle(strip.window);
     let start = strip.frame_of(strip.window);
-    let wider = rect(start.origin.x, start.origin.y, start.size.width + 40., start.size.height);
+    let wider = rect(
+        start.origin.x,
+        start.origin.y,
+        start.size.width + 40.,
+        start.size.height,
+    );
     strip.app_reports(strip.window, wider, MouseState::Down);
     assert_eq!(active_session(&strip).dragged_end, None, "the next drag");
 }
@@ -1814,19 +1888,29 @@ fn every_report_of_a_drag_measures_from_where_the_drag_started() {
         .layout_manager
         .layout_engine
         .set_layout_settings(&strip.reactor.config.settings.layout);
-    strip.reactor.send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
+    strip
+        .reactor
+        .send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
     strip.settle(strip.other);
     let start = strip.on_screen(strip.other);
 
     for travel in [50., 100.] {
-        let wider = rect(start.origin.x, start.origin.y, start.size.width + travel, start.size.height);
+        let wider = rect(
+            start.origin.x,
+            start.origin.y,
+            start.size.width + travel,
+            start.size.height,
+        );
         strip.app_reports(strip.other, wider, MouseState::Down);
     }
     strip.reactor.handle_event(Event::MouseUp);
     strip.settle(strip.other);
 
     let width = strip.on_screen(strip.other).size.width;
-    assert!((width - (start.size.width + 200.)).abs() <= 3., "{start:?} -> {width}");
+    assert!(
+        (width - (start.size.width + 200.)).abs() <= 3.,
+        "{start:?} -> {width}"
+    );
 }
 
 /// The window the window server finds under the cursor, for as long as the guard lives.
@@ -1834,8 +1918,15 @@ struct CursorOver;
 
 impl CursorOver {
     fn window(reactor: &Reactor, window: WindowId) -> Self {
-        let id = reactor.state.windows.window(window).and_then(|w| w.info.sys_id).expect("sys id");
-        crate::windows::platform::window_server::set_window_under_cursor_override(Some(id.as_u32()));
+        let id = reactor
+            .state
+            .windows
+            .window(window)
+            .and_then(|w| w.info.sys_id)
+            .expect("sys id");
+        crate::windows::platform::window_server::set_window_under_cursor_override(Some(
+            id.as_u32(),
+        ));
         CursorOver
     }
 }
@@ -1858,7 +1949,9 @@ fn left_edge_drag_released_over(under_cursor: Option<fn(&Strip) -> WindowId>) ->
         .layout_manager
         .layout_engine
         .set_layout_settings(&strip.reactor.config.settings.layout);
-    strip.reactor.send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
+    strip
+        .reactor
+        .send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
     strip.settle(strip.other);
     let start = strip.on_screen(strip.other);
     let window_start = strip.on_screen(strip.window);
@@ -1868,7 +1961,12 @@ fn left_edge_drag_released_over(under_cursor: Option<fn(&Strip) -> WindowId>) ->
     for grown in [30., 60., 90.] {
         strip.app_reports(
             strip.other,
-            rect(start.origin.x - grown, start.origin.y, start.size.width + grown, start.size.height),
+            rect(
+                start.origin.x - grown,
+                start.origin.y,
+                start.size.width + grown,
+                start.size.height,
+            ),
             MouseState::Down,
         );
     }
@@ -1882,7 +1980,10 @@ fn left_edge_drag_released_over(under_cursor: Option<fn(&Strip) -> WindowId>) ->
     let travel = start.origin.x - end.origin.x;
     assert!(travel > 80., "{start:?} -> {end:?}");
     let window_travel = window_start.origin.x - strip.on_screen(strip.window).origin.x;
-    assert!((window_travel - travel).abs() <= 1., "{window_travel} against {travel}");
+    assert!(
+        (window_travel - travel).abs() <= 1.,
+        "{window_travel} against {travel}"
+    );
     strip
 }
 
@@ -1902,7 +2003,10 @@ fn a_left_edge_drag_let_go_over_its_own_window_keeps_its_right_edge() {
 #[test]
 fn a_left_edge_drag_let_go_over_the_window_behind_its_edge_keeps_its_focus_and_right_edge() {
     let strip = left_edge_drag_released_over(Some(|strip| strip.window));
-    assert_eq!(strip.reactor.layout_manager.layout_engine.focused_window(), Some(strip.other));
+    assert_eq!(
+        strip.reactor.layout_manager.layout_engine.focused_window(),
+        Some(strip.other)
+    );
 }
 
 /// Kai, 2026-10-06, after the left edge first grew to the left: "it makes a weird back and fourth
@@ -1919,7 +2023,9 @@ fn a_left_edge_drags_release_draws_the_dragged_window_from_where_it_was_let_go()
         .layout_manager
         .layout_engine
         .set_layout_settings(&strip.reactor.config.settings.layout);
-    strip.reactor.send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
+    strip
+        .reactor
+        .send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
     strip.settle(strip.other);
     let start = strip.on_screen(strip.other);
     let before = strip.on_screen(strip.window);
@@ -1958,13 +2064,19 @@ fn a_left_edge_drags_release_draws_the_dragged_window_from_where_it_was_let_go()
         (from.origin.x - dropped.origin.x).abs() <= 2.,
         "drawn from where it was let go, {dropped:?}, not {from:?}"
     );
-    assert!((to.origin.x + to.size.width - dropped.max().x).abs() <= 2., "{to:?}");
+    assert!(
+        (to.origin.x + to.size.width - dropped.max().x).abs() <= 2.,
+        "{to:?}"
+    );
     let (from, to) = travel(strip.window);
     assert!(
         (from.origin.x - before.origin.x).abs() <= 1.,
         "pans from where it stands, {before:?}, not {from:?}"
     );
-    assert!((from.origin.x - to.origin.x - 90.).abs() <= 2., "{from:?} -> {to:?}");
+    assert!(
+        (from.origin.x - to.origin.x - 90.).abs() <= 2.,
+        "{from:?} -> {to:?}"
+    );
 }
 
 /// Kai, 2026-10-07: "wher i resize a ghosty window by the left size it still does a small 1-2px
@@ -1985,11 +2097,16 @@ fn a_left_edge_drags_release_leaves_the_dragged_window_exactly_where_it_was_let_
         .layout_engine
         .set_layout_settings(&strip.reactor.config.settings.layout);
     for _ in 0..2 {
-        strip.reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+        strip
+            .reactor
+            .handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
         strip.settle(last);
     }
     let start = strip.on_screen(last);
-    assert!((start.max().x - strip.tiling().max().x).abs() <= 1., "flush with the right edge: {start:?}");
+    assert!(
+        (start.max().x - strip.tiling().max().x).abs() <= 1.,
+        "flush with the right edge: {start:?}"
+    );
     strip.reactor.config.settings.animate = true;
     let (animation_tx, mut rx) = crate::app::channels::channel();
     strip.reactor.communication_manager.transitions_tx = Some(animation_tx);
@@ -2042,21 +2159,36 @@ fn a_left_edge_shrink_flush_right_leaves_the_column_beyond_the_right_edge_where_
     // The live display's gaps: the column after the flush one starts on the screen's edge and is
     // parked in the corner.
     settings.gaps.gaps = 3.;
-    settings.gaps.struts = Edges { top: 0., left: 0., bottom: 0., right: 0. };
+    settings.gaps.struts = Edges {
+        top: 0.,
+        left: 0.,
+        bottom: 0.,
+        right: 0.,
+    };
     strip
         .reactor
         .layout_manager
         .layout_engine
         .set_layout_settings(&strip.reactor.config.settings.layout);
-    strip.reactor.send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.window));
+    strip
+        .reactor
+        .send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.window));
     strip.settle(strip.window);
-    strip.reactor.send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
+    strip
+        .reactor
+        .send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
     strip.settle(strip.other);
     let beyond = WindowId::new(1, 3);
     let start = strip.on_screen(strip.other);
-    assert!((start.max().x - strip.tiling().max().x).abs() <= 1., "flush right: {start:?}");
+    assert!(
+        (start.max().x - strip.tiling().max().x).abs() <= 1.,
+        "flush right: {start:?}"
+    );
     let parked = strip.on_screen(beyond);
-    assert!(parked.origin.y > start.max().y, "parked in the corner: {parked:?}");
+    assert!(
+        parked.origin.y > start.max().y,
+        "parked in the corner: {parked:?}"
+    );
     let window_before = strip.on_screen(strip.window);
     strip.reactor.config.settings.animate = true;
     let (animation_tx, mut rx) = crate::app::channels::channel();
@@ -2066,7 +2198,12 @@ fn a_left_edge_shrink_flush_right_leaves_the_column_beyond_the_right_edge_where_
     for shrunk in [30., 60., 90.] {
         strip.app_reports(
             strip.other,
-            rect(start.origin.x + shrunk, start.origin.y, start.size.width - shrunk, start.size.height),
+            rect(
+                start.origin.x + shrunk,
+                start.origin.y,
+                start.size.width - shrunk,
+                start.size.height,
+            ),
             MouseState::Down,
         );
     }
@@ -2075,7 +2212,11 @@ fn a_left_edge_shrink_flush_right_leaves_the_column_beyond_the_right_edge_where_
     let flights = strip_movements(&mut rx);
     assert_eq!(flights.len(), 1, "the release scrolls the strip once");
     let flight = &flights[0];
-    assert!((flight.from_offset.x - 90.).abs() <= 2., "by the shrink: {:?}", flight.from_offset);
+    assert!(
+        (flight.from_offset.x - 90.).abs() <= 2.,
+        "by the shrink: {:?}",
+        flight.from_offset
+    );
     let travel = |window| {
         flight
             .windows
@@ -2085,14 +2226,23 @@ fn a_left_edge_shrink_flush_right_leaves_the_column_beyond_the_right_edge_where_
             .travel(flight.from_offset, SurfacePoint::origin())
     };
     let (from, to) = travel(beyond);
-    assert!(from.origin.x >= DISPLAY.max().x, "off screen throughout, not from {from:?}");
-    assert!((from.origin.x - to.origin.x).abs() <= 1., "where it was: {from:?} -> {to:?}");
+    assert!(
+        from.origin.x >= DISPLAY.max().x,
+        "off screen throughout, not from {from:?}"
+    );
+    assert!(
+        (from.origin.x - to.origin.x).abs() <= 1.,
+        "where it was: {from:?} -> {to:?}"
+    );
     let (from, to) = travel(strip.window);
     assert!(
         (from.origin.x - window_before.origin.x).abs() <= 1.,
         "the column before pans from where it stands, {window_before:?}, not {from:?}"
     );
-    assert!((to.origin.x - from.origin.x - 90.).abs() <= 2., "by the shrink: {from:?} -> {to:?}");
+    assert!(
+        (to.origin.x - from.origin.x - 90.).abs() <= 2.,
+        "by the shrink: {from:?} -> {to:?}"
+    );
 }
 
 /// A double-click on a title bar has the app zoom its window, and rini has to follow it to its own
@@ -2169,7 +2319,11 @@ mod title_bar_zoom {
 
         fn assert_adopted_as_before(&mut self, case: &str) {
             assert_eq!(self.full_width(), Some(false), "{case}");
-            assert_eq!(self.laid_out(self.window).size.width, self.clamped_width(), "{case}");
+            assert_eq!(
+                self.laid_out(self.window).size.width,
+                self.clamped_width(),
+                "{case}"
+            );
         }
     }
 
@@ -2243,7 +2397,10 @@ mod title_bar_zoom {
             assert_eq!(strip.full_width(), Some(maximised), "{command:?}");
             let tiling = strip.tiling();
             let full = strip.laid_out(strip.window);
-            assert_eq!((full.origin.x, full.size.width), (tiling.origin.x, tiling.size.width));
+            assert_eq!(
+                (full.origin.x, full.size.width),
+                (tiling.origin.x, tiling.size.width)
+            );
 
             // The app snapping its height to a grid after rini's write.
             let snapped =
@@ -2251,7 +2408,10 @@ mod title_bar_zoom {
             strip.app_reports(strip.window, snapped, MouseState::Up);
             assert_eq!(strip.full_width(), Some(maximised), "{command:?}");
             let after = strip.laid_out(strip.window);
-            assert_eq!((after.origin.x, after.size.width), (tiling.origin.x, tiling.size.width));
+            assert_eq!(
+                (after.origin.x, after.size.width),
+                (tiling.origin.x, tiling.size.width)
+            );
         }
     }
 
@@ -2269,7 +2429,11 @@ mod title_bar_zoom {
             strip.reactor.drag_manager.skip_layout_for_window,
             Some(strip.window)
         );
-        assert_eq!(strip.settle(strip.window).last(), Some(&full), "rini's frame again, at once");
+        assert_eq!(
+            strip.settle(strip.window).last(),
+            Some(&full),
+            "rini's frame again, at once"
+        );
         assert_eq!(strip.on_screen(strip.window), full);
         assert_eq!(strip.full_width(), Some(true), "one double-click toggles once");
 
@@ -2292,10 +2456,18 @@ mod title_bar_zoom {
                 VISIBLE
             });
             assert_eq!(strip.full_width(), Some(false), "{unzoomed_to}");
-            assert_eq!(strip.laid_out(strip.window), before, "{unzoomed_to}: back to its width");
+            assert_eq!(
+                strip.laid_out(strip.window),
+                before,
+                "{unzoomed_to}: back to its width"
+            );
             strip.settle(strip.window);
             strip.click_back();
-            assert_eq!(strip.laid_out(strip.window), before, "{unzoomed_to}: and it stays there");
+            assert_eq!(
+                strip.laid_out(strip.window),
+                before,
+                "{unzoomed_to}: and it stays there"
+            );
         }
     }
 
@@ -2310,7 +2482,11 @@ mod title_bar_zoom {
         assert_eq!(strip.settle(strip.window).last(), Some(&full), "written at once");
         assert_eq!(strip.on_screen(strip.window), full);
         strip.click_back();
-        assert_eq!(strip.settle(strip.window), Vec::<CGRect>::new(), "the next click writes nothing back");
+        assert_eq!(
+            strip.settle(strip.window),
+            Vec::<CGRect>::new(),
+            "the next click writes nothing back"
+        );
         assert_eq!(strip.full_width(), Some(true));
     }
 
@@ -2347,7 +2523,8 @@ mod title_bar_zoom {
         let frame = strip.frame_of(strip.window);
         strip.press(CGPoint::new(frame.max().x, frame.mid().y), false);
         for width in [1020., 1050., 1080.] {
-            strip.app_reports(strip.window, 
+            strip.app_reports(
+                strip.window,
                 CGRect::new(frame.origin, CGSize::new(width, frame.size.height)),
                 MouseState::Down,
             );
@@ -2532,7 +2709,14 @@ fn every_mod_r_on_the_last_column_flies() {
 
             for press in 0..5 {
                 let case = format!("{case}, press {press}");
-                press_flies(&mut apps, &mut reactor, &mut rx, last, LayoutCommand::CyclePresetColumnWidth, &case);
+                press_flies(
+                    &mut apps,
+                    &mut reactor,
+                    &mut rx,
+                    last,
+                    LayoutCommand::CyclePresetColumnWidth,
+                    &case,
+                );
             }
         }
     }
@@ -2553,7 +2737,10 @@ fn press_flies(
     let passes = land_layout_passes(apps, reactor, rx);
     let resized = apps.windows[&window].frame;
     assert_ne!(resized.size.width, width, "{case}: the width changed");
-    let flown = passes.iter().flatten().find(|request| request.window == window && request.to.to_cg() == resized);
+    let flown = passes
+        .iter()
+        .flatten()
+        .find(|request| request.window == window && request.to.to_cg() == resized);
     let flown = flown.unwrap_or_else(|| panic!("{case}: {passes:?}"));
     assert_eq!(flown.from.size.width, width, "{case}");
 }
@@ -2575,15 +2762,31 @@ fn a_resize_key_and_the_full_width_toggle_on_the_last_column_fly() {
         reactor.send_layout_event(LayoutEvent::WindowFocused(space, last));
         land_layout_passes(&mut apps, &mut reactor, &mut rx);
         let presses = [
-            ("a shrink key", LayoutCommand::ResizeWindowBy { amount: -0.1, orientation: ResizeOrientation::Horizontal }),
-            ("a grow key", LayoutCommand::ResizeWindowBy { amount: 0.1, orientation: ResizeOrientation::Horizontal }),
+            ("a shrink key", LayoutCommand::ResizeWindowBy {
+                amount: -0.1,
+                orientation: ResizeOrientation::Horizontal,
+            }),
+            ("a grow key", LayoutCommand::ResizeWindowBy {
+                amount: 0.1,
+                orientation: ResizeOrientation::Horizontal,
+            }),
             ("Mod+F", LayoutCommand::ToggleFullscreenWithinGaps),
             ("Mod+F back", LayoutCommand::ToggleFullscreenWithinGaps),
         ];
         for (press, command) in presses {
-            press_flies(&mut apps, &mut reactor, &mut rx, last, command, &format!("{columns} columns, {press}"));
+            press_flies(
+                &mut apps,
+                &mut reactor,
+                &mut rx,
+                last,
+                command,
+                &format!("{columns} columns, {press}"),
+            );
         }
-        assert_eq!(reactor.layout_manager.layout_engine.full_width_of_column(space, last), Some(false));
+        assert_eq!(
+            reactor.layout_manager.layout_engine.full_width_of_column(space, last),
+            Some(false)
+        );
     }
 }
 
@@ -2600,7 +2803,10 @@ fn a_strip_movement_names_the_window_focused_as_its_event_began() {
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     let pressed = strip_movements(&mut rx);
     let flight = pressed.last().expect("the press scrolls the strip");
-    assert_eq!((flight.focus, flight.focused_before), (Some(third), Some(second)));
+    assert_eq!(
+        (flight.focus, flight.focused_before),
+        (Some(third), Some(second))
+    );
 
     // cmd-` onto the column scrolled off: macOS makes it key, and reports it, before the layout moves.
     reactor.handle_event(Event::WindowServerFocusChanged(first, space));
@@ -2628,11 +2834,19 @@ fn a_strip_movement_names_the_key_window_as_it_went_out() {
     reactor.handle_event(Event::WindowServerFocusChanged(WindowId::new(2, 90), space));
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     let flight = strip_movements(&mut rx).pop().expect("the press scrolls the strip");
-    assert_eq!((flight.focused_before, flight.key), (Some(third), None), "a panel has the keys");
+    assert_eq!(
+        (flight.focused_before, flight.key),
+        (Some(third), None),
+        "a panel has the keys"
+    );
 
     reactor.handle_event(Event::WindowServerFocusChanged(first, space));
     let flight = strip_movements(&mut rx).pop().expect("the report scrolls the strip");
-    assert_eq!(flight.key, Some(first), "the click made its target key before the request");
+    assert_eq!(
+        flight.key,
+        Some(first),
+        "the click made its target key before the request"
+    );
 }
 
 /// Every request the reactor sent the flight engine since the last look, by kind, with the event it
@@ -2683,7 +2897,10 @@ fn a_commands_flight_carries_its_cause() {
         }
         for (kind, cause) in sent {
             assert_eq!(cause.what, what, "{kind}");
-            assert!(before <= cause.at && cause.at <= after, "{what}: taken as it was handled");
+            assert!(
+                before <= cause.at && cause.at <= after,
+                "{what}: taken as it was handled"
+            );
         }
     }
 }
@@ -2702,23 +2919,37 @@ fn a_nested_event_leaves_the_outer_cause() {
     let window = WindowId::new(1, 1);
     let frame = reactor.state.windows.window(window).expect("window").frame_monotonic;
     let dragged = |dx, mouse| {
-        let to = CGRect::new(CGPoint::new(frame.origin.x + dx, frame.origin.y + 50.), frame.size);
+        let to = CGRect::new(
+            CGPoint::new(frame.origin.x + dx, frame.origin.y + 50.),
+            frame.size,
+        );
         Event::WindowFrameChanged(window, to, None, Requested(false), Some(mouse))
     };
     reactor.handle_event(dragged(200., MouseState::Down));
     causes(&mut rx);
 
-    let report =
-        crate::transitions::domain::request::Cause { at: Instant::now(), what: "window_frame_changed" };
+    let report = crate::transitions::domain::request::Cause {
+        at: Instant::now(),
+        what: "window_frame_changed",
+    };
     reactor.cause = report;
     let outcome = reactor.dispatch_workflow(dragged(210., MouseState::Up)).unwrap();
-    assert!(outcome.dispatch_mouse_up, "the release is handled inside the report");
+    assert!(
+        outcome.dispatch_mouse_up,
+        "the release is handled inside the report"
+    );
     reactor.apply_event_outcome(outcome);
 
     let sent = causes(&mut rx);
     assert!(!sent.is_empty(), "the mouse up lays the strip out again");
-    assert!(sent.iter().all(|(_, cause)| cause.what == "mouse_up" && cause.at >= report.at), "{sent:?}");
-    assert_eq!(reactor.cause, report, "what the report does after it carries the report");
+    assert!(
+        sent.iter().all(|(_, cause)| cause.what == "mouse_up" && cause.at >= report.at),
+        "{sent:?}"
+    );
+    assert_eq!(
+        reactor.cause, report,
+        "what the report does after it carries the report"
+    );
 }
 
 /// Reported 2026-09-30: only the 50/50 pair at the start of a strip showed a move; everywhere else
@@ -2797,10 +3028,7 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
         let flight = &flights[0];
         assert_eq!(
             flight.cue,
-            crate::animation::domain::choreography::Cue::Move {
-                window: moved,
-                direction
-            },
+            crate::animation::domain::choreography::Cue::Move { window: moved, direction },
             "the look is told the press"
         );
         assert!(
@@ -2835,8 +3063,10 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
             "{direction:?}: its real window goes to the layout's frame, off screen: {real:?}"
         );
 
-        let Some(crate::animation::domain::motion::accents::Accent::Step { offset: nudge, seconds }) =
-            flight.accent
+        let Some(crate::animation::domain::motion::accents::Accent::Step {
+            offset: nudge,
+            seconds,
+        }) = flight.accent
         else {
             panic!("{direction:?}: a full-width move steps");
         };
@@ -2851,7 +3081,10 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
             "{:?}",
             flight.duration
         );
-        assert!((seconds - plain).abs() < 1e-6, "the step runs over its press's length: {seconds}");
+        assert!(
+            (seconds - plain).abs() < 1e-6,
+            "the step runs over its press's length: {seconds}"
+        );
     }
 }
 
@@ -2942,8 +3175,7 @@ fn a_move_that_drops_the_centring_starts_every_window_where_it_was() {
         flight.from_offset
     );
     assert_eq!(flight.windows.len(), 5);
-    let display =
-            ScreenRect::from_cg(CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.)));
+    let display = ScreenRect::from_cg(CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.)));
     let viewport = rini_geometry::to_overlay_space(display, display);
     let mut seen = 0;
     for window in &flight.windows {
@@ -2958,7 +3190,8 @@ fn a_move_that_drops_the_centring_starts_every_window_where_it_was() {
         } else {
             seen += 1;
             assert_eq!(
-                start.origin.to_cg(), before.origin,
+                start.origin.to_cg(),
+                before.origin,
                 "{:?} is drawn from where it was",
                 window.window
             );

@@ -9,16 +9,15 @@ use std::time::{Duration, Instant};
 use objc2_app_kit::NSRunningApplication;
 use objc2_application_services::AXError;
 use objc2_foundation::ns_string;
+use rini_core::ids::pid_t;
 use rini_runloop::timer::Timer;
 use tracing::{debug, error, info, instrument, warn};
 
+use crate::displays::event::{Event, EventSink};
 use crate::windows::platform::app::NSRunningApplicationExt;
 use crate::windows::platform::ax::ask_again::{AskAgain, ask_until};
 use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
 use crate::windows::platform::ax::observer::Observer;
-use rini_core::ids::pid_t;
-
-use crate::displays::event::{Event, EventSink};
 
 const K_AX_EXPOSE_SHOW_ALL_WINDOWS: &str = "AXExposeShowAllWindows";
 const K_AX_EXPOSE_SHOW_FRONT_WINDOWS: &str = "AXExposeShowFrontWindows";

@@ -2,11 +2,11 @@
 //! every 30s once the input has been idle a minute, cut apart, compared with what was last sent, and
 //! sent on only when something changed; and the desktop behind each bar, for its ground, once a minute. See `src/bar/docs/menu-extras.md`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use objc2_app_kit::NSStatusWindowLevel;
@@ -37,7 +37,10 @@ const ANY_INPUT: CGEventType = CGEventType(u32::MAX);
 
 /// How long since the last keyboard, mouse or trackpad input to the session.
 fn idle() -> Duration {
-    let seconds = CGEventSource::seconds_since_last_event_type(CGEventSourceStateID::HIDSystemState, ANY_INPUT);
+    let seconds = CGEventSource::seconds_since_last_event_type(
+        CGEventSourceStateID::HIDSystemState,
+        ANY_INPUT,
+    );
     Duration::try_from_secs_f64(seconds).unwrap_or(Duration::ZERO)
 }
 
@@ -99,9 +102,7 @@ impl Watcher {
     }
 
     /// Picture now rather than at the next tick, the grounds too.
-    pub fn refresh(&self) {
-        let _ = self.commands.send(Message::Extras(Command::Refresh));
-    }
+    pub fn refresh(&self) { let _ = self.commands.send(Message::Extras(Command::Refresh)); }
 
     /// The displays whose grounds to picture, pictured at the next chance.
     pub fn set_grounds(&self, displays: Vec<(String, CGRect)>) {
@@ -119,7 +120,11 @@ fn run(inbox: &Receiver<Message>, paused: &AtomicBool, sinks: &Sinks) {
     let mut schedule = Schedule::new(Instant::now());
     let mut last: Option<Sent> = None;
     let mut owners = OwnerNames::default();
-    let mut grounds = Grounds { displays: Vec::new(), timer: Timer::new(Instant::now()), hashes: HashMap::new() };
+    let mut grounds = Grounds {
+        displays: Vec::new(),
+        timer: Timer::new(Instant::now()),
+        hashes: HashMap::new(),
+    };
     loop {
         let message = match schedule.wait(Instant::now()) {
             Some(timeout) => inbox.recv_timeout(timeout),
@@ -152,7 +157,10 @@ fn run(inbox: &Receiver<Message>, paused: &AtomicBool, sinks: &Sinks) {
                 }
             }
         }
-        last = Some(Sent { stamps, items: extras.items.clone() });
+        last = Some(Sent {
+            stamps,
+            items: extras.items.clone(),
+        });
         (sinks.extras)(extras);
     }
 }
@@ -196,7 +204,11 @@ impl Grounds {
                 continue;
             };
             if self.hashes.insert(display.clone(), hash) != Some(hash) {
-                send(Ground { display: display.clone(), picture, scale });
+                send(Ground {
+                    display: display.clone(),
+                    picture,
+                    scale,
+                });
             }
         }
     }
@@ -216,8 +228,10 @@ fn picture(
     may_capture: impl FnOnce() -> bool,
 ) -> Option<(Extras, Vec<Stamp>)> {
     let (windows, placed) = status_windows(owners);
-    let chosen: Vec<(Placed, Kind)> =
-        extras::select(&windows).into_iter().map(|(index, kind)| (placed[index], kind)).collect();
+    let chosen: Vec<(Placed, Kind)> = extras::select(&windows)
+        .into_iter()
+        .map(|(index, kind)| (placed[index], kind))
+        .collect();
     if chosen.is_empty() {
         return Some((Extras::default(), Vec::new()));
     }
@@ -227,14 +241,18 @@ fn picture(
         return None;
     }
     let image = capture(&ids, NULL_RECT)?;
-    let composite = Composite::new(&bounds, (CGImage::width(Some(&image)), CGImage::height(Some(&image))))?;
+    let composite = Composite::new(
+        &bounds,
+        (CGImage::width(Some(&image)), CGImage::height(Some(&image))),
+    )?;
     cut(&image, composite, &chosen)
 }
 
 /// The status-level windows on the active menu bar, and where each is. The main display's when which
 /// menu bar is active cannot be read.
 fn status_windows(owners: &mut OwnerNames) -> (Vec<StatusWindow>, Vec<Placed>) {
-    let display = CGDisplayBounds(active_menu_bar_display_id().unwrap_or_else(|| CGMainDisplayID()));
+    let display =
+        CGDisplayBounds(active_menu_bar_display_id().unwrap_or_else(|| CGMainDisplayID()));
     let windows: Vec<Listed> = every_window()
         .into_iter()
         .filter(|window| window.level as isize == NSStatusWindowLevel)
@@ -253,7 +271,10 @@ fn status_windows(owners: &mut OwnerNames) -> (Vec<StatusWindow>, Vec<Placed>) {
                 width: bounds.size.width,
                 height: bounds.size.height,
             };
-            (status, Placed { window: window.id.as_u32(), bounds })
+            (status, Placed {
+                window: window.id.as_u32(),
+                bounds,
+            })
         })
         .filter(|(status, _)| extras::on_display(status, display))
         .unzip()
@@ -273,7 +294,11 @@ pub(super) fn capture(ids: &[u32], rect: CGRect) -> Option<CFRetained<CGImage>> 
 
 /// Each chosen window's picture cut out of the capture, measured and fingerprinted. An extra with no
 /// ink is left out. `None` when the capture's pixels cannot be read.
-fn cut(image: &CGImage, composite: Composite, chosen: &[(Placed, Kind)]) -> Option<(Extras, Vec<Stamp>)> {
+fn cut(
+    image: &CGImage,
+    composite: Composite,
+    chosen: &[(Placed, Kind)],
+) -> Option<(Extras, Vec<Stamp>)> {
     let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
     let ctx = rgba_bitmap_context(width, height)?;
     let whole = CGRect::new(CGPoint::ZERO, CGSize::new(width as f64, height as f64));
@@ -291,15 +316,25 @@ fn cut(image: &CGImage, composite: Composite, chosen: &[(Placed, Kind)]) -> Opti
         let Some(rect) = composite.crop(bounds) else {
             continue;
         };
-        let Some(ink) = extras::ink_span(&extras::column_alpha(pixels, stride, rect), composite.scale)
+        let Some(ink) =
+            extras::ink_span(&extras::column_alpha(pixels, stride, rect), composite.scale)
         else {
             continue;
         };
         let Some(picture) = CGImage::with_image_in_rect(Some(image), rect.rect()) else {
             continue;
         };
-        stamps.push(Stamp { window, kind, hash: extras::fingerprint(pixels, stride, rect) });
-        items.push(Extra { kind, image: picture, scale: composite.scale, ink });
+        stamps.push(Stamp {
+            window,
+            kind,
+            hash: extras::fingerprint(pixels, stride, rect),
+        });
+        items.push(Extra {
+            kind,
+            image: picture,
+            scale: composite.scale,
+            ink,
+        });
     }
     Some((Extras { items }, stamps))
 }
@@ -315,7 +350,11 @@ mod tests {
     fn a_display_change_is_pictured_at_once_while_away() {
         let start = Instant::now();
         let mut schedule = Schedule::new(start);
-        let mut grounds = Grounds { displays: Vec::new(), timer: Timer::new(start), hashes: HashMap::new() };
+        let mut grounds = Grounds {
+            displays: Vec::new(),
+            timer: Timer::new(start),
+            hashes: HashMap::new(),
+        };
         assert!(schedule.take(start, AWAY_AFTER));
         assert!(grounds.timer.take(start));
         let changed = start + Duration::from_secs(3);

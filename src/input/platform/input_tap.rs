@@ -15,6 +15,7 @@
 use std::cell::{Cell, RefCell};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use arc_swap::ArcSwap;
 use objc2_core_foundation::CGPoint;
@@ -22,14 +23,9 @@ use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventFlags, CGEventMask, CGEventSource, CGEventSourceStateID,
     CGEventTapOptions as CGTapOpt, CGEventTapProxy, CGEventType,
 };
-use tracing::{debug, error, trace, warn};
-
-use crate::windows::platform::mouse::{MouseState, set_mouse_state};
-use crate::windows::platform::window_server;
 use rini_core::ids::WindowServerId;
 use rini_runloop::channel;
-
-use std::time::Instant;
+use tracing::{debug, error, trace, warn};
 
 use crate::input::domain::binding::Bind;
 use crate::input::domain::held_keys::HeldKeys;
@@ -40,10 +36,11 @@ use crate::input::domain::switch_session::{
     KeyEvent as SwitchKeyEvent, KeyEventKind, SwitchKeys, SwitchSession,
 };
 use crate::input::event::{Event, EventSink, LeftPress, OnLeftPress};
-use crate::input::platform::cursor;
 use crate::input::platform::keyboard::{key_code_from_event, modifiers_from_flags_with_keys};
-use crate::input::platform::tap;
+use crate::input::platform::{cursor, tap};
 use crate::input::settings::InputSettings;
+use crate::windows::platform::mouse::{MouseState, set_mouse_state};
+use crate::windows::platform::window_server;
 const MOUSE_MOVE_MIN_INTERVAL_NS_NORMAL: u64 = 8_000_000; // 8ms ~= 125 Hz
 const MOUSE_MOVE_MIN_INTERVAL_NS_LOW_POWER: u64 = 16_000_000; // 16ms ~= 62 Hz
 
@@ -434,14 +431,10 @@ impl InputTap {
     }
 
     #[inline]
-    fn reset_mouse_move_sampling(&self) {
-        self.mouse_move_last_timestamp.set(None);
-    }
+    fn reset_mouse_move_sampling(&self) { self.mouse_move_last_timestamp.set(None); }
 
     #[inline]
-    fn reset_mouse_window(&self) {
-        self.mouse_window.set(pointer::PointerCache::default());
-    }
+    fn reset_mouse_window(&self) { self.mouse_window.set(pointer::PointerCache::default()); }
 
     fn reconcile_after_tap_reenabled(&self) {
         let mut state = self.state.borrow_mut();
@@ -682,9 +675,10 @@ impl InputTap {
                     modifiers_from_flags_with_keys(state.current_flags, state.held.pressed()),
                     key_code,
                 );
-                let is_repeat =
-                    CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventAutorepeat)
-                        != 0;
+                let is_repeat = CGEvent::integer_value_field(
+                    Some(event),
+                    CGEventField::KeyboardEventAutorepeat,
+                ) != 0;
                 if let Some(fired) = self.hotkeys.load().press(&hotkey, is_repeat) {
                     if let Some(action) = fired {
                         self.events.send(Event::Action(action));
@@ -703,7 +697,10 @@ impl InputTap {
         for spec in unresolved {
             warn!(%spec, "Skipping hotkey that no longer resolves for current keyboard layout");
         }
-        trace!("Updated hotkey bindings for current keyboard layout: {}", table.len());
+        trace!(
+            "Updated hotkey bindings for current keyboard layout: {}",
+            table.len()
+        );
         self.hotkeys.store(Arc::new(table));
     }
 }
@@ -748,13 +745,9 @@ unsafe extern "C-unwind" fn event_tap_invalidated(user_info: *mut std::ffi::c_vo
 }
 
 impl State {
-    fn note_key_down(&mut self, key_code: KeyCode) {
-        self.held.key_down(key_code);
-    }
+    fn note_key_down(&mut self, key_code: KeyCode) { self.held.key_down(key_code); }
 
-    fn note_key_up(&mut self, key_code: KeyCode) {
-        self.held.key_up(key_code);
-    }
+    fn note_key_up(&mut self, key_code: KeyCode) { self.held.key_up(key_code); }
 
     fn note_flags_changed(&mut self, key_code: KeyCode) {
         self.held.flags_changed(self.current_flags.bits(), key_code);
@@ -842,9 +835,7 @@ fn build_event_mask(keyboard_enabled: bool, mouse_move_enabled: bool) -> CGEvent
 mod tests {
     use super::*;
 
-    fn wants(mask: CGEventMask, ty: CGEventType) -> bool {
-        mask & (1u64 << (ty.0 as u64)) != 0
-    }
+    fn wants(mask: CGEventMask, ty: CGEventType) -> bool { mask & (1u64 << (ty.0 as u64)) != 0 }
 
     /// Mouse buttons are always asked for: they are how a drag is noticed, and a drag is how a
     /// window is moved between displays.

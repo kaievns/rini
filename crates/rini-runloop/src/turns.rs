@@ -89,7 +89,10 @@ pub fn woke(now: Instant) {
 /// The thread's run loop goes to sleep at `now`: the turn ends, and is given back if it was slow.
 pub fn sleeps(now: Instant) -> Option<MainTurn> {
     TURN.with_borrow_mut(|turn| {
-        let slow = turn.began.take().and_then(|began| fold(began, now, &turn.actors, &turn.changes));
+        let slow = turn
+            .began
+            .take()
+            .and_then(|began| fold(began, now, &turn.actors, &turn.changes));
         turn.actors.clear();
         slow
     })
@@ -133,17 +136,33 @@ mod tests {
     fn an_iteration_over_a_frame_is_reported_with_each_actor_and_what_was_outside_them() {
         let began = Instant::now() + ms(100);
         let mut actors = Vec::new();
-        for (actor, took) in [("renderer", ms(2)), ("rest", ms(3)), ("renderer", ms(1)), ("bar", Duration::ZERO)] {
+        for (actor, took) in [
+            ("renderer", ms(2)),
+            ("rest", ms(3)),
+            ("renderer", ms(1)),
+            ("bar", Duration::ZERO),
+        ] {
             add(&mut actors, actor, took);
         }
-        let changes = VecDeque::from([("rest.frame", began - ms(60)), ("overlay.show", began - ms(20)), ("rest.show", began + ms(4))]);
+        let changes = VecDeque::from([
+            ("rest.frame", began - ms(60)),
+            ("overlay.show", began - ms(20)),
+            ("rest.show", began + ms(4)),
+        ]);
         let turn = fold(began, began + ms(12), &actors, &changes).expect("slow");
         assert_eq!(turn, MainTurn {
             began,
             busy: ms(12),
-            actors: vec![("renderer", ms(3)), ("rest", ms(3)), ("bar", Duration::ZERO)],
+            actors: vec![
+                ("renderer", ms(3)),
+                ("rest", ms(3)),
+                ("bar", Duration::ZERO)
+            ],
             outside: ms(6),
-            changes: vec![("overlay.show", began - ms(20)), ("rest.show", began + ms(4))],
+            changes: vec![
+                ("overlay.show", began - ms(20)),
+                ("rest.show", began + ms(4))
+            ],
         });
     }
 
@@ -151,7 +170,11 @@ mod tests {
     fn a_quick_iteration_reports_nothing() {
         let began = Instant::now();
         let changes = VecDeque::from([("overlay.show", began)]);
-        assert_eq!(fold(began, began + SLOW, &[("renderer", ms(7))], &changes), None, "one frame is not over it");
+        assert_eq!(
+            fold(began, began + SLOW, &[("renderer", ms(7))], &changes),
+            None,
+            "one frame is not over it"
+        );
         assert!(fold(began, began + SLOW + Duration::from_micros(1), &[], &changes).is_some());
     }
 
@@ -170,7 +193,11 @@ mod tests {
         woke(now);
         polled("renderer", ms(9));
         let turn = sleeps(now + ms(10)).expect("slow");
-        assert_eq!(turn.actors, [("renderer", ms(9))], "a poll before the wake is not this turn's");
+        assert_eq!(
+            turn.actors,
+            [("renderer", ms(9))],
+            "a poll before the wake is not this turn's"
+        );
         assert_eq!(turn.outside, ms(1));
         assert_eq!(turn.changes.len(), CHANGES_KEPT);
         assert_eq!(sleeps(now + ms(30)), None, "no turn open");

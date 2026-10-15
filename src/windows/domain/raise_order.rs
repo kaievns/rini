@@ -54,7 +54,12 @@ pub struct AppBatch {
 }
 
 impl AppBatch {
-    pub fn new(first: WindowId) -> Self { Self { pid: first.pid, windows: vec![first] } }
+    pub fn new(first: WindowId) -> Self {
+        Self {
+            pid: first.pid,
+            windows: vec![first],
+        }
+    }
 
     /// Adds `window` last, or answers false and leaves the batch as it was when another application
     /// owns it.
@@ -124,7 +129,11 @@ pub enum StackGroup {
 
 impl StackGroup {
     pub fn of(floating: bool) -> Self {
-        if floating { StackGroup::Floating } else { StackGroup::Tiled }
+        if floating {
+            StackGroup::Floating
+        } else {
+            StackGroup::Tiled
+        }
     }
 }
 
@@ -176,12 +185,11 @@ pub fn regroup_tiled<T: Copy>(front_to_back: &[(T, StackGroup)]) -> Vec<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use StackGroup::{Floating, Tiled};
 
-    fn window(pid: pid_t, idx: u32) -> WindowId {
-        WindowId::new(pid, idx)
-    }
+    use super::*;
+
+    fn window(pid: pid_t, idx: u32) -> WindowId { WindowId::new(pid, idx) }
 
     #[test]
     fn parked_windows_are_dropped() {
@@ -235,7 +243,10 @@ mod tests {
     fn one_app_on_two_spaces_is_two_batches() {
         let windows = [window(1, 1), window(1, 2)];
         let batches = group_by_app_and_space(&windows, |w| Some(w.idx.get()));
-        assert_eq!(batches, [AppBatch::new(window(1, 1)), AppBatch::new(window(1, 2))]);
+        assert_eq!(batches, [
+            AppBatch::new(window(1, 1)),
+            AppBatch::new(window(1, 2))
+        ]);
     }
 
     /// A window whose space is unknown batches with the other unknowns rather than with everything.
@@ -262,13 +273,10 @@ mod tests {
     fn windows_of_two_apps_on_one_space_are_a_batch_each() {
         let windows = [window(1, 1), window(2, 1), window(1, 2), window(2, 2)];
         let batches = group_by_app_and_space(&windows, |_| Some(7));
-        assert_eq!(
-            batches,
-            [
-                AppBatch::of(&[window(1, 1), window(1, 2)]),
-                AppBatch::of(&[window(2, 1), window(2, 2)])
-            ]
-        );
+        assert_eq!(batches, [
+            AppBatch::of(&[window(1, 1), window(1, 2)]),
+            AppBatch::of(&[window(2, 1), window(2, 2)])
+        ]);
         assert!(batches.iter().all(|batch| batch.windows().iter().all(|w| w.pid == batch.pid())));
     }
 

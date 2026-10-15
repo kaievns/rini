@@ -144,9 +144,7 @@ pub fn start_is_synthetic(real: ScreenRect, from: ScreenRect, to: ScreenRect) ->
 ///
 /// A window being moved needs a real share, or every parked sliver becomes a tile. A window standing still
 /// needs only to be visible at all, because whatever shows of it turns into wallpaper otherwise.
-pub fn min_on_screen(moving: bool) -> f64 {
-    if moving { 0.25 } else { f64::MIN_POSITIVE }
-}
+pub fn min_on_screen(moving: bool) -> f64 { if moving { 0.25 } else { f64::MIN_POSITIVE } }
 
 /// The smallest visible extent that still reads as a window rather than a sliver.
 ///
@@ -371,7 +369,8 @@ mod tests {
     fn a_window_that_changes_position_or_size_is_moving() {
         let frame = ScreenRect::new(ScreenPoint::new(4.0, 32.0), ScreenSize::new(859.0, 1081.0));
         let moved = ScreenRect::new(ScreenPoint::new(865.0, 32.0), ScreenSize::new(859.0, 1081.0));
-        let lowered = ScreenRect::new(ScreenPoint::new(4.0, 1149.0), ScreenSize::new(859.0, 1081.0));
+        let lowered =
+            ScreenRect::new(ScreenPoint::new(4.0, 1149.0), ScreenSize::new(859.0, 1081.0));
         let widened = ScreenRect::new(ScreenPoint::new(4.0, 32.0), ScreenSize::new(1720.0, 1081.0));
         assert!(is_moving(frame, moved));
         assert!(is_moving(frame, lowered));
@@ -385,14 +384,18 @@ mod tests {
 
         const SLOT: ScreenRect = Rect::new(Point::new(4.0, 32.0), Size::new(1720.0, 1081.0));
         const PARK: ScreenRect = Rect::new(Point::new(1727.0, 1116.0), Size::new(1720.0, 1081.0));
-        const RIGHT_EDGE: ScreenRect = Rect::new(Point::new(1728.0, 32.0), Size::new(1720.0, 1081.0));
+        const RIGHT_EDGE: ScreenRect =
+            Rect::new(Point::new(1728.0, 32.0), Size::new(1720.0, 1081.0));
 
         /// Kiro's park shows 41pt: `is_off_screen` says visible, the requested park says parked.
         #[test]
         fn a_41pt_park_enters_from_the_right_edge() {
             let real = rect(1727.0, 1076.0, 1720.0, 1081.0);
             assert!(!is_off_screen(DISPLAY, real));
-            assert_eq!(resolve_start(Some(real), PARK, SLOT, DISPLAY, None, None), RIGHT_EDGE);
+            assert_eq!(
+                resolve_start(Some(real), PARK, SLOT, DISPLAY, None, None),
+                RIGHT_EDGE
+            );
         }
 
         /// Finder's park shows 52pt.
@@ -412,7 +415,10 @@ mod tests {
         /// wins over the synthetic-start test, so the tile enters from the edge, not the corner.
         #[test]
         fn a_park_the_server_reports_at_its_slot_enters_from_the_edge() {
-            assert_eq!(resolve_start(Some(SLOT), PARK, SLOT, DISPLAY, None, None), RIGHT_EDGE);
+            assert_eq!(
+                resolve_start(Some(SLOT), PARK, SLOT, DISPLAY, None, None),
+                RIGHT_EDGE
+            );
         }
 
         /// A genuine park (1pt showing) with no server answer still enters from the edge.
@@ -483,8 +489,10 @@ mod tests {
         use super::*;
 
         const SLOT: ScreenRect = Rect::new(Point::new(867.0, 32.0), Size::new(859.0, 1081.0));
-        const RIGHT_PARK: ScreenRect = Rect::new(Point::new(1727.0, 1116.0), Size::new(859.0, 1081.0));
-        const LEFT_PARK: ScreenRect = Rect::new(Point::new(-858.0, 1116.0), Size::new(859.0, 1081.0));
+        const RIGHT_PARK: ScreenRect =
+            Rect::new(Point::new(1727.0, 1116.0), Size::new(859.0, 1081.0));
+        const LEFT_PARK: ScreenRect =
+            Rect::new(Point::new(-858.0, 1116.0), Size::new(859.0, 1081.0));
 
         #[test]
         fn a_window_leaving_for_the_right_park_exits_past_the_right_edge() {
@@ -615,7 +623,10 @@ mod tests {
                 .collect();
             let plan = reflow_plan(&requests, DISPLAY);
             assert!(plan.changing.is_empty(), "{plan:?}");
-            plan.groups.iter().filter(|g| g.key != GroupKey::STILL && !g.members.is_empty()).count()
+            plan.groups
+                .iter()
+                .filter(|g| g.key != GroupKey::STILL && !g.members.is_empty())
+                .count()
         }
 
         /// `n` columns a column apart from x=4, the last on screen and the one after it off it, and
@@ -624,17 +635,29 @@ mod tests {
             let pitch = rng.pt((1724.0 / n as f64).ceil(), (1624.0 / (n - 1) as f64).floor());
             let w = pitch - 4.0;
             let columns = (0..n).map(|i| rect(4.0 + i as f64 * pitch, 32.0, w, 1081.0)).collect();
-            (pitch, columns, rect(DISPLAY.max().x - 1.0, DISPLAY.max().y - 1.0, w, 1081.0))
+            (
+                pitch,
+                columns,
+                rect(DISPLAY.max().x - 1.0, DISPLAY.max().y - 1.0, w, 1081.0),
+            )
         }
 
         #[test]
         fn leaving_goes_along_its_own_place_on_the_strip() {
             // A opens a column: A is pushed right by a column, B off to the park.
             let requests = [
-                on_strip(request(SLOT_A, moved(SLOT_A, PITCH), false), SLOT_A, moved(SLOT_A, PITCH)),
+                on_strip(
+                    request(SLOT_A, moved(SLOT_A, PITCH), false),
+                    SLOT_A,
+                    moved(SLOT_A, PITCH),
+                ),
                 on_strip(request(SLOT_B, RIGHT_PARK, false), SLOT_B, moved(SLOT_B, PITCH)),
             ];
-            assert_eq!(tile_for(1, &requests), (SLOT_B, moved(SLOT_B, PITCH)), "not the corner, not the edge");
+            assert_eq!(
+                tile_for(1, &requests),
+                (SLOT_B, moved(SLOT_B, PITCH)),
+                "not the corner, not the edge"
+            );
 
             // A widens by a column instead, moving no origin: B leaves by the place A pushed it to.
             let wide = rect(4.0, 32.0, W + PITCH, 1081.0);
@@ -649,10 +672,18 @@ mod tests {
         fn returning_comes_along_its_own_place_on_the_strip() {
             // A column closes: A comes back left by a column, B returns from the park to its slot.
             let requests = [
-                on_strip(request(moved(SLOT_A, PITCH), SLOT_A, false), moved(SLOT_A, PITCH), SLOT_A),
+                on_strip(
+                    request(moved(SLOT_A, PITCH), SLOT_A, false),
+                    moved(SLOT_A, PITCH),
+                    SLOT_A,
+                ),
                 on_strip(request(RIGHT_PARK, SLOT_B, false), moved(SLOT_B, PITCH), SLOT_B),
             ];
-            assert_eq!(tile_for(1, &requests), (moved(SLOT_B, PITCH), SLOT_B), "enters from where the strip was");
+            assert_eq!(
+                tile_for(1, &requests),
+                (moved(SLOT_B, PITCH), SLOT_B),
+                "enters from where the strip was"
+            );
         }
 
         /// A column carried off or on while the pass also changes its width keeps its edge facing
@@ -702,7 +733,10 @@ mod tests {
 
         #[test]
         fn no_moving_neighbour_falls_back_to_the_edge() {
-            let requests = [request(SLOT_A, SLOT_A, false), request(RIGHT_PARK, SLOT_B, false)];
+            let requests = [
+                request(SLOT_A, SLOT_A, false),
+                request(RIGHT_PARK, SLOT_B, false),
+            ];
             let (from, _) = tile_for(1, &requests);
             assert_eq!(from, park_entry_frame(RIGHT_PARK, SLOT_B, DISPLAY));
         }
@@ -729,7 +763,11 @@ mod tests {
         /// 2026-10-09). A farther window the strip only shifts still lends its vector.
         #[test]
         fn a_neighbour_that_moves_and_resizes_lends_no_travel() {
-            let bottom = (rect(3.0, 542.0, 860.0, 536.0), rect(3.0, 3.0, 1722.0, 1074.0), false);
+            let bottom = (
+                rect(3.0, 542.0, 860.0, 536.0),
+                rect(3.0, 3.0, 1722.0, 1074.0),
+                false,
+            );
             let next = rect(866.0, 3.0, 860.0, 1074.0);
             assert_eq!(neighbour_travel(next, &[bottom], DISPLAY), None);
             let far = rect(-500.0, 3.0, 860.0, 1074.0);
@@ -835,7 +873,11 @@ mod tests {
                     assert_eq!((dx, dy), (want, 0.0), "seed 62: n={n} pitch={pitch} k={k} i={i}");
                     assert_eq!(to.size, from.size, "seed 62: n={n} pitch={pitch} k={k} i={i}");
                     if i == n - 1 {
-                        assert_eq!(*from, moved(columns[i], pitch), "seed 62: n={n} pitch={pitch} k={k}");
+                        assert_eq!(
+                            *from,
+                            moved(columns[i], pitch),
+                            "seed 62: n={n} pitch={pitch} k={k}"
+                        );
                     }
                 }
                 assert_eq!(bodies(&tiles[k..]), 1, "seed 62: n={n} pitch={pitch} k={k}");
@@ -908,8 +950,17 @@ mod tests {
         /// Row `row` of a `rows`-stack maximized, the stack left or right of the other column, the
         /// maximized column going in left or right of what is left of the stack. The stack's rows are
         /// windows 1 to `rows`, the other column the last; the strip before and after.
-        fn maximize(rows: usize, row: usize, stack_left: bool, goes_left: bool) -> (Vec<ScreenRect>, Vec<ScreenRect>) {
-            let (stack_x, other_x) = if stack_left { (3.0, 866.0) } else { (866.0, 3.0) };
+        fn maximize(
+            rows: usize,
+            row: usize,
+            stack_left: bool,
+            goes_left: bool,
+        ) -> (Vec<ScreenRect>, Vec<ScreenRect>) {
+            let (stack_x, other_x) = if stack_left {
+                (3.0, 866.0)
+            } else {
+                (866.0, 3.0)
+            };
             let mut before = column(stack_x, rows);
             before.push(column(other_x, 1)[0]);
 
@@ -940,7 +991,8 @@ mod tests {
         fn tiles(requests: &[AnimationRequest]) -> Vec<(WindowId, ScreenRect, ScreenRect)> {
             (0..requests.len())
                 .filter_map(|i| {
-                    tile_path(None, requests, i, SCREEN).map(|p| (requests[i].window, p.start, p.end))
+                    tile_path(None, requests, i, SCREEN)
+                        .map(|p| (requests[i].window, p.start, p.end))
                 })
                 .collect()
         }
@@ -954,15 +1006,32 @@ mod tests {
                 let (before, after) = (r.strip_before.unwrap(), r.strip_after.unwrap());
                 let tile = drawn.iter().find(|(w, _, _)| *w == r.window);
                 if is_off_screen(SCREEN, before) && is_off_screen(SCREEN, after) {
-                    assert!(tile.is_none(), "{case}: {:?} is off the screen throughout: {tile:?}", r.window);
+                    assert!(
+                        tile.is_none(),
+                        "{case}: {:?} is off the screen throughout: {tile:?}",
+                        r.window
+                    );
                     continue;
                 }
-                let &(_, start, end) = tile.unwrap_or_else(|| panic!("{case}: {:?} not drawn", r.window));
-                let seen = if is_off_screen(SCREEN, r.from) { r.to } else { r.from };
+                let &(_, start, end) =
+                    tile.unwrap_or_else(|| panic!("{case}: {:?} not drawn", r.window));
+                let seen = if is_off_screen(SCREEN, r.from) {
+                    r.to
+                } else {
+                    r.from
+                };
                 let what = format!("{case}: {:?} {start:?} -> {end:?}", r.window);
                 assert_eq!((start.size, end.size), (seen.size, seen.size), "{what}");
-                assert_eq!((start.origin.y, end.origin.y), (seen.origin.y, seen.origin.y), "{what}");
-                assert_eq!(end.origin.x - start.origin.x, after.origin.x - before.origin.x, "{what}");
+                assert_eq!(
+                    (start.origin.y, end.origin.y),
+                    (seen.origin.y, seen.origin.y),
+                    "{what}"
+                );
+                assert_eq!(
+                    end.origin.x - start.origin.x,
+                    after.origin.x - before.origin.x,
+                    "{what}"
+                );
                 if is_off_screen(SCREEN, r.from) {
                     assert!(is_off_screen(SCREEN, start), "{what}");
                 } else {
@@ -974,8 +1043,15 @@ mod tests {
                     assert_eq!(end, r.to, "{what}");
                 }
             }
-            let plan = reflow_plan(&drawn.iter().map(|&(w, s, e)| (w, s, e, false)).collect::<Vec<_>>(), SCREEN);
-            assert_eq!(plan.changing.iter().map(|c| c.0).collect::<Vec<_>>(), vec![resized], "{case}");
+            let plan = reflow_plan(
+                &drawn.iter().map(|&(w, s, e)| (w, s, e, false)).collect::<Vec<_>>(),
+                SCREEN,
+            );
+            assert_eq!(
+                plan.changing.iter().map(|c| c.0).collect::<Vec<_>>(),
+                vec![resized],
+                "{case}"
+            );
             let mut vectors: Vec<f64> = drawn
                 .iter()
                 .filter(|(w, _, _)| *w != resized)
@@ -983,8 +1059,11 @@ mod tests {
                 .collect();
             vectors.sort_by(f64::total_cmp);
             vectors.dedup();
-            let groups: Vec<_> =
-                plan.groups.iter().filter(|g| g.key != GroupKey::STILL && !g.members.is_empty()).collect();
+            let groups: Vec<_> = plan
+                .groups
+                .iter()
+                .filter(|g| g.key != GroupKey::STILL && !g.members.is_empty())
+                .collect();
             assert_eq!(groups.len(), vectors.len(), "{case}: {groups:?}");
         }
 
@@ -1001,8 +1080,16 @@ mod tests {
                                 if stack_left { "left" } else { "right" },
                                 if goes_left { "left" } else { "right" }
                             );
-                            holds_its_row(&format!("maximize {case}"), &pass(&before, &after), resized);
-                            holds_its_row(&format!("restore {case}"), &pass(&after, &before), resized);
+                            holds_its_row(
+                                &format!("maximize {case}"),
+                                &pass(&before, &after),
+                                resized,
+                            );
+                            holds_its_row(
+                                &format!("restore {case}"),
+                                &pass(&after, &before),
+                                resized,
+                            );
                         }
                     }
                 }
@@ -1022,7 +1109,10 @@ mod tests {
                     after.push(b);
                     after.push(column(866.0, 1)[0]);
                     let requests = pass(&before, &after);
-                    let c = tiles(&requests).into_iter().find(|t| t.0 == requests[rows + 1].window).expect("drawn");
+                    let c = tiles(&requests)
+                        .into_iter()
+                        .find(|t| t.0 == requests[rows + 1].window)
+                        .expect("drawn");
                     assert_eq!(c.1, column(1729.0, 1)[0], "{rows} rows, at {at}");
                     assert_eq!(c.2, column(866.0, 1)[0], "{rows} rows, at {at}");
 
@@ -1034,7 +1124,10 @@ mod tests {
                     after.push(stack.remove(at));
                     after.extend(stack);
                     let requests = pass(&before, &after);
-                    let z = tiles(&requests).into_iter().find(|t| t.0 == requests[0].window).expect("drawn");
+                    let z = tiles(&requests)
+                        .into_iter()
+                        .find(|t| t.0 == requests[0].window)
+                        .expect("drawn");
                     assert_eq!(z.1, column(-860.0, 1)[0], "{rows} rows, at {at}");
                     assert_eq!(z.2, column(3.0, 1)[0], "{rows} rows, at {at}");
                 }
@@ -1053,7 +1146,10 @@ mod tests {
                     after.insert(at, column(866.0, 1)[0]);
                     after.push(column(1729.0, 1)[0]);
                     let requests = pass(&before, &after);
-                    let b = tiles(&requests).into_iter().find(|t| t.0 == requests[rows].window).expect("drawn");
+                    let b = tiles(&requests)
+                        .into_iter()
+                        .find(|t| t.0 == requests[rows].window)
+                        .expect("drawn");
                     assert_eq!(b.1, column(866.0, 1)[0], "{rows} rows, at {at}");
                     assert_eq!(b.2, column(1729.0, 1)[0], "{rows} rows, at {at}");
 
@@ -1066,7 +1162,10 @@ mod tests {
                     stack.insert(at, column(866.0, 1)[0]);
                     after.extend(stack);
                     let requests = pass(&before, &after);
-                    let a = tiles(&requests).into_iter().find(|t| t.0 == requests[0].window).expect("drawn");
+                    let a = tiles(&requests)
+                        .into_iter()
+                        .find(|t| t.0 == requests[0].window)
+                        .expect("drawn");
                     assert_eq!(a.1, column(3.0, 1)[0], "{rows} rows, at {at}");
                     assert_eq!(a.2, column(-860.0, 1)[0], "{rows} rows, at {at}");
                 }
@@ -1084,7 +1183,12 @@ mod tests {
             let on_screen = rect(740.0, 3.0, 860.0, 1074.0);
             let park = written(beyond);
             let path = |from, to, before, after| {
-                tile_path(None, &[on_strip(request(from, to, false), before, after)], 0, SCREEN)
+                tile_path(
+                    None,
+                    &[on_strip(request(from, to, false), before, after)],
+                    0,
+                    SCREEN,
+                )
             };
 
             let leaving = path(on_screen, park, on_screen, in_the_dock).expect("drawn");
@@ -1119,8 +1223,16 @@ mod tests {
     }
 
     /// `request` with its place on the strip before and after the pass.
-    fn on_strip(request: AnimationRequest, before: ScreenRect, after: ScreenRect) -> AnimationRequest {
-        AnimationRequest { strip_before: Some(before), strip_after: Some(after), ..request }
+    fn on_strip(
+        request: AnimationRequest,
+        before: ScreenRect,
+        after: ScreenRect,
+    ) -> AnimationRequest {
+        AnimationRequest {
+            strip_before: Some(before),
+            strip_after: Some(after),
+            ..request
+        }
     }
 
     /// A strip column, as the animation path describes one: where it is now, where the layout wants it.
@@ -1170,10 +1282,20 @@ mod tests {
         let full = ScreenRect::new(ScreenPoint::new(3.0, 35.0), ScreenSize::new(1722.0, 1079.0));
         let third = ScreenRect::new(ScreenPoint::new(3.0, 35.0), ScreenSize::new(572.0, 1079.0));
         for (from, to) in [(full, third), (third, full)] {
-            assert!(changes_visibly(&[on_strip(request(from, to, false), from, to)]), "{to:?}");
+            assert!(
+                changes_visibly(&[on_strip(request(from, to, false), from, to)]),
+                "{to:?}"
+            );
         }
-        let shorter = ScreenRect { size: ScreenSize::new(1722.0, 538.0), ..full };
-        assert!(changes_visibly(&[on_strip(request(full, shorter, false), full, shorter)]));
+        let shorter = ScreenRect {
+            size: ScreenSize::new(1722.0, 538.0),
+            ..full
+        };
+        assert!(changes_visibly(&[on_strip(
+            request(full, shorter, false),
+            full,
+            shorter
+        )]));
     }
 
     /// An app snapped a few points off its slot is written its slot again, which resizes nothing the
@@ -1181,11 +1303,28 @@ mod tests {
     #[test]
     fn a_window_written_back_to_the_slot_it_had_does_not_change_visibly() {
         let slot = ScreenRect::new(ScreenPoint::new(3.0, 35.0), ScreenSize::new(860.0, 1079.0));
-        let snapped = ScreenRect { size: ScreenSize::new(853.0, 1071.0), ..slot };
-        assert!(!changes_visibly(&[on_strip(request(snapped, slot, false), slot, slot)]));
-        let rounded = ScreenRect { size: ScreenSize::new(861.0, 1079.0), ..slot };
-        assert!(!changes_visibly(&[on_strip(request(slot, rounded, false), slot, rounded)]));
-        assert!(!changes_visibly(&[request(snapped, slot, false)]), "off the strip, origin only");
+        let snapped = ScreenRect {
+            size: ScreenSize::new(853.0, 1071.0),
+            ..slot
+        };
+        assert!(!changes_visibly(&[on_strip(
+            request(snapped, slot, false),
+            slot,
+            slot
+        )]));
+        let rounded = ScreenRect {
+            size: ScreenSize::new(861.0, 1079.0),
+            ..slot
+        };
+        assert!(!changes_visibly(&[on_strip(
+            request(slot, rounded, false),
+            slot,
+            rounded
+        )]));
+        assert!(
+            !changes_visibly(&[request(snapped, slot, false)]),
+            "off the strip, origin only"
+        );
     }
 
     // --- tile_path: the whole geometry decision for one window ---------------------------------
@@ -1196,8 +1335,8 @@ mod tests {
     fn a_window_moving_on_screen_gets_a_path_from_where_it_is_to_where_it_is_going() {
         let from = rect(0., 0., 400., 600.);
         let to = rect(500., 0., 400., 600.);
-        let path =
-            tile_path(Some(from), &[request(from, to, false)], 0, DISPLAY).expect("worth animating");
+        let path = tile_path(Some(from), &[request(from, to, false)], 0, DISPLAY)
+            .expect("worth animating");
         assert_eq!(path.start, from);
         assert_eq!(path.end, to);
     }
@@ -1231,7 +1370,10 @@ mod tests {
     fn a_move_entirely_off_screen_is_not_worth_a_tile() {
         let far = rect(-9000., -9000., 400., 600.);
         let also_far = rect(-9500., -9000., 400., 600.);
-        assert_eq!(tile_path(Some(far), &[request(far, also_far, false)], 0, DISPLAY), None);
+        assert_eq!(
+            tile_path(Some(far), &[request(far, also_far, false)], 0, DISPLAY),
+            None
+        );
     }
 
     /// A floating window rides nothing. It is not part of the strip, so a neighbour's vector would be
@@ -1248,7 +1390,11 @@ mod tests {
         assert_eq!(tiled.start, rect(1900., 100., 300., 300.));
         let floating = tile_path(None, &[request(park, to, true), neighbour], 0, DISPLAY)
             .expect("worth animating");
-        assert_eq!(floating.start, park_entry_frame(park, to, DISPLAY), "a floating tile rides nothing");
+        assert_eq!(
+            floating.start,
+            park_entry_frame(park, to, DISPLAY),
+            "a floating tile rides nothing"
+        );
     }
 
     /// A window is never its own neighbour. The server reports this one parked while the reactor
@@ -1259,10 +1405,23 @@ mod tests {
         let parked = rect(1727., 1116., 859., 1081.);
         let believed = rect(867., 32., 859., 1081.);
         let to = rect(4., 32., 859., 1081.);
-        let neighbour = request(rect(-1000., 32., 1100., 1081.), rect(-100., 32., 1100., 1081.), false);
-        let path = tile_path(Some(parked), &[request(believed, to, false), neighbour], 0, DISPLAY)
-            .expect("worth animating");
-        assert_eq!(path.start, rect(-896., 32., 859., 1081.), "by the neighbour's (900, 0)");
+        let neighbour = request(
+            rect(-1000., 32., 1100., 1081.),
+            rect(-100., 32., 1100., 1081.),
+            false,
+        );
+        let path = tile_path(
+            Some(parked),
+            &[request(believed, to, false), neighbour],
+            0,
+            DISPLAY,
+        )
+        .expect("worth animating");
+        assert_eq!(
+            path.start,
+            rect(-896., 32., 859., 1081.),
+            "by the neighbour's (900, 0)"
+        );
     }
 
     /// `index` selects which of the requests is the subject. Passing the wrong one would have a
@@ -1403,13 +1562,14 @@ mod tests {
 
     /// Where a park's tile ends decides which rigid piece it rides.
     mod park_groups {
-        use super::*;
-        use crate::animation::domain::motion::plan::{GroupKey, ReflowPlan, RigidGroup, reflow_plan};
         use rini_geometry::space::OverlayVector;
 
-        fn window(idx: u32) -> WindowId {
-            WindowId::new(7, idx)
-        }
+        use super::*;
+        use crate::animation::domain::motion::plan::{
+            GroupKey, ReflowPlan, RigidGroup, reflow_plan,
+        };
+
+        fn window(idx: u32) -> WindowId { WindowId::new(7, idx) }
 
         fn shifted(frame: ScreenRect, dx: f64, dy: f64) -> ScreenRect {
             ScreenRect::new(
@@ -1418,9 +1578,7 @@ mod tests {
             )
         }
 
-        fn column(i: f64) -> ScreenRect {
-            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
-        }
+        fn column(i: f64) -> ScreenRect { rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0) }
 
         fn moving(plan: &ReflowPlan) -> Vec<&RigidGroup> {
             plan.groups
@@ -1443,7 +1601,10 @@ mod tests {
             let a_end = resolve_end(a, park, DISPLAY, Some(shifted(a, -863.0, 0.0)));
             assert_eq!(a_end, shifted(a, -863.0, 0.0), "where the strip takes it");
 
-            let plan = reflow_plan(&[(window(1), a, a_end, false), (window(2), b, b_to, false)], DISPLAY);
+            let plan = reflow_plan(
+                &[(window(1), a, a_end, false), (window(2), b, b_to, false)],
+                DISPLAY,
+            );
             let groups = moving(&plan);
             assert_eq!(groups.len(), 1);
             assert_eq!(members(groups[0]), vec![window(1), window(2)]);
@@ -1464,13 +1625,19 @@ mod tests {
             let still = column(0.0);
 
             let plan = reflow_plan(
-                &[(window(1), a, a_end, false), (window(2), still, still, false)],
+                &[
+                    (window(1), a, a_end, false),
+                    (window(2), still, still, false),
+                ],
                 DISPLAY,
             );
             let groups = moving(&plan);
             assert_eq!(groups.len(), 1);
             assert_eq!(members(groups[0]), vec![window(1)]);
-            assert_eq!(groups[0].travel, OverlayVector::new(a_end.origin.x - a.origin.x, 0.0));
+            assert_eq!(
+                groups[0].travel,
+                OverlayVector::new(a_end.origin.x - a.origin.x, 0.0)
+            );
             assert_eq!(members(&plan.groups[0]), vec![window(2)]);
         }
     }

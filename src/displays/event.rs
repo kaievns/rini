@@ -4,14 +4,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 
 use objc2_core_foundation::CGRect;
-use rini_core::ids::WindowServerId;
+use rini_core::ids::{SpaceId, WindowId, WindowServerId};
 use rini_geometry::CGRectDef;
 use serde::{Deserialize, Serialize};
 
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowId;
 
 #[derive(Debug)]
 pub enum Event {
@@ -153,7 +151,5 @@ pub trait EventSink: Send {
 }
 
 impl<T: From<Event> + Send> EventSink for rini_runloop::channel::Sender<T> {
-    fn send(&self, event: Event) {
-        rini_runloop::channel::Sender::send(self, event.into())
-    }
+    fn send(&self, event: Event) { rini_runloop::channel::Sender::send(self, event.into()) }
 }

@@ -56,15 +56,11 @@ impl Timepiece {
     }
 
     /// Whether the bar shows a minute other than the one last read.
-    pub fn behind(&self) -> bool {
-        self.shown.is_some_and(|shown| shown != self.read)
-    }
+    pub fn behind(&self) -> bool { self.shown.is_some_and(|shown| shown != self.read) }
 
     /// From `now` until the minute last read turns over, measured from when it was read, so a wake
     /// that took a while still lands on the boundary. Zero once it has passed.
-    pub fn until_turn(&self, now: Instant) -> Duration {
-        self.turns.saturating_duration_since(now)
-    }
+    pub fn until_turn(&self, now: Instant) -> Duration { self.turns.saturating_duration_since(now) }
 }
 
 /// What a text piece says and how it is set.

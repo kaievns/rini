@@ -3,11 +3,12 @@
 //!
 //! `impl LayoutEngine` across modules is the pattern `engine/persistence/` already uses.
 
+use rini_core::ids::{SpaceId, WindowId};
+
 use super::CommandTarget;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::engine::{EventResponse, LayoutCommand, LayoutEngine};
 use crate::workspaces::{LayoutId, VirtualWorkspaceId};
-use rini_core::ids::{SpaceId, WindowId};
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_floating_command(
@@ -62,6 +63,7 @@ impl LayoutEngine {
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use rini_core::ids::WindowServerId;
     use rustc_hash::FxHashMap as HashMap;
 
     use super::*;
@@ -71,7 +73,6 @@ mod tests {
     use crate::workspaces::domain::display_affinity::ColumnWidth;
     use crate::workspaces::settings::VirtualWorkspaceSettings;
     use crate::workspaces::{LayoutEvent, WindowStore};
-    use rini_core::ids::WindowServerId;
 
     const DISPLAY: &str = "display-a";
 
@@ -100,30 +101,27 @@ mod tests {
             let windows = [WindowId::new(3, 1), WindowId::new(3, 2)];
             for window in windows {
                 let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(720.0, 900.0));
-                store.insert_window(
-                    window,
-                    WindowState {
-                        info: WindowInfo {
-                            is_standard: true,
-                            is_root: true,
-                            is_minimized: false,
-                            is_resizable: true,
-                            min_size: None,
-                            max_size: None,
-                            title: String::new(),
-                            frame,
-                            sys_id: Some(WindowServerId::new(window.idx.get())),
-                            bundle_id: None,
-                            path: None,
-                            ax_role: None,
-                            ax_subrole: None,
-                            is_modal: false,
-                        },
-                        frame_monotonic: frame,
-                        is_manageable: true,
-                        ignore_app_rule: false,
+                store.insert_window(window, WindowState {
+                    info: WindowInfo {
+                        is_standard: true,
+                        is_root: true,
+                        is_minimized: false,
+                        is_resizable: true,
+                        min_size: None,
+                        max_size: None,
+                        title: String::new(),
+                        frame,
+                        sys_id: Some(WindowServerId::new(window.idx.get())),
+                        bundle_id: None,
+                        path: None,
+                        ax_role: None,
+                        ax_subrole: None,
+                        is_modal: false,
                     },
-                );
+                    frame_monotonic: frame,
+                    is_manageable: true,
+                    ignore_app_rule: false,
+                });
                 let _ = engine.handle_event(
                     &mut store,
                     &mut memory,

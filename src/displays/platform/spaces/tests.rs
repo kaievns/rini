@@ -255,13 +255,10 @@ fn quarantines_window_space_events_during_sleep_before_churn_begins() {
     actor.handle_event(Notification::SpaceCreated(SpaceId::new(5)));
     actor.handle_event(Notification::SpaceDestroyed(SpaceId::new(6)));
 
-    assert_eq!(
-        actor.state.quarantine_stats,
-        QuarantineStats {
-            appeared_dropped: 1,
-            destroyed_dropped: 1
-        }
-    );
+    assert_eq!(actor.state.quarantine_stats, QuarantineStats {
+        appeared_dropped: 1,
+        destroyed_dropped: 1
+    });
     assert!(!actor.state.visible_window_spaces.contains_key(&appeared));
     assert_eq!(
         actor.state.visible_window_spaces.get(&existing),
@@ -339,8 +336,14 @@ fn wake_into_display_churn_forwards_nothing_until_churn_settles_then_releases_th
         flags: rini_skylight_sys::DisplayReconfigFlags::ADD,
     });
     actor.handle_event(Notification::SystemDidWake);
-    assert!(matches!(recv_reactor(&mut reactor_rx), OutEvent::SystemWillSleep));
-    assert!(matches!(recv_reactor(&mut reactor_rx), OutEvent::DisplayChurnBegin));
+    assert!(matches!(
+        recv_reactor(&mut reactor_rx),
+        OutEvent::SystemWillSleep
+    ));
+    assert!(matches!(
+        recv_reactor(&mut reactor_rx),
+        OutEvent::DisplayChurnBegin
+    ));
     assert!(matches!(recv_reactor(&mut reactor_rx), OutEvent::SystemWoke));
 
     actor.state.screens = vec![
@@ -352,8 +355,14 @@ fn wake_into_display_churn_forwards_nothing_until_churn_settles_then_releases_th
     assert_no_wm_event(&mut wm_rx);
 
     let epoch = actor.state.display_churn_epoch;
-    actor.handle_event(Notification::CheckDisplayStabilization { expected_epoch: epoch, attempt: 0 });
-    actor.handle_event(Notification::CheckDisplayStabilization { expected_epoch: epoch, attempt: 1 });
+    actor.handle_event(Notification::CheckDisplayStabilization {
+        expected_epoch: epoch,
+        attempt: 0,
+    });
+    actor.handle_event(Notification::CheckDisplayStabilization {
+        expected_epoch: epoch,
+        attempt: 1,
+    });
 
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
@@ -378,7 +387,9 @@ fn wake_into_display_churn_forwards_nothing_until_churn_settles_then_releases_th
         CoordinateConverter::default(),
     );
     match recv_wm(&mut wm_rx) {
-        OutEvent::SpaceStateUpdated(state, _) => assert!(!state.releases_lifecycle_refresh_quarantine),
+        OutEvent::SpaceStateUpdated(state, _) => {
+            assert!(!state.releases_lifecycle_refresh_quarantine)
+        }
         other => panic!("unexpected wm event: {other:?}"),
     }
 }
@@ -627,10 +638,10 @@ fn wake_transient_cannot_steal_another_displays_space_history() {
     );
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
-            assert_eq!(
-                state.space_remaps,
-                vec![(external_space_before_sleep, external_space_after_wake)]
-            );
+            assert_eq!(state.space_remaps, vec![(
+                external_space_before_sleep,
+                external_space_after_wake
+            )]);
             assert!(!state.space_remaps.contains(&(builtin_space, external_space_after_wake)));
         }
         other => panic!("unexpected wm event: {other:?}"),
@@ -657,11 +668,9 @@ fn topology_window_delta_is_emitted_when_windows_leave_space_during_churn_withou
         space.get(),
         Some(vec![]),
     );
-    actor.synthesize_topology_window_delta(
-        9,
-        actor.state.display_churn_flags,
-        &[make_screen(Some(space))],
-    );
+    actor.synthesize_topology_window_delta(9, actor.state.display_churn_flags, &[make_screen(
+        Some(space),
+    )]);
     crate::windows::platform::window_server::set_space_window_list_for_space_override(
         space.get(),
         None,
@@ -740,14 +749,10 @@ fn topology_window_delta_treats_same_window_space_move_as_remove_then_add() {
         new_space.get(),
         Some(vec![wsid.as_u32()]),
     );
-    actor.synthesize_topology_window_delta(
-        10,
-        actor.state.display_churn_flags,
-        &[
-            make_screen_with(1, "display-left", 0.0, 1000.0, Some(old_space)),
-            make_screen_with(2, "display-right", 1000.0, 1000.0, Some(new_space)),
-        ],
-    );
+    actor.synthesize_topology_window_delta(10, actor.state.display_churn_flags, &[
+        make_screen_with(1, "display-left", 0.0, 1000.0, Some(old_space)),
+        make_screen_with(2, "display-right", 1000.0, 1000.0, Some(new_space)),
+    ]);
     crate::windows::platform::window_server::set_space_window_list_for_space_override(
         new_space.get(),
         None,
@@ -1201,10 +1206,7 @@ fn a_user_space_is_forwarded_unchanged() {
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor_with_a_non_user_space();
     let space = SpaceId::new(NON_USER_SPACE + 1);
 
-    actor.forward_screen_parameters(
-        vec![make_screen(Some(space))],
-        CoordinateConverter::default(),
-    );
+    actor.forward_screen_parameters(vec![make_screen(Some(space))], CoordinateConverter::default());
 
     let OutEvent::SpaceStateUpdated(state, _) = recv_wm(&mut wm_rx) else {
         panic!("expected a topology snapshot");
@@ -1228,10 +1230,10 @@ fn build_actor_seeing_display_and_space() -> (
         active_space: || Some(SpaceId::new(ACTIVE_SPACE)),
         spaces_per_display: || {
             let mut map = HashMap::default();
-            map.insert(
-                ACTIVE_DISPLAY.to_string(),
-                vec![SpaceId::new(ACTIVE_SPACE), SpaceId::new(99)],
-            );
+            map.insert(ACTIVE_DISPLAY.to_string(), vec![
+                SpaceId::new(ACTIVE_SPACE),
+                SpaceId::new(99),
+            ]);
             map
         },
         window_server_quiet: || true,
@@ -1384,5 +1386,8 @@ fn a_silent_window_server_falls_back_to_the_snapshot() {
         panic!("expected a topology snapshot");
     };
     assert_eq!(state.display_space_ids.get("display-left"), Some(&vec![space]));
-    assert!(state.display_space_ids_from_screens, "not a listing a save may prune by");
+    assert!(
+        state.display_space_ids_from_screens,
+        "not a listing a save may prune by"
+    );
 }

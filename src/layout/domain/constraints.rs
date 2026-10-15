@@ -9,9 +9,7 @@ pub struct AxisConstraints {
     pub can_grow: bool,
 }
 
-fn sanitize(v: f64) -> f64 {
-    if v.is_finite() { v.max(0.0) } else { 0.0 }
-}
+fn sanitize(v: f64) -> f64 { if v.is_finite() { v.max(0.0) } else { 0.0 } }
 
 /// The horizontal limits a column's windows impose TOGETHER.
 ///
@@ -21,7 +19,9 @@ fn sanitize(v: f64) -> f64 {
 /// windows lock to different widths takes the larger, because the smaller one can be clipped but the
 /// larger one cannot be conjured. Each limit is its window's slot's, the window's own with the
 /// border it wears, paired with it, on both sides (`tile::slot_limits`).
-pub fn column_limits(windows: impl IntoIterator<Item = (WindowLayoutConstraints, f64)>) -> AxisConstraints {
+pub fn column_limits(
+    windows: impl IntoIterator<Item = (WindowLayoutConstraints, f64)>,
+) -> AxisConstraints {
     let mut limits = AxisConstraints {
         min: 1.0,
         ..AxisConstraints::default()
@@ -335,7 +335,10 @@ mod tests {
 
     #[test]
     fn an_ordinary_column_is_its_base_plus_its_offset() {
-        assert_eq!(column_ratio(ColumnKind::Bounded, 0.5, 0.16667, MIN, MAX), 0.66667);
+        assert_eq!(
+            column_ratio(ColumnKind::Bounded, 0.5, 0.16667, MIN, MAX),
+            0.66667
+        );
     }
 
     #[test]
@@ -347,8 +350,14 @@ mod tests {
     /// A drag is not a key: neither bound holds it, and the viewport and the twentieth still do.
     #[test]
     fn a_dragged_ratio_ignores_min_and_max_column_width() {
-        assert_eq!(column_ratio(ColumnKind::Unbounded, 0.5, 0.33797, MIN, MAX), 0.83797);
-        assert_eq!(column_ratio(ColumnKind::Unbounded, 0.5, -0.21719, MIN, MAX), 0.28281);
+        assert_eq!(
+            column_ratio(ColumnKind::Unbounded, 0.5, 0.33797, MIN, MAX),
+            0.83797
+        );
+        assert_eq!(
+            column_ratio(ColumnKind::Unbounded, 0.5, -0.21719, MIN, MAX),
+            0.28281
+        );
         assert_eq!(column_ratio(ColumnKind::Unbounded, 0.5, 0.7, MIN, MAX), 1.0);
         assert_eq!(column_ratio(ColumnKind::Unbounded, 0.0, 0.0, MIN, MAX), 0.05);
     }
@@ -604,7 +613,10 @@ mod column_tests {
     #[test]
     fn a_windows_minimum_counts_its_border_in_the_column() {
         let limits = column_limits([(window(400., 900., 0.), 4.0), (window(0., 0., 500.), 2.0)]);
-        assert_eq!((limits.min, limits.fixed, limits.max), (408.0, Some(504.0), Some(908.0)));
+        assert_eq!(
+            (limits.min, limits.fixed, limits.max),
+            (408.0, Some(504.0), Some(908.0))
+        );
     }
 
     // --- column_width -------------------------------------------------------------------------
@@ -628,8 +640,14 @@ mod column_tests {
     #[test]
     fn a_dragged_column_keeps_its_dragged_width_whole() {
         let ratio = 809. / 1722.;
-        assert_eq!(column_width(ColumnKind::Unbounded, ratio, 1722., 3., free()), 809.0);
-        assert_eq!(column_width(ColumnKind::Bounded, ratio, 1722., 3., free()), 807.5);
+        assert_eq!(
+            column_width(ColumnKind::Unbounded, ratio, 1722., 3., free()),
+            809.0
+        );
+        assert_eq!(
+            column_width(ColumnKind::Bounded, ratio, 1722., 3., free()),
+            807.5
+        );
     }
 
     /// The gap comes out of the columns, which is what makes two half-width columns add up to the
@@ -680,11 +698,31 @@ mod column_tests {
             max: Some(1408.),
             ..AxisConstraints::default()
         };
-        assert_eq!(column_width(ColumnKind::FullWidth, 1.0, 1722., 0., limits), 1722.0, "full width");
-        assert_eq!(column_width(ColumnKind::Unbounded, 1.0, 1722., 3., limits), 1722.0, "Mod+R's 100%");
-        assert_eq!(column_width(ColumnKind::Unbounded, 1721.5 / 1722., 1722., 3., limits), 1721.5, "a point short");
-        assert_eq!(column_width(ColumnKind::Unbounded, 0.9, 1722., 3., limits), 1408.0, "dragged short of it");
-        assert_eq!(column_width(ColumnKind::Bounded, 1.0, 1722., 0., limits), 1408.0, "bounded");
+        assert_eq!(
+            column_width(ColumnKind::FullWidth, 1.0, 1722., 0., limits),
+            1722.0,
+            "full width"
+        );
+        assert_eq!(
+            column_width(ColumnKind::Unbounded, 1.0, 1722., 3., limits),
+            1722.0,
+            "Mod+R's 100%"
+        );
+        assert_eq!(
+            column_width(ColumnKind::Unbounded, 1721.5 / 1722., 1722., 3., limits),
+            1721.5,
+            "a point short"
+        );
+        assert_eq!(
+            column_width(ColumnKind::Unbounded, 0.9, 1722., 3., limits),
+            1408.0,
+            "dragged short of it"
+        );
+        assert_eq!(
+            column_width(ColumnKind::Bounded, 1.0, 1722., 0., limits),
+            1408.0,
+            "bounded"
+        );
     }
 
     /// A lock raises the column's FLOOR and does not cap it.
@@ -780,7 +818,10 @@ mod column_tests {
     fn a_width_reads_back_as_the_ratio_that_lays_it_out_that_wide() {
         let ratio = ratio_of_column_width(ColumnKind::Bounded, 860., 1722., 3.);
         assert!((column_width(ColumnKind::Bounded, ratio, 1722., 3., free()) - 860.).abs() < 1e-9);
-        assert_eq!(column_width(ColumnKind::Bounded, 860. / 1722., 1722., 3., free()), 858.5);
+        assert_eq!(
+            column_width(ColumnKind::Bounded, 860. / 1722., 1722., 3., free()),
+            858.5
+        );
     }
 
     #[test]
@@ -790,7 +831,10 @@ mod column_tests {
             for gap in [3., 20.] {
                 let width = column_width(ColumnKind::Bounded, ratio, 1722., gap, free());
                 let back = ratio_of_column_width(ColumnKind::Bounded, width, 1722., gap);
-                assert!((back - ratio).abs() < 1e-9, "{ratio} with gap {gap}: {width} read as {back}");
+                assert!(
+                    (back - ratio).abs() < 1e-9,
+                    "{ratio} with gap {gap}: {width} read as {back}"
+                );
             }
         }
     }
@@ -798,6 +842,9 @@ mod column_tests {
     #[test]
     fn a_dragged_width_reads_back_whole() {
         let back = ratio_of_column_width(ColumnKind::Unbounded, 809., 1722., 3.);
-        assert_eq!(column_width(ColumnKind::Unbounded, back, 1722., 3., free()), 809.0);
+        assert_eq!(
+            column_width(ColumnKind::Unbounded, back, 1722., 3., free()),
+            809.0
+        );
     }
 }

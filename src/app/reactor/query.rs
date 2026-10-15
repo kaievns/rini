@@ -1,12 +1,13 @@
-use super::diagnostics;
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use std::sync::mpsc::{RecvError, SyncSender, sync_channel};
 
 use objc2_core_foundation::CGRect;
+use rini_core::ids::{SpaceId, WindowId, pid_t};
 use rini_ipc::protocol::{
     ApplicationData, DiagnosticSpace, DiagnosticWindow, DiagnosticsData, LayoutStateData,
 };
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
+use super::diagnostics;
 use crate::app::api::dto::{RuntimeDisplayData, RuntimeWindowData, RuntimeWorkspaceData};
 use crate::app::config::Settings;
 use crate::app::reactor::state::AppState;
@@ -15,12 +16,8 @@ use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::topology::ForwardedSpaceState;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::state::WindowFilter;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::{LayoutEngine, WindowStore};
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowId;
-use rini_core::ids::pid_t;
-use rustc_hash::FxHashMap as HashMap;
-use rustc_hash::FxHashSet as HashSet;
 
 #[derive(Clone)]
 pub struct ReactorQueryHandle {
@@ -28,9 +25,7 @@ pub struct ReactorQueryHandle {
 }
 
 impl ReactorQueryHandle {
-    pub(super) fn new(tx: Sender) -> Self {
-        Self { tx }
-    }
+    pub(super) fn new(tx: Sender) -> Self { Self { tx } }
 
     fn send_query<T>(
         &self,
@@ -178,9 +173,7 @@ impl Reactor {
         self.view().handle_windows_query(space_id)
     }
 
-    pub fn query_displays(&self) -> Vec<RuntimeDisplayData> {
-        self.view().handle_displays_query()
-    }
+    pub fn query_displays(&self) -> Vec<RuntimeDisplayData> { self.view().handle_displays_query() }
 
     pub fn query_window_info(&self, window_id: WindowId) -> Option<RuntimeWindowData> {
         self.view().handle_window_info_query(window_id)
@@ -198,9 +191,7 @@ impl Reactor {
         self.view().handle_layout_state_query(space_id, workspace_id)
     }
 
-    pub fn query_metrics(&self) -> serde_json::Value {
-        self.view().handle_metrics_query()
-    }
+    pub fn query_metrics(&self) -> serde_json::Value { self.view().handle_metrics_query() }
 
     /// One-shot dump of strip and display state for every known space.
     ///
@@ -240,9 +231,7 @@ pub(crate) struct StateView<'a> {
 }
 
 impl StateView<'_> {
-    fn is_space_active(&self, space: SpaceId) -> bool {
-        self.active_spaces.contains(&space)
-    }
+    fn is_space_active(&self, space: SpaceId) -> bool { self.active_spaces.contains(&space) }
 
     fn active_space_ids(&self) -> Vec<u64> {
         self.active_spaces.iter().map(|space| space.get()).collect()
@@ -705,21 +694,18 @@ impl StateView<'_> {
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::{CGPoint, CGSize};
+    use rini_core::ids::{ScreenId, WindowServerId};
     use rustc_hash::{FxHashMap, FxHashSet};
 
+    use super::*;
     use crate::app::reactor::state::AppState;
     use crate::app::reactor::testing::make_window_info;
     use crate::displays::domain::screen::ScreenInfo;
     use crate::windows::domain::request::AppThreadHandle;
     use crate::windows::domain::state::WindowState;
     use crate::workspaces::LayoutEvent;
-    use rini_core::ids::{ScreenId, WindowServerId};
 
-    use super::*;
-
-    fn rect(x: f64, w: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, 0.0), CGSize::new(w, 800.0))
-    }
+    fn rect(x: f64, w: f64) -> CGRect { CGRect::new(CGPoint::new(x, 0.0), CGSize::new(w, 800.0)) }
 
     fn engine() -> LayoutEngine {
         LayoutEngine::new(
@@ -753,16 +739,13 @@ mod tests {
         let (tx, _rx) = rini_runloop::channel::channel();
         pids.iter()
             .map(|&pid| {
-                (
-                    pid,
-                    AppState {
-                        info: crate::windows::domain::info::AppInfo {
-                            bundle_id: Some(format!("com.test.{pid}")),
-                            localized_name: Some(format!("App {pid}")),
-                        },
-                        handle: AppThreadHandle::from_sender(tx.clone()),
+                (pid, AppState {
+                    info: crate::windows::domain::info::AppInfo {
+                        bundle_id: Some(format!("com.test.{pid}")),
+                        localized_name: Some(format!("App {pid}")),
                     },
-                )
+                    handle: AppThreadHandle::from_sender(tx.clone()),
+                })
             })
             .collect()
     }
@@ -1001,7 +984,8 @@ mod tests {
         let first = view.handle_layout_state_query(Some(10), Some(0)).expect("the first workspace");
         assert_eq!(first.workspace_id, 0);
         assert_eq!(first.is_active_workspace, active.workspace_id == 0);
-        let second = view.handle_layout_state_query(Some(10), Some(1)).expect("the second workspace");
+        let second =
+            view.handle_layout_state_query(Some(10), Some(1)).expect("the second workspace");
         assert_eq!(second.workspace_id, 1);
         assert_ne!(first.is_active_workspace, second.is_active_workspace);
         assert!(view.handle_layout_state_query(Some(10), Some(99)).is_none());

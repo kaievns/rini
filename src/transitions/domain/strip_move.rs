@@ -155,16 +155,14 @@ pub(crate) mod tests {
     use rini_geometry::space::{OverlayRect, Size, SurfacePoint};
 
     use super::*;
-    use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
     use crate::animation::domain::motion::easing::{CubicBezier, nudge_displacement};
     use crate::animation::domain::motion::nudge::{NUDGE_STRETCH, flight_curve};
+    use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 
     const GAP: f64 = 3.0;
     const HEIGHT: f64 = 1081.0;
 
-    fn wid(idx: u32) -> WindowId {
-        WindowId::new(1, idx)
-    }
+    fn wid(idx: u32) -> WindowId { WindowId::new(1, idx) }
 
     fn column(x: f64, width: f64) -> SurfaceRect {
         SurfaceRect::new(Point::new(x, 32.0), Size::new(width, HEIGHT))
@@ -210,13 +208,19 @@ pub(crate) mod tests {
     fn a_window_standing_where_the_scroll_puts_it_starts_there() {
         let viewport = column(0.0, 1728.0);
         let from_offset = SurfacePoint::new(-90.0, 0.0);
-        let mut windows =
-            [on_surface(wid(1), column(-87.0, 600.0)), on_surface(wid(2), column(516.0, 951.0))];
+        let mut windows = [
+            on_surface(wid(1), column(-87.0, 600.0)),
+            on_surface(wid(2), column(516.0, 951.0)),
+        ];
         let standing = [(wid(1), column(3.0, 600.0)), (wid(2), column(515.0, 952.0))];
         let laid_out = [(wid(1), column(3.0, 600.0)), (wid(2), column(606.0, 861.0))];
         start_where_standing(&mut windows, &standing, &laid_out, from_offset, viewport);
         assert_eq!(windows[0].from, None, "A rides the strip");
-        assert_eq!(windows[1].from, Some(column(425.0, 951.0)), "where it stands, its end's size");
+        assert_eq!(
+            windows[1].from,
+            Some(column(425.0, 951.0)),
+            "where it stands, its end's size"
+        );
         let (start, _) = windows[1].travel(from_offset, SurfacePoint::origin());
         assert_eq!(start.origin.x, 515.0);
     }
@@ -234,7 +238,11 @@ pub(crate) mod tests {
             on_surface(wid(3), column(2592.0, 861.0)),
         ];
         let parked = SurfaceRect::new(Point::new(1727.0, 1112.0), Size::new(861.0, HEIGHT));
-        let standing = [(wid(1), column(1.5, 861.0)), (wid(2), parked), (wid(3), parked)];
+        let standing = [
+            (wid(1), column(1.5, 861.0)),
+            (wid(2), parked),
+            (wid(3), parked),
+        ];
         let laid_out = [(wid(1), column(0.0, 861.0)), (wid(2), column(864.0, 861.0))];
         start_where_standing(&mut windows, &standing, &laid_out, from_offset, viewport);
         assert_eq!(windows[0].from, None, "within rounding");
@@ -256,8 +264,11 @@ pub(crate) mod tests {
             on_surface(wid(3), column(1728.0, 861.0)),
         ];
         let parked = SurfaceRect::new(Point::new(1727.0, 1112.0), Size::new(861.0, HEIGHT));
-        let standing =
-            [(wid(1), column(-500.0, 600.0)), (wid(2), column(690.0, 1035.0)), (wid(3), parked)];
+        let standing = [
+            (wid(1), column(-500.0, 600.0)),
+            (wid(2), column(690.0, 1035.0)),
+            (wid(3), parked),
+        ];
         let laid_out = [
             (wid(1), column(-500.0, 600.0)),
             (wid(2), column(600.0, 1125.0)),
@@ -268,7 +279,11 @@ pub(crate) mod tests {
         let start = |window: &SurfaceWindow| window.travel(from_offset, SurfacePoint::origin()).0;
         assert_eq!(start(&windows[1]).origin.x, 690.0, "B where it was let go");
         assert_eq!(windows[2].from, Some(column(1818.0, 861.0)));
-        assert_eq!(start(&windows[2]).origin.x, 1728.0, "C off screen, where it ends");
+        assert_eq!(
+            start(&windows[2]).origin.x,
+            1728.0,
+            "C off screen, where it ends"
+        );
     }
 
     /// macOS keeps more of some parked windows on screen than `is_off_screen` allows: a Chrome
@@ -280,9 +295,18 @@ pub(crate) mod tests {
         let from_offset = SurfacePoint::new(864.0, 0.0);
         let mut windows = [on_surface(wid(1), column(864.0, 861.0))];
         let parked = SurfaceRect::new(Point::new(1727.0, 1065.0), Size::new(861.0, HEIGHT));
-        assert!(!rini_geometry::is_off_screen(viewport, parked), "the case is the one the clamp misses");
+        assert!(
+            !rini_geometry::is_off_screen(viewport, parked),
+            "the case is the one the clamp misses"
+        );
         let laid_out = [(wid(1), column(0.0, 861.0))];
-        start_where_standing(&mut windows, &[(wid(1), parked)], &laid_out, from_offset, viewport);
+        start_where_standing(
+            &mut windows,
+            &[(wid(1), parked)],
+            &laid_out,
+            from_offset,
+            viewport,
+        );
         assert_eq!(windows[0].from, None);
     }
 
@@ -297,7 +321,10 @@ pub(crate) mod tests {
         let mut staged = on_surface(wid(2), column(516.0, 951.0));
         staged.from = Some(column(0.0, 951.0));
         let mut windows = [floating, staged];
-        let standing = [(wid(1), column(400.0, 600.0)), (wid(2), column(515.0, 952.0))];
+        let standing = [
+            (wid(1), column(400.0, 600.0)),
+            (wid(2), column(515.0, 952.0)),
+        ];
         start_where_standing(&mut windows, &standing, &standing, from_offset, viewport);
         assert_eq!(windows[0].from, None);
         assert_eq!(windows[1].from, Some(column(0.0, 951.0)));
@@ -395,12 +422,13 @@ pub(crate) mod tests {
         );
     }
 
+    use rini_core::ids::WindowServerId;
+
     use crate::animation::domain::motion::glide::Leg;
     use crate::animation::domain::motion::plan::{
         AnimationTarget, FlightPlan, GroupKey, Member, animation_targets, carries_out_and_back,
         surface_plan,
     };
-    use rini_core::ids::WindowServerId;
 
     /// The display the design was simulated on, 2026-09-30.
     const V: f64 = 1728.0;
@@ -711,7 +739,10 @@ pub(crate) mod tests {
             let (before, from_offset) = full_width_move(Direction::Right);
             let mut windows = before.clone();
             let travel = travel_from(from_offset);
-            assert_eq!(stage_move(&mut windows, &Cue::Plain, area, travel, PLAIN, look), None);
+            assert_eq!(
+                stage_move(&mut windows, &Cue::Plain, area, travel, PLAIN, look),
+                None
+            );
             assert_eq!(windows, before, "{look:?}: a plain press");
         }
     }
@@ -806,7 +837,9 @@ pub(crate) mod tests {
         use std::collections::HashMap;
 
         use rini_core::ids::{WindowId, WindowServerId};
-        use rini_geometry::space::{OverlayPoint, OverlayRect, OverlayVector, SurfacePoint, SurfaceRect};
+        use rini_geometry::space::{
+            OverlayPoint, OverlayRect, OverlayVector, SurfacePoint, SurfaceRect,
+        };
         use rini_geometry::{SameAs, to_overlay_space};
         use rini_ipc::protocol::Direction;
 
@@ -843,9 +876,7 @@ pub(crate) mod tests {
             }
         }
 
-        pub(crate) fn at(x: f64, width: f64) -> SurfaceRect {
-            rect(x, 32.0, width, 1081.0)
-        }
+        pub(crate) fn at(x: f64, width: f64) -> SurfaceRect { rect(x, 32.0, width, 1081.0) }
 
         /// The surface of one move as `start_strip_pan` builds it: every window at its new frame,
         /// the pair staged by `stage_move`, and the step the move takes.
@@ -873,7 +904,8 @@ pub(crate) mod tests {
                 outer_right: OUTER,
             };
             let travel = pan_travel(OFFSET, REST);
-            let step = match stage_move(&mut windows, &cue, area, travel, super::PLAIN, Look::Slide) {
+            let step = match stage_move(&mut windows, &cue, area, travel, super::PLAIN, Look::Slide)
+            {
                 Some(Accent::Step { offset, .. }) => Some(offset),
                 _ => None,
             };
@@ -907,7 +939,12 @@ pub(crate) mod tests {
         /// second, and the viewport's travel of each.
         pub(crate) fn two_presses(
             width: f64,
-        ) -> (FlightPlan, [(WindowId, SurfaceRect); 5], ReflowPlan, SurfacePoint) {
+        ) -> (
+            FlightPlan,
+            [(WindowId, SurfaceRect); 5],
+            ReflowPlan,
+            SurfacePoint,
+        ) {
             let step = width + 3.0;
             let offset = SurfacePoint::new(-step, 0.0);
             let (zero, a, w, b, c) = (wid(1), wid(2), wid(3), wid(4), wid(5));
@@ -984,7 +1021,11 @@ pub(crate) mod tests {
                 let member = group(window.window);
                 let rel = member.members.iter().find(|m| m.window == window.window).unwrap().rel;
                 assert_eq!(rel, installed(from), "installs where it was on screen");
-                assert_eq!(overlay_of(rel, member.travel.to_point()), to, "lands at its new frame");
+                assert_eq!(
+                    overlay_of(rel, member.travel.to_point()),
+                    to,
+                    "lands at its new frame"
+                );
             }
         }
 

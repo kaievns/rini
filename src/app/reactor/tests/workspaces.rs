@@ -2,15 +2,14 @@
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::WindowServerId;
 use rini_geometry::SameAs;
+use rini_ipc::protocol::{SwitchScope, WorkspaceSelector};
 use test_log::test;
 
 use super::fixtures::*;
-use rini_ipc::protocol::WorkspaceSelector;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::request::Request;
 use crate::workspaces::{LayoutCommand, LayoutEvent};
-use rini_ipc::protocol::SwitchScope;
 
 #[test]
 fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
@@ -123,10 +122,10 @@ fn workspace_commands_follow_active_display_space_across_active_displays() {
         (target, WindowServerId::new(202), right_space, right),
     ];
 
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(left_space), Some(right_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(left_space),
+        Some(right_space),
+    ]));
 
     reactor.add_test_app(1);
 
@@ -181,10 +180,10 @@ fn workspace_switch_arrange_is_scoped_to_its_command_space() {
     let left_space = SpaceId::new(1);
     let right_space = SpaceId::new(2);
 
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(left_space), Some(right_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(left_space),
+        Some(right_space),
+    ]));
 
     let switch = reactor.dispatch_test_layout_command(LayoutCommand::NextWorkspace(None));
     assert_eq!(switch.arrange.space_scope, Some(left_space));
@@ -219,10 +218,10 @@ fn workspace_queries_are_isolated_per_macos_space() {
     let space1 = SpaceId::new(1);
     let space2 = SpaceId::new(2);
 
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(space1), Some(space2)],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(space1),
+        Some(space2),
+    ]));
 
     reactor.handle_test_workspace_command(space1, &LayoutCommand::SwitchToWorkspace(0));
     reactor.handle_test_workspace_command(space2, &LayoutCommand::SwitchToWorkspace(1));
@@ -610,10 +609,9 @@ fn windows_discovered_does_not_reintroduce_inactive_workspace_window() {
 
     reactor.discover_test_windows(1, vec![], vec![WindowId::new(1, 1), WindowId::new(1, 2)]);
 
-    assert_eq!(
-        reactor.test_active_workspace_windows(space),
-        vec![WindowId::new(1, 2)]
-    );
+    assert_eq!(reactor.test_active_workspace_windows(space), vec![
+        WindowId::new(1, 2)
+    ]);
 }
 
 #[test]
@@ -764,9 +762,13 @@ fn display_churn_end_refresh_preserves_non_default_workspace_without_app_rules()
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
 
     reactor.handle_event(Event::DisplayChurnBegin);
-    reactor.handle_event(space_state_event_with(vec![screen], vec![Some(space)], |state| {
-        state.releases_display_churn_refresh_quarantine = true;
-    }));
+    reactor.handle_event(space_state_event_with(
+        vec![screen],
+        vec![Some(space)],
+        |state| {
+            state.releases_display_churn_refresh_quarantine = true;
+        },
+    ));
     apps.simulate_until_quiet(&mut reactor);
 
     assert_eq!(
@@ -874,10 +876,10 @@ fn displays_share_workspaces_but_switch_between_them_independently() {
     let external_space = SpaceId::new(479);
 
     set_space_membership(&[(builtin_space, &[]), (external_space, &[])]);
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
 
     let builtin_workspaces = reactor.test_workspace_ids(builtin_space);
     let external_workspaces = reactor.test_workspace_ids(external_space);
@@ -887,10 +889,10 @@ fn displays_share_workspaces_but_switch_between_them_independently() {
     );
 
     // Move only the external to workspace 3.
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
     assert!(reactor.set_test_active_workspace(external_space, external_workspaces[3]));
 
     assert_eq!(
@@ -1007,10 +1009,11 @@ fn the_every_window_switch_offers_one_stack_per_application_in_focus_order() {
     let ghostty = WindowId::new(1, 1);
     let other_ghostty = WindowId::new(1, 2);
     let slack = WindowId::new(2, 1);
-    let (mut reactor, _) = switch_desk(
-        &[(ghostty, 0), (other_ghostty, 1), (slack, 0)],
-        &[other_ghostty, slack, ghostty],
-    );
+    let (mut reactor, _) = switch_desk(&[(ghostty, 0), (other_ghostty, 1), (slack, 0)], &[
+        other_ghostty,
+        slack,
+        ghostty,
+    ]);
 
     let list = reactor.probe_switch_candidates(SwitchScope::Everything);
     assert_eq!(
@@ -1066,10 +1069,13 @@ fn a_stack_commits_its_applications_most_recent_window_wherever_it_is() {
     let recent = WindowId::new(1, 2);
     let current = WindowId::new(2, 1);
     let current_other = WindowId::new(2, 2);
-    let (mut reactor, space) = switch_desk(
-        &[(older, 0), (recent, 1), (current, 0), (current_other, 0)],
-        &[older, recent, current_other, current],
-    );
+    let (mut reactor, space) =
+        switch_desk(&[(older, 0), (recent, 1), (current, 0), (current_other, 0)], &[
+            older,
+            recent,
+            current_other,
+            current,
+        ]);
     let workspaces = reactor.test_workspace_ids(space);
     assert!(reactor.set_test_active_workspace(space, workspaces[0]));
 
@@ -1188,10 +1194,9 @@ fn the_popup_draws_one_stack_per_application() {
     let slack = WindowId::new(2, 1);
     let mut windows: Vec<(WindowId, usize)> = ghostty.iter().map(|window| (*window, 0)).collect();
     windows.push((slack, 0));
-    let (mut reactor, _) = switch_desk(
-        &windows,
-        &[ghostty[3], ghostty[2], slack, ghostty[1], ghostty[0]],
-    );
+    let (mut reactor, _) = switch_desk(&windows, &[
+        ghostty[3], ghostty[2], slack, ghostty[1], ghostty[0],
+    ]);
     let mut popup = reactor.connect_test_switcher();
 
     reactor.dispatch_test_switch(Signal::Open {
@@ -1258,10 +1263,9 @@ fn a_switch_reads_and_warms_only_the_windows_it_draws() {
     let slack = WindowId::new(2, 1);
     let mut windows: Vec<(WindowId, usize)> = ghostty.iter().map(|window| (*window, 0)).collect();
     windows.push((slack, 0));
-    let (mut reactor, _) = switch_desk(
-        &windows,
-        &[ghostty[3], ghostty[2], slack, ghostty[1], ghostty[0]],
-    );
+    let (mut reactor, _) = switch_desk(&windows, &[
+        ghostty[3], ghostty[2], slack, ghostty[1], ghostty[0],
+    ]);
     let mut popup = reactor.connect_test_switcher();
     let mut pictures = reactor.connect_test_pictures();
 
@@ -1293,10 +1297,12 @@ fn a_workspace_switch_stays_one_entry_per_window() {
     let other_editor = WindowId::new(1, 2);
     let elsewhere = WindowId::new(1, 3);
     let slack = WindowId::new(2, 1);
-    let (mut reactor, _) = switch_desk(
-        &[(editor, 0), (other_editor, 0), (elsewhere, 1), (slack, 0)],
-        &[slack, other_editor, editor],
-    );
+    let (mut reactor, _) =
+        switch_desk(&[(editor, 0), (other_editor, 0), (elsewhere, 1), (slack, 0)], &[
+            slack,
+            other_editor,
+            editor,
+        ]);
 
     let entries = reactor.probe_switch_entries(SwitchScope::Workspace);
     assert_eq!(
@@ -1327,10 +1333,10 @@ fn a_workspace_switch_offers_that_workspace_on_every_display() {
     let other_workspace = WindowId::new(1, 2);
 
     set_space_membership(&[(left_space, &[901, 903]), (right_space, &[902])]);
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(left_space), Some(right_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(left_space),
+        Some(right_space),
+    ]));
     reactor.add_test_app(1);
     reactor.add_test_app(2);
     let workspaces = reactor.test_workspace_ids(left_space);
@@ -1376,10 +1382,10 @@ fn a_workspace_switch_is_a_hard_filter_whatever_the_other_display_shows() {
     let terminal = WindowId::new(4, 1); // ws2, external, parked
 
     set_space_membership(&[(laptop_space, &[901, 902]), (external_space, &[903, 904])]);
-    reactor.handle_event(space_state_event(
-        vec![laptop, external],
-        vec![Some(laptop_space), Some(external_space)],
-    ));
+    reactor.handle_event(space_state_event(vec![laptop, external], vec![
+        Some(laptop_space),
+        Some(external_space),
+    ]));
     for pid in [1, 2, 3, 4] {
         reactor.add_test_app(pid);
     }
@@ -1621,10 +1627,9 @@ fn three_ghosttys() -> (Reactor, SpaceId, [WindowId; 3]) {
     let first = WindowId::new(1, 1);
     let second = WindowId::new(1, 2);
     let elsewhere = WindowId::new(1, 3);
-    let (mut reactor, space) = switch_desk(
-        &[(first, 0), (second, 0), (elsewhere, 1)],
-        &[elsewhere, second, first],
-    );
+    let (mut reactor, space) = switch_desk(&[(first, 0), (second, 0), (elsewhere, 1)], &[
+        elsewhere, second, first,
+    ]);
     let workspaces = reactor.test_workspace_ids(space);
     assert!(reactor.set_test_active_workspace(space, workspaces[0]));
     (reactor, space, [first, second, elsewhere])
@@ -1929,7 +1934,10 @@ fn a_switch_claims_the_destination_strip_s_layout() {
 
     let (claimed, now) = reactor.take_strip_layout(space).expect("a strip");
     let claimed = claimed.expect("the switch drew the destination");
-    assert!(claimed.iter().any(|(window, _)| *window == WindowId::new(1, 2)), "{claimed:?}");
+    assert!(
+        claimed.iter().any(|(window, _)| *window == WindowId::new(1, 2)),
+        "{claimed:?}"
+    );
     assert_eq!(claimed, now, "as the strip has it now");
 }
 

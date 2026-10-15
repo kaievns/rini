@@ -223,9 +223,7 @@ impl BarActor {
         }
     }
 
-    fn redraw(&mut self) {
-        cut(|| self.draw_all());
-    }
+    fn redraw(&mut self) { cut(|| self.draw_all()); }
 
     /// Draws every display's bar and orders out the rest. Inside a transaction the caller holds.
     fn draw_all(&mut self) {
@@ -355,9 +353,7 @@ fn cut<R>(change: impl FnOnce() -> R) -> R {
 }
 
 /// No pictures while a flight runs or settles, and none while no bar is up to show them.
-fn pictures_paused(flight: bool, displays: usize) -> bool {
-    flight || displays == 0
-}
+fn pictures_paused(flight: bool, displays: usize) -> bool { flight || displays == 0 }
 
 /// The local time, and how far into its minute it is.
 fn read_clock() -> (Clock, f64) {

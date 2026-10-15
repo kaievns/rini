@@ -1,25 +1,26 @@
 use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU64, Ordering};
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_core::ids::{WindowId, pid_t};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 
-use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::constraints::{
     AxisConstraints, ColumnKind, clamp_to_constraints, column_limits, column_ratio, column_width,
     holds_viewport, ratio_of_column_width, solve_axis_lengths,
 };
+use crate::layout::domain::edge_drag::{
+    Drag, End, Side, dragged_side, dragged_width, trade_height,
+};
 use crate::layout::domain::preset_width::{PresetWidth, next_preset};
-use crate::layout::domain::edge_drag::{Drag, End, Side, dragged_side, dragged_width, trade_height};
-use crate::layout::domain::tile;
 use crate::layout::domain::strip::{
     Reveal, anchor_x, centres, column_starts, offset_keeping_right_edge, place_offset, place_share,
     reveal_offset,
 };
+use crate::layout::domain::tile;
 use crate::layout::settings::{Gaps, ScrollingLayoutSettings};
-use crate::layout::{Direction, LayoutId, ResizeOrientation};
-use rini_core::ids::{WindowId, pid_t};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::layout::{Direction, LayoutId, ResizeOrientation, WindowLayoutConstraints};
 
 /// Where a window sat in the stack it left, so the toggle back can put it there again.
 ///
@@ -304,17 +305,14 @@ impl LayoutState {
             Direction::Left => col_idx,
             _ => (col_idx + 1).min(self.columns.len()),
         };
-        self.columns.insert(
-            insert_at,
-            Column {
-                windows: vec![wid],
-                width_offset: 0.0,
-                width_overridden: false,
-                width_unbounded: false,
-                height_weights: vec![weight],
-                height_overridden: false,
-            },
-        );
+        self.columns.insert(insert_at, Column {
+            windows: vec![wid],
+            width_offset: 0.0,
+            width_overridden: false,
+            width_unbounded: false,
+            height_weights: vec![weight],
+            height_overridden: false,
+        });
         Some(origin)
     }
 
@@ -425,7 +423,8 @@ impl LayoutState {
     /// A full-width window is alone in its column: one that comes to share it stops being full
     /// width where it is, as if given a width.
     fn keep_full_width_alone(&mut self, col_idx: usize) {
-        let Some(column) = self.columns.get(col_idx).filter(|column| column.windows.len() > 1) else {
+        let Some(column) = self.columns.get(col_idx).filter(|column| column.windows.len() > 1)
+        else {
             return;
         };
         let maximized: Vec<WindowId> = column
@@ -796,8 +795,12 @@ impl Clone for LayoutState {
             last_selected_rel_px: AtomicU64::new(self.last_selected_rel_px.load(Ordering::Relaxed)),
             last_selected_rel_of: AtomicU64::new(self.last_selected_rel_of.load(Ordering::Relaxed)),
             last_selected_share: AtomicU64::new(self.last_selected_share.load(Ordering::Relaxed)),
-            last_selected_width_px: AtomicU64::new(self.last_selected_width_px.load(Ordering::Relaxed)),
-            last_selected_height_px: AtomicU64::new(self.last_selected_height_px.load(Ordering::Relaxed)),
+            last_selected_width_px: AtomicU64::new(
+                self.last_selected_width_px.load(Ordering::Relaxed),
+            ),
+            last_selected_height_px: AtomicU64::new(
+                self.last_selected_height_px.load(Ordering::Relaxed),
+            ),
             last_strip_origin_px: AtomicU64::new(self.last_strip_origin_px.load(Ordering::Relaxed)),
             last_step_px: AtomicU64::new(self.last_step_px.load(Ordering::Relaxed)),
             last_center_offset_delta_px: AtomicU64::new(
@@ -810,41 +813,41 @@ impl Clone for LayoutState {
     }
 }
 
-fn default_atomic_bool() -> AtomicBool {
-    AtomicBool::new(false)
-}
-fn default_atomic_i8() -> AtomicI8 {
-    AtomicI8::new(0)
-}
-fn default_atomic() -> AtomicU64 {
-    AtomicU64::new(0.0f64.to_bits())
-}
+fn default_atomic_bool() -> AtomicBool { AtomicBool::new(false) }
+fn default_atomic_i8() -> AtomicI8 { AtomicI8::new(0) }
+fn default_atomic() -> AtomicU64 { AtomicU64::new(0.0f64.to_bits()) }
 
-fn default_atomic_unset() -> AtomicU64 {
-    AtomicU64::new(f64::NAN.to_bits())
-}
+fn default_atomic_unset() -> AtomicU64 { AtomicU64::new(f64::NAN.to_bits()) }
 
 /// A window, or none, as one atomic word: `idx` is never zero, so zero is none.
 fn packed(wid: Option<WindowId>) -> u64 {
-    wid.map_or(0, |wid| (u64::from(wid.pid as u32) << 32) | u64::from(wid.idx.get()))
+    wid.map_or(0, |wid| {
+        (u64::from(wid.pid as u32) << 32) | u64::from(wid.idx.get())
+    })
 }
 
 fn unpacked(bits: u64) -> Option<WindowId> {
     let idx = std::num::NonZeroU32::new(bits as u32)?;
-    Some(WindowId { pid: (bits >> 32) as u32 as pid_t, idx })
+    Some(WindowId {
+        pid: (bits >> 32) as u32 as pid_t,
+        idx,
+    })
 }
 
 /// Whether a reported length is the slot length the strip laid out, as drawn, to within the point a
 /// window's own rounding or its app's snapping takes off it.
-fn answers_slot(reported: f64, slot: f64) -> bool {
-    (reported - slot.round()).abs() <= 1.0
-}
+fn answers_slot(reported: f64, slot: f64) -> bool { (reported - slot.round()).abs() <= 1.0 }
 
 /// The scroll offset that keeps the selected column where it was on screen after the gap between
 /// columns changed. The offset is in strip points and every column start includes the gaps before
 /// it, so a wider gap slides the selected column right by one gap change per column ahead of it
 /// unless the offset follows. `None` when the gap is unchanged or nothing was laid out before.
-fn rebased_offset(previous_gap: f64, gap: f64, previous_rel: f64, selected_start: f64) -> Option<f64> {
+fn rebased_offset(
+    previous_gap: f64,
+    gap: f64,
+    previous_rel: f64,
+    selected_start: f64,
+) -> Option<f64> {
     (gap != previous_gap && previous_rel.is_finite()).then(|| selected_start - previous_rel)
 }
 
@@ -855,9 +858,7 @@ pub struct ScrollingLayoutSystem {
     settings: ScrollingLayoutSettings,
 }
 
-fn default_scrolling_settings() -> ScrollingLayoutSettings {
-    ScrollingLayoutSettings::default()
-}
+fn default_scrolling_settings() -> ScrollingLayoutSettings { ScrollingLayoutSettings::default() }
 
 impl Default for ScrollingLayoutSystem {
     fn default() -> Self {
@@ -937,7 +938,10 @@ impl ScrollingLayoutSystem {
     ) -> (ColumnKind, f64) {
         let kind = state.column_kind(col);
         let base_ratio = Self::clamp_base_ratio(state.column_width_ratio, min_ratio, max_ratio);
-        (kind, column_ratio(kind, base_ratio, col.width_offset, min_ratio, max_ratio))
+        (
+            kind,
+            column_ratio(kind, base_ratio, col.width_offset, min_ratio, max_ratio),
+        )
     }
 
     fn column_starts(
@@ -1022,9 +1026,7 @@ impl ScrollingLayoutSystem {
             .filter(|origin| !origin.is_nan())
     }
 
-    fn layout_state(&self, layout: LayoutId) -> Option<&LayoutState> {
-        self.layouts.get(layout)
-    }
+    fn layout_state(&self, layout: LayoutId) -> Option<&LayoutState> { self.layouts.get(layout) }
 
     fn layout_state_mut(&mut self, layout: LayoutId) -> Option<&mut LayoutState> {
         self.layouts.get_mut(layout)
@@ -1098,17 +1100,14 @@ impl ScrollingLayoutSystem {
                 Direction::Right => (col_idx + 1).min(state.columns.len()),
                 _ => return false,
             };
-            state.columns.insert(
-                insert_at,
-                Column {
-                    windows: vec![wid],
-                    width_offset: 0.0,
-                    width_overridden: false,
-                    width_unbounded: false,
-                    height_weights: vec![weight],
-                    height_overridden: false,
-                },
-            );
+            state.columns.insert(insert_at, Column {
+                windows: vec![wid],
+                width_offset: 0.0,
+                width_overridden: false,
+                width_unbounded: false,
+                height_weights: vec![weight],
+                height_overridden: false,
+            });
             state.selected = Some(wid);
             return true;
         }
@@ -1145,9 +1144,7 @@ impl ScrollingLayoutSystem {
         self.layouts.insert(LayoutState::new(self.settings.column_width_ratio))
     }
 
-    pub fn contains_layout(&self, layout: LayoutId) -> bool {
-        self.layouts.contains_key(layout)
-    }
+    pub fn contains_layout(&self, layout: LayoutId) -> bool { self.layouts.contains_key(layout) }
 
     pub fn clone_layout(&mut self, layout: LayoutId) -> LayoutId {
         let cloned = self
@@ -1158,9 +1155,7 @@ impl ScrollingLayoutSystem {
         self.layouts.insert(cloned)
     }
 
-    pub fn remove_layout(&mut self, layout: LayoutId) {
-        self.layouts.remove(layout);
-    }
+    pub fn remove_layout(&mut self, layout: LayoutId) { self.layouts.remove(layout); }
 
     pub fn draw_tree(&self, layout: LayoutId) -> String {
         let Some(state) = self.layouts.get(layout) else {
@@ -1264,7 +1259,9 @@ impl ScrollingLayoutSystem {
                 self.settings.max_column_width_ratio,
             );
             let limits = column_limits(
-                col.windows.iter().filter_map(|wid| Some((constraints.get(wid).copied()?, borders.of(*wid)))),
+                col.windows
+                    .iter()
+                    .filter_map(|wid| Some((constraints.get(wid).copied()?, borders.of(*wid)))),
             );
             let width = column_width(kind, ratio, tiling.size.width, gap_x, limits);
             column_widths.push(width);
@@ -1828,7 +1825,10 @@ impl ScrollingLayoutSystem {
         screen: CGRect,
         gaps: &Gaps,
     ) {
-        let drag = drag.map(|drag| Drag { from: tile::slot_of(drag.from, border), ..drag });
+        let drag = drag.map(|drag| Drag {
+            from: tile::slot_of(drag.from, border),
+            ..drag
+        });
         let new_frame = tile::slot_of(new_frame, border);
         let min_ratio = self.settings.min_column_width_ratio;
         let max_ratio = self.settings.max_column_width_ratio;
@@ -1850,8 +1850,8 @@ impl ScrollingLayoutSystem {
             return;
         };
         let dragged_from = drag.map(|drag| drag.from);
-        let side_drag = dragged_from
-            .and_then(|start| dragged_side(start, new_frame).map(|side| (start, side)));
+        let side_drag =
+            dragged_from.and_then(|start| dragged_side(start, new_frame).map(|side| (start, side)));
         let full_width = state.is_full_width_column(&state.columns[col_idx]);
         if full_width && side_drag.is_none() {
             // A full-width column keeps the width it had before, for the toggle back: neither the
@@ -1859,9 +1859,11 @@ impl ScrollingLayoutSystem {
             return;
         }
         let stacked = state.columns[col_idx].windows.len() > 1;
-        let (kind, ratio) = Self::laid_out_ratio(state, &state.columns[col_idx], min_ratio, max_ratio);
+        let (kind, ratio) =
+            Self::laid_out_ratio(state, &state.columns[col_idx], min_ratio, max_ratio);
         let held_to_viewport = holds_viewport(kind, ratio, tiling.size.width);
-        let (width_kept, height_kept) = match state.laid_out_slot_of(wid).filter(|_| drag.is_none()) {
+        let (width_kept, height_kept) = match state.laid_out_slot_of(wid).filter(|_| drag.is_none())
+        {
             Some(slot) => (
                 answers_slot(new_frame.size.width, slot.width) || held_to_viewport,
                 !stacked || answers_slot(new_frame.size.height, slot.height),
@@ -2014,8 +2016,9 @@ impl ScrollingLayoutSystem {
         };
         let selected = state.columns[col_idx].windows[row_idx];
         let folding_out = state.columns[col_idx].windows.len() > 1;
-        let view_before =
-            (folding_out && reveals_only).then(|| state.laid_out_view_of(selected)).flatten();
+        let view_before = (folding_out && reveals_only)
+            .then(|| state.laid_out_view_of(selected))
+            .flatten();
 
         if folding_out {
             if let Some(origin) = state.split_out(selected, away) {
@@ -2245,16 +2248,15 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use rini_core::ids::{WindowId, pid_t};
+    use rustc_hash::FxHashMap as HashMap;
 
     use super::{Column, ScrollingLayoutSystem, answers_slot, rebased_offset};
-    use crate::layout::WindowLayoutConstraints;
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::domain::edge_drag::Drag;
     use crate::layout::domain::tile;
     use crate::layout::settings::{CenterFocusedColumn, Gaps, ScrollingLayoutSettings};
-    use crate::layout::{Direction, LayoutId, ResizeOrientation};
-    use rini_core::ids::{WindowId, pid_t};
-    use rustc_hash::FxHashMap as HashMap;
+    use crate::layout::{Direction, LayoutId, ResizeOrientation, WindowLayoutConstraints};
 
     fn wid(pid: pid_t, idx: u32) -> WindowId {
         WindowId {
@@ -2277,9 +2279,7 @@ mod tests {
         system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), gaps)
     }
 
-    fn constraints_none() -> HashMap<WindowId, WindowLayoutConstraints> {
-        HashMap::default()
-    }
+    fn constraints_none() -> HashMap<WindowId, WindowLayoutConstraints> { HashMap::default() }
 
     fn frame_for(frames: &[(WindowId, CGRect)], wid: WindowId) -> CGRect {
         frames
@@ -2527,7 +2527,8 @@ mod tests {
         let screen = screen(1200.0, 700.0);
         let gaps = Gaps::default();
         let tiling = compute_tiling_area(screen, &gaps);
-        let frames = system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
+        let frames =
+            system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
         let frame = frame_for(&frames, window);
         assert!(frame.size.width <= tiling.size.width);
         assert!(frame.origin.x >= tiling.origin.x);
@@ -3274,7 +3275,10 @@ mod tests {
 
         toggle_selection(&mut system, layout);
         let full = frame_for(&render(&system, layout, screen, &gaps), w1);
-        let settled = CGRect::new(full.origin, CGSize::new(full.size.width - 6.0, full.size.height - 4.0));
+        let settled = CGRect::new(
+            full.origin,
+            CGSize::new(full.size.width - 6.0, full.size.height - 4.0),
+        );
         system.on_window_resized(layout, w1, None, settled, 0.0, screen, &gaps);
         assert_eq!(
             frame_for(&render(&system, layout, screen, &gaps), w1).size.width,
@@ -3606,14 +3610,19 @@ mod tests {
             assert!(system.select_window(layout, wid(1, wide)));
             system.cycle_preset_column_width(layout);
         }
-        let width = |system: &ScrollingLayoutSystem, idx| laid_out_xw(system, layout, wid(1, idx)).1;
+        let width =
+            |system: &ScrollingLayoutSystem, idx| laid_out_xw(system, layout, wid(1, idx)).1;
         let before = [1, 3, 5].map(|idx| width(&system, idx));
 
         system.explode_column_of_selection(layout);
 
         assert_eq!(shape(&system, layout), ids(&[&[1], &[2], &[3], &[4], &[5]]));
         assert_eq!([1, 3, 5].map(|idx| width(&system, idx)), before);
-        assert_ne!(width(&system, 2), before[0], "fixture: the neighbours are not at the default");
+        assert_ne!(
+            width(&system, 2),
+            before[0],
+            "fixture: the neighbours are not at the default"
+        );
         assert_eq!(system.selected_window(layout), Some(wid(1, 3)));
     }
 
@@ -3638,7 +3647,11 @@ mod tests {
     fn only_a_changed_gap_rebases_the_offset() {
         assert_eq!(rebased_offset(2.0, 4.0, -4.0, 1726.0), Some(1730.0));
         assert_eq!(rebased_offset(4.0, 4.0, -4.0, 1726.0), None, "the same gap");
-        assert_eq!(rebased_offset(2.0, 4.0, f64::NAN, 1726.0), None, "never laid out");
+        assert_eq!(
+            rebased_offset(2.0, 4.0, f64::NAN, 1726.0),
+            None,
+            "never laid out"
+        );
     }
 
     /// Found 2026-09-30: raising the gap between windows from 2 to 4 left a full-width column two
@@ -3659,15 +3672,25 @@ mod tests {
         gaps.inner = 2.0;
 
         let before = frame_for(&render(&system, layout, screen, &gaps), w3);
-        assert_eq!(before.origin.x, 4.0, "the full-width column starts at the left margin");
+        assert_eq!(
+            before.origin.x, 4.0,
+            "the full-width column starts at the left margin"
+        );
 
         gaps.inner = 4.0;
         let frames = render(&system, layout, screen, &gaps);
         let after = frame_for(&frames, w3);
         assert_eq!(after.origin.x, 4.0, "it stays at the left margin");
-        assert_eq!(after.origin.x + after.size.width, 1724.0, "and ends at the right one");
+        assert_eq!(
+            after.origin.x + after.size.width,
+            1724.0,
+            "and ends at the right one"
+        );
         // The columns ahead of it are re-spaced with the new gap, one gap to its left.
-        assert_eq!(frame_for(&frames, w2).origin.x + frame_for(&frames, w2).size.width, 0.0);
+        assert_eq!(
+            frame_for(&frames, w2).origin.x + frame_for(&frames, w2).size.width,
+            0.0
+        );
         let _ = w1;
     }
 
@@ -4016,22 +4039,23 @@ mod tests {
         toggle_selection(&mut system, layout);
 
         let mut constraints = HashMap::default();
-        constraints.insert(
-            narrow,
-            WindowLayoutConstraints {
-                is_resizable: true,
-                max_width: 400.0,
-                ..Default::default()
-            },
-        );
+        constraints.insert(narrow, WindowLayoutConstraints {
+            is_resizable: true,
+            max_width: 400.0,
+            ..Default::default()
+        });
         let screen = screen(1000.0, 800.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
+        let frames =
+            system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
 
         let maximized = frame_for(&frames, narrow);
         let neighbour = frame_for(&frames, next);
         assert_eq!(maximized.size.width, 400.0, "it cannot be wider than it says");
-        assert!(neighbour.origin.x >= 1000.0, "the column keeps the viewport, the next at {neighbour:?}");
+        assert!(
+            neighbour.origin.x >= 1000.0,
+            "the column keeps the viewport, the next at {neighbour:?}"
+        );
         assert!(
             maximized.origin.x + maximized.size.width <= neighbour.origin.x + 1.0,
             "maximized {maximized:?} runs into the next column at {neighbour:?}"
@@ -4055,17 +4079,15 @@ mod tests {
         system.toggle_fold_of_selection(layout, Direction::Left);
 
         let mut constraints = HashMap::default();
-        constraints.insert(
-            top,
-            WindowLayoutConstraints {
-                is_resizable: true,
-                min_height: 100.0,
-                ..Default::default()
-            },
-        );
+        constraints.insert(top, WindowLayoutConstraints {
+            is_resizable: true,
+            min_height: 100.0,
+            ..Default::default()
+        });
         let screen = screen(1000.0, 800.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
+        let frames =
+            system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
 
         let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
         assert!(
@@ -4086,7 +4108,13 @@ mod tests {
 
         let screen = screen(1000.0, 800.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints_none(), &tile::Borders::default(), &gaps);
+        let frames = system.calculate_layout(
+            layout,
+            screen,
+            &constraints_none(),
+            &tile::Borders::default(),
+            &gaps,
+        );
         let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
         assert!(
             (a.size.height - b.size.height).abs() < 2.0,
@@ -4111,7 +4139,13 @@ mod tests {
 
         let screen = screen(1000.0, 800.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints_none(), &tile::Borders::default(), &gaps);
+        let frames = system.calculate_layout(
+            layout,
+            screen,
+            &constraints_none(),
+            &tile::Borders::default(),
+            &gaps,
+        );
         let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
         assert!(
             a.size.height > b.size.height + 10.0,
@@ -4136,7 +4170,13 @@ mod tests {
 
         let screen = screen(1000.0, 900.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints_none(), &tile::Borders::default(), &gaps);
+        let frames = system.calculate_layout(
+            layout,
+            screen,
+            &constraints_none(),
+            &tile::Borders::default(),
+            &gaps,
+        );
         let heights: Vec<f64> = w.iter().map(|id| frame_for(&frames, *id).size.height).collect();
         let spread = heights.iter().cloned().fold(f64::MIN, f64::max)
             - heights.iter().cloned().fold(f64::MAX, f64::min);
@@ -4159,17 +4199,15 @@ mod tests {
         system.add_window_after_selection(layout, neighbour);
 
         let mut constraints = HashMap::default();
-        constraints.insert(
-            acme,
-            WindowLayoutConstraints {
-                is_resizable: true,
-                min_width: 600.0,
-                ..Default::default()
-            },
-        );
+        constraints.insert(acme, WindowLayoutConstraints {
+            is_resizable: true,
+            min_width: 600.0,
+            ..Default::default()
+        });
         let screen = screen(1000.0, 800.0);
         let gaps = Gaps::default();
-        let frames = system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
+        let frames =
+            system.calculate_layout(layout, screen, &constraints, &tile::Borders::default(), &gaps);
 
         let wide = frame_for(&frames, acme);
         let next = frame_for(&frames, neighbour);
@@ -4562,7 +4600,15 @@ mod tests {
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
         render(&system, layout, KAI_SCREEN, &kai_s_gaps());
 
-        system.on_window_resized(layout, w[1], None, xw(39.0, 1440.0), 0.0, KAI_SCREEN, &kai_s_gaps());
+        system.on_window_resized(
+            layout,
+            w[1],
+            None,
+            xw(39.0, 1440.0),
+            0.0,
+            KAI_SCREEN,
+            &kai_s_gaps(),
+        );
         assert_eq!(laid_out_xw(&system, layout, w[1]), (39.0, 1440.0));
     }
 
@@ -4594,10 +4640,17 @@ mod tests {
         drag(&mut system, layout, lone, start, full);
 
         assert!(system.is_window_full_width(layout, lone));
-        assert_eq!(frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), lone), full);
+        assert_eq!(
+            frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), lone),
+            full
+        );
         toggle_selection(&mut system, layout);
         let back = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), lone);
-        assert_eq!((start.size.width, back.size.width), (860.0, 860.0), "the toggle back");
+        assert_eq!(
+            (start.size.width, back.size.width),
+            (860.0, 860.0),
+            "the toggle back"
+        );
 
         let (mut system, layout, w) = kai_s_stack();
         assert!(system.select_window(layout, w[1]));
@@ -4663,7 +4716,15 @@ mod tests {
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(782.0, 700.0));
         system.cycle_preset_column_width(layout);
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 860.0, "a half");
-        system.on_window_resized(layout, w[1], None, xw(39.0, 1443.0), 0.0, KAI_SCREEN, &kai_s_gaps());
+        system.on_window_resized(
+            layout,
+            w[1],
+            None,
+            xw(39.0, 1443.0),
+            0.0,
+            KAI_SCREEN,
+            &kai_s_gaps(),
+        );
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1148.0, "bounded again");
     }
 
@@ -4680,7 +4741,11 @@ mod tests {
             let from = at_yh(system, layout, w[0], y, height);
             let taller = at_yh(system, layout, w[0], y, height + 100.0);
             drag(system, layout, w[0], from, taller);
-            assert_eq!(laid_out_yh(system, layout, w[0]), (y, height + 100.0), "dragged apart");
+            assert_eq!(
+                laid_out_yh(system, layout, w[0]),
+                (y, height + 100.0),
+                "dragged apart"
+            );
         }
         w.iter().map(|&id| laid_out_yh(system, layout, id)).collect()
     }
@@ -4695,7 +4760,11 @@ mod tests {
                 let heights = heights_dragged_apart(&mut system, layout, &w);
                 assert!(system.select_window(layout, w[row]));
                 system.cycle_preset_column_width(layout);
-                assert_eq!(laid_out_xw(&system, layout, w[row]).1, 1148.0, "{rows}/{row}: 2/3");
+                assert_eq!(
+                    laid_out_xw(&system, layout, w[row]).1,
+                    1148.0,
+                    "{rows}/{row}: 2/3"
+                );
 
                 system.cycle_preset_column_width(layout);
 
@@ -4735,8 +4804,16 @@ mod tests {
         assert_eq!(shape(&system, layout), strip);
         assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0));
         assert_eq!(laid_out_xw(&system, layout, folded), (3.0, 1722.0));
-        assert_eq!(laid_out_xw(&system, layout, w[0]), (-594.0, 594.0), "left neighbour");
-        assert_eq!(laid_out_xw(&system, layout, w[2]), (1728.0, w2_width), "right neighbour");
+        assert_eq!(
+            laid_out_xw(&system, layout, w[0]),
+            (-594.0, 594.0),
+            "left neighbour"
+        );
+        assert_eq!(
+            laid_out_xw(&system, layout, w[2]),
+            (1728.0, w2_width),
+            "right neighbour"
+        );
         assert_eq!(scroll_offset(&system, layout), 597.0);
         assert!(!system.is_window_full_width(layout, folded));
     }
@@ -4776,10 +4853,20 @@ mod tests {
         let (mut system, layout, w) = kai_s_stack();
         assert!(system.select_window(layout, w[1]));
         let from = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]);
-        drag(&mut system, layout, w[1], from, CGRect::new(from.origin, CGSize::new(1722.0, from.size.height)));
+        drag(
+            &mut system,
+            layout,
+            w[1],
+            from,
+            CGRect::new(from.origin, CGSize::new(1722.0, from.size.height)),
+        );
         render(&system, layout, KAI_SCREEN, &kai_s_gaps());
         app_sizes(&mut system, layout, w[1], 800.0);
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "dragged across");
+        assert_eq!(
+            laid_out_xw(&system, layout, w[1]),
+            (3.0, 1722.0),
+            "dragged across"
+        );
     }
 
     /// A column the viewport wide keeps the viewport when the window server reports its app cannot
@@ -4800,24 +4887,48 @@ mod tests {
             HashMap::from_iter([(w[1], limit)])
         };
         let slot_xw = |system: &ScrollingLayoutSystem, layout, w: &[WindowId], id| {
-            let frames = system.calculate_layout(layout, KAI_SCREEN, &capped(w), &borders, &kai_s_gaps());
+            let frames =
+                system.calculate_layout(layout, KAI_SCREEN, &capped(w), &borders, &kai_s_gaps());
             let slot = tile::slot_of(frame_for(&frames, id), border);
             (slot.origin.x, slot.size.width)
         };
-        let reports = |system: &mut ScrollingLayoutSystem, layout, w: &[WindowId], width: Option<f64>| {
-            let frames = system.calculate_layout(layout, KAI_SCREEN, &capped(w), &borders, &kai_s_gaps());
+        let reports = |system: &mut ScrollingLayoutSystem,
+                       layout,
+                       w: &[WindowId],
+                       width: Option<f64>| {
+            let frames =
+                system.calculate_layout(layout, KAI_SCREEN, &capped(w), &borders, &kai_s_gaps());
             let frame = frame_for(&frames, w[1]);
             assert_eq!(frame.size.width, 1400.0, "the window at its maximum");
-            let frame = CGRect::new(frame.origin, CGSize::new(width.unwrap_or(frame.size.width), frame.size.height));
+            let frame = CGRect::new(
+                frame.origin,
+                CGSize::new(width.unwrap_or(frame.size.width), frame.size.height),
+            );
             system.on_window_resized(layout, w[1], None, frame, border, KAI_SCREEN, &kai_s_gaps());
         };
         let held = |system: &mut ScrollingLayoutSystem, layout, w: &[WindowId], how: &str| {
-            assert_eq!(slot_xw(system, layout, w, w[1]), (3.0, 1408.0), "{how}: the capped window");
-            assert_eq!(slot_xw(system, layout, w, w[0]), (3.0, 1722.0), "{how}: the column");
+            assert_eq!(
+                slot_xw(system, layout, w, w[1]),
+                (3.0, 1408.0),
+                "{how}: the capped window"
+            );
+            assert_eq!(
+                slot_xw(system, layout, w, w[0]),
+                (3.0, 1722.0),
+                "{how}: the column"
+            );
             for width in [None, Some(1380.0), Some(1000.0)] {
                 reports(system, layout, w, width);
-                assert_eq!(slot_xw(system, layout, w, w[1]), (3.0, 1408.0), "{how}: {width:?} taken");
-                assert_eq!(slot_xw(system, layout, w, w[0]), (3.0, 1722.0), "{how}: {width:?} narrowed it");
+                assert_eq!(
+                    slot_xw(system, layout, w, w[1]),
+                    (3.0, 1408.0),
+                    "{how}: {width:?} taken"
+                );
+                assert_eq!(
+                    slot_xw(system, layout, w, w[0]),
+                    (3.0, 1722.0),
+                    "{how}: {width:?} narrowed it"
+                );
             }
             system.cycle_preset_column_width(layout);
             assert_eq!(slot_xw(system, layout, w, w[0]).1, 572.0, "{how}: Mod+R wraps");
@@ -4831,7 +4942,8 @@ mod tests {
 
         let (mut system, layout, w) = column_of(preset_settings(), 2);
         assert!(system.select_window(layout, w[1]));
-        let frames = system.calculate_layout(layout, KAI_SCREEN, &capped(&w), &borders, &kai_s_gaps());
+        let frames =
+            system.calculate_layout(layout, KAI_SCREEN, &capped(&w), &borders, &kai_s_gaps());
         let from = frame_for(&frames, w[1]);
         let to = CGRect::new(from.origin, CGSize::new(1722.0 - 2.0 * border, from.size.height));
         let drag = Drag::report(from, to, None);
@@ -4883,7 +4995,10 @@ mod tests {
             let before: Vec<_> = w.iter().map(|&id| laid_out_xw(&system, layout, id)).collect();
 
             toggle_selection(&mut system, layout);
-            assert!(system.is_window_full_width(layout, w[row]), "{rows} rows: maximised");
+            assert!(
+                system.is_window_full_width(layout, w[row]),
+                "{rows} rows: maximised"
+            );
             toggle_selection(&mut system, layout);
 
             assert!(!system.is_window_full_width(layout, w[row]), "{rows} rows");
@@ -4910,7 +5025,11 @@ mod tests {
         system.cycle_preset_column_width(layout);
 
         assert!(!system.is_window_full_width(layout, w[1]));
-        assert_eq!(shape(&system, layout), vec![vec![w[1]], vec![w[0], w[2]]], "in place");
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[1]], vec![w[0], w[2]]],
+            "in place"
+        );
         assert_eq!(laid_out_xw(&system, layout, w[1]).1, 1722.0);
         assert!(system.layout_state(layout).expect("layout").full_width_origins.is_empty());
     }
@@ -4929,7 +5048,13 @@ mod tests {
         let lone = wid(2, 1);
         system.add_window_after_selection(layout, lone);
         let (x, width) = laid_out_xw(&system, layout, lone);
-        drag(&mut system, layout, lone, xw(x, width), xw(x - 80.0, width + 80.0));
+        drag(
+            &mut system,
+            layout,
+            lone,
+            xw(x, width),
+            xw(x - 80.0, width + 80.0),
+        );
         let (x_after, width_after) = laid_out_xw(&system, layout, lone);
         assert_eq!(x_after, x, "1 column");
         assert!(width_after > width + 75.0, "1 column: {width} -> {width_after}");
@@ -4948,7 +5073,10 @@ mod tests {
         );
         drag(&mut system, layout, w[1], full, shrunk);
         assert!(!system.is_window_full_width(layout, w[1]));
-        assert_eq!(frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]), shrunk);
+        assert_eq!(
+            frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]),
+            shrunk
+        );
     }
 
     /// No width was dragged, so the window stays the full-width column it was.
@@ -4964,7 +5092,10 @@ mod tests {
         );
         drag(&mut system, layout, w[1], full, lower);
         assert!(system.is_window_full_width(layout, w[1]));
-        assert_eq!(frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]), full);
+        assert_eq!(
+            frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[1]),
+            full
+        );
     }
 
     /// The layout file keeps the mark, so the bounds still pass it after a restart.
@@ -5030,7 +5161,15 @@ mod tests {
     #[test]
     fn a_window_resizing_itself_keeps_its_column_where_it_was() {
         let (mut system, layout, w) = kai_s_strip();
-        system.on_window_resized(layout, w[1], None, xw(500.0, 982.0), 0.0, KAI_SCREEN, &kai_s_gaps());
+        system.on_window_resized(
+            layout,
+            w[1],
+            None,
+            xw(500.0, 982.0),
+            0.0,
+            KAI_SCREEN,
+            &kai_s_gaps(),
+        );
 
         assert_eq!(laid_out_xw(&system, layout, w[1]), (600.0, 982.0));
         assert_eq!(scroll_offset(&system, layout), 0.0);
@@ -5061,17 +5200,29 @@ mod tests {
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
         system.resize_selection_by(layout, 0.05, ResizeOrientation::Horizontal);
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (577.0, 1148.0), "a key, revealed");
+        assert_eq!(
+            laid_out_xw(&system, layout, w[1]),
+            (577.0, 1148.0),
+            "a key, revealed"
+        );
 
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
         assert!(system.toggle_full_width(layout, w[1]));
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "Mod+F, revealed");
+        assert_eq!(
+            laid_out_xw(&system, layout, w[1]),
+            (3.0, 1722.0),
+            "Mod+F, revealed"
+        );
 
         let (mut system, layout, w) = kai_s_strip();
         drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(334.0, 1148.0));
         assert_eq!(system.move_focus(layout, Direction::Down).0, None);
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1148.0), "a focus move that finds none");
+        assert_eq!(
+            laid_out_xw(&system, layout, w[1]),
+            (3.0, 1148.0),
+            "a focus move that finds none"
+        );
     }
 
     /// Any frame under a held button counts as the drag, rini's own write to a neighbour coming
@@ -5118,7 +5269,8 @@ mod tests {
     /// 684pt asked and laid out, 519pt from either edge of the tiling area. Undoubled it would end
     /// at [547, w 634].
     #[test]
-    fn in_centred_mode_a_middle_column_dragged_out_50_from_its_left_edge_grows_100_and_stays_centred() {
+    fn in_centred_mode_a_middle_column_dragged_out_50_from_its_left_edge_grows_100_and_stays_centred()
+     {
         let (mut system, layout, w) = kai_s_centred_strip();
         app_sizes(&mut system, layout, w[1], 584.0);
         assert_eq!(laid_out_xw(&system, layout, w[1]), (572.0, 584.0));
@@ -5176,7 +5328,10 @@ mod tests {
         height: f64,
     ) -> CGRect {
         let frame = frame_for(&render(system, layout, KAI_SCREEN, &kai_s_gaps()), wid);
-        CGRect::new(CGPoint::new(frame.origin.x, y), CGSize::new(frame.size.width, height))
+        CGRect::new(
+            CGPoint::new(frame.origin.x, y),
+            CGSize::new(frame.size.width, height),
+        )
     }
 
     /// The middle window takes 99.667pt, its 468 less the 368.333 it had, from the top one alone.
@@ -5255,7 +5410,10 @@ mod tests {
 
         assert!(system.select_window(layout, w[0]));
         let from = frame_for(&render(&system, layout, KAI_SCREEN, &kai_s_gaps()), w[0]);
-        let wider = CGRect::new(from.origin, CGSize::new(from.size.width + 100.0, from.size.height));
+        let wider = CGRect::new(
+            from.origin,
+            CGSize::new(from.size.width + 100.0, from.size.height),
+        );
         drag(&mut system, layout, w[0], from, wider);
         assert_eq!(laid_out_yh(&system, layout, w[0]), (3.0, 554.0), "top");
         assert_eq!(laid_out_yh(&system, layout, w[1]), (560.0, 554.0), "bottom");
@@ -5299,7 +5457,10 @@ mod tests {
         })
     }
 
-    fn kept_place(system: &ScrollingLayoutSystem, layout: LayoutId) -> Option<(WindowId, super::Place)> {
+    fn kept_place(
+        system: &ScrollingLayoutSystem,
+        layout: LayoutId,
+    ) -> Option<(WindowId, super::Place)> {
         system.layout_state(layout).expect("layout").kept_place
     }
 
@@ -5394,8 +5555,16 @@ mod tests {
         let half = mod_r(&mut system, layout);
         assert_eq!(xw_in(&half, w[1]), (434.0, 860.0));
         let moved = |wid: WindowId| xw_in(&half, wid).0 - xw_in(&before, wid).0;
-        assert!((moved(w[0]) + 143.75).abs() <= 0.5, "left neighbour {}", moved(w[0]));
-        assert!((moved(w[2]) - 143.75).abs() <= 0.5, "right neighbour {}", moved(w[2]));
+        assert!(
+            (moved(w[0]) + 143.75).abs() <= 0.5,
+            "left neighbour {}",
+            moved(w[0])
+        );
+        assert!(
+            (moved(w[2]) - 143.75).abs() <= 0.5,
+            "right neighbour {}",
+            moved(w[2])
+        );
 
         assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (290.0, 1148.0));
         assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1722.0));
@@ -5415,7 +5584,10 @@ mod tests {
             let (x, got) = xw_in(&frames, w[1]);
             assert_eq!(got, width);
             let (left, right) = (x - 3.0, 1725.0 - x - width);
-            assert!((left - 3.0 * right).abs() <= 2.0, "{width}: {left} against {right}");
+            assert!(
+                (left - 3.0 * right).abs() <= 2.0,
+                "{width}: {left} against {right}"
+            );
         }
         assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1722.0));
         assert_same_frames(&mod_r(&mut system, layout), &before);
@@ -5471,7 +5643,10 @@ mod tests {
         assert_eq!(xw_in(&half, w[1]), (578.0, 860.0));
         let two_thirds = mod_r(&mut system, layout);
         assert_eq!(xw_in(&two_thirds, w[1]).1, 1148.0);
-        assert!((right_edge(&two_thirds, w[1]) - 1725.0).abs() <= 1.0, "{two_thirds:?}");
+        assert!(
+            (right_edge(&two_thirds, w[1]) - 1725.0).abs() <= 1.0,
+            "{two_thirds:?}"
+        );
         assert!(xw_in(&two_thirds, w[0]).0 >= 2.0, "{two_thirds:?}");
         assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1722.0));
         assert_same_frames(&mod_r(&mut system, layout), &before);
@@ -5491,7 +5666,11 @@ mod tests {
     fn a_column_grows_from_where_the_focus_that_reached_it_left_it() {
         let (mut system, layout, w) = kai_s_widths(&[0.66667, 0.33333, 0.66667], 0);
         system.move_focus(layout, Direction::Right);
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (1153.0, 572.0), "reached going right");
+        assert_eq!(
+            laid_out_xw(&system, layout, w[1]),
+            (1153.0, 572.0),
+            "reached going right"
+        );
         let grown = mod_r(&mut system, layout);
         assert_eq!(xw_in(&grown, w[1]), (866.0, 860.0));
 
@@ -5499,7 +5678,11 @@ mod tests {
             system.move_focus(layout, direction);
             kai_s_frames(&system, layout);
         }
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 860.0), "reached going left");
+        assert_eq!(
+            laid_out_xw(&system, layout, w[1]),
+            (3.0, 860.0),
+            "reached going left"
+        );
         assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1148.0));
     }
 
@@ -5601,10 +5784,18 @@ mod tests {
             system.move_focus(layout, away);
             kai_s_frames(&system, layout);
             system.move_focus(layout, back);
-            assert_eq!(laid_out_xw(&system, layout, w[col]), (3.0, 1722.0), "column {col}");
+            assert_eq!(
+                laid_out_xw(&system, layout, w[col]),
+                (3.0, 1722.0),
+                "column {col}"
+            );
             assert_eq!(kept_place(&system, layout), None, "column {col}");
 
-            assert_eq!(xw_in(&mod_r(&mut system, layout), w[col]), (third, 572.0), "column {col}");
+            assert_eq!(
+                xw_in(&mod_r(&mut system, layout), w[col]),
+                (third, 572.0),
+                "column {col}"
+            );
         }
     }
 
@@ -5643,7 +5834,10 @@ mod tests {
         let before = kai_s_frames(&system, layout);
         for amount in [0.05, 0.05, -0.05] {
             let frames = resize_key(&mut system, layout, amount);
-            assert!((right_edge(&frames, w[1]) - 1725.0).abs() <= 1.0, "{amount}: {frames:?}");
+            assert!(
+                (right_edge(&frames, w[1]) - 1725.0).abs() <= 1.0,
+                "{amount}: {frames:?}"
+            );
             assert!(xw_in(&frames, w[1]).1 > 572.0, "{amount}");
         }
         assert_same_frames(&resize_key(&mut system, layout, -0.05), &before);
@@ -5803,7 +5997,11 @@ mod tests {
         let before = kai_s_frames(&system, layout);
 
         assert!(system.toggle_full_width(layout, w[1]));
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "the strip scrolled");
+        assert_eq!(
+            laid_out_xw(&system, layout, w[1]),
+            (3.0, 1722.0),
+            "the strip scrolled"
+        );
         assert!(system.toggle_full_width(layout, w[1]));
 
         assert_same_frames(&kai_s_frames(&system, layout), &before);
@@ -5839,7 +6037,11 @@ mod tests {
                 kai_s_frames(&system, layout);
                 let mut rest = b.clone();
                 rest.remove(row);
-                assert_eq!(shape(&system, layout), vec![vec![a], vec![b[row]], rest], "{case}");
+                assert_eq!(
+                    shape(&system, layout),
+                    vec![vec![a], vec![b[row]], rest],
+                    "{case}"
+                );
                 assert_near(scroll_offset(&system, layout), 862.5, &case);
                 assert!(system.toggle_full_width(layout, b[row]));
 
@@ -6005,7 +6207,11 @@ mod tests {
             assert!(system.select_window(layout, w[col]));
             let before = kai_s_frames(&system, layout);
 
-            assert_eq!(xw_in(&mod_f(&mut system, layout), w[col]), (3.0, 1722.0), "{case}");
+            assert_eq!(
+                xw_in(&mod_f(&mut system, layout), w[col]),
+                (3.0, 1722.0),
+                "{case}"
+            );
             assert_same_frames(&mod_f(&mut system, layout), &before);
         }
     }
@@ -6023,12 +6229,20 @@ mod tests {
             assert!(system.select_window(layout, stack[row]));
             let before = kai_s_frames(&system, layout);
             assert_eq!(shape(&system, layout), vec![vec![w[0]], stack.clone()]);
-            assert_eq!(laid_out_xw(&system, layout, stack[row]), (1153.0, 572.0), "row {row}");
+            assert_eq!(
+                laid_out_xw(&system, layout, stack[row]),
+                (1153.0, 572.0),
+                "row {row}"
+            );
 
             let full = mod_f(&mut system, layout);
             assert_eq!(xw_in(&full, stack[row]), (3.0, 1722.0), "row {row}");
             let rest = vec![stack[1 - row]];
-            assert_eq!(shape(&system, layout), vec![vec![w[0]], vec![stack[row]], rest], "row {row}");
+            assert_eq!(
+                shape(&system, layout),
+                vec![vec![w[0]], vec![stack[row]], rest],
+                "row {row}"
+            );
 
             assert_same_frames(&mod_f(&mut system, layout), &before);
             assert_eq!(shape(&system, layout), vec![vec![w[0]], stack], "row {row}");
@@ -6044,7 +6258,11 @@ mod tests {
         type Setup = fn() -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>);
         let off_centre: Setup = || kai_s_widths(&[0.5, 0.33333, 0.5, 0.33333], 1);
         let cases: [(&str, Setup, (f64, f64)); 2] = [
-            ("Kai's right third", kai_s_two_thirds_and_a_third, (1153.0, 572.0)),
+            (
+                "Kai's right third",
+                kai_s_two_thirds_and_a_third,
+                (1153.0, 572.0),
+            ),
             ("an off-centre third", off_centre, (866.0, 572.0)),
         ];
         for (case, setup, third) in cases {
@@ -6075,7 +6293,10 @@ mod tests {
         assert_same_frames(&mod_f(&mut system, layout), &half);
         let two_thirds = mod_r(&mut system, layout);
         assert_eq!(xw_in(&two_thirds, w[1]).1, 1148.0);
-        assert!((right_edge(&two_thirds, w[1]) - 1725.0).abs() <= 1.0, "{two_thirds:?}");
+        assert!(
+            (right_edge(&two_thirds, w[1]) - 1725.0).abs() <= 1.0,
+            "{two_thirds:?}"
+        );
     }
 
     /// Under `"always"` the centring places the column both ways, as it does for a width key.
@@ -6086,7 +6307,11 @@ mod tests {
             assert!(system.select_window(layout, w[col]));
             let before = kai_s_frames(&system, layout);
 
-            assert_eq!(xw_in(&mod_f(&mut system, layout), w[col]), (3.0, 1722.0), "column {col}");
+            assert_eq!(
+                xw_in(&mod_f(&mut system, layout), w[col]),
+                (3.0, 1722.0),
+                "column {col}"
+            );
             assert_eq!(kept_place(&system, layout), None, "column {col}");
             assert_same_frames(&mod_f(&mut system, layout), &before);
             assert_eq!(kept_place(&system, layout), None, "column {col}");
@@ -6097,7 +6322,9 @@ mod tests {
 
     /// [A1][B1..] on Kai's display, two halves with the stack on the right, the strip at 0 with the
     /// stack at x=866.
-    fn a_stack_on_the_right(rows: u32) -> (ScrollingLayoutSystem, LayoutId, WindowId, Vec<WindowId>) {
+    fn a_stack_on_the_right(
+        rows: u32,
+    ) -> (ScrollingLayoutSystem, LayoutId, WindowId, Vec<WindowId>) {
         let mut system = ScrollingLayoutSystem::new(&preset_settings());
         let layout = system.create_layout();
         let a = wid(1, 1);
@@ -6310,7 +6537,9 @@ mod tests {
     // ── full width in the stack's place ─────────────────────────────────────
 
     /// [A1..][B] on Kai's display, two halves with the stack on the left and the strip at 0.
-    fn a_stack_on_the_left(rows: u32) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>, WindowId) {
+    fn a_stack_on_the_left(
+        rows: u32,
+    ) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>, WindowId) {
         let mut system = ScrollingLayoutSystem::new(&preset_settings());
         let layout = system.create_layout();
         let a: Vec<WindowId> = (1..1 + rows).map(|idx| wid(1, idx)).collect();
@@ -6344,11 +6573,18 @@ mod tests {
                 kai_s_frames(&system, layout);
                 let mut rest = a.clone();
                 rest.remove(row);
-                assert_eq!(shape(&system, layout), vec![vec![a[row]], rest.clone(), vec![b]], "{case}");
+                assert_eq!(
+                    shape(&system, layout),
+                    vec![vec![a[row]], rest.clone(), vec![b]],
+                    "{case}"
+                );
                 assert_eq!(scroll_offset(&system, layout), 0.0, "{case}");
                 assert_eq!(laid_out_xw(&system, layout, a[row]), (3.0, 1722.0), "{case}");
                 for window in rest.into_iter().chain(std::iter::once(b)) {
-                    assert!(laid_out_xw(&system, layout, window).0 >= 1728.0, "{case}: {window:?}");
+                    assert!(
+                        laid_out_xw(&system, layout, window).0 >= 1728.0,
+                        "{case}: {window:?}"
+                    );
                 }
                 assert!(system.toggle_full_width(layout, a[row]));
 
@@ -6384,7 +6620,10 @@ mod tests {
     }
 
     fn ids(columns: &[&[u32]]) -> Vec<Vec<WindowId>> {
-        columns.iter().map(|column| column.iter().map(|&idx| wid(1, idx)).collect()).collect()
+        columns
+            .iter()
+            .map(|column| column.iter().map(|&idx| wid(1, idx)).collect())
+            .collect()
     }
 
     /// No window is full width in a column it shares, and every window of a column is its width.
@@ -6393,12 +6632,18 @@ mod tests {
         for column in shape(system, layout) {
             if column.len() > 1 {
                 for &window in &column {
-                    assert!(!system.is_window_full_width(layout, window), "{window:?} in {column:?}");
+                    assert!(
+                        !system.is_window_full_width(layout, window),
+                        "{window:?} in {column:?}"
+                    );
                 }
             }
             let widths: Vec<f64> =
                 column.iter().map(|&window| frame_for(&frames, window).size.width).collect();
-            assert!(widths.iter().all(|&width| width == widths[0]), "{column:?} at {widths:?}");
+            assert!(
+                widths.iter().all(|&width| width == widths[0]),
+                "{column:?} at {widths:?}"
+            );
         }
     }
 
@@ -6567,7 +6812,9 @@ mod tests {
 
     /// B1 out of [A][B1,B2] by `Mod+Comma` and back, with `renamed` given a new id in between: B1
     /// goes back on top and the strip back to 0.
-    fn fold_round_trip_renaming(renamed: usize) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
+    fn fold_round_trip_renaming(
+        renamed: usize,
+    ) -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
         let (mut system, layout, a, mut b) = a_stack_on_the_right(2);
         assert!(system.select_window(layout, b[0]));
         kai_s_frames(&system, layout);
@@ -6576,16 +6823,16 @@ mod tests {
         let new = wid(2, 1);
         system.replace_window(b[renamed], new);
         b[renamed] = new;
-        assert_eq!(system.toggle_fold_of_selection(layout, Direction::Left), vec![b[0]]);
+        assert_eq!(system.toggle_fold_of_selection(layout, Direction::Left), vec![
+            b[0]
+        ]);
         assert_eq!(shape(&system, layout), vec![vec![a], b.clone()]);
         assert_eq!(laid_out_xw(&system, layout, a), (3.0, 860.0));
         (system, layout, b)
     }
 
     #[test]
-    fn a_folded_out_window_given_a_new_id_folds_back_into_its_row() {
-        fold_round_trip_renaming(0);
-    }
+    fn a_folded_out_window_given_a_new_id_folds_back_into_its_row() { fold_round_trip_renaming(0); }
 
     #[test]
     fn a_fold_back_finds_its_row_when_the_window_it_sat_above_has_a_new_id() {
@@ -6623,7 +6870,11 @@ mod tests {
                 assert!(system.toggle_full_width(layout, new));
             }
 
-            assert_eq!(laid_out_xw(&system, layout, new), (578.0, 572.0), "{before_the_pass}");
+            assert_eq!(
+                laid_out_xw(&system, layout, new),
+                (578.0, 572.0),
+                "{before_the_pass}"
+            );
         }
     }
 
@@ -6650,7 +6901,9 @@ mod tests {
         let state = system.layout_state(layout).expect("layout");
         let saved = ron::ser::to_string(state).expect("serialize");
         assert!(saved.contains("full_width_origins:{},fold_origins:{"), "{saved}");
-        let old = saved.replace("full_width_origins:{},", "").replace("fold_origins:", "stack_origins:");
+        let old = saved
+            .replace("full_width_origins:{},", "")
+            .replace("fold_origins:", "stack_origins:");
 
         let loaded: super::LayoutState = ron::from_str(&old).expect("a file from before loads");
 
@@ -6663,7 +6916,12 @@ mod tests {
 
     /// The app reporting `window`'s frame from the pass before, `short` narrower and lower, then a
     /// pass.
-    fn answer(system: &mut ScrollingLayoutSystem, layout: LayoutId, window: WindowId, short: (f64, f64)) {
+    fn answer(
+        system: &mut ScrollingLayoutSystem,
+        layout: LayoutId,
+        window: WindowId,
+        short: (f64, f64),
+    ) {
         answer_under(system, layout, window, short, &constraints_none());
     }
 
@@ -6692,13 +6950,23 @@ mod tests {
         layout: LayoutId,
         limits: &HashMap<WindowId, WindowLayoutConstraints>,
     ) -> Vec<(WindowId, CGRect)> {
-        system.calculate_layout(layout, KAI_SCREEN, limits, &tile::Borders::default(), &kai_s_gaps())
+        system.calculate_layout(
+            layout,
+            KAI_SCREEN,
+            limits,
+            &tile::Borders::default(),
+            &kai_s_gaps(),
+        )
     }
 
     /// `window` at least 900pt wide, more than a half column's 860.
     fn at_least_900_wide(window: WindowId) -> HashMap<WindowId, WindowLayoutConstraints> {
         let mut limits = constraints_none();
-        let wide = WindowLayoutConstraints { is_resizable: true, min_width: 900.0, ..Default::default() };
+        let wide = WindowLayoutConstraints {
+            is_resizable: true,
+            min_width: 900.0,
+            ..Default::default()
+        };
         limits.insert(window, wide);
         limits
     }
@@ -6725,7 +6993,10 @@ mod tests {
     #[test]
     fn a_report_of_the_frame_rini_gave_changes_nothing() {
         let shortfalls = [(0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0), (-1.0, -1.0)];
-        for (columns, window) in [(&[&[1, 2, 3][..]][..], wid(1, 1)), (&[&[1][..], &[2][..]][..], wid(1, 2))] {
+        for (columns, window) in [
+            (&[&[1, 2, 3][..]][..], wid(1, 1)),
+            (&[&[1][..], &[2][..]][..], wid(1, 2)),
+        ] {
             for short in shortfalls {
                 let (mut system, layout) = a_strip(columns);
                 assert!(system.select_window(layout, window));
@@ -6772,7 +7043,9 @@ mod tests {
 
                         for _ in 0..10 {
                             for _ in 0..2 {
-                                assert_eq!(system.toggle_fold_of_selection(layout, side), vec![b[row]]);
+                                assert_eq!(system.toggle_fold_of_selection(layout, side), vec![
+                                    b[row]
+                                ]);
                                 answer(&mut system, layout, b[row], short);
                             }
                         }
@@ -6831,7 +7104,9 @@ mod tests {
         let before = kai_s_frames_under(&system, layout, &limits);
 
         for _ in 0..2 {
-            assert_eq!(system.toggle_fold_of_selection(layout, Direction::Left), vec![b[1]]);
+            assert_eq!(system.toggle_fold_of_selection(layout, Direction::Left), vec![
+                b[1]
+            ]);
             answer_under(&mut system, layout, b[1], (0.0, 0.0), &limits);
         }
 
@@ -6884,7 +7159,13 @@ mod tests {
             constraints: &HashMap<WindowId, WindowLayoutConstraints>,
             border: f64,
         ) -> Vec<(WindowId, CGRect)> {
-            system.calculate_layout(layout, KAI_SCREEN, constraints, &tile::Borders::every(border), &kai_s_gaps())
+            system.calculate_layout(
+                layout,
+                KAI_SCREEN,
+                constraints,
+                &tile::Borders::every(border),
+                &kai_s_gaps(),
+            )
         }
 
         fn bordered(system: &ScrollingLayoutSystem, layout: LayoutId, wid: WindowId) -> CGRect {
@@ -6892,11 +7173,27 @@ mod tests {
         }
 
         /// A window's report, `[x, w]` inside a full-height slot.
-        fn window_xw(x: f64, width: f64) -> CGRect { window_in(xw(x - BORDER, width + 2.0 * BORDER), BORDER) }
+        fn window_xw(x: f64, width: f64) -> CGRect {
+            window_in(xw(x - BORDER, width + 2.0 * BORDER), BORDER)
+        }
 
-        fn drag_bordered(system: &mut ScrollingLayoutSystem, layout: LayoutId, wid: WindowId, from: CGRect, to: CGRect) {
+        fn drag_bordered(
+            system: &mut ScrollingLayoutSystem,
+            layout: LayoutId,
+            wid: WindowId,
+            from: CGRect,
+            to: CGRect,
+        ) {
             let drag = Drag::report(from, to, None);
-            system.on_window_resized(layout, wid, Some(drag), to, BORDER, KAI_SCREEN, &kai_s_gaps());
+            system.on_window_resized(
+                layout,
+                wid,
+                Some(drag),
+                to,
+                BORDER,
+                KAI_SCREEN,
+                &kai_s_gaps(),
+            );
         }
 
         #[test]
@@ -6908,7 +7205,10 @@ mod tests {
             for (wid, slot) in slots {
                 assert_eq!(frame_for(&windows, wid), window_in(slot, BORDER), "{wid:?}");
             }
-            assert_eq!(bordered(&system, layout, w[1]), CGRect::new(CGPoint::new(604.0, 7.0), CGSize::new(874.0, 1103.0)));
+            assert_eq!(
+                bordered(&system, layout, w[1]),
+                CGRect::new(CGPoint::new(604.0, 7.0), CGSize::new(874.0, 1103.0))
+            );
             assert_eq!(scroll_offset(&system, layout), 0.0, "the strip as it was");
         }
 
@@ -6916,9 +7216,28 @@ mod tests {
         fn a_resize_report_with_a_border_on_reads_the_same_ratio_as_without_a_border() {
             let (mut plain, layout, w) = kai_s_strip();
             let (mut with_border, other, _) = kai_s_strip();
-            plain.on_window_resized(layout, w[1], None, xw(600.0, 700.0), 0.0, KAI_SCREEN, &kai_s_gaps());
-            with_border.on_window_resized(other, w[1], None, window_xw(604.0, 692.0), BORDER, KAI_SCREEN, &kai_s_gaps());
-            assert_eq!(plain.column_width_offset(layout, w[1]), with_border.column_width_offset(other, w[1]));
+            plain.on_window_resized(
+                layout,
+                w[1],
+                None,
+                xw(600.0, 700.0),
+                0.0,
+                KAI_SCREEN,
+                &kai_s_gaps(),
+            );
+            with_border.on_window_resized(
+                other,
+                w[1],
+                None,
+                window_xw(604.0, 692.0),
+                BORDER,
+                KAI_SCREEN,
+                &kai_s_gaps(),
+            );
+            assert_eq!(
+                plain.column_width_offset(layout, w[1]),
+                with_border.column_width_offset(other, w[1])
+            );
             let slot = frame_for(&render(&plain, layout, KAI_SCREEN, &kai_s_gaps()), w[1]);
             assert_eq!(bordered(&with_border, other, w[1]), window_in(slot, BORDER));
         }
@@ -6928,11 +7247,27 @@ mod tests {
         #[test]
         fn a_left_edge_drag_with_a_border_on_keeps_the_right_edge() {
             let (mut system, layout, w) = kai_s_strip();
-            drag_bordered(&mut system, layout, w[1], window_xw(604.0, 874.0), window_xw(338.0, 1140.0));
+            drag_bordered(
+                &mut system,
+                layout,
+                w[1],
+                window_xw(604.0, 874.0),
+                window_xw(338.0, 1140.0),
+            );
             assert_eq!(bordered(&system, layout, w[1]), window_xw(338.0, 1140.0));
 
-            drag_bordered(&mut system, layout, w[1], window_xw(338.0, 1140.0), window_xw(438.0, 1040.0));
-            assert_eq!(bordered(&system, layout, w[1]), window_xw(438.0, 1040.0), "the right edge kept at 1478");
+            drag_bordered(
+                &mut system,
+                layout,
+                w[1],
+                window_xw(338.0, 1140.0),
+                window_xw(438.0, 1040.0),
+            );
+            assert_eq!(
+                bordered(&system, layout, w[1]),
+                window_xw(438.0, 1040.0),
+                "the right edge kept at 1478"
+            );
             assert_near(scroll_offset(&system, layout), 166.0, "offset");
         }
 
@@ -6941,7 +7276,13 @@ mod tests {
         #[test]
         fn a_release_with_a_border_on_leaves_the_window_where_the_cursor_let_go() {
             let (mut system, layout, w) = kai_s_strip();
-            drag_bordered(&mut system, layout, w[1], window_xw(604.0, 874.0), window_xw(604.0, 805.0));
+            drag_bordered(
+                &mut system,
+                layout,
+                w[1],
+                window_xw(604.0, 874.0),
+                window_xw(604.0, 805.0),
+            );
             assert_eq!(bordered(&system, layout, w[1]), window_xw(604.0, 805.0));
         }
 
@@ -6955,15 +7296,30 @@ mod tests {
             drag(&mut plain, layout, w[1], from, to);
             let reported = |slot: CGRect| window_in(slot, BORDER);
             let drag = Drag::report(reported(from), reported(to), None);
-            with_border.on_window_resized(other, w[1], Some(drag), reported(to), BORDER, KAI_SCREEN, &kai_s_gaps());
+            with_border.on_window_resized(
+                other,
+                w[1],
+                Some(drag),
+                reported(to),
+                BORDER,
+                KAI_SCREEN,
+                &kai_s_gaps(),
+            );
 
             let slots = render(&plain, layout, KAI_SCREEN, &kai_s_gaps());
             for window in w {
-                assert_eq!(bordered(&with_border, other, window), window_in(frame_for(&slots, window), BORDER), "{window:?}");
+                assert_eq!(
+                    bordered(&with_border, other, window),
+                    window_in(frame_for(&slots, window), BORDER),
+                    "{window:?}"
+                );
             }
         }
 
-        fn limited(wid: WindowId, limits: WindowLayoutConstraints) -> HashMap<WindowId, WindowLayoutConstraints> {
+        fn limited(
+            wid: WindowId,
+            limits: WindowLayoutConstraints,
+        ) -> HashMap<WindowId, WindowLayoutConstraints> {
             let mut constraints = constraints_none();
             constraints.insert(wid, limits);
             constraints
@@ -6973,11 +7329,19 @@ mod tests {
         #[test]
         fn a_stacked_windows_minimum_height_counts_its_border() {
             let (system, layout, w) = kai_s_stack();
-            let tall = WindowLayoutConstraints { is_resizable: true, min_height: 700.0, ..Default::default() };
+            let tall = WindowLayoutConstraints {
+                is_resizable: true,
+                min_height: 700.0,
+                ..Default::default()
+            };
             let frames = laid_out_with(&system, layout, &limited(w[0], tall), BORDER);
             let top = frame_for(&frames, w[0]);
             assert_eq!((top.origin.y, top.size.height), (7.0, 700.0));
-            assert_eq!(frame_for(&frames, w[1]).origin.y, 3.0 + 708.0 + 3.0 + BORDER, "below the whole slot and the gap");
+            assert_eq!(
+                frame_for(&frames, w[1]).origin.y,
+                3.0 + 708.0 + 3.0 + BORDER,
+                "below the whole slot and the gap"
+            );
         }
 
         /// A column as wide as its widest minimum, about 808pt with the border, holds a window that
@@ -6985,13 +7349,24 @@ mod tests {
         #[test]
         fn a_window_held_to_its_maximum_is_clamped_inside_its_slot() {
             let (system, layout, w) = kai_s_stack();
-            let mut constraints = limited(w[0], WindowLayoutConstraints { is_resizable: true, max_width: 500.0, ..Default::default() });
-            constraints.insert(w[1], WindowLayoutConstraints { is_resizable: true, min_width: 800.0, ..Default::default() });
+            let mut constraints = limited(w[0], WindowLayoutConstraints {
+                is_resizable: true,
+                max_width: 500.0,
+                ..Default::default()
+            });
+            constraints.insert(w[1], WindowLayoutConstraints {
+                is_resizable: true,
+                min_width: 800.0,
+                ..Default::default()
+            });
             let frames = laid_out_with(&system, layout, &constraints, BORDER);
             let slot = tile::slot_of(frame_for(&frames, w[1]), BORDER);
             assert!(slot.size.width > 500.0 + 2.0 * BORDER, "{slot:?}");
             let narrow = frame_for(&frames, w[0]);
-            assert_eq!((narrow.origin.x, narrow.size.width), (slot.origin.x + BORDER, 500.0));
+            assert_eq!(
+                (narrow.origin.x, narrow.size.width),
+                (slot.origin.x + BORDER, 500.0)
+            );
         }
 
         /// A rule can give one window of a stack another border: each is laid inside its own slot by
@@ -7000,10 +7375,26 @@ mod tests {
         fn each_window_of_a_stack_is_inset_by_its_own_border() {
             let (system, layout, w) = kai_s_stack();
             let slots = render(&system, layout, KAI_SCREEN, &kai_s_gaps());
-            let borders = tile::Borders { every: BORDER, windows: [(w[0], 0.0)].into_iter().collect() };
-            let frames = system.calculate_layout(layout, KAI_SCREEN, &constraints_none(), &borders, &kai_s_gaps());
-            assert_eq!(frame_for(&frames, w[0]), frame_for(&slots, w[0]), "no border, the whole slot");
-            assert_eq!(frame_for(&frames, w[1]), window_in(frame_for(&slots, w[1]), BORDER));
+            let borders = tile::Borders {
+                every: BORDER,
+                windows: [(w[0], 0.0)].into_iter().collect(),
+            };
+            let frames = system.calculate_layout(
+                layout,
+                KAI_SCREEN,
+                &constraints_none(),
+                &borders,
+                &kai_s_gaps(),
+            );
+            assert_eq!(
+                frame_for(&frames, w[0]),
+                frame_for(&slots, w[0]),
+                "no border, the whole slot"
+            );
+            assert_eq!(
+                frame_for(&frames, w[1]),
+                window_in(frame_for(&slots, w[1]), BORDER)
+            );
         }
     }
 }

@@ -39,9 +39,7 @@ impl LiveSpaces {
         space
     }
 
-    pub(crate) fn clear(&self) {
-        self.0.borrow_mut().clear();
-    }
+    pub(crate) fn clear(&self) { self.0.borrow_mut().clear(); }
 }
 
 pub(crate) struct SpaceAffinity<'a> {

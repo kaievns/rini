@@ -98,9 +98,7 @@ pub fn spans_display(covered: ScreenSize, display: ScreenSize) -> bool {
 const PICTURE_STALE_AFTER: Duration = Duration::from_secs(2);
 
 /// Whether a cached picture's age alone justifies a fresh capture.
-pub fn picture_is_stale(age: Duration) -> bool {
-    age > PICTURE_STALE_AFTER
-}
+pub fn picture_is_stale(age: Duration) -> bool { age > PICTURE_STALE_AFTER }
 
 #[cfg(test)]
 mod tests {

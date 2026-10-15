@@ -3,10 +3,10 @@
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::WindowServerId;
 use rini_geometry::space::OverlayVector;
+use rini_ipc::protocol::WorkspaceSelector;
 use test_log::test;
 
 use super::fixtures::*;
-use rini_ipc::protocol::WorkspaceSelector;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::request::Request;
@@ -466,7 +466,10 @@ fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_who
         .collect();
     assert_eq!(hinted, [arriving, leaving, leaving]);
     for priority in [Priority::Focus, Priority::Background] {
-        assert!(asked_at(&asked, priority).is_empty(), "the reactor captures neither end itself: {priority:?}");
+        assert!(
+            asked_at(&asked, priority).is_empty(),
+            "the reactor captures neither end itself: {priority:?}"
+        );
     }
     assert!(
         !asked.iter().any(|command| matches!(command, Asked::Refresh(_))),
@@ -479,8 +482,10 @@ fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_who
             turned.push(windows);
         }
     }
-    let ends: Vec<Vec<WindowId>> =
-        turned.iter().map(|ends| ends.iter().map(|(window, _)| *window).collect()).collect();
+    let ends: Vec<Vec<WindowId>> = turned
+        .iter()
+        .map(|ends| ends.iter().map(|(window, _)| *window).collect())
+        .collect();
     assert_eq!(ends, vec![vec![arriving, leaving], vec![leaving, arriving]]);
     assert!(
         turned
@@ -859,18 +864,10 @@ mod a_panel_taking_the_focus_report {
     use crate::windows::domain::focus::FocusEvent;
     use crate::windows::domain::request::Quiet;
 
-    fn main() -> WindowId {
-        WindowId::new(1, 1)
-    }
-    fn call() -> WindowId {
-        WindowId::new(1, 2)
-    }
-    fn panel() -> WindowId {
-        WindowId::new(1, 3)
-    }
-    fn elsewhere() -> WindowId {
-        WindowId::new(2, 1)
-    }
+    fn main() -> WindowId { WindowId::new(1, 1) }
+    fn call() -> WindowId { WindowId::new(1, 2) }
+    fn panel() -> WindowId { WindowId::new(1, 3) }
+    fn elsewhere() -> WindowId { WindowId::new(2, 1) }
 
     fn zoom() -> (Reactor, SpaceId) {
         let mut reactor = test_reactor();
@@ -935,10 +932,11 @@ mod a_panel_taking_the_focus_report {
         reactor.handle_event(Event::WindowServerFocusChanged(panel(), space));
         leave_for_elsewhere(&mut reactor, space);
 
-        assert_eq!(
-            order(&mut reactor, SwitchScope::Everything),
-            vec![elsewhere(), call(), main()]
-        );
+        assert_eq!(order(&mut reactor, SwitchScope::Everything), vec![
+            elsewhere(),
+            call(),
+            main()
+        ]);
         assert_eq!(quick_tap(&mut reactor, SwitchScope::Everything), Some(call()));
     }
 
@@ -950,10 +948,11 @@ mod a_panel_taking_the_focus_report {
         reactor.handle_event(Event::ApplicationMainWindowChanged(1, Some(call()), Quiet::No));
         leave_for_elsewhere(&mut reactor, space);
 
-        assert_eq!(
-            order(&mut reactor, SwitchScope::Everything),
-            vec![elsewhere(), call(), main()]
-        );
+        assert_eq!(order(&mut reactor, SwitchScope::Everything), vec![
+            elsewhere(),
+            call(),
+            main()
+        ]);
     }
 
     /// The reported cmd-` case: in the call window, a quick tap stayed in the call window.

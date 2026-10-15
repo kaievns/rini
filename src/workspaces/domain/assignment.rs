@@ -1,8 +1,7 @@
 //! Which workspace each window belongs to. One assignment per window, indexed both ways, so
 //! "which workspace owns this window" and "which windows does this workspace hold" are one lookup
 //! each and can never disagree. See "One workspace list" in `src/workspaces/docs/workspaces-and-displays.md`.
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowId;
+use rini_core::ids::{SpaceId, WindowId};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 
@@ -95,13 +94,9 @@ impl WorkspaceAssignments {
         spaces
     }
 
-    pub fn len(&self) -> usize {
-        self.by_window.len()
-    }
+    pub fn len(&self) -> usize { self.by_window.len() }
 
-    pub fn is_empty(&self) -> bool {
-        self.by_window.is_empty()
-    }
+    pub fn is_empty(&self) -> bool { self.by_window.is_empty() }
 
     /// Every assignment on `old_space` moves to `new_space`; a workspace that already had windows
     /// on `new_space` keeps them (macOS has usually already placed windows on the incoming id).
@@ -197,14 +192,11 @@ mod tests {
         ] {
             idx.assign(w, WindowWorkspaceInfo { space, workspace_id: a });
         }
-        assert_eq!(
-            idx.windows(space, a),
-            vec![
-                WindowId::new(1, 1),
-                WindowId::new(1, 2),
-                WindowId::new(2, 1)
-            ]
-        );
+        assert_eq!(idx.windows(space, a), vec![
+            WindowId::new(1, 1),
+            WindowId::new(1, 2),
+            WindowId::new(2, 1)
+        ]);
         assert_eq!(idx.window_count(space, a), 3);
     }
 
@@ -230,19 +222,19 @@ mod tests {
         let mut store = WorkspaceStore::new();
         let a = store.create_workspace(old, "a".into()).unwrap();
         let mut idx = WorkspaceAssignments::default();
-        idx.assign(
-            WindowId::new(1, 1),
-            WindowWorkspaceInfo { space: old, workspace_id: a },
-        );
-        idx.assign(
-            WindowId::new(1, 2),
-            WindowWorkspaceInfo { space: new, workspace_id: a },
-        );
+        idx.assign(WindowId::new(1, 1), WindowWorkspaceInfo {
+            space: old,
+            workspace_id: a,
+        });
+        idx.assign(WindowId::new(1, 2), WindowWorkspaceInfo {
+            space: new,
+            workspace_id: a,
+        });
         idx.remap_space(old, new);
-        assert_eq!(
-            idx.windows(new, a),
-            vec![WindowId::new(1, 1), WindowId::new(1, 2)]
-        );
+        assert_eq!(idx.windows(new, a), vec![
+            WindowId::new(1, 1),
+            WindowId::new(1, 2)
+        ]);
         assert!(idx.windows(old, a).is_empty());
         assert_eq!(idx.spaces(), vec![new]);
         idx.debug_assert_invariants();

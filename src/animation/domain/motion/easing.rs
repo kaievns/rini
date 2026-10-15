@@ -202,9 +202,17 @@ mod tests {
     /// there.
     #[test]
     fn a_curve_cut_at_a_progress_is_the_whole_curve_either_side_and_keeps_its_speed() {
-        for (curve, progress) in [(MOTION_CURVE, 541.0 / 1979.0), (MOTION_CURVE, 0.8), (EASE_IN_OUT, 0.3)] {
+        for (curve, progress) in [
+            (MOTION_CURVE, 541.0 / 1979.0),
+            (MOTION_CURVE, 0.8),
+            (EASE_IN_OUT, 0.3),
+        ] {
             let (at, first, second) = curve.split(progress);
-            assert!((curve.ease(at) - progress).abs() < 1e-6, "{at}: {}", curve.ease(at));
+            assert!(
+                (curve.ease(at) - progress).abs() < 1e-6,
+                "{at}: {}",
+                curve.ease(at)
+            );
             for i in 0..=200 {
                 let t = i as f64 / 200.0;
                 let cut = if t <= at {
@@ -212,13 +220,22 @@ mod tests {
                 } else {
                     progress + (1.0 - progress) * second.ease((t - at) / (1.0 - at))
                 };
-                assert!((cut - curve.ease(t)).abs() < 1e-6, "{curve:?} cut at {progress}, t={t}");
+                assert!(
+                    (cut - curve.ease(t)).abs() < 1e-6,
+                    "{curve:?} cut at {progress}, t={t}"
+                );
             }
             let into = first.slope(1.0 - 1e-9) * progress / at;
             let out = second.slope(0.0) * (1.0 - progress) / (1.0 - at);
             let whole = curve.slope(at);
-            assert!((into - whole).abs() < 1e-3 * whole.max(1.0), "{into} into the cut, {whole}");
-            assert!((out - whole).abs() < 1e-3 * whole.max(1.0), "{out} out of it, {whole}");
+            assert!(
+                (into - whole).abs() < 1e-3 * whole.max(1.0),
+                "{into} into the cut, {whole}"
+            );
+            assert!(
+                (out - whole).abs() < 1e-3 * whole.max(1.0),
+                "{out} out of it, {whole}"
+            );
         }
     }
 
@@ -236,7 +253,11 @@ mod tests {
         assert!(MOTION_CURVE.ease(0.5) > 0.95, "{}", MOTION_CURVE.ease(0.5));
         assert!(MOTION_CURVE.ease(0.25) > 0.8, "{}", MOTION_CURVE.ease(0.25));
         assert!(MOTION_CURVE.ease(0.7) > 0.99, "{}", MOTION_CURVE.ease(0.7));
-        assert!(MOTION_CURVE.ease(0.1) < 0.6, "not a cut: {}", MOTION_CURVE.ease(0.1));
+        assert!(
+            MOTION_CURVE.ease(0.1) < 0.6,
+            "not a cut: {}",
+            MOTION_CURVE.ease(0.1)
+        );
     }
 
     #[test]

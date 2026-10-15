@@ -489,10 +489,9 @@ mod tests {
     /// A start leaves a running instance alone; a restart kills it first.
     #[test]
     fn a_current_plist_is_just_kickstarted() {
-        assert_eq!(
-            launch_plan(true, false, false),
-            Launch::Kickstart { kill: false }
-        );
+        assert_eq!(launch_plan(true, false, false), Launch::Kickstart {
+            kill: false
+        });
         assert_eq!(launch_plan(true, false, true), Launch::Kickstart { kill: true });
     }
 

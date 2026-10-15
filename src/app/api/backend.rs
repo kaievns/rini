@@ -2,13 +2,12 @@
 //! live configuration. Ids cross this boundary as wire types; the conversion happens here.
 use std::time::Duration;
 
-use crate::app::config::actor as config_actor;
 use r#continue::continuation;
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowId;
+use rini_core::ids::{SpaceId, WindowId};
 use rini_ipc::protocol::{self, ConfigCommand};
 use rini_runloop::dispatch::block_on;
 
+use crate::app::config::actor as config_actor;
 use crate::app::reactor::{Event, ReactorHandle};
 
 pub struct IpcBackend {
@@ -48,6 +47,7 @@ impl rini_ipc::Backend for IpcBackend {
             .map(Into::into)
             .collect()
     }
+
     fn windows(&self, space: Option<u64>) -> Vec<protocol::WindowData> {
         self.reactor
             .query_windows(space.map(SpaceId::new))
@@ -55,14 +55,17 @@ impl rini_ipc::Backend for IpcBackend {
             .map(Into::into)
             .collect()
     }
+
     fn window(&self, window: protocol::WindowId) -> Option<protocol::WindowData> {
         self.reactor
             .query_window_info(WindowId::new(window.pid, window.idx))
             .map(Into::into)
     }
+
     fn displays(&self) -> Vec<protocol::DisplayData> {
         self.reactor.query_displays().into_iter().map(Into::into).collect()
     }
+
     fn layout_state(
         &self,
         space: Option<u64>,
@@ -70,22 +73,22 @@ impl rini_ipc::Backend for IpcBackend {
     ) -> Option<protocol::LayoutStateData> {
         self.reactor.query_layout_state(space, workspace)
     }
-    fn applications(&self) -> Vec<protocol::ApplicationData> {
-        self.reactor.query_applications()
-    }
-    fn metrics(&self) -> serde_json::Value {
-        self.reactor.query_metrics()
-    }
-    fn diagnostics(&self) -> protocol::DiagnosticsData {
-        self.reactor.query_diagnostics()
-    }
+
+    fn applications(&self) -> Vec<protocol::ApplicationData> { self.reactor.query_applications() }
+
+    fn metrics(&self) -> serde_json::Value { self.reactor.query_metrics() }
+
+    fn diagnostics(&self) -> protocol::DiagnosticsData { self.reactor.query_diagnostics() }
+
     fn execute(&self, command: protocol::Command) -> Result<(), String> {
         self.reactor.try_send(Event::Command(command)).map_err(|e| e.to_string())
     }
+
     fn config(&self) -> Result<serde_json::Value, String> {
         let config = self.ask_config(config_actor::Event::QueryConfig)?;
         serde_json::to_value(&config).map_err(|e| format!("Failed to serialize config: {e}"))
     }
+
     fn apply_config(&self, command: ConfigCommand) -> Result<Result<(), String>, String> {
         self.ask_config(|response| config_actor::Event::ApplyConfig { cmd: command, response })
     }

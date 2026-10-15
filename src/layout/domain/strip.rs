@@ -174,16 +174,13 @@ pub fn reveal_offset(
 
 #[cfg(test)]
 mod tests {
+    use CenterFocusedColumn::{Always, Never};
     use objc2_core_foundation::{CGPoint, CGSize};
 
     use super::*;
 
-    use CenterFocusedColumn::{Always, Never};
-
     /// A 1000pt-wide viewport starting at x=0.
-    fn tiling() -> CGRect {
-        CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0))
-    }
+    fn tiling() -> CGRect { CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0)) }
 
     fn anchor(idx: usize, count: usize, center: CenterFocusedColumn, override_: bool) -> f64 {
         anchor_x(tiling(), 400.0, idx, count, center, override_)
@@ -311,15 +308,16 @@ mod tests {
     fn keeping_the_right_edge_corrects_only_the_left() {
         let kept = reveal_offset(Reveal::KeepingRightEdge, tiling(), 0.0, 601.0, 400.0, 0.0);
         assert_eq!(kept, None);
-        assert_eq!(reveal_offset(Reveal::Either, tiling(), 0.0, 601.0, 400.0, 0.0), Some(1.0));
+        assert_eq!(
+            reveal_offset(Reveal::Either, tiling(), 0.0, 601.0, 400.0, 0.0),
+            Some(1.0)
+        );
         let off_left = reveal_offset(Reveal::KeepingRightEdge, tiling(), 0.0, 0.0, 400.0, 200.0);
         assert_eq!(off_left, Some(0.0));
     }
 
     /// Kai's display, the tiling area at x=3, 1722 wide.
-    fn kai_s_tiling() -> CGRect {
-        CGRect::new(CGPoint::new(3.0, 3.0), CGSize::new(1722.0, 1111.0))
-    }
+    fn kai_s_tiling() -> CGRect { CGRect::new(CGPoint::new(3.0, 3.0), CGSize::new(1722.0, 1111.0)) }
 
     #[test]
     fn a_column_at_an_edge_takes_all_or_none_of_the_free_space() {
@@ -353,10 +351,19 @@ mod tests {
     #[test]
     fn a_column_back_at_its_width_stands_where_it_was_and_the_viewport_wide_at_its_left() {
         let tiling = kai_s_tiling();
-        for (x, width) in [(3.0, 572.0), (1153.0, 572.0), (578.0, 572.0), (103.0, 722.0)] {
+        for (x, width) in [
+            (3.0, 572.0),
+            (1153.0, 572.0),
+            (578.0, 572.0),
+            (103.0, 722.0),
+        ] {
             let share = place_share(tiling, x, width);
             assert!((place_x(tiling, share, width) - x).abs() < 1e-9, "{x}, {width}");
-            assert_eq!(place_x(tiling, share, 1722.0), 3.0, "{x}, {width} at the viewport");
+            assert_eq!(
+                place_x(tiling, share, 1722.0),
+                3.0,
+                "{x}, {width} at the viewport"
+            );
         }
     }
 
@@ -367,8 +374,16 @@ mod tests {
         let at = |start, width, share, strip_end| {
             place_offset(kai_s_tiling(), 3.0, start, width, share, strip_end)
         };
-        assert_eq!(at(575.0, 860.0, 0.5, 2010.0), 144.0, "the middle of three, a half");
-        assert_eq!(at(575.0, 1722.0, 1.0, 2297.0), 575.0, "the last, the viewport wide");
+        assert_eq!(
+            at(575.0, 860.0, 0.5, 2010.0),
+            144.0,
+            "the middle of three, a half"
+        );
+        assert_eq!(
+            at(575.0, 1722.0, 1.0, 2297.0),
+            575.0,
+            "the last, the viewport wide"
+        );
     }
 
     #[test]
@@ -376,8 +391,16 @@ mod tests {
         let at = |start, width, share, strip_end| {
             place_offset(kai_s_tiling(), 3.0, start, width, share, strip_end)
         };
-        assert_eq!(at(575.0, 860.0, 0.5, 1435.0), 0.0, "the second of two thirds, a half");
-        assert_eq!(at(575.0, 1148.0, 0.5, 1723.0), 1.0, "its end held at the right edge");
+        assert_eq!(
+            at(575.0, 860.0, 0.5, 1435.0),
+            0.0,
+            "the second of two thirds, a half"
+        );
+        assert_eq!(
+            at(575.0, 1148.0, 0.5, 1723.0),
+            1.0,
+            "its end held at the right edge"
+        );
     }
 
     #[test]

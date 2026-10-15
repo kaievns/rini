@@ -10,7 +10,12 @@ use objc2_core_graphics::{
 /// A fresh `width` x `height` RGBA bitmap context, alpha last and premultiplied, owning its buffer.
 pub fn rgba_bitmap_context(width: usize, height: usize) -> Option<CFRetained<CGContext>> {
     let space = CGColorSpace::new_device_rgb()?;
-    bitmap_context(width, height, &space, CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0))
+    bitmap_context(
+        width,
+        height,
+        &space,
+        CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0),
+    )
 }
 
 /// A fresh `width` x `height` bitmap context of 8 bits a channel in `space`, its pixels laid out as
@@ -108,9 +113,15 @@ mod tests {
     fn a_copy_has_the_pixels_of_its_source_in_an_image_of_its_own() {
         let ctx = rgba_bitmap_context(4, 2).unwrap();
         CGContext::set_rgb_fill_color(Some(&ctx), 1.0, 0.0, 0.0, 1.0);
-        CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(2.0, 2.0)));
+        CGContext::fill_rect(
+            Some(&ctx),
+            CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(2.0, 2.0)),
+        );
         CGContext::set_rgb_fill_color(Some(&ctx), 0.0, 0.0, 1.0, 1.0);
-        CGContext::fill_rect(Some(&ctx), CGRect::new(CGPoint::new(2.0, 0.0), CGSize::new(2.0, 2.0)));
+        CGContext::fill_rect(
+            Some(&ctx),
+            CGRect::new(CGPoint::new(2.0, 0.0), CGSize::new(2.0, 2.0)),
+        );
         let source = CGBitmapContextCreateImage(Some(&ctx)).unwrap();
         let crop = CGImage::with_image_in_rect(
             Some(&source),
@@ -118,7 +129,10 @@ mod tests {
         )
         .unwrap();
         let copy = standalone_copy(&crop).expect("a copy");
-        assert_eq!((CGImage::width(Some(&copy)), CGImage::height(Some(&copy))), (2, 2));
+        assert_eq!(
+            (CGImage::width(Some(&copy)), CGImage::height(Some(&copy))),
+            (2, 2)
+        );
         assert_ne!(&*copy as *const CGImage, &*crop as *const CGImage);
         assert_eq!(thumbprint(&copy), thumbprint(&crop), "the same pixels");
         assert_eq!(thumbprint(&copy), thumbprint(&flat_blue(2, 2)));

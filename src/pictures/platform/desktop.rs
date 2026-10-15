@@ -22,9 +22,7 @@ pub struct DesktopBackdrop {
 
 impl DesktopBackdrop {
     /// macOS recreates the wallpaper window; a listing without it composites to black.
-    pub fn has_wallpaper(&self) -> bool {
-        !self.wallpaper.is_empty()
-    }
+    pub fn has_wallpaper(&self) -> bool { !self.wallpaper.is_empty() }
 }
 /// Window server ids of the desktop backdrop: everything at or below the desktop level on `display`.
 /// See "The wallpaper is not reliably a window" in `src/pictures/docs/capture-research.md`.

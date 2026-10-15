@@ -22,19 +22,13 @@ pub struct Entry {
 }
 
 impl Entry {
-    pub fn front(&self) -> &Candidate {
-        &self.windows[0]
-    }
+    pub fn front(&self) -> &Candidate { &self.windows[0] }
 
     /// The windows drawn behind the top one, nearest first.
-    pub fn behind(&self) -> &[Candidate] {
-        &self.windows[1..self.windows.len().min(1 + BEHIND)]
-    }
+    pub fn behind(&self) -> &[Candidate] { &self.windows[1..self.windows.len().min(1 + BEHIND)] }
 
     /// Every window the entry stands for, drawn or not.
-    pub fn count(&self) -> usize {
-        self.windows.len()
-    }
+    pub fn count(&self) -> usize { self.windows.len() }
 
     pub fn holds(&self, window: WindowId) -> bool {
         self.windows.iter().any(|candidate| candidate.window == window)
@@ -101,9 +95,7 @@ mod tests {
     use crate::windows::domain::focus_order::FocusOrder;
     use crate::workspaces::VirtualWorkspaceId;
 
-    fn win(pid: pid_t, idx: u32) -> WindowId {
-        WindowId::new(pid, idx)
-    }
+    fn win(pid: pid_t, idx: u32) -> WindowId { WindowId::new(pid, idx) }
 
     fn workspace(n: usize) -> VirtualWorkspaceId {
         slotmap::KeyData::from_ffi((1u64 << 32) | (n as u64 + 1)).into()
@@ -221,14 +213,14 @@ mod tests {
     #[test]
     fn a_card_slot_past_the_rows_depth_is_hidden() {
         assert_eq!(cards_behind(&[]), [CardBehind::Hidden, CardBehind::Hidden]);
-        assert_eq!(
-            cards_behind(&[win(1, 2)]),
-            [CardBehind::Shows(win(1, 2)), CardBehind::Hidden]
-        );
-        assert_eq!(
-            cards_behind(&[win(1, 2), win(1, 3)]),
-            [CardBehind::Shows(win(1, 2)), CardBehind::Shows(win(1, 3))]
-        );
+        assert_eq!(cards_behind(&[win(1, 2)]), [
+            CardBehind::Shows(win(1, 2)),
+            CardBehind::Hidden
+        ]);
+        assert_eq!(cards_behind(&[win(1, 2), win(1, 3)]), [
+            CardBehind::Shows(win(1, 2)),
+            CardBehind::Shows(win(1, 3))
+        ]);
     }
 
     #[test]

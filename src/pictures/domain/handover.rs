@@ -61,7 +61,8 @@ impl Rgba<'_> {
     fn at(&self, x: f64, y: f64) -> Option<[u8; 3]> {
         let column = ((x - self.origin.x) * self.scale).floor();
         let row = ((y - self.origin.y) * self.scale).floor();
-        if column < 0.0 || row < 0.0 || column as usize >= self.width || row as usize >= self.height {
+        if column < 0.0 || row < 0.0 || column as usize >= self.width || row as usize >= self.height
+        {
             return None;
         }
         let at = row as usize * self.stride + column as usize * 4;
@@ -104,7 +105,12 @@ impl Mean {
 /// `overlay` against `screen` over `window`, in screen points, and over the band `band` wide outside
 /// it. `None` when either picture leaves the window with no sample inside it, or none on either side
 /// of its outline.
-pub fn compare(overlay: &Rgba, screen: &Rgba, window: ScreenRect, band: f64) -> Option<HandoverDiff> {
+pub fn compare(
+    overlay: &Rgba,
+    screen: &Rgba,
+    window: ScreenRect,
+    band: f64,
+) -> Option<HandoverDiff> {
     let diff = |x: f64, y: f64| -> Option<f64> {
         let (a, b) = (overlay.at(x, y)?, screen.at(x, y)?);
         Some((0..3).map(|k| (f64::from(a[k]) - f64::from(b[k])).abs()).sum::<f64>() / 3.0)
@@ -124,7 +130,11 @@ pub fn compare(overlay: &Rgba, screen: &Rgba, window: ScreenRect, band: f64) -> 
 
     let (mut inside, mut outside) = (Mean::default(), Mean::default());
     for across in ACROSS {
-        let side = if across > 0.0 { &mut inside } else { &mut outside };
+        let side = if across > 0.0 {
+            &mut inside
+        } else {
+            &mut outside
+        };
         for x in steps(left + CORNER, right - CORNER, ALONG_STEP) {
             for y in [top + across, bottom - across] {
                 if let Some(d) = diff(x, y) {
@@ -219,7 +229,14 @@ mod tests {
     }
 
     fn rgba(bytes: &[u8], origin: ScreenPoint) -> Rgba<'_> {
-        Rgba { width: SIDE, height: SIDE, stride: SIDE * 4, bytes, origin, scale: SCALE }
+        Rgba {
+            width: SIDE,
+            height: SIDE,
+            stride: SIDE * 4,
+            bytes,
+            origin,
+            scale: SCALE,
+        }
     }
 
     fn window() -> ScreenRect { rect(40.0, 40.0, 120.0, 100.0) }
@@ -227,7 +244,12 @@ mod tests {
     fn untouched(_: &mut [u8], _: usize, _: usize) {}
 
     fn compared(overlay: &[u8], screen: &[u8]) -> Option<HandoverDiff> {
-        compare(&rgba(overlay, ScreenPoint::origin()), &rgba(screen, ScreenPoint::origin()), window(), 0.0)
+        compare(
+            &rgba(overlay, ScreenPoint::origin()),
+            &rgba(screen, ScreenPoint::origin()),
+            window(),
+            0.0,
+        )
     }
 
     #[test]
@@ -235,7 +257,13 @@ mod tests {
         let drawn = picture(window(), untouched);
         assert_eq!(
             compared(&drawn, &drawn),
-            Some(HandoverDiff { interior: 0.0, interior_over: 0.0, edge_in: 0.0, edge_out: 0.0, band: None })
+            Some(HandoverDiff {
+                interior: 0.0,
+                interior_over: 0.0,
+                edge_in: 0.0,
+                edge_out: 0.0,
+                band: None
+            })
         );
     }
 
@@ -243,7 +271,10 @@ mod tests {
     #[test]
     fn an_outline_a_pixel_off_shows_at_the_edge_only() {
         let overlay = picture(window(), untouched);
-        let screen = picture(window().translate(rini_geometry::space::ScreenVector::new(0.5, 0.5)), untouched);
+        let screen = picture(
+            window().translate(rini_geometry::space::ScreenVector::new(0.5, 0.5)),
+            untouched,
+        );
         let diff = compared(&overlay, &screen).unwrap();
         assert_eq!(diff.interior, 0.0);
         assert!(diff.edge_in > 10.0 && diff.edge_out > 10.0, "{diff:?}");
@@ -256,7 +287,10 @@ mod tests {
         let white_line = |pixel: &mut [u8], column: usize, row: usize| {
             let (x, y) = (column as f64 / SCALE, row as f64 / SCALE);
             let inside = x >= w.origin.x && x < w.max_x() && y >= w.origin.y && y < w.max_y();
-            let near = x < w.origin.x + 1.0 || x >= w.max_x() - 1.0 || y < w.origin.y + 1.0 || y >= w.max_y() - 1.0;
+            let near = x < w.origin.x + 1.0
+                || x >= w.max_x() - 1.0
+                || y < w.origin.y + 1.0
+                || y >= w.max_y() - 1.0;
             if inside && near {
                 pixel[..3].copy_from_slice(&[200, 200, 200]);
             }
@@ -273,7 +307,11 @@ mod tests {
         let w = window();
         let repainted = |pixel: &mut [u8], column: usize, row: usize| {
             let (x, y) = (column as f64 / SCALE, row as f64 / SCALE);
-            if x >= w.origin.x + 20.0 && x < w.max_x() - 20.0 && y >= w.origin.y + 20.0 && y < w.max_y() - 20.0 {
+            if x >= w.origin.x + 20.0
+                && x < w.max_x() - 20.0
+                && y >= w.origin.y + 20.0
+                && y < w.max_y() - 20.0
+            {
                 pixel[..3].copy_from_slice(&[40, 40, 40]);
             }
         };
@@ -290,7 +328,13 @@ mod tests {
         let shifted = window().translate(rini_geometry::space::ScreenVector::new(0.0, -32.0));
         let overlay = picture(shifted, untouched);
         let screen = picture(window(), untouched);
-        let diff = compare(&rgba(&overlay, below), &rgba(&screen, ScreenPoint::origin()), window(), 0.0).unwrap();
+        let diff = compare(
+            &rgba(&overlay, below),
+            &rgba(&screen, ScreenPoint::origin()),
+            window(),
+            0.0,
+        )
+        .unwrap();
         assert_eq!(diff.interior, 0.0);
     }
 
@@ -298,8 +342,24 @@ mod tests {
     fn a_window_off_either_picture_is_not_compared() {
         let drawn = picture(window(), untouched);
         let off = ScreenPoint::new(500.0, 0.0);
-        assert_eq!(compare(&rgba(&drawn, off), &rgba(&drawn, ScreenPoint::origin()), window(), 0.0), None);
-        assert_eq!(compare(&rgba(&drawn, ScreenPoint::origin()), &rgba(&drawn, off), window(), 0.0), None);
+        assert_eq!(
+            compare(
+                &rgba(&drawn, off),
+                &rgba(&drawn, ScreenPoint::origin()),
+                window(),
+                0.0
+            ),
+            None
+        );
+        assert_eq!(
+            compare(
+                &rgba(&drawn, ScreenPoint::origin()),
+                &rgba(&drawn, off),
+                window(),
+                0.0
+            ),
+            None
+        );
     }
 
     /// The tile's ring drawn on the overlay and no ring at rest: over the band, and nowhere else.
@@ -309,27 +369,49 @@ mod tests {
         let ring = |pixel: &mut [u8], column: usize, row: usize| {
             let (x, y) = (column as f64 / SCALE, row as f64 / SCALE);
             let within = |grow: f64| {
-                x >= w.origin.x - grow && x < w.max_x() + grow && y >= w.origin.y - grow && y < w.max_y() + grow
+                x >= w.origin.x - grow
+                    && x < w.max_x() + grow
+                    && y >= w.origin.y - grow
+                    && y < w.max_y() + grow
             };
             if within(4.0) && !within(0.5) {
                 pixel[..3].copy_from_slice(&[127, 200, 255]);
             }
         };
         let both = |overlay: &[u8], screen: &[u8]| {
-            compare(&rgba(overlay, ScreenPoint::origin()), &rgba(screen, ScreenPoint::origin()), w, 4.0).unwrap()
+            compare(
+                &rgba(overlay, ScreenPoint::origin()),
+                &rgba(screen, ScreenPoint::origin()),
+                w,
+                4.0,
+            )
+            .unwrap()
         };
         let (tile, rest, bare) = (picture(w, ring), picture(w, ring), picture(w, untouched));
         let missing = both(&tile, &bare);
         assert!(missing.band.is_some_and(|band| band > 50.0), "{missing:?}");
         assert_eq!((missing.interior, missing.edge_in), (0.0, 0.0));
-        assert_eq!(both(&tile, &rest).band, Some(0.0), "drawn the same on both sides");
+        assert_eq!(
+            both(&tile, &rest).band,
+            Some(0.0),
+            "drawn the same on both sides"
+        );
     }
 
     #[test]
     fn a_window_with_no_band_reports_none() {
         let drawn = picture(window(), untouched);
         assert_eq!(compared(&drawn, &drawn).and_then(|diff| diff.band), None);
-        let thin = compare(&rgba(&drawn, ScreenPoint::origin()), &rgba(&drawn, ScreenPoint::origin()), window(), 0.5);
-        assert_eq!(thin.and_then(|diff| diff.band), None, "a band no wider than the outline");
+        let thin = compare(
+            &rgba(&drawn, ScreenPoint::origin()),
+            &rgba(&drawn, ScreenPoint::origin()),
+            window(),
+            0.5,
+        );
+        assert_eq!(
+            thin.and_then(|diff| diff.band),
+            None,
+            "a band no wider than the outline"
+        );
     }
 }

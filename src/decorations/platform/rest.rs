@@ -23,13 +23,13 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_quartz_core::{CALayer, CATransaction};
 use rini_core::ids::WindowServerId;
 use rini_geometry::space::{FromCg, ScreenRect, ToCg};
-use rini_runloop::channel;
 use rini_runloop::executor::sleep;
-use rini_runloop::turns;
+use rini_runloop::{channel, turns};
 use tracing::warn;
 
 use crate::decorations::domain::rest::{
-    self, Draw, Introduction, Layers, Look, Placed, Rest, RestModel, delta, display_of, stack_change,
+    self, Draw, Introduction, Layers, Look, Placed, Rest, RestModel, delta, display_of,
+    stack_change,
 };
 use crate::decorations::platform::layers::Bands;
 use crate::displays::domain::screen::CoordinateConverter;
@@ -44,7 +44,10 @@ pub enum Event {
     /// A flight over this display, its whole bounds, for the press at `pressed`, was handed to the
     /// flight engine: sent before the model of the batch that began it, so the rest windows hold that
     /// model and what follows from the begin to its lift (`Rest::fly`).
-    Flight { display: ScreenRect, pressed: Instant },
+    Flight {
+        display: ScreenRect,
+        pressed: Instant,
+    },
     /// What every decorated window wears and what holds its band, sent when it changed.
     Model(RestModel),
     /// What the frames thread read of the window server: where windows that moved or resized are, a
@@ -138,7 +141,8 @@ impl Panel {
         unsafe { window.setReleasedWhenClosed(false) };
         window.setAlphaValue(0.0);
         // SAFETY: a fresh view, initialised as AppKit's designated initializer requires.
-        let view: Retained<RestView> = unsafe { msg_send![RestView::alloc(mtm), initWithFrame: frame] };
+        let view: Retained<RestView> =
+            unsafe { msg_send![RestView::alloc(mtm), initWithFrame: frame] };
         view.setWantsLayer(true);
         window.setContentView(Some(&view));
         let root = view.layer()?;
@@ -149,11 +153,23 @@ impl Panel {
         // Ordered in once, and only shown or hidden by alpha from here: ordering costs a frame.
         window.orderFrontRegardless();
         turns::changed("rest.open");
-        Some(Panel { window, root, holder, bands, target: None, look: None, drew: None, level: None })
+        Some(Panel {
+            window,
+            root,
+            holder,
+            bands,
+            target: None,
+            look: None,
+            drew: None,
+            level: None,
+        })
     }
 
     fn own_id(&self) -> Option<WindowServerId> {
-        u32::try_from(self.window.windowNumber()).ok().filter(|id| *id > 0).map(WindowServerId::new)
+        u32::try_from(self.window.windowNumber())
+            .ok()
+            .filter(|id| *id > 0)
+            .map(WindowServerId::new)
     }
 
     /// Directly above `target`: at its `level` and sub-level, taken when it holds another, then
@@ -164,14 +180,23 @@ impl Panel {
             window_server::take_stack_place(own, level.level, level.sub_level);
             self.level = Some(level);
         }
-        self.window.orderWindow_relativeTo(NSWindowOrderingMode::Above, target.as_u32() as isize);
+        self.window
+            .orderWindow_relativeTo(NSWindowOrderingMode::Above, target.as_u32() as isize);
         turns::changed("rest.order");
     }
 
     /// Lays its layers for `now`.
     fn lay(&mut self, now: &Look) {
-        let Layers { decoration, style, size, corner, scale, inside } = now.layers;
-        self.holder.setFrame(CGRect::new(CGPoint::new(inside.x, inside.y), size.to_cg()));
+        let Layers {
+            decoration,
+            style,
+            size,
+            corner,
+            scale,
+            inside,
+        } = now.layers;
+        self.holder
+            .setFrame(CGRect::new(CGPoint::new(inside.x, inside.y), size.to_cg()));
         self.root.setContentsScale(scale);
         self.bands.wear(&decoration, scale);
         self.bands.place(size, corner);
@@ -229,7 +254,13 @@ pub struct RestBorders {
 
 impl RestBorders {
     fn new(mtm: MainThreadMarker, following: Following) -> RestBorders {
-        RestBorders { mtm, rest: Rest::default(), following, panels: Vec::new(), warned: false }
+        RestBorders {
+            mtm,
+            rest: Rest::default(),
+            following,
+            panels: Vec::new(),
+            warned: false,
+        }
     }
 
     /// Every event queued, taken as one turn: a flight's begin first, the latest model, each window
@@ -251,12 +282,14 @@ impl RestBorders {
                 Event::Off => word = Some(None),
                 Event::Server(ServerRead::Frames(frames)) => moved.extend(frames),
                 Event::Server(ServerRead::Order(order)) => orders.push(order),
-                Event::Server(ServerRead::Intro(intro)) => intros.push((intro.window, Introduction {
-                    frame: intro.frame.map(ScreenRect::from_cg),
-                    ordered_out: intro.ordered_in == Some(false),
-                    radius: intro.radius,
-                    level: intro.level,
-                })),
+                Event::Server(ServerRead::Intro(intro)) => {
+                    intros.push((intro.window, Introduction {
+                        frame: intro.frame.map(ScreenRect::from_cg),
+                        ordered_out: intro.ordered_in == Some(false),
+                        radius: intro.radius,
+                        level: intro.level,
+                    }))
+                }
                 Event::Lifted => grow = true,
             }
         }
@@ -273,9 +306,13 @@ impl RestBorders {
             self.following.ask(ToRead::Intro(window));
         }
         grow |= model.is_some();
-        let moved: Vec<(WindowServerId, ScreenRect)> =
-            moved.iter().map(|frame| (frame.window, ScreenRect::from_cg(frame.frame))).collect();
-        let Some(draw) = self.rest.turn(model, &intros, &moved, orders, now) else { return };
+        let moved: Vec<(WindowServerId, ScreenRect)> = moved
+            .iter()
+            .map(|frame| (frame.window, ScreenRect::from_cg(frame.frame)))
+            .collect();
+        let Some(draw) = self.rest.turn(model, &intros, &moved, orders, now) else {
+            return;
+        };
         if grow {
             self.grow();
         }
@@ -293,7 +330,9 @@ impl RestBorders {
 
     /// `draw`'s orders, and the rest window of the window focus came to ordered above it again.
     fn draw_turn(&mut self, draw: &Draw) {
-        let also = draw.focus.and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus)));
+        let also = draw
+            .focus
+            .and_then(|focus| self.panels.iter().position(|panel| panel.target == Some(focus)));
         self.draw(&draw.orders, also.into_iter().collect());
     }
 
@@ -309,7 +348,10 @@ impl RestBorders {
             return;
         }
         for window in reread {
-            self.rest.reread(window, window_server::server_frame(window).map(ScreenRect::from_cg));
+            self.rest.reread(
+                window,
+                window_server::server_frame(window).map(ScreenRect::from_cg),
+            );
         }
         self.draw_turn(&draw);
     }
@@ -318,7 +360,12 @@ impl RestBorders {
     /// nothing, before the overlay hides, and every turn draws as it comes from here. Whether the
     /// actor wants a turn of its own once it is down (`Rest::wants_turn`): the pool owes rest windows,
     /// or a park waits for its patience.
-    fn lift(&mut self, display: Option<ScreenRect>, through: Option<Instant>, now: Instant) -> bool {
+    fn lift(
+        &mut self,
+        display: Option<ScreenRect>,
+        through: Option<Instant>,
+        now: Instant,
+    ) -> bool {
         let draw = self.rest.lift(display, through, now);
         if !self.rest.on() {
             return false;
@@ -343,8 +390,10 @@ impl RestBorders {
     /// in the stack and alpha 1 only once its layers are committed.
     fn draw(&mut self, orders: &[ServerOrder], mut also: Vec<usize>) {
         let wanted = self.rest.wanted();
-        let pool: Vec<Option<WindowServerId>> = self.panels.iter().map(|panel| panel.target).collect();
-        let drew: Vec<Option<WindowServerId>> = self.panels.iter().map(|panel| panel.drew).collect();
+        let pool: Vec<Option<WindowServerId>> =
+            self.panels.iter().map(|panel| panel.target).collect();
+        let drew: Vec<Option<WindowServerId>> =
+            self.panels.iter().map(|panel| panel.drew).collect();
         let assignment = rest::assign(&pool, &drew, &wanted);
         let mut given = Vec::new();
         for (at, window) in assignment.retargeted {
@@ -355,7 +404,8 @@ impl RestBorders {
         let before: Vec<(Option<WindowServerId>, bool)> =
             self.panels.iter().map(|panel| (panel.target, panel.shown())).collect();
         let afresh = rest::afresh(&before, &given, &wanted);
-        let targets: Vec<Option<WindowServerId>> = before.iter().map(|(target, _)| *target).collect();
+        let targets: Vec<Option<WindowServerId>> =
+            before.iter().map(|(target, _)| *target).collect();
         let reorder = rest::to_reorder(orders, &targets, &also);
         for at in reorder.iter().filter(|at| !afresh.contains(at)) {
             self.order_above_its_window(*at);
@@ -366,9 +416,14 @@ impl RestBorders {
         for at in &assignment.released {
             self.panels[*at].target = None;
         }
-        let looks: Vec<Option<Look>> = self.panels.iter().map(|panel| self.look_of(panel.target?, &wanted)).collect();
-        let lays: Vec<bool> =
-            self.panels.iter().zip(&looks).map(|(panel, look)| look.is_some_and(|look| delta(panel.look, look).layers)).collect();
+        let looks: Vec<Option<Look>> =
+            self.panels.iter().map(|panel| self.look_of(panel.target?, &wanted)).collect();
+        let lays: Vec<bool> = self
+            .panels
+            .iter()
+            .zip(&looks)
+            .map(|(panel, look)| look.is_some_and(|look| delta(panel.look, look).layers))
+            .collect();
         let laying = lays.contains(&true);
         if laying {
             CATransaction::begin();
@@ -417,7 +472,9 @@ impl RestBorders {
 
     fn order_above_its_window(&mut self, at: usize) {
         let panel = &mut self.panels[at];
-        let target = panel.target.and_then(|target| Some((target, self.rest.windows.get(&target)?.level)));
+        let target = panel
+            .target
+            .and_then(|target| Some((target, self.rest.windows.get(&target)?.level)));
         if let Some((target, level)) = target {
             panel.order_above(target, level);
         }
@@ -460,14 +517,21 @@ impl RestActor {
     /// The actor, and what the renderer calls as its overlay goes up, its flight lands and it lifts.
     /// `wake` is its own inbox, told once a lift wants a turn of it; `following` is where it asks the
     /// window server of a window first named.
-    pub fn new(rx: Receiver, wake: Sender, following: Following, mtm: MainThreadMarker) -> (RestActor, Handover) {
+    pub fn new(
+        rx: Receiver,
+        wake: Sender,
+        following: Following,
+        mtm: MainThreadMarker,
+    ) -> (RestActor, Handover) {
         let borders = Rc::new(RefCell::new(RestBorders::new(mtm, following)));
         let covered = borders.clone();
         let placed = borders.clone();
         let lifted = borders.clone();
         let handover = Handover {
             cover: Box::new(move |display| covered.borrow_mut().rest.cover(display)),
-            place: Box::new(move |display, through| placed.borrow_mut().place(display, through, Instant::now())),
+            place: Box::new(move |display, through| {
+                placed.borrow_mut().place(display, through, Instant::now())
+            }),
             lift: Box::new(move |display, through| {
                 if lifted.borrow_mut().lift(display, through, Instant::now()) {
                     wake.send(Event::Lifted);
@@ -505,7 +569,11 @@ mod tests {
     #[test]
     fn a_rest_window_follows_the_active_space_and_takes_no_place_in_expose() {
         let behaviour = collection_behaviour();
-        assert!(behaviour.contains(NSWindowCollectionBehavior::MoveToActiveSpace | NSWindowCollectionBehavior::Transient));
-        assert!(!behaviour.intersects(NSWindowCollectionBehavior::Stationary | NSWindowCollectionBehavior::Managed));
+        assert!(behaviour.contains(
+            NSWindowCollectionBehavior::MoveToActiveSpace | NSWindowCollectionBehavior::Transient
+        ));
+        assert!(!behaviour.intersects(
+            NSWindowCollectionBehavior::Stationary | NSWindowCollectionBehavior::Managed
+        ));
     }
 }

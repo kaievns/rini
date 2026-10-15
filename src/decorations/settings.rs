@@ -62,7 +62,10 @@ impl DecorationSettings {
     pub fn draws_bands(&self) -> bool {
         self.focus_ring.on
             || self.border.on
-            || self.rules.iter().any(|rule| rule.focus_ring.on == Some(true) || rule.border.on == Some(true))
+            || self
+                .rules
+                .iter()
+                .any(|rule| rule.focus_ring.on == Some(true) || rule.border.on == Some(true))
     }
 }
 
@@ -73,13 +76,21 @@ mod tests {
     use crate::decorations::domain::style::Decoration;
     use crate::windows::domain::rules::WindowRuleContext;
 
-    fn worn(settings: &DecorationSettings) -> Decoration { fold(settings, WindowRuleContext::default()) }
+    fn worn(settings: &DecorationSettings) -> Decoration {
+        fold(settings, WindowRuleContext::default())
+    }
 
     #[test]
     fn the_focus_ring_is_niris_and_on_unless_turned_off() {
         let settings = DecorationSettings::default();
         assert_eq!(worn(&settings).ring, Some(settings.focus_ring.band));
-        let off = DecorationSettings { focus_ring: BandSetting { on: false, ..settings.focus_ring }, ..settings.clone() };
+        let off = DecorationSettings {
+            focus_ring: BandSetting {
+                on: false,
+                ..settings.focus_ring
+            },
+            ..settings.clone()
+        };
         assert_eq!(worn(&off), Decoration::default());
         assert!(settings.draws_bands() && !off.draws_bands());
     }
@@ -89,16 +100,37 @@ mod tests {
         let settings = DecorationSettings::default();
         assert_eq!(worn(&settings).border, None);
         let solid = |rgb| Paint::Solid(Colour::rgb(rgb));
-        assert_eq!(settings.border.band, Band { width: 4.0, active: solid(0xffc87f), inactive: solid(0x505050), urgent: solid(0x9b0000) });
-        let on = DecorationSettings { border: BandSetting { on: true, ..settings.border }, ..settings.clone() };
+        assert_eq!(settings.border.band, Band {
+            width: 4.0,
+            active: solid(0xffc87f),
+            inactive: solid(0x505050),
+            urgent: solid(0x9b0000)
+        });
+        let on = DecorationSettings {
+            border: BandSetting { on: true, ..settings.border },
+            ..settings.clone()
+        };
         assert_eq!(worn(&on).border, Some(settings.border.band));
     }
 
     #[test]
     fn a_rule_turning_a_band_on_draws_bands_with_both_off() {
-        let off = BandSetting { on: false, ..DecorationSettings::default().focus_ring };
-        let rule = DecorationRule { border: BandRule { on: Some(true), ..BandRule::default() }, ..DecorationRule::default() };
-        let settings = DecorationSettings { focus_ring: off, rules: vec![rule], ..DecorationSettings::default() };
+        let off = BandSetting {
+            on: false,
+            ..DecorationSettings::default().focus_ring
+        };
+        let rule = DecorationRule {
+            border: BandRule {
+                on: Some(true),
+                ..BandRule::default()
+            },
+            ..DecorationRule::default()
+        };
+        let settings = DecorationSettings {
+            focus_ring: off,
+            rules: vec![rule],
+            ..DecorationSettings::default()
+        };
         assert!(settings.draws_bands());
         assert!(!DecorationSettings { rules: Vec::new(), ..settings }.draws_bands());
     }
@@ -110,21 +142,54 @@ mod tests {
     fn nothing_is_decorated_until_the_layout_or_a_rule_turns_a_band_on() {
         use crate::windows::domain::rules::RuleMatch;
         let defaults = DecorationSettings::default();
-        let off = DecorationSettings { focus_ring: BandSetting { on: false, ..defaults.focus_ring }, ..defaults.clone() };
+        let off = DecorationSettings {
+            focus_ring: BandSetting {
+                on: false,
+                ..defaults.focus_ring
+            },
+            ..defaults.clone()
+        };
         assert!(!off.draws_bands(), "ring off, border off by default");
-        let border = DecorationSettings { border: BandSetting { on: true, ..off.border }, ..off.clone() };
+        let border = DecorationSettings {
+            border: BandSetting { on: true, ..off.border },
+            ..off.clone()
+        };
         assert!(border.draws_bands(), "the border alone");
         let ghostty = vec![RuleMatch::app("com.mitchellh.ghostty")];
-        let ring_on = DecorationRule { matches: ghostty.clone(), focus_ring: BandRule { on: Some(true), ..BandRule::default() }, ..DecorationRule::default() };
-        assert!(DecorationSettings { rules: vec![ring_on], ..off.clone() }.draws_bands(), "a rule turning one window's ring on");
+        let ring_on = DecorationRule {
+            matches: ghostty.clone(),
+            focus_ring: BandRule {
+                on: Some(true),
+                ..BandRule::default()
+            },
+            ..DecorationRule::default()
+        };
+        assert!(
+            DecorationSettings {
+                rules: vec![ring_on],
+                ..off.clone()
+            }
+            .draws_bands(),
+            "a rule turning one window's ring on"
+        );
         let red = Paint::Solid(Colour::rgb(0xff0000));
         let painted = DecorationRule {
             matches: ghostty,
-            focus_ring: BandRule { width: Some(6.0), active: Some(red), ..BandRule::default() },
-            border: BandRule { on: Some(false), ..BandRule::default() },
+            focus_ring: BandRule {
+                width: Some(6.0),
+                active: Some(red),
+                ..BandRule::default()
+            },
+            border: BandRule {
+                on: Some(false),
+                ..BandRule::default()
+            },
             corner_radius: Some(8.0),
             ..DecorationRule::default()
         };
-        assert!(!DecorationSettings { rules: vec![painted], ..off }.draws_bands(), "a rule that paints, widens or turns off");
+        assert!(
+            !DecorationSettings { rules: vec![painted], ..off }.draws_bands(),
+            "a rule that paints, widens or turns off"
+        );
     }
 }

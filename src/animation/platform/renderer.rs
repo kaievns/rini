@@ -25,17 +25,35 @@ use crate::pictures::platform::picture::Picture;
 pub enum Render {
     /// The display the overlay covers, in Screen space, the band the bar reserves at its top and the
     /// scale.
-    Display { frame: ScreenRect, top_band: f64, scale: f64 },
+    Display {
+        frame: ScreenRect,
+        top_band: f64,
+        scale: f64,
+    },
     /// The desktop drawn behind the tiles and the bar over them, at `strip`.
-    Dress { desktop: Option<Picture>, bar: Option<Picture>, strip: Option<OverlayRect> },
+    Dress {
+        desktop: Option<Picture>,
+        bar: Option<Picture>,
+        strip: Option<OverlayRect>,
+    },
     /// Frame zero, and each pose of it again before the motion, every tile dressed from `tiles`.
-    Stage { score: Score, tiles: Vec<OverlayTile> },
+    Stage {
+        score: Score,
+        tiles: Vec<OverlayTile>,
+    },
     /// The score's edits: the motion, merges, accents, snaps and banks; a tile first ridden is
     /// dressed from `tiles`.
-    Play { edits: Vec<Edit>, tiles: Vec<OverlayTile> },
+    Play {
+        edits: Vec<Edit>,
+        tiles: Vec<OverlayTile>,
+    },
     /// A fresh picture onto `window`'s tile, `clipped` to its corner or whole, its movement left
     /// alone.
-    Swap { window: WindowId, picture: Picture, clipped: bool },
+    Swap {
+        window: WindowId,
+        picture: Picture,
+        clipped: bool,
+    },
     /// `window`'s tile drawn focused or not: its hairline and shadow.
     Focus { window: WindowId, focused: bool },
     /// `window`'s tile wearing its ring and border as `worn` has them where the flight now ends.
@@ -94,11 +112,20 @@ pub fn in_order(woke: Batch, mut queued: Vec<Batch>) -> Drained {
         Render::PlaceRest { through } | Render::Lift { through } => Some(*through),
         _ => None,
     });
-    Drained { commands, seq, sent, shown, places, through: through.flatten() }
+    Drained {
+        commands,
+        seq,
+        sent,
+        shown,
+        places,
+        through: through.flatten(),
+    }
 }
 
 /// Whether `command` makes the overlay when there is none: it dresses or poses a flight.
-fn needs_overlay(command: &Render) -> bool { matches!(command, Render::Dress { .. } | Render::Stage { .. }) }
+fn needs_overlay(command: &Render) -> bool {
+    matches!(command, Render::Dress { .. } | Render::Stage { .. })
+}
 
 /// What a drain comes to, given the overlay after it and its window's number: not drawn when it
 /// `needed` the overlay and there is none, else committed, any drain with no overlay included, with
@@ -113,9 +140,16 @@ fn answer(
 ) -> Event {
     match overlay {
         None if needed => Event::Unavailable { seq },
-        overlay => {
-            Event::Committed { seq, overlay: overlay.flatten(), shown, places, crops, sent, began, flushed }
-        }
+        overlay => Event::Committed {
+            seq,
+            overlay: overlay.flatten(),
+            shown,
+            places,
+            crops,
+            sent,
+            began,
+            flushed,
+        },
     }
 }
 
@@ -153,9 +187,20 @@ enum Step {
 /// one that shows it puts it up last and then covers what is drawn at rest.
 fn steps(shown: Option<bool>, places: bool) -> Vec<Step> {
     let place = places.then_some(Step::PlaceRest);
-    let lifts = (shown == Some(false)).then_some([Step::LiftRest, Step::Hide]).into_iter().flatten();
-    let shows = (shown == Some(true)).then_some([Step::Show, Step::CoverRest]).into_iter().flatten();
-    place.into_iter().chain(lifts).chain([Step::Play, Step::Background]).chain(shows).collect()
+    let lifts = (shown == Some(false))
+        .then_some([Step::LiftRest, Step::Hide])
+        .into_iter()
+        .flatten();
+    let shows = (shown == Some(true))
+        .then_some([Step::Show, Step::CoverRest])
+        .into_iter()
+        .flatten();
+    place
+        .into_iter()
+        .chain(lifts)
+        .chain([Step::Play, Step::Background])
+        .chain(shows)
+        .collect()
 }
 
 pub struct Renderer {
@@ -179,7 +224,14 @@ impl Renderer {
         rest: Handover,
         mtm: MainThreadMarker,
     ) -> Self {
-        Self { rx, overlay: None, display: None, report, rest, mtm }
+        Self {
+            rx,
+            overlay: None,
+            display: None,
+            report,
+            rest,
+            mtm,
+        }
     }
 
     /// Each time a batch comes, it and every batch queued behind it are played as one drain, and
@@ -206,7 +258,14 @@ impl Renderer {
     /// and what its commands spent on crop-drawn tiles.
     fn play(&mut self, drained: Drained) -> Event {
         let began = Instant::now();
-        let Drained { mut commands, seq, sent, shown, places, through } = drained;
+        let Drained {
+            mut commands,
+            seq,
+            sent,
+            shown,
+            places,
+            through,
+        } = drained;
         let needed = commands.iter().any(needs_overlay);
         let mut flushed = began;
         let mut crops = Crops::default();
@@ -235,7 +294,9 @@ impl Renderer {
                     flushed = Instant::now();
                     crops = self.overlay.as_mut().map(TileOverlay::take_crops).unwrap_or_default();
                 }
-                Step::Background => self.overlay.as_mut().into_iter().for_each(TileOverlay::paint_background),
+                Step::Background => {
+                    self.overlay.as_mut().into_iter().for_each(TileOverlay::paint_background)
+                }
                 Step::Show => self.overlay.as_mut().into_iter().for_each(TileOverlay::show),
                 Step::CoverRest => {
                     if self.overlay.is_some() {
@@ -245,7 +306,13 @@ impl Renderer {
             }
         }
         let overlay = self.overlay.as_ref().map(TileOverlay::server_id);
-        answer(seq, needed, overlay, (shown, places, crops), (sent, began, flushed))
+        answer(
+            seq,
+            needed,
+            overlay,
+            (shown, places, crops),
+            (sent, began, flushed),
+        )
     }
 
     fn apply(&mut self, command: Render) {
@@ -284,7 +351,9 @@ impl Renderer {
         if self.overlay.is_some() {
             return;
         }
-        let Some((frame, top_band, scale)) = self.display else { return };
+        let Some((frame, top_band, scale)) = self.display else {
+            return;
+        };
         self.overlay = TileOverlay::new(frame, top_band, scale, self.mtm);
         if self.overlay.is_none() {
             warn!("could not create the animation overlay; animations will be skipped");
@@ -303,12 +372,19 @@ mod tests {
     const PLACE: Render = Render::PlaceRest { through: None };
 
     fn holes(x: f64) -> Render {
-        Render::Holes(vec![(OverlayRect::new(Point::new(x, 32.0), Size::new(859.0, 1081.0)), 0.0)])
+        Render::Holes(vec![(
+            OverlayRect::new(Point::new(x, 32.0), Size::new(859.0, 1081.0)),
+            0.0,
+        )])
     }
 
     /// Batch `seq`, sent `ms` after `at`.
     fn batch(seq: u64, at: Instant, ms: u64, commands: Vec<Render>) -> Batch {
-        Batch { seq, sent: at + std::time::Duration::from_millis(ms), commands }
+        Batch {
+            seq,
+            sent: at + std::time::Duration::from_millis(ms),
+            commands,
+        }
     }
 
     fn held_holes(commands: &[Render]) -> Vec<f64> {
@@ -330,7 +406,11 @@ mod tests {
         ]);
         assert_eq!(held_holes(&drained.commands), vec![1.0, 2.0, 3.0, 4.0]);
         assert_eq!(drained.seq, 6, "one answer, for the highest");
-        assert_eq!(drained.sent, at + std::time::Duration::from_millis(1), "waiting since the oldest was sent");
+        assert_eq!(
+            drained.sent,
+            at + std::time::Duration::from_millis(1),
+            "waiting since the oldest was sent"
+        );
         assert_eq!(drained.shown, None, "neither shown nor lifted: as it was");
     }
 
@@ -338,18 +418,52 @@ mod tests {
     fn the_last_show_or_lift_in_a_drain_decides_whether_the_overlay_is_up() {
         let at = Instant::now();
         let shown = |woke: Batch, queued: Vec<Batch>| in_order(woke, queued).shown;
-        assert_eq!(shown(batch(1, at, 0, vec![holes(1.0), Render::Show, holes(2.0)]), Vec::new()), Some(true));
-        assert_eq!(shown(batch(1, at, 0, vec![Render::Show]), vec![batch(2, at, 1, vec![LIFT])]), Some(false), "never shown");
-        assert_eq!(shown(batch(1, at, 0, vec![LIFT, holes(1.0)]), vec![batch(2, at, 1, vec![Render::Show])]), Some(true));
+        assert_eq!(
+            shown(
+                batch(1, at, 0, vec![holes(1.0), Render::Show, holes(2.0)]),
+                Vec::new()
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            shown(batch(1, at, 0, vec![Render::Show]), vec![batch(2, at, 1, vec![
+                LIFT
+            ])]),
+            Some(false),
+            "never shown"
+        );
+        assert_eq!(
+            shown(batch(1, at, 0, vec![LIFT, holes(1.0)]), vec![batch(
+                2,
+                at,
+                1,
+                vec![Render::Show]
+            )]),
+            Some(true)
+        );
     }
 
     /// The show covers what is drawn at rest, so it draws nothing until it is placed, and the lift
     /// draws what came since the place before the overlay hides.
     #[test]
     fn the_show_covers_what_rests_and_the_lift_places_it_before_it_hides_the_overlay() {
-        assert_eq!(steps(Some(false), false), [Step::LiftRest, Step::Hide, Step::Play, Step::Background]);
-        assert_eq!(steps(Some(true), false), [Step::Play, Step::Background, Step::Show, Step::CoverRest]);
-        assert_eq!(steps(None, false), [Step::Play, Step::Background], "neither: nothing at rest is touched");
+        assert_eq!(steps(Some(false), false), [
+            Step::LiftRest,
+            Step::Hide,
+            Step::Play,
+            Step::Background
+        ]);
+        assert_eq!(steps(Some(true), false), [
+            Step::Play,
+            Step::Background,
+            Step::Show,
+            Step::CoverRest
+        ]);
+        assert_eq!(
+            steps(None, false),
+            [Step::Play, Step::Background],
+            "neither: nothing at rest is touched"
+        );
     }
 
     /// A drain carrying `PlaceRest`, a tick ahead of the lift or in the lift's own, puts what is drawn
@@ -359,15 +473,27 @@ mod tests {
         let at = Instant::now();
         let ahead = in_order(batch(7, at, 0, vec![holes(1.0), PLACE]), Vec::new());
         assert!(ahead.places && ahead.shown.is_none());
-        assert_eq!(steps(ahead.shown, ahead.places), [Step::PlaceRest, Step::Play, Step::Background]);
+        assert_eq!(steps(ahead.shown, ahead.places), [
+            Step::PlaceRest,
+            Step::Play,
+            Step::Background
+        ]);
         let pressed = Some(at + std::time::Duration::from_millis(5));
         let with_the_lift =
-            in_order(batch(9, at, 1, vec![Render::Lift { through: pressed }]), vec![batch(8, at, 0, vec![PLACE])]);
+            in_order(batch(9, at, 1, vec![Render::Lift { through: pressed }]), vec![
+                batch(8, at, 0, vec![PLACE]),
+            ]);
+        assert_eq!(steps(with_the_lift.shown, with_the_lift.places), [
+            Step::PlaceRest,
+            Step::LiftRest,
+            Step::Hide,
+            Step::Play,
+            Step::Background
+        ]);
         assert_eq!(
-            steps(with_the_lift.shown, with_the_lift.places),
-            [Step::PlaceRest, Step::LiftRest, Step::Hide, Step::Play, Step::Background]
+            with_the_lift.through, pressed,
+            "both through the press the lift was given after"
         );
-        assert_eq!(with_the_lift.through, pressed, "both through the press the lift was given after");
         assert!(!in_order(batch(1, at, 0, vec![holes(1.0)]), Vec::new()).places);
     }
 
@@ -376,11 +502,29 @@ mod tests {
         let window = WindowId::new(7, 1);
         let display = ScreenRect::new(Point::new(0.0, 0.0), Size::new(1728.0, 1117.0));
         let commands = [
-            ("display", Render::Display { frame: display, top_band: 32.0, scale: 2.0 }),
-            ("dress", Render::Dress { desktop: None, bar: None, strip: None }),
-            ("stage", Render::Stage { score: Score::default(), tiles: Vec::new() }),
-            ("play", Render::Play { edits: Vec::new(), tiles: Vec::new() }),
-            ("swap", Render::Swap { window, picture: test_picture(display.size), clipped: false }),
+            ("display", Render::Display {
+                frame: display,
+                top_band: 32.0,
+                scale: 2.0,
+            }),
+            ("dress", Render::Dress {
+                desktop: None,
+                bar: None,
+                strip: None,
+            }),
+            ("stage", Render::Stage {
+                score: Score::default(),
+                tiles: Vec::new(),
+            }),
+            ("play", Render::Play {
+                edits: Vec::new(),
+                tiles: Vec::new(),
+            }),
+            ("swap", Render::Swap {
+                window,
+                picture: test_picture(display.size),
+                clipped: false,
+            }),
             ("focus", Render::Focus { window, focused: true }),
             ("wear", Render::Wear { window, worn: Worn::default() }),
             ("holes", holes(1.0)),
@@ -389,31 +533,84 @@ mod tests {
             ("lift", LIFT),
             ("trace", Render::Trace),
         ];
-        let making: Vec<&str> =
-            commands.iter().filter(|(_, command)| needs_overlay(command)).map(|(name, _)| *name).collect();
+        let making: Vec<&str> = commands
+            .iter()
+            .filter(|(_, command)| needs_overlay(command))
+            .map(|(name, _)| *name)
+            .collect();
         assert_eq!(making, ["dress", "stage"]);
     }
 
     #[test]
     fn a_drain_that_needed_the_overlay_and_has_none_is_not_drawn() {
         let at = Instant::now();
-        assert_eq!(answer(3, true, None, (Some(true), false, Crops::default()), (at, at, at)), Event::Unavailable { seq: 3 });
+        assert_eq!(
+            answer(
+                3,
+                true,
+                None,
+                (Some(true), false, Crops::default()),
+                (at, at, at)
+            ),
+            Event::Unavailable { seq: 3 }
+        );
     }
 
     #[test]
     fn every_other_drain_is_committed_with_the_windows_number_once_it_has_one() {
         let at = Instant::now();
-        let times = (at, at + std::time::Duration::from_millis(1), at + std::time::Duration::from_millis(2));
+        let times = (
+            at,
+            at + std::time::Duration::from_millis(1),
+            at + std::time::Duration::from_millis(2),
+        );
         let (sent, began, flushed) = times;
         let none = Crops::default();
-        let committed = |overlay| Event::Committed { seq: 3, overlay, shown: None, places: false, crops: none, sent, began, flushed };
+        let committed = |overlay| Event::Committed {
+            seq: 3,
+            overlay,
+            shown: None,
+            places: false,
+            crops: none,
+            sent,
+            began,
+            flushed,
+        };
         let numbered = WindowServerId(4_242);
-        assert_eq!(answer(3, false, None, (None, false, none), times), committed(None), "a display or holes, no overlay");
-        assert_eq!(answer(3, true, Some(None), (None, false, none), times), committed(None), "made, not numbered yet");
-        assert_eq!(answer(3, true, Some(Some(numbered)), (None, false, none), times), committed(Some(numbered)));
-        assert_eq!(answer(3, false, Some(Some(numbered)), (None, false, none), times), committed(Some(numbered)), "every drain");
-        let placed = Event::Committed { seq: 3, overlay: Some(numbered), shown: None, places: true, crops: none, sent, began, flushed };
-        assert_eq!(answer(3, false, Some(Some(numbered)), (None, true, none), times), placed, "a place, told apart from a drain in flight");
+        assert_eq!(
+            answer(3, false, None, (None, false, none), times),
+            committed(None),
+            "a display or holes, no overlay"
+        );
+        assert_eq!(
+            answer(3, true, Some(None), (None, false, none), times),
+            committed(None),
+            "made, not numbered yet"
+        );
+        assert_eq!(
+            answer(3, true, Some(Some(numbered)), (None, false, none), times),
+            committed(Some(numbered))
+        );
+        assert_eq!(
+            answer(3, false, Some(Some(numbered)), (None, false, none), times),
+            committed(Some(numbered)),
+            "every drain"
+        );
+        let placed = Event::Committed {
+            seq: 3,
+            overlay: Some(numbered),
+            shown: None,
+            places: true,
+            crops: none,
+            sent,
+            began,
+            flushed,
+        };
+        assert_eq!(
+            answer(3, false, Some(Some(numbered)), (None, true, none), times),
+            placed,
+            "a place, told apart from a drain in flight"
+        );
     }
 
     /// A drain answers with what its commands spent on crop-drawn tiles, so the journal can say what
@@ -421,8 +618,13 @@ mod tests {
     #[test]
     fn a_drain_is_committed_with_its_crop_drawn_tiles() {
         let at = Instant::now();
-        let crops = Crops { fills: 2, ground: std::time::Duration::from_micros(7_910) };
-        let Event::Committed { crops: answered, .. } = answer(3, true, Some(None), (Some(true), false, crops), (at, at, at)) else {
+        let crops = Crops {
+            fills: 2,
+            ground: std::time::Duration::from_micros(7_910),
+        };
+        let Event::Committed { crops: answered, .. } =
+            answer(3, true, Some(None), (Some(true), false, crops), (at, at, at))
+        else {
             panic!("committed")
         };
         assert_eq!(answered, crops);
@@ -442,6 +644,9 @@ mod tests {
         let media = objc2_quartz_core::CACurrentMediaTime();
         let after = Instant::now();
         let (from, to) = (clock.at(before), clock.at(after));
-        assert!(from - 0.000_1 <= media && media <= to + 0.000_1, "{media} outside {from}..{to}");
+        assert!(
+            from - 0.000_1 <= media && media <= to + 0.000_1,
+            "{media} outside {from}..{to}"
+        );
     }
 }

@@ -148,9 +148,19 @@ mod tests {
         );
         assert_eq!(from, rect(4224.0, 95.0, 1280.0, 960.0));
         assert_eq!(to, from);
-        let home =
-            surface_travel(frame, SurfacePoint::new(100.0, 0.0), SurfacePoint::origin(), true);
-        assert_eq!(home, (rect(224.0, 95.0, 1280.0, 960.0), rect(224.0, 95.0, 1280.0, 960.0)));
+        let home = surface_travel(
+            frame,
+            SurfacePoint::new(100.0, 0.0),
+            SurfacePoint::origin(),
+            true,
+        );
+        assert_eq!(
+            home,
+            (
+                rect(224.0, 95.0, 1280.0, 960.0),
+                rect(224.0, 95.0, 1280.0, 960.0)
+            )
+        );
     }
 
     #[test]

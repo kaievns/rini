@@ -168,7 +168,11 @@ pub struct Schedule<P, O, C> {
 enum Checking<O> {
     Overlay(HandoverCheck),
     Taking(HandoverCheck),
-    Screen { check: HandoverCheck, overlay: O, due: Instant },
+    Screen {
+        check: HandoverCheck,
+        overlay: O,
+        due: Instant,
+    },
 }
 
 /// One window owed a capture.
@@ -309,15 +313,23 @@ impl<P, O, C> Schedule<P, O, C> {
     }
 
     /// A lift to measure, in place of any check under way: its overlay's own picture is the next call.
-    pub fn check_handover(&mut self, check: HandoverCheck) { self.check = Some(Checking::Overlay(check)) }
+    pub fn check_handover(&mut self, check: HandoverCheck) {
+        self.check = Some(Checking::Overlay(check))
+    }
 
     /// The overlay's own picture of the check under way, taken at `at`, or `None` when it was not: the
     /// screen is due with it `AFTER_LIFT` later, or never. The check's tag, to tell its client.
     pub fn overlay_taken(&mut self, at: Instant, picture: Option<O>) -> Option<Tag> {
-        let Some(Checking::Taking(check)) = self.check.take() else { return None };
+        let Some(Checking::Taking(check)) = self.check.take() else {
+            return None;
+        };
         let tag = check.tag;
         if let Some(overlay) = picture {
-            self.check = Some(Checking::Screen { check, overlay, due: at + AFTER_LIFT });
+            self.check = Some(Checking::Screen {
+                check,
+                overlay,
+                due: at + AFTER_LIFT,
+            });
         }
         Some(tag)
     }
@@ -335,9 +347,13 @@ impl<P, O, C> Schedule<P, O, C> {
         }
     }
 
-    pub fn watch(&mut self, id: WatchId, watch: Watch, now: Instant) { self.watches.watch(id, watch, now) }
+    pub fn watch(&mut self, id: WatchId, watch: Watch, now: Instant) {
+        self.watches.watch(id, watch, now)
+    }
 
-    pub fn retarget(&mut self, id: WatchId, watch: Watch, now: Instant) { self.watches.retarget(id, watch, now) }
+    pub fn retarget(&mut self, id: WatchId, watch: Watch, now: Instant) {
+        self.watches.retarget(id, watch, now)
+    }
 
     pub fn stop(&mut self, id: WatchId) { self.watches.stop(id) }
 
@@ -375,10 +391,9 @@ impl<P, O, C> Schedule<P, O, C> {
     fn ask_elsewhere(&mut self, outcome: &mut Outcome, now: Instant) {
         for target in std::mem::take(&mut outcome.elsewhere) {
             self.asked += 1;
-            let waiting = self
-                .jobs
-                .iter_mut()
-                .find(|job| job.target.window == target.window && matches!(job.stage, Stage::Waiting));
+            let waiting = self.jobs.iter_mut().find(|job| {
+                job.target.window == target.window && matches!(job.stage, Stage::Waiting)
+            });
             match waiting {
                 Some(job) => {
                     job.target = target;
@@ -404,7 +419,12 @@ impl<P, O, C> Schedule<P, O, C> {
     /// capture of each the cache would take: the capture each window whose look settled is pictured
     /// with, once (see [`Refreshes::seen`]). One a refresh cannot capture through SkyLight is owed a
     /// ScreenCaptureKit capture at background priority.
-    pub fn refreshed(&mut self, now: Instant, seen: &[Seen], captures: Vec<(WindowId, C)>) -> Vec<(WindowId, C)> {
+    pub fn refreshed(
+        &mut self,
+        now: Instant,
+        seen: &[Seen],
+        captures: Vec<(WindowId, C)>,
+    ) -> Vec<(WindowId, C)> {
         let display = self.display.map(|display| display.frame);
         let refreshed = self.refreshes.seen(now, seen, captures, display);
         if !refreshed.elsewhere.is_empty() {
@@ -424,7 +444,8 @@ impl<P, O, C> Schedule<P, O, C> {
     fn ask_clipped(&mut self, tag: Tag, target: PictureTarget, frame: ScreenRect, now: Instant) {
         self.asked += 1;
         let waiting = self.jobs.iter_mut().find(|job| {
-            job.target.window == target.window && matches!(job.stage, Stage::Waiting | Stage::Listed(_))
+            job.target.window == target.window
+                && matches!(job.stage, Stage::Waiting | Stage::Listed(_))
         });
         match waiting {
             Some(job) => {
@@ -505,7 +526,10 @@ impl<P, O, C> Schedule<P, O, C> {
     pub fn captured(&mut self, window: WindowId) -> Option<Owed> {
         let at = self.position(window, |stage| matches!(stage, Stage::Capturing))?;
         let job = self.jobs.remove(at);
-        (!job.forgotten).then_some(Owed { focus: job.deliver, settles: job.settles })
+        (!job.forgotten).then_some(Owed {
+            focus: job.deliver,
+            settles: job.settles,
+        })
     }
 
     /// A render of `display`'s desktop came back, taken at `taken`, or not at all. Whether it may be
@@ -532,7 +556,11 @@ impl<P, O, C> Schedule<P, O, C> {
     /// Every window owed a capture or with one out, but for those forgotten.
     #[cfg(test)]
     pub fn owed(&self) -> impl Iterator<Item = WindowId> + '_ {
-        self.jobs.iter().filter(|job| !job.forgotten).map(|job| job.target.window).chain(self.refreshes.owed())
+        self.jobs
+            .iter()
+            .filter(|job| !job.forgotten)
+            .map(|job| job.target.window)
+            .chain(self.refreshes.owed())
     }
 
     /// The next call to make. `held` is what the cache holds worth drawing of a window, for the warm
@@ -545,7 +573,9 @@ impl<P, O, C> Schedule<P, O, C> {
                 self.check = Some(Checking::Taking(check));
                 return Next::Overlay(overlay);
             }
-            Some(Checking::Screen { check, overlay, due }) if due <= now => return Next::Screen(check, overlay),
+            Some(Checking::Screen { check, overlay, due }) if due <= now => {
+                return Next::Screen(check, overlay);
+            }
             other => self.check = other,
         }
         // What a transition waits on starts before any ScreenCaptureKit call is issued, and so, at
@@ -587,7 +617,8 @@ impl<P, O, C> Schedule<P, O, C> {
             return Next::List(targets);
         }
 
-        let capturing = self.jobs.iter().filter(|job| matches!(job.stage, Stage::Capturing)).count();
+        let capturing =
+            self.jobs.iter().filter(|job| matches!(job.stage, Stage::Capturing)).count();
         if capturing < MAX_CONCURRENT
             && let Some(job) = self
                 .jobs
@@ -627,7 +658,14 @@ impl<P, O, C> Schedule<P, O, C> {
         };
         let refreshing = self.refreshes.wake();
         let bar = self.bar_due.filter(|_| self.display.is_some());
-        match bar.into_iter().chain(settling).chain(watching).chain(refreshing).chain(screen).min() {
+        match bar
+            .into_iter()
+            .chain(settling)
+            .chain(watching)
+            .chain(refreshing)
+            .chain(screen)
+            .min()
+        {
             Some(at) => Next::WaitUntil(at),
             None => Next::Idle,
         }
@@ -734,14 +772,23 @@ mod tests {
             assert_eq!(captures(&mut schedule, now), vec![wid(3)], "{hold:?}");
 
             schedule.hold(Hold::Released, now);
-            assert_eq!(captures(&mut schedule, now), vec![wid(2), wid(1)], "released, in order");
+            assert_eq!(
+                captures(&mut schedule, now),
+                vec![wid(2), wid(1)],
+                "released, in order"
+            );
         }
     }
 
     /// The full table, hold by priority: what starts.
     #[test]
     fn what_starts_under_each_hold() {
-        const PRIORITIES: [Priority; 4] = [Priority::Repaint, Priority::Focus, Priority::Background, Priority::Warm];
+        const PRIORITIES: [Priority; 4] = [
+            Priority::Repaint,
+            Priority::Focus,
+            Priority::Background,
+            Priority::Warm,
+        ];
         let mut started = 0usize;
         for hold in [Hold::Released, Hold::Transition, Hold::Settling] {
             for priority in PRIORITIES {
@@ -750,7 +797,8 @@ mod tests {
                 schedule.hold(hold, now);
                 schedule.ask(ask(priority, &[1]), settled_by(now));
                 let starts = !captures(&mut schedule, now).is_empty();
-                let expected = hold == Hold::Released || matches!(priority, Priority::Repaint | Priority::Focus);
+                let expected = hold == Hold::Released
+                    || matches!(priority, Priority::Repaint | Priority::Focus);
                 assert_eq!(starts, expected, "{hold:?}/{priority:?}");
                 started += starts as usize;
             }
@@ -772,12 +820,17 @@ mod tests {
         ));
         schedule.hold(Hold::Transition, now + Duration::from_millis(10));
         assert!(
-            matches!(schedule.next(now + SETTLE_BEFORE_STARTING, nothing_held), Next::Idle),
+            matches!(
+                schedule.next(now + SETTLE_BEFORE_STARTING, nothing_held),
+                Next::Idle
+            ),
             "held"
         );
         let release = now + Duration::from_millis(500);
         schedule.hold(Hold::Released, release);
-        assert_eq!(listed_windows(schedule.next(release, nothing_held)), vec![wid(1)]);
+        assert_eq!(listed_windows(schedule.next(release, nothing_held)), vec![wid(
+            1
+        )]);
     }
 
     #[test]
@@ -795,7 +848,9 @@ mod tests {
         let now = Instant::now();
         let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1, 2, 3, 4, 5, 6]), settled_by(now));
-        let Next::List(targets) = schedule.next(now, nothing_held) else { panic!("a listing") };
+        let Next::List(targets) = schedule.next(now, nothing_held) else {
+            panic!("a listing")
+        };
         for target in targets {
             schedule.listed(target.window, Some(()));
         }
@@ -824,9 +879,16 @@ mod tests {
             now,
         );
         schedule.hold(Hold::Released, now);
-        let Next::List(targets) = schedule.next(now, nothing_held) else { panic!("a listing") };
-        let asked: Vec<(WindowId, f64)> = targets.iter().map(|t| (t.window, t.size.width)).collect();
-        assert_eq!(asked, vec![(wid(1), 1147.0)], "listed again, at the size asked last");
+        let Next::List(targets) = schedule.next(now, nothing_held) else {
+            panic!("a listing")
+        };
+        let asked: Vec<(WindowId, f64)> =
+            targets.iter().map(|t| (t.window, t.size.width)).collect();
+        assert_eq!(
+            asked,
+            vec![(wid(1), 1147.0)],
+            "listed again, at the size asked last"
+        );
     }
 
     /// A listing that returns once the hold is up has prepared a buffer the flight may outgrow too.
@@ -860,12 +922,16 @@ mod tests {
             },
             settled_by(now),
         );
-        let Next::List(targets) = schedule.next(now, nothing_held) else { panic!("a listing") };
+        let Next::List(targets) = schedule.next(now, nothing_held) else {
+            panic!("a listing")
+        };
         assert_eq!(
             targets.iter().map(|t| (t.window, t.size.width)).collect::<Vec<_>>(),
             vec![(wid(1), 1147.0)]
         );
-        assert!(matches!(schedule.next(now, nothing_held), Next::Capture { target, .. } if target.window == wid(2)));
+        assert!(
+            matches!(schedule.next(now, nothing_held), Next::Capture { target, .. } if target.window == wid(2))
+        );
     }
 
     /// A warm owed when the focus moves is not asked twice: it takes the focus priority, and starts
@@ -907,17 +973,26 @@ mod tests {
         let now = Instant::now();
         let mut schedule = Schedule::<(), (), ()>::default();
         schedule.hold(Hold::Transition, now);
-        schedule.ask(Ask {
-            priority: Priority::Warm,
-            targets: vec![target(1, 859.0), target(2, 859.0)],
-        }, settled_by(now));
-        schedule.ask(Ask {
-            priority: Priority::Warm,
-            targets: vec![target(1, 1147.0), target(3, 859.0)],
-        }, settled_by(now));
+        schedule.ask(
+            Ask {
+                priority: Priority::Warm,
+                targets: vec![target(1, 859.0), target(2, 859.0)],
+            },
+            settled_by(now),
+        );
+        schedule.ask(
+            Ask {
+                priority: Priority::Warm,
+                targets: vec![target(1, 1147.0), target(3, 859.0)],
+            },
+            settled_by(now),
+        );
         schedule.hold(Hold::Released, now);
-        let Next::List(targets) = schedule.next(now, nothing_held) else { panic!("a listing") };
-        let asked: Vec<(WindowId, f64)> = targets.iter().map(|t| (t.window, t.size.width)).collect();
+        let Next::List(targets) = schedule.next(now, nothing_held) else {
+            panic!("a listing")
+        };
+        let asked: Vec<(WindowId, f64)> =
+            targets.iter().map(|t| (t.window, t.size.width)).collect();
         assert_eq!(asked, vec![(wid(1), 1147.0), (wid(2), 859.0), (wid(3), 859.0)]);
         assert!(
             matches!(schedule.next(now, nothing_held), Next::Idle),
@@ -938,16 +1013,28 @@ mod tests {
             taken: now,
         };
         assert!(!wants_warm(Some(fits), ScreenSize::new(859.0, 1081.0), now));
-        assert!(wants_warm(Some(fits), ScreenSize::new(1147.0, 1081.0), now), "resized");
-        assert!(wants_warm(None, ScreenSize::new(859.0, 1081.0), now), "nothing held");
+        assert!(
+            wants_warm(Some(fits), ScreenSize::new(1147.0, 1081.0), now),
+            "resized"
+        );
+        assert!(
+            wants_warm(None, ScreenSize::new(859.0, 1081.0), now),
+            "nothing held"
+        );
         let later = now + Duration::from_secs(3);
-        assert!(wants_warm(Some(fits), ScreenSize::new(859.0, 1081.0), later), "stale");
+        assert!(
+            wants_warm(Some(fits), ScreenSize::new(859.0, 1081.0), later),
+            "stale"
+        );
 
         let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1, 2]), settled_by(now));
         let held = |window: WindowId| (window == wid(1)).then_some(fits);
         assert_eq!(listed_windows(schedule.next(now, held)), vec![wid(2)]);
-        assert!(schedule.owed().all(|window| window != wid(1)), "dropped, not kept waiting");
+        assert!(
+            schedule.owed().all(|window| window != wid(1)),
+            "dropped, not kept waiting"
+        );
     }
 
     /// A clipped focus end, the display's visible windows and a turned look off the display are
@@ -976,10 +1063,17 @@ mod tests {
         schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
         assert_eq!(captures(&mut schedule, now), vec![wid(1)]);
         schedule.ask(ask(Priority::Focus, &[1]), settled_by(now));
-        assert!(captures(&mut schedule, now).is_empty(), "the one out serves both");
+        assert!(
+            captures(&mut schedule, now).is_empty(),
+            "the one out serves both"
+        );
         assert!(schedule.captured(wid(1)).is_some());
         schedule.ask(ask(Priority::Focus, &[1]), settled_by(now));
-        assert_eq!(captures(&mut schedule, now), vec![wid(1)], "asked again once it is back");
+        assert_eq!(
+            captures(&mut schedule, now),
+            vec![wid(1)],
+            "asked again once it is back"
+        );
     }
 
     #[test]
@@ -987,7 +1081,12 @@ mod tests {
         let now = Instant::now();
         let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Warm, &[1, 2, 3, 4, 5, 6]), settled_by(now));
-        assert_eq!(captures(&mut schedule, now), vec![wid(1), wid(2), wid(3), wid(4)]);
+        assert_eq!(captures(&mut schedule, now), vec![
+            wid(1),
+            wid(2),
+            wid(3),
+            wid(4)
+        ]);
         assert!(schedule.captured(wid(2)).is_some());
         assert_eq!(captures(&mut schedule, now), vec![wid(5)], "one back, one out");
     }
@@ -1067,9 +1166,18 @@ mod tests {
         let rescaled = Display { scale: 1.0, ..external() };
         schedule.ask(ask(Priority::Warm, &[2]), settled_by(now));
         assert_eq!(captures(&mut schedule, now), vec![wid(2)]);
-        assert!(schedule.set_display(rescaled, false, now), "a scale change is a display change");
-        assert!(schedule.captured(wid(2)).is_some(), "kept through a scale change too");
-        assert!(!schedule.set_display(rescaled, false, now), "the same display again");
+        assert!(
+            schedule.set_display(rescaled, false, now),
+            "a scale change is a display change"
+        );
+        assert!(
+            schedule.captured(wid(2)).is_some(),
+            "kept through a scale change too"
+        );
+        assert!(
+            !schedule.set_display(rescaled, false, now),
+            "the same display again"
+        );
     }
 
     /// A display change used to ask for its render before invalidating the one in flight, so the
@@ -1087,7 +1195,10 @@ mod tests {
             matches!(schedule.next(now, nothing_held), Next::Idle),
             "one render out at a time"
         );
-        assert!(!schedule.desktop_rendered(built_in(), Some(now)), "the display left");
+        assert!(
+            !schedule.desktop_rendered(built_in(), Some(now)),
+            "the display left"
+        );
         assert!(matches!(schedule.next(now, nothing_held), Next::Desktop(d) if d == external()));
         assert!(schedule.desktop_rendered(external(), Some(now)));
         assert!(matches!(schedule.next(now, nothing_held), Next::Idle));
@@ -1111,7 +1222,10 @@ mod tests {
         assert!(matches!(schedule.next(now, nothing_held), Next::Idle), "in hand");
         schedule.hold(Hold::Transition, now);
         schedule.hold(Hold::Released, now + Duration::from_secs(3));
-        assert!(matches!(schedule.next(now, nothing_held), Next::Desktop(_)), "stale");
+        assert!(
+            matches!(schedule.next(now, nothing_held), Next::Desktop(_)),
+            "stale"
+        );
         assert!(!schedule.desktop_rendered(built_in(), None), "failed");
         schedule.hold(Hold::Transition, now);
         schedule.hold(Hold::Released, now + Duration::from_secs(3));
@@ -1136,21 +1250,32 @@ mod tests {
 
         schedule.hold(Hold::Transition, now);
         let after = now + BAR_REFRESH_DELAY;
-        assert!(matches!(schedule.next(after, nothing_held), Next::Idle), "overlay up");
+        assert!(
+            matches!(schedule.next(after, nothing_held), Next::Idle),
+            "overlay up"
+        );
         schedule.set_display(external(), true, after);
         assert!(
-            !matches!(schedule.next(after + BAR_REFRESH_DELAY, nothing_held), Next::Bar(_)),
+            !matches!(
+                schedule.next(after + BAR_REFRESH_DELAY, nothing_held),
+                Next::Bar(_)
+            ),
             "a display change under the overlay does not picture it either"
         );
 
         let lift = after + Duration::from_millis(100);
         schedule.hold(Hold::Settling, lift);
-        assert!(matches!(schedule.next(lift, nothing_held), Next::WaitUntil(due) if due == lift + BAR_REFRESH_DELAY));
+        assert!(
+            matches!(schedule.next(lift, nothing_held), Next::WaitUntil(due) if due == lift + BAR_REFRESH_DELAY)
+        );
         assert!(matches!(
             schedule.next(lift + BAR_REFRESH_DELAY, nothing_held),
             Next::Bar(d) if d == external()
         ));
-        assert!(matches!(schedule.next(lift + BAR_REFRESH_DELAY, nothing_held), Next::Idle));
+        assert!(matches!(
+            schedule.next(lift + BAR_REFRESH_DELAY, nothing_held),
+            Next::Idle
+        ));
     }
 
     fn tag() -> Tag {
@@ -1181,7 +1306,11 @@ mod tests {
         let mut schedule = Schedule::<(), (), ()>::default();
         schedule.set_display(built_in(), false, now);
         schedule.ask(ask(Priority::Focus, &[1]), now);
-        schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now);
+        schedule.watch(
+            WatchId(1),
+            landing(2, end(), now + Duration::from_millis(150)),
+            now,
+        );
         assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)));
         let _ = schedule.seen(now, &[]);
         assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(1)]);
@@ -1194,7 +1323,9 @@ mod tests {
         let now = Instant::now();
         let until = now + Duration::from_millis(150);
         let looked = |next: Next<(), ()>| match next {
-            Next::Sky(sets) => sets.iter().flat_map(|set| &set.looks).map(|look| look.target.window).collect(),
+            Next::Sky(sets) => {
+                sets.iter().flat_map(|set| &set.looks).map(|look| look.target.window).collect()
+            }
             _ => Vec::new(),
         };
         let mut schedule = Schedule::<(), (), ()>::default();
@@ -1213,7 +1344,11 @@ mod tests {
     fn a_lost_window_is_reported_first_and_the_schedule_wakes_for_its_watches() {
         let now = Instant::now();
         let mut schedule = Schedule::<(), (), ()>::default();
-        schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now);
+        schedule.watch(
+            WatchId(1),
+            landing(2, end(), now + Duration::from_millis(150)),
+            now,
+        );
         assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)));
         let _ = schedule.seen(now, &[]);
         assert!(matches!(
@@ -1254,17 +1389,17 @@ mod tests {
             now,
         );
         assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)));
-        let outcome = schedule.seen(
-            now,
-            &[Seen {
-                window: wid(1),
-                frame: Some(clipped),
-                capture: Capture::Missed,
-            }],
-        );
+        let outcome = schedule.seen(now, &[Seen {
+            window: wid(1),
+            frame: Some(clipped),
+            capture: Capture::Missed,
+        }]);
         assert!(outcome.clipped.is_empty(), "taken over by the schedule");
         assert_eq!(captures(&mut schedule, now), vec![wid(1)], "through the hold");
-        assert_eq!(schedule.captured(wid(1)).map(|owed| owed.focus), Some(vec![(tag(), clipped)]));
+        assert_eq!(
+            schedule.captured(wid(1)).map(|owed| owed.focus),
+            Some(vec![(tag(), clipped)])
+        );
     }
 
     /// A repainting window ending cut by the display's edge is captured through ScreenCaptureKit,
@@ -1290,7 +1425,11 @@ mod tests {
         };
         schedule.watch(WatchId(1), landing, now);
         assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)));
-        let outcome = schedule.seen(now, &[Seen { window: wid(1), frame: Some(cut), capture: Capture::Missed }]);
+        let outcome = schedule.seen(now, &[Seen {
+            window: wid(1),
+            frame: Some(cut),
+            capture: Capture::Missed,
+        }]);
         assert!(outcome.elsewhere.is_empty(), "taken over by the schedule");
         let rounds = [
             (CapturedElsewhere::Missed, false),
@@ -1299,10 +1438,24 @@ mod tests {
         ];
         for (capture, settled) in rounds {
             assert_eq!(captures(&mut schedule, now), vec![wid(1)], "through the hold");
-            assert_eq!(schedule.captured(wid(1)), Some(Owed { focus: Vec::new(), settles: true }));
+            assert_eq!(
+                schedule.captured(wid(1)),
+                Some(Owed {
+                    focus: Vec::new(),
+                    settles: true
+                })
+            );
             let outcome = schedule.captured_elsewhere(wid(1), capture, now);
-            let delivered: Vec<_> = outcome.deliveries.iter().map(|d| (d.why, d.windows.clone())).collect();
-            assert_eq!(delivered, if settled { vec![(Why::Landed, vec![(wid(1), cut)])] } else { Vec::new() });
+            let delivered: Vec<_> =
+                outcome.deliveries.iter().map(|d| (d.why, d.windows.clone())).collect();
+            assert_eq!(
+                delivered,
+                if settled {
+                    vec![(Why::Landed, vec![(wid(1), cut)])]
+                } else {
+                    Vec::new()
+                }
+            );
         }
         assert!(captures(&mut schedule, now).is_empty(), "settled");
     }
@@ -1328,7 +1481,11 @@ mod tests {
             };
             schedule.watch(WatchId(1), landing, now);
             assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)));
-            schedule.seen(now, &[Seen { window: wid(1), frame: Some(cut), capture: Capture::Missed }]);
+            schedule.seen(now, &[Seen {
+                window: wid(1),
+                frame: Some(cut),
+                capture: Capture::Missed,
+            }]);
         };
         let ready = || {
             let mut schedule = Schedule::<(), (), ()>::default();
@@ -1337,15 +1494,25 @@ mod tests {
             let _ = schedule.desktop_rendered(built_in(), Some(now));
             schedule
         };
-        let settling = Some(Owed { focus: Vec::new(), settles: true });
+        let settling = Some(Owed {
+            focus: Vec::new(),
+            settles: true,
+        });
 
         let mut waiting = ready();
         waiting.hold(Hold::Transition, now);
         waiting.ask(ask(Priority::Warm, &[1]), settled_by(now));
-        assert!(captures(&mut waiting, now).is_empty(), "a warm waits through the hold");
+        assert!(
+            captures(&mut waiting, now).is_empty(),
+            "a warm waits through the hold"
+        );
         handed_over(&mut waiting);
         assert_eq!(waiting.owed().collect::<Vec<_>>(), [wid(1)], "one job");
-        assert_eq!(captures(&mut waiting, now), vec![wid(1)], "raised, through the hold");
+        assert_eq!(
+            captures(&mut waiting, now),
+            vec![wid(1)],
+            "raised, through the hold"
+        );
         assert_eq!(waiting.captured(wid(1)), settling);
         assert!(waiting.owed().next().is_none());
 
@@ -1353,7 +1520,14 @@ mod tests {
         out.ask(ask(Priority::Warm, &[1]), settled_by(now));
         assert_eq!(captures(&mut out, now), vec![wid(1)], "out before the hold");
         handed_over(&mut out);
-        assert_eq!(out.captured(wid(1)), Some(Owed { focus: Vec::new(), settles: false }), "owes the watch nothing");
+        assert_eq!(
+            out.captured(wid(1)),
+            Some(Owed {
+                focus: Vec::new(),
+                settles: false
+            }),
+            "owes the watch nothing"
+        );
         assert_eq!(captures(&mut out, now), vec![wid(1)], "its own follows");
         assert_eq!(out.captured(wid(1)), settling);
     }
@@ -1367,9 +1541,16 @@ mod tests {
         schedule.ask(ask(Priority::Focus, &[1]), now);
         assert_eq!(captures(&mut schedule, now), vec![wid(1)]);
         schedule.ask_clipped(tag(), target(1, 859.0), end(), now);
-        assert_eq!(schedule.captured(wid(1)).map(|owed| owed.focus), Some(Vec::new()), "the one out owes no one");
+        assert_eq!(
+            schedule.captured(wid(1)).map(|owed| owed.focus),
+            Some(Vec::new()),
+            "the one out owes no one"
+        );
         assert_eq!(captures(&mut schedule, now), vec![wid(1)]);
-        assert_eq!(schedule.captured(wid(1)).map(|owed| owed.focus), Some(vec![(tag(), end())]));
+        assert_eq!(
+            schedule.captured(wid(1)).map(|owed| owed.focus),
+            Some(vec![(tag(), end())])
+        );
         schedule.ask_clipped(tag(), target(1, 859.0), end(), now);
         schedule.ask(ask(Priority::Focus, &[1]), now);
         schedule.forget(wid(1));
@@ -1383,7 +1564,11 @@ mod tests {
         }
     }
 
-    fn seen(window: u32, frame: ScreenRect, capture: crate::pictures::domain::watch::Capture) -> Seen {
+    fn seen(
+        window: u32,
+        frame: ScreenRect,
+        capture: crate::pictures::domain::watch::Capture,
+    ) -> Seen {
         Seen {
             window: wid(window),
             frame: Some(frame),
@@ -1410,8 +1595,14 @@ mod tests {
         let mut schedule = Schedule::<(), (), ()>::default();
         schedule.ask(ask(Priority::Background, &[2]), settled_by(now));
         schedule.refresh(vec![target(1, 859.0)], now);
-        assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(2)], "the refresh settles");
-        assert!(matches!(schedule.next(now, nothing_held), Next::WaitUntil(at) if at == now + SETTLE_BEFORE_STARTING));
+        assert_eq!(
+            listed_windows(schedule.next(now, nothing_held)),
+            vec![wid(2)],
+            "the refresh settles"
+        );
+        assert!(
+            matches!(schedule.next(now, nothing_held), Next::WaitUntil(at) if at == now + SETTLE_BEFORE_STARTING)
+        );
 
         let pressed = now + Duration::from_millis(10);
         schedule.hold(Hold::Transition, pressed);
@@ -1424,11 +1615,22 @@ mod tests {
             behind: Vec::new(),
         });
         let _ = schedule.next(pressed, nothing_held);
-        let _ = schedule.seen(pressed, &[seen(1, end(), crate::pictures::domain::watch::Capture::Missed)]);
+        let _ = schedule.seen(pressed, &[seen(
+            1,
+            end(),
+            crate::pictures::domain::watch::Capture::Missed,
+        )]);
         schedule.hold(Hold::Settling, pressed);
         let settled = now + SETTLE_BEFORE_STARTING;
-        assert!(matches!(schedule.next(settled, nothing_held), Next::Idle), "cancelled, and asked while held");
-        assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(2), wid(1), wid(3)], "still owed");
+        assert!(
+            matches!(schedule.next(settled, nothing_held), Next::Idle),
+            "cancelled, and asked while held"
+        );
+        assert_eq!(
+            schedule.owed().collect::<Vec<_>>(),
+            vec![wid(2), wid(1), wid(3)],
+            "still owed"
+        );
 
         let release = now + Duration::from_millis(400);
         schedule.hold(Hold::Released, release);
@@ -1444,9 +1646,17 @@ mod tests {
         };
         let due = release + SETTLE_BEFORE_STARTING;
         assert!(matches!(schedule.next(release, pictured), Next::WaitUntil(at) if at == due));
-        assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(2), wid(4), wid(1)], "the flight pictured 3");
+        assert_eq!(
+            schedule.owed().collect::<Vec<_>>(),
+            vec![wid(2), wid(4), wid(1)],
+            "the flight pictured 3"
+        );
         assert_eq!(refreshed(schedule.next(due, pictured)), vec![wid(1)]);
-        assert!(schedule.refreshed(due, &[seen(1, end(), band(1))], vec![(wid(1), ())]).is_empty());
+        assert!(
+            schedule
+                .refreshed(due, &[seen(1, end(), band(1))], vec![(wid(1), ())])
+                .is_empty()
+        );
         assert_eq!(listed_windows(schedule.next(due, pictured)), vec![wid(4)]);
     }
 
@@ -1471,15 +1681,32 @@ mod tests {
         let _ = schedule.desktop_rendered(built_in(), Some(now));
         schedule.refresh(vec![target(1, 859.0), target(2, 859.0)], settled_by(now));
         assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(1), wid(2)]);
-        assert_eq!(refreshed(schedule.next(now, nothing_held)), vec![wid(1), wid(2)], "one round");
+        assert_eq!(
+            refreshed(schedule.next(now, nothing_held)),
+            vec![wid(1), wid(2)],
+            "one round"
+        );
         let parked = rect(1727.0, 32.0, 859.0, 1081.0);
         let seen = [seen(1, parked, Capture::Missed), seen(2, end(), band(1))];
-        assert!(schedule.refreshed(now, &seen, vec![(wid(2), ())]).is_empty(), "a first capture is held");
-        assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(1), wid(2)], "window 2 is looked at again");
+        assert!(
+            schedule.refreshed(now, &seen, vec![(wid(2), ())]).is_empty(),
+            "a first capture is held"
+        );
+        assert_eq!(
+            schedule.owed().collect::<Vec<_>>(),
+            vec![wid(1), wid(2)],
+            "window 2 is looked at again"
+        );
         schedule.forget(wid(2));
-        assert_eq!(schedule.owed().collect::<Vec<_>>(), vec![wid(1)], "owed ScreenCaptureKit's capture");
+        assert_eq!(
+            schedule.owed().collect::<Vec<_>>(),
+            vec![wid(1)],
+            "owed ScreenCaptureKit's capture"
+        );
         let settled = now + SETTLE_BEFORE_STARTING;
-        assert_eq!(listed_windows(schedule.next(settled, |_| Some(fits))), vec![wid(1)]);
+        assert_eq!(listed_windows(schedule.next(settled, |_| Some(fits))), vec![
+            wid(1)
+        ]);
     }
 
     /// The one record of whether there is a bar to picture, which a transition is dressed by too.
@@ -1487,12 +1714,18 @@ mod tests {
     fn no_bar_is_pictured_while_rini_draws_its_own() {
         let now = Instant::now();
         let mut schedule = Schedule::<(), (), ()>::default();
-        assert!(!schedule.picture_bar(), "a transition before the first display is dressed with none");
+        assert!(
+            !schedule.picture_bar(),
+            "a transition before the first display is dressed with none"
+        );
         schedule.set_display(built_in(), false, now);
         assert!(!schedule.picture_bar());
         let _ = schedule.next(now, nothing_held);
         schedule.hold(Hold::Settling, now);
-        assert!(matches!(schedule.next(now + BAR_REFRESH_DELAY, nothing_held), Next::Idle));
+        assert!(matches!(
+            schedule.next(now + BAR_REFRESH_DELAY, nothing_held),
+            Next::Idle
+        ));
         schedule.set_display(built_in(), true, now);
         assert!(schedule.picture_bar(), "another app's bar, under the overlay");
     }
@@ -1517,10 +1750,19 @@ mod tests {
         schedule.set_display(built_in(), false, now);
         schedule.hold(Hold::Settling, now);
         schedule.ask(ask(Priority::Focus, &[1]), now);
-        schedule.watch(WatchId(1), landing(2, end(), now + Duration::from_millis(150)), now);
+        schedule.watch(
+            WatchId(1),
+            landing(2, end(), now + Duration::from_millis(150)),
+            now,
+        );
         schedule.check_handover(check());
-        assert!(matches!(schedule.next(now, nothing_held), Next::Overlay(id) if id == WindowServerId::new(77)));
-        assert!(matches!(schedule.next(now, nothing_held), Next::Sky(_)), "the overlay is being taken");
+        assert!(
+            matches!(schedule.next(now, nothing_held), Next::Overlay(id) if id == WindowServerId::new(77))
+        );
+        assert!(
+            matches!(schedule.next(now, nothing_held), Next::Sky(_)),
+            "the overlay is being taken"
+        );
         let _ = schedule.seen(now, &[]);
         assert_eq!(schedule.overlay_taken(now, Some(())), Some(tag()));
         assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(1)]);
@@ -1537,14 +1779,28 @@ mod tests {
         let taken = now + Duration::from_millis(30);
         assert_eq!(schedule.overlay_taken(taken, Some(7)), Some(tag()));
         let early = taken + AFTER_LIFT - Duration::from_millis(1);
-        assert!(matches!(schedule.next(early, nothing_held), Next::WaitUntil(at) if at == taken + AFTER_LIFT));
-        assert!(matches!(schedule.next(taken + AFTER_LIFT, nothing_held), Next::Screen(due, 7) if due == check()));
-        assert!(matches!(schedule.next(taken + AFTER_LIFT, nothing_held), Next::Idle), "once");
+        assert!(
+            matches!(schedule.next(early, nothing_held), Next::WaitUntil(at) if at == taken + AFTER_LIFT)
+        );
+        assert!(
+            matches!(schedule.next(taken + AFTER_LIFT, nothing_held), Next::Screen(due, 7) if due == check())
+        );
+        assert!(
+            matches!(schedule.next(taken + AFTER_LIFT, nothing_held), Next::Idle),
+            "once"
+        );
 
         schedule.check_handover(check());
         let _ = schedule.next(now, nothing_held);
-        assert_eq!(schedule.overlay_taken(now, None), Some(tag()), "its client is told all the same");
-        assert!(matches!(schedule.next(now + AFTER_LIFT, nothing_held), Next::Idle), "nothing to compare");
+        assert_eq!(
+            schedule.overlay_taken(now, None),
+            Some(tag()),
+            "its client is told all the same"
+        );
+        assert!(
+            matches!(schedule.next(now + AFTER_LIFT, nothing_held), Next::Idle),
+            "nothing to compare"
+        );
         assert_eq!(schedule.overlay_taken(now, Some(7)), None, "no check under way");
     }
 
@@ -1566,6 +1822,9 @@ mod tests {
         assert_eq!(Rc::strong_count(&picture), 2, "settling: the lift it measures");
         schedule.hold(Hold::Transition, now);
         assert_eq!(Rc::strong_count(&picture), 1, "the overlay's picture is let go");
-        assert!(matches!(schedule.next(now + AFTER_LIFT, nothing_held), Next::Idle), "after");
+        assert!(
+            matches!(schedule.next(now + AFTER_LIFT, nothing_held), Next::Idle),
+            "after"
+        );
     }
 }

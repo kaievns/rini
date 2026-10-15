@@ -116,11 +116,8 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(
-            request,
-            RiniRequest::GetWindowInfo {
-                window_id: WindowId::new(42, 7).unwrap(),
-            }
-        );
+        assert_eq!(request, RiniRequest::GetWindowInfo {
+            window_id: WindowId::new(42, 7).unwrap(),
+        });
     }
 }

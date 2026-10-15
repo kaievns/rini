@@ -1,17 +1,16 @@
 use objc2_core_foundation::{CGPoint, CGRect};
-use tracing::{debug, trace};
-
-use crate::transitions::domain::travel::changes_visibly;
-use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
-use crate::app::power;
+use rini_core::ids::{SpaceId, WindowId, pid_t};
 use rini_geometry::space::{FromCg, ScreenRect, ScreenSize, ToCg};
 use rini_geometry::stretch::is_a_resize;
+use rustc_hash::FxHashMap as HashMap;
+use tracing::{debug, trace};
+
+use crate::app::power;
 use crate::app::reactor::Reactor;
 use crate::app::reactor::present::{Present, instant_requests};
+use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
+use crate::transitions::domain::travel::changes_visibly;
 use crate::windows::domain::request::Request;
-use rini_core::ids::SpaceId;
-use rini_core::ids::{WindowId, pid_t};
-use rustc_hash::FxHashMap as HashMap;
 
 /// The layout side of animation: decides per pass whether the overlay flies it, and places
 /// the real windows when it does not. A namespace; it holds no state. The sorting of a pass is
@@ -167,7 +166,10 @@ impl AnimationManager {
             ..
         } = plan;
         let screen_space = |layout: &[(WindowId, CGRect)]| -> Vec<(WindowId, ScreenRect)> {
-            layout.iter().map(|&(window, frame)| (window, ScreenRect::from_cg(frame))).collect()
+            layout
+                .iter()
+                .map(|&(window, frame)| (window, ScreenRect::from_cg(frame)))
+                .collect()
         };
         let (was, is) = (screen_space(&strip_before), screen_space(&strip_now));
         pass::place_on_strip(&mut overlay_requests, &was, &is);
@@ -234,8 +236,9 @@ impl AnimationManager {
         {
             // The strip movement owns it, including placing the real windows once it covers them.
         } else if use_overlay {
-            let duration =
-                std::time::Duration::from_secs_f64(reactor.config.settings.animation_duration.max(0.0));
+            let duration = std::time::Duration::from_secs_f64(
+                reactor.config.settings.animation_duration.max(0.0),
+            );
             let count = overlay_requests.len();
             let flight = crate::transitions::platform::engine::Event::Animate {
                 windows: overlay_requests,
@@ -328,10 +331,11 @@ impl AnimationManager {
                 hidden = !m.in_active_workspace,
                 "Instant workspace positioning"
             );
-            per_app
-                .entry(m.window.pid)
-                .or_default()
-                .push((m.window, m.to.to_cg(), m.size_unchanged()));
+            per_app.entry(m.window.pid).or_default().push((
+                m.window,
+                m.to.to_cg(),
+                m.size_unchanged(),
+            ));
         }
 
         for (pid, frames) in per_app {
