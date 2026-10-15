@@ -22,6 +22,7 @@ a restart. Sits above `windows`, `displays` and `layout`.
 | `domain/floating.rs`, `domain/floating_position_store.rs` | Which windows float and where they sit |
 | `domain/hidden_window_placement.rs` | Where off-workspace windows park |
 | `domain/workspaces.rs` | `WorkspaceLayouts`: a layout per workspace per display SIZE |
+| `engine/frames.rs` | `calculate_layout_for_workspace`: the frames a workspace shows, its strip and its floating windows |
 | `engine/persistence/` | `layout.ron`: save, load, restore, and matching a saved window to a live one |
 | `settings.rs` | `VirtualWorkspaceSettings`: which workspaces there are, which one shows at launch, and the window rules that route windows into them |
 

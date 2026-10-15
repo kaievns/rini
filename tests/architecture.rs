@@ -1184,7 +1184,7 @@ const LONG_FILES: [(&str, usize); 4] = [
     ("src/app/reactor/mod.rs", 4502),
     ("src/layout/domain/scrolling.rs", 1816),
     ("src/transitions/platform/engine.rs", 2187),
-    ("src/workspaces/engine.rs", 2544),
+    ("src/workspaces/engine.rs", 2510),
 ];
 
 /// `source` with every comment blanked, so a `//` inside a string is not a comment, and with
