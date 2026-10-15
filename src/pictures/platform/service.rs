@@ -118,15 +118,6 @@ struct Shared {
     stand_in: Option<CFRetained<CGImage>>,
 }
 
-impl Shared {
-    /// Every window the cache holds a picture of or the schedule owes one.
-    fn windows(&self) -> Vec<WindowId> {
-        let mut windows: Vec<WindowId> = self.cache.iter().map(|(window, _)| *window).collect();
-        windows.extend(self.schedule.owed());
-        windows
-    }
-}
-
 /// Every picture of `window` and all that is known of it, gone.
 fn forget_window(
     shared: &mut Shared,
@@ -528,9 +519,6 @@ impl Pictures {
 
     /// What is known of the window: its translucency and material.
     pub fn knowledge(&self, window: WindowServerId) -> Knowledge { self.lock().learned.get(window) }
-
-    /// Every window with a picture held or one on its way.
-    pub fn windows(&self) -> Vec<WindowId> { self.lock().windows() }
 
     /// A stand-in for a window of `size`, never cached. `None` only if its pixel cannot be drawn.
     pub fn stand_in(&self, size: ScreenSize) -> Option<Picture> {
@@ -1059,7 +1047,6 @@ mod tests {
 
     use super::*;
     use crate::pictures::domain::handover::AFTER_LIFT;
-    use crate::pictures::domain::schedule::Priority;
     use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, CHANGE_TRIES, Moment, Settle};
     use crate::pictures::platform::picture::test_picture;
 
@@ -1958,34 +1945,5 @@ mod tests {
             .map(|(window, _)| window)
             .collect();
         assert_eq!(drawn, vec![wid(3), wid(1)]);
-    }
-
-    /// Every window with a picture held or one on its way, but not one forgotten while its capture was
-    /// out.
-    #[test]
-    fn windows_are_those_held_and_those_owed() {
-        let (pictures, _commands) = Pictures::detached();
-        let now = Instant::now();
-        let target = |idx| PictureTarget {
-            window: wid(idx),
-            server_id: rini_core::ids::WindowServerId::new(idx),
-            size: ScreenSize::new(859.0, 1081.0),
-        };
-        {
-            let mut shared = pictures.lock();
-            shared.cache.insert(wid(1), sized(859.0, 1081.0));
-            shared.schedule.ask(
-                Ask {
-                    priority: Priority::Focus,
-                    targets: vec![target(2), target(3)],
-                },
-                now,
-            );
-            let _ = shared.schedule.next(now, |_| None);
-            shared.schedule.forget(wid(3));
-        }
-        let mut windows = pictures.windows();
-        windows.sort();
-        assert_eq!(windows, vec![wid(1), wid(2)]);
     }
 }

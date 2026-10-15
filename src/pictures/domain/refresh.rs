@@ -135,6 +135,7 @@ impl<C> Refreshes<C> {
     pub fn forget(&mut self, window: WindowId) { self.windows.retain(|refresh| refresh.target.window != window) }
 
     /// Every window owed a picture, cancelled or not.
+    #[cfg(test)]
     pub fn owed(&self) -> impl Iterator<Item = WindowId> + '_ { self.windows.iter().map(|refresh| refresh.target.window) }
 
     /// Every window due a look at `now`, in one round, each taken wholly on the display wherever it
