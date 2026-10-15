@@ -382,15 +382,10 @@ fn main() {
         }),
         media: rini::animation::platform::renderer::media_clock(),
         clock: Box::new(std::time::Instant::now),
+        window_server: rini::windows::platform::window_server::live(),
+        capture: Box::new(rini::pictures::platform::skylight::capture_via_framed),
     };
-    std::thread::Builder::new()
-        .name("transitions".into())
-        .spawn(move || {
-            let engine = rini::transitions::platform::engine::FlightEngine::new(flight_engine);
-            Executor::run_interactive(engine.run());
-            panic!("transitions thread exited");
-        })
-        .expect("failed to spawn transitions thread");
+    spawn_transitions(flight_engine);
 
     // The switcher popup, on the main thread for the same reason the overlay is: AppKit and Core
     // Animation require it. Idle until a switch opens, and it builds its window on first use.
@@ -482,6 +477,18 @@ fn load_saved_layout(path: std::path::PathBuf) -> anyhow::Result<(LayoutEngine, 
         },
         rini::windows::platform::app::is_bundle_running,
     )
+}
+
+/// The flight engine, on a thread of its own made from `parts`.
+fn spawn_transitions(parts: rini::transitions::platform::engine::Parts) {
+    std::thread::Builder::new()
+        .name("transitions".into())
+        .spawn(move || {
+            let engine = rini::transitions::platform::engine::FlightEngine::new(parts);
+            Executor::run_interactive(engine.run());
+            panic!("transitions thread exited");
+        })
+        .expect("failed to spawn transitions thread");
 }
 
 fn install_panic_hook() {

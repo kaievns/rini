@@ -778,7 +778,7 @@ is "The move flight" in `src/animation/docs/animation-smoothness.md`.
 window at its own frame about 40ms before rini's first pass (AX
 `WindowCreated` latency plus the coalesce window); that time is accepted.
 `start` reads that frame from the window server and takes ONE framed
-capture there (`capture_via_framed`, 16-24ms), at most
+capture there (its `Parts`' `capture`, `capture_via_framed` in production, 16-24ms), at most
 `MAX_SYNC_ENTRANCE_CAPTURES` (4) per pass. The tile is a loose
 `Member::Entrance` from the spawn frame to the slot, crop-drawn with its spawn
 picture and the window's ground in the growth until its picture at the slot is

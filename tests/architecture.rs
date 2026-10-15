@@ -367,6 +367,35 @@ fn the_tap_decides_a_key_event_only_through_the_key_router() {
     );
 }
 
+/// The flight engine asks the window server only through the `WindowServer` its `Parts` hand it and
+/// captures only through `Parts::capture`, so its tests state every answer it reads and no shim
+/// override is left to state one with.
+#[test]
+fn the_flight_engine_reads_the_window_server_only_through_its_port() {
+    let mut broken = Vec::new();
+    for path in rust_files(Path::new("src/transitions")) {
+        let source = fs::read_to_string(&path).expect("readable source");
+        for (line, code) in production_lines_in(&source) {
+            let free = code
+                .match_indices("window_server::")
+                .any(|(at, path)| !code[at + path.len()..].starts_with("WindowServer"));
+            if free || code.contains("skylight::") {
+                broken.push(format!("{}:{line}: {}", slash(&path), code.trim()));
+            }
+        }
+        for (line, code) in code_lines_in(&source) {
+            if code.contains("_override(") {
+                broken.push(format!("{}:{line}: {}", slash(&path), code.trim()));
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "the flight engine reads through Parts::window_server and Parts::capture:\n{}",
+        broken.join("\n")
+    );
+}
+
 /// A module only a test builds: the 1-based lines of one written inline, or the name of one in a
 /// file of its own.
 #[derive(Debug, PartialEq)]
@@ -1009,11 +1038,11 @@ const LONG_FNS: [(&str, &str, usize); 42] = [
     ("src/layout/domain/constraints.rs", "solve_axis_lengths", 114),
     ("src/layout/domain/scrolling.rs", "calculate_layout", 243),
     ("src/layout/domain/scrolling.rs", "on_window_resized", 105),
-    ("src/main.rs", "main", 292),
+    ("src/main.rs", "main", 287),
     ("src/pictures/domain/watch.rs", "seen", 151),
-    ("src/transitions/platform/engine.rs", "merge_now", 125),
-    ("src/transitions/platform/engine.rs", "start", 256),
-    ("src/transitions/platform/engine.rs", "start_surface", 124),
+    ("src/transitions/platform/engine.rs", "merge_now", 120),
+    ("src/transitions/platform/engine.rs", "start", 229),
+    ("src/transitions/platform/engine.rs", "start_surface", 120),
     ("src/windows/platform/app_actor.rs", "handle_notification", 148),
     ("src/windows/platform/app_actor.rs", "handle_raise_request", 101),
     ("src/windows/platform/app_actor.rs", "handle_request", 132),
@@ -1038,7 +1067,7 @@ const LONG_FNS: [(&str, &str, usize); 42] = [
 const LONG_FILES: [(&str, usize); 4] = [
     ("src/app/reactor/mod.rs", 4502),
     ("src/layout/domain/scrolling.rs", 1816),
-    ("src/transitions/platform/engine.rs", 2212),
+    ("src/transitions/platform/engine.rs", 2188),
     ("src/workspaces/engine.rs", 2544),
 ];
 

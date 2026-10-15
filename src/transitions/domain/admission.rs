@@ -72,13 +72,28 @@ pub(in crate::transitions) fn retarget_entrances(
     moved
 }
 
-/// How a newly opened window enters a flight.
+/// How a newly opened window enters a flight, `P` the picture taken where it opened, which a
+/// decision judged on its own carries none of.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(in crate::transitions) enum EntranceDecision {
-    /// Its tile travels from the frame macOS showed it at to its slot.
-    Travel { from: ScreenRect, to: ScreenRect },
+pub(in crate::transitions) enum EntranceDecision<P = ()> {
+    /// Its tile travels from the frame macOS showed it at to its slot, drawn with `picture`.
+    Travel {
+        from: ScreenRect,
+        to: ScreenRect,
+        picture: P,
+    },
     /// No usable picture at spawn: a reservation held for the first picture, with the reason.
     Reserve(&'static str),
+}
+
+impl<P> EntranceDecision<P> {
+    /// The decision, its picture left behind.
+    pub(in crate::transitions) fn decided(&self) -> EntranceDecision {
+        match *self {
+            Self::Travel { from, to, .. } => EntranceDecision::Travel { from, to, picture: () },
+            Self::Reserve(reason) => EntranceDecision::Reserve(reason),
+        }
+    }
 }
 
 /// How a window's picture where it ends is waited for. See "A grow waits for its repaint" and "A
@@ -228,7 +243,7 @@ impl EndPicture {
     /// at its slot lands there, and a reservation is awaited.
     fn of_entrance(entrance: EntranceDecision) -> Self {
         match entrance {
-            EntranceDecision::Travel { from, to } if from.same_as(to) => Self::Lands,
+            EntranceDecision::Travel { from, to, .. } if from.same_as(to) => Self::Lands,
             EntranceDecision::Travel { .. } => Self::Repainting,
             EntranceDecision::Reserve(_) => Self::Awaited,
         }
@@ -334,13 +349,14 @@ impl FromIterator<(WindowId, EndPicture)> for Waits {
     }
 }
 
-/// `Travel` iff the server reports a sized frame, the spawn capture is usable and budget remains.
-pub(in crate::transitions) fn entrance_plan(
+/// `Travel` with `usable`, the capture at spawn if it is usable, iff the server reports a sized
+/// frame, budget remains and there is one.
+pub(in crate::transitions) fn entrance_plan<P>(
     spawn: Option<ScreenRect>,
     slot: ScreenRect,
-    picture_usable: bool,
+    usable: Option<P>,
     budget_left: bool,
-) -> EntranceDecision {
+) -> EntranceDecision<P> {
     let Some(from) = spawn else {
         return EntranceDecision::Reserve("no server frame");
     };
@@ -350,10 +366,10 @@ pub(in crate::transitions) fn entrance_plan(
     if !budget_left {
         return EntranceDecision::Reserve("capture budget");
     }
-    if !picture_usable {
+    let Some(picture) = usable else {
         return EntranceDecision::Reserve("capture unusable");
-    }
-    EntranceDecision::Travel { from, to: slot }
+    };
+    EntranceDecision::Travel { from, to: slot, picture }
 }
 
 #[cfg(test)]
@@ -472,8 +488,12 @@ mod tests {
         let spawn: ScreenRect = rect(0., 0., 200., 200.);
         let slot = rect(500., 0., 400., 600.);
         assert_eq!(
-            entrance_plan(Some(spawn), slot, true, true),
-            EntranceDecision::Travel { from: spawn, to: slot }
+            entrance_plan(Some(spawn), slot, Some(()), true),
+            EntranceDecision::Travel {
+                from: spawn,
+                to: slot,
+                picture: ()
+            }
         );
     }
 
@@ -484,19 +504,19 @@ mod tests {
         let slot: ScreenRect = rect(500., 0., 400., 600.);
         let spawn = rect(0., 0., 200., 200.);
         assert_eq!(
-            entrance_plan(None, slot, true, true),
+            entrance_plan(None, slot, Some(()), true),
             EntranceDecision::Reserve("no server frame")
         );
         assert_eq!(
-            entrance_plan(Some(rect(0., 0., 0., 200.)), slot, true, true),
+            entrance_plan(Some(rect(0., 0., 0., 200.)), slot, Some(()), true),
             EntranceDecision::Reserve("zero server frame")
         );
         assert_eq!(
-            entrance_plan(Some(spawn), slot, true, false),
+            entrance_plan(Some(spawn), slot, Some(()), false),
             EntranceDecision::Reserve("capture budget")
         );
         assert_eq!(
-            entrance_plan(Some(spawn), slot, false, true),
+            entrance_plan(Some(spawn), slot, None::<()>, true),
             EntranceDecision::Reserve("capture unusable")
         );
     }
@@ -507,7 +527,7 @@ mod tests {
     fn a_frame_with_no_height_reserves_too() {
         let slot: ScreenRect = rect(500., 0., 400., 600.);
         assert_eq!(
-            entrance_plan(Some(rect(0., 0., 200., 0.)), slot, true, true),
+            entrance_plan(Some(rect(0., 0., 200., 0.)), slot, Some(()), true),
             EntranceDecision::Reserve("zero server frame")
         );
     }
@@ -519,7 +539,7 @@ mod tests {
         let slot: ScreenRect = rect(500., 0., 400., 600.);
         let spawn = rect(0., 0., 200., 200.);
         assert_eq!(
-            entrance_plan(Some(spawn), slot, false, false),
+            entrance_plan(Some(spawn), slot, None::<()>, false),
             EntranceDecision::Reserve("capture budget")
         );
     }
@@ -753,11 +773,19 @@ mod tests {
         let slot: ScreenRect = rect(867.0, 32.0, 859.0, 1081.0);
         let spawn = rect(400.0, 200.0, 700.0, 500.0);
         assert_eq!(
-            EndPicture::of_entrance(EntranceDecision::Travel { from: spawn, to: slot }),
+            EndPicture::of_entrance(EntranceDecision::Travel {
+                from: spawn,
+                to: slot,
+                picture: ()
+            }),
             EndPicture::Repainting
         );
         assert_eq!(
-            EndPicture::of_entrance(EntranceDecision::Travel { from: slot, to: slot }),
+            EndPicture::of_entrance(EntranceDecision::Travel {
+                from: slot,
+                to: slot,
+                picture: ()
+            }),
             EndPicture::Lands
         );
         assert_eq!(
@@ -774,7 +802,11 @@ mod tests {
         use rini_core::ids::WindowServerId;
         let slot: ScreenRect = rect(867.0, 32.0, 1148.0, 1081.0);
         let (end, carried) = (ScreenSize::new(860.0, 1081.0), ScreenSize::new(572.0, 1081.0));
-        let standing = FliesOn::Entrance(EntranceDecision::Travel { from: slot, to: slot });
+        let standing = FliesOn::Entrance(EntranceDecision::Travel {
+            from: slot,
+            to: slot,
+            picture: (),
+        });
         assert_eq!(skylight(carried).ends_at(end), Some(end));
         assert_eq!(standing.ends_at(end), Some(slot.size));
         assert_eq!(
@@ -836,11 +868,16 @@ mod tests {
                 FliesOn::Entrance(EntranceDecision::Travel {
                     from: rect(400.0, 200.0, 700.0, 500.0),
                     to: next,
+                    picture: (),
                 }),
             ),
             (
                 request(7, next, next),
-                FliesOn::Entrance(EntranceDecision::Travel { from: next, to: next }),
+                FliesOn::Entrance(EntranceDecision::Travel {
+                    from: next,
+                    to: next,
+                    picture: (),
+                }),
             ),
             (
                 request(8, column, next),
@@ -929,23 +966,50 @@ mod tests {
         let slot: ScreenRect = rect(867.0, 32.0, 859.0, 1081.0);
         let spawn = rect(300.0, 200.0, 640.0, 480.0);
         assert_eq!(
-            entrance_plan(Some(spawn), slot, true, true),
-            EntranceDecision::Travel { from: spawn, to: slot }
+            entrance_plan(Some(spawn), slot, Some(()), true),
+            EntranceDecision::Travel {
+                from: spawn,
+                to: slot,
+                picture: ()
+            }
         );
         assert_eq!(
-            entrance_plan(None, slot, true, true),
+            entrance_plan(None, slot, Some(()), true),
             EntranceDecision::Reserve("no server frame")
         );
         assert_eq!(
-            entrance_plan(Some(rect(300.0, 200.0, 0.0, 0.0)), slot, true, true),
+            entrance_plan(Some(rect(300.0, 200.0, 0.0, 0.0)), slot, Some(()), true),
             EntranceDecision::Reserve("zero server frame")
         );
         assert_eq!(
-            entrance_plan(Some(spawn), slot, false, true),
+            entrance_plan(Some(spawn), slot, None::<()>, true),
             EntranceDecision::Reserve("capture unusable")
         );
         assert_eq!(
-            entrance_plan(Some(spawn), slot, true, false),
+            entrance_plan(Some(spawn), slot, Some(()), false),
+            EntranceDecision::Reserve("capture budget")
+        );
+    }
+
+    /// The picture an entrance travels with is the one it was decided on, so nothing draws a
+    /// travelling tile without one.
+    #[test]
+    fn a_travelling_entrance_carries_the_capture_it_was_decided_on() {
+        let slot: ScreenRect = rect(867.0, 32.0, 859.0, 1081.0);
+        let spawn = rect(300.0, 200.0, 640.0, 480.0);
+        let travels = entrance_plan(Some(spawn), slot, Some("the capture"), true);
+        assert_eq!(travels, EntranceDecision::Travel {
+            from: spawn,
+            to: slot,
+            picture: "the capture",
+        });
+        assert_eq!(travels.decided(), EntranceDecision::Travel {
+            from: spawn,
+            to: slot,
+            picture: (),
+        });
+        assert_eq!(
+            entrance_plan(Some(spawn), slot, Some("the capture"), false).decided(),
             EntranceDecision::Reserve("capture budget")
         );
     }
@@ -967,12 +1031,12 @@ mod tests {
             };
             let usable = rng.coin();
             let budget = rng.coin();
-            let decision = entrance_plan(spawn, slot, usable, budget);
+            let decision = entrance_plan(spawn, slot, usable.then_some(()), budget);
             let can = spawn.is_some_and(|f| f.size.width > 0.0 && f.size.height > 0.0)
                 && usable
                 && budget;
             match decision {
-                EntranceDecision::Travel { from, to } => {
+                EntranceDecision::Travel { from, to, .. } => {
                     assert!(can, "seed 157 run {run}");
                     assert_eq!(Some(from), spawn, "seed 157 run {run}");
                     assert_eq!(to, slot, "seed 157 run {run}");
