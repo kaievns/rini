@@ -17,7 +17,7 @@ windows are on this space" is a window-server query over window ids.
 | `platform/display_churn.rs`, `cgs_notify.rs` | Display reconfiguration and the CGS notification streams |
 | `platform/window_notify.rs` | The actor over those streams: space events to the spaces actor, focus edges coalesced into `WindowServerFocusChanged`, and one `window-frames` thread that reads the window server for the application, in the order it was asked through `Following`'s queue (`ToRead`): every tracked window's moves and resizes, as `ServerFrame`s, each reorder, hide, unhide and close, as a `ServerOrder` with the level and sub-level read after a reorder or an unhide (`StackLevel`), and each window the application introduces, whole, as a `ServerIntro`, all handed to its `OnServerRead` callbacks, only while the application is `Following` them ("Live frames" in `live-frames.md`) |
 | `platform/cursor_warp.rs` | Carrying the pointer across the edge between two stacked displays, over their whole bounds |
-| `platform/mission_control.rs` | Detecting Mission Control, during which nothing may be moved |
+| `platform/mission_control.rs` | Detecting Mission Control, during which nothing may be moved, through the Dock's notifications: a subscription the Dock is too busy to answer is asked again on `src/windows/platform/ax/ask_again.rs`'s schedule for up to 60s |
 
 ## The shape that matters
 

@@ -141,12 +141,15 @@ as visible rather than absent. The reverse — an id the server does not report 
 admission, `src/windows/domain/catalogue.rs` the records, `src/windows/domain/ax_events.rs` the
 liveness rules, `src/windows/domain/frame_write.rs` which writes a frame takes,
 `src/windows/platform/app_actor.rs` the per-app thread, and `src/app/hotkeys/mod.rs` the controller
-that starts it. That an application slow to answer while it launches is asked again is held by
-`an_application_too_busy_launching_to_answer_is_asked_again` and
-`an_application_that_never_answers_is_given_up_on_once_patience_runs_out` in `app_actor.rs`: the
-thread asks every 20ms, doubling to 1s, for up to 60s, and is the only part of rini that asks again. A window leaving rini's records goes through `src/app/reactor/events/window.rs`, which
-forgets its pictures, except at a new identity, whose old one `src/app/reactor/events/window_discovery.rs`
-forgets.
+that starts it. An application too busy to answer a subscription while it launches is asked again
+by the thread's launch loop, every 20ms doubling to 1s for up to 60s, on the schedule in
+`src/windows/platform/ax/ask_again.rs`; `an_application_too_busy_launching_to_answer_is_asked_again`
+and `an_application_that_never_answers_is_given_up_on_once_patience_runs_out` in `app_actor.rs` hold
+it. A window whose own subscription it is too busy to answer is left out and taken on at the next
+AXWindows refresh, held by `a_window_too_busy_to_watch_is_taken_on_at_the_next_refresh`. The
+Accessibility observer itself asks nothing again. A window leaving rini's records goes through
+`src/app/reactor/events/window.rs`, which forgets its pictures, except at a new identity, whose old
+one `src/app/reactor/events/window_discovery.rs` forgets.
 
 ## Floating windows and the park corner
 

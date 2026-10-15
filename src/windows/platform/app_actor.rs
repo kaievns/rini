@@ -36,6 +36,7 @@ use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::platform::ax::element::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
+use crate::windows::platform::ax::ask_again::AskAgain;
 use crate::windows::platform::ax::observer::Observer;
 use crate::windows::platform::ax::world::{AxWorld, MacAx};
 use crate::windows::platform::mouse;
@@ -355,17 +356,8 @@ impl<W: AxWorld> State<W> {
     #[instrument(skip_all, fields(?info))]
     #[must_use]
     fn init(&mut self, handle: AppThreadHandle, info: AppInfo, patience: Duration) -> bool {
-        let timeout = Instant::now() + patience;
-        let mut sleep_dur = Duration::from_millis(20);
-        let mut sleep = || {
-            let now = Instant::now();
-            let Some(remaining) = timeout.checked_duration_since(now) else {
-                return false;
-            };
-            thread::sleep(Duration::min(sleep_dur, remaining));
-            sleep_dur = Duration::min(sleep_dur * 2, Duration::from_secs(1));
-            true
-        };
+        let mut again = AskAgain::new(Instant::now(), patience);
+        let mut sleep = || again.next_wait(Instant::now()).map(thread::sleep).is_some();
         for &(kind, notif) in APP_NOTIFICATIONS {
             // App-level notifications are not tied to a specific window, but the
             // observer callback still recovers the notification kind by decoding
@@ -2071,5 +2063,37 @@ mod tests {
                 "{notif} was never subscribed"
             );
         }
+    }
+
+    /// A window whose subscription the application is too busy to answer is not registered, and the
+    /// next AXWindows refresh takes it on: no window server id, so it needs no server record.
+    #[test]
+    fn a_window_too_busy_to_watch_is_taken_on_at_the_next_refresh() {
+        let window = 7;
+        let mut ax = FakeAx::with_one_window(window, rect(0., 0., 100., 100.));
+        ax.server_ids.clear();
+        ax.busy_watches.set(1);
+        let (mut state, sink) = state_with(ax);
+
+        assert!(state.register_window(window, None).is_none(), "left out while busy");
+        assert!(state.windows.is_empty());
+
+        state.handle_request(Request::GetVisibleWindows).expect("refreshed");
+
+        let wid = state.id(&window).expect("taken on at the refresh");
+        let watched = state.ax.watched.borrow();
+        for &(_, notif) in WINDOW_NOTIFICATIONS {
+            assert!(
+                watched.iter().any(|(elem, n)| *elem == window && *n == notif),
+                "{notif} was never subscribed"
+            );
+        }
+        assert!(
+            sink.0.borrow().iter().any(|event| matches!(
+                event,
+                Event::WindowsDiscovered { new, .. } if new.iter().any(|(w, _)| *w == wid)
+            )),
+            "and the reactor hears of it"
+        );
     }
 }
