@@ -19,5 +19,5 @@ pub use queries::{
     DiagnosticDisplayCensus, DiagnosticSpace, DiagnosticWindow, DiagnosticsData, DisplayData,
     LayoutStateData, Point, Rect, Size, WindowData, WindowId, WorkspaceData,
 };
-pub use selectors::{DisplaySelector, RelativeDisplay, WorkspaceSelector};
+pub use selectors::{DisplaySelector, RelativeDisplay, RelativeWorkspace, WorkspaceSelector};
 pub use transport::{RiniRequest, RiniResponse};

@@ -1014,7 +1014,7 @@ mod tests {
     use std::panic::AssertUnwindSafe;
 
     use objc2_core_foundation::{CGPoint, CGSize};
-    use rini_ipc::protocol::WorkspaceSelector;
+    use rini_ipc::protocol::{RelativeWorkspace, WorkspaceSelector};
     use rustc_hash::FxHashMap as HashMap;
 
     use super::*;
@@ -1739,7 +1739,7 @@ mod tests {
             move_focused(WorkspaceSelector::Index(workspaces.len() - 1)),
         );
 
-        let next = WorkspaceSelector::Name("next".to_owned());
+        let next = WorkspaceSelector::Relative(RelativeWorkspace::Next);
         let past_the_bottom = fx.workspace_command(space, move_focused(next));
         assert_eq!(past_the_bottom.edge_hit, Some(Direction::Down));
 
@@ -2008,8 +2008,11 @@ mod tests {
         assert_eq!(fx.workspace_of(space, wid), Some(workspaces[1]));
         assert_eq!(members(&fx, workspaces[1]), vec![wid]);
 
-        for (target, expected) in [("next", workspaces[2]), ("prev", workspaces[1])] {
-            let target = WorkspaceSelector::Name(target.into());
+        for (step, expected) in [
+            (RelativeWorkspace::Next, workspaces[2]),
+            (RelativeWorkspace::Prev, workspaces[1]),
+        ] {
+            let target = WorkspaceSelector::Relative(step);
             let _ = fx.workspace_command(space, move_window(wid, target, false));
             assert_eq!(fx.workspace_of(space, wid), Some(expected));
         }
@@ -2038,7 +2041,7 @@ mod tests {
         });
         assert_eq!(fx.frame(space, wid).size.width, dragged);
 
-        let next = WorkspaceSelector::Name("next".into());
+        let next = WorkspaceSelector::Relative(RelativeWorkspace::Next);
         let _ = fx.workspace_command(space, move_window(wid, next, true));
         assert_eq!(fx.engine.active_workspace(space), Some(fx.workspaces(space)[1]));
         assert_eq!(fx.frame(space, wid).size.width, dragged);
@@ -2199,7 +2202,7 @@ mod tests {
         let _ = fx.open(space, vec![OnScreenEntry::plain(wid).sized(500.0, 500.0)]);
         let target = fx.workspaces(space)[1];
 
-        let next = WorkspaceSelector::Name("next".into());
+        let next = WorkspaceSelector::Relative(RelativeWorkspace::Next);
         let response = fx.workspace_command(space, move_window(wid, next, true));
 
         assert_eq!(fx.engine.active_workspace(space), Some(target));

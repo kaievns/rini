@@ -14,6 +14,9 @@ moves along the strip within one workspace.
   workspace the config does not declare. A reload that declares one more adds it; nothing else
   does. A workspace added at run time has no name the config knows and no place in its order, and
   niri has no action that adds one.
+- Workspace names MUST compare ignoring case wherever a name is looked up: two `workspace` nodes
+  that differ only in case are refused as one declared twice, and a bind, a window rule or a command
+  naming `web` reaches the workspace declared `Web`.
 
 > **Reported 2026-10-15.** Kai's decision in the dead-code sweep: delete `create-workspace`. It
 > appended an unnamed "Workspace N" after the configured list, and neither Kai's config nor the
@@ -44,8 +47,10 @@ moves along the strip within one workspace.
   niri config has to mean the same thing here. The shipped binds say `focus=false`.
 - The CLI MUST NOT follow unless asked, with `--follow`.
 - A move acts on the space the window is actually on, not the space the command named.
-- `next` and `prev` are matched as workspace NAMES before the name lookup, so a workspace actually
-  named "next" cannot be selected by name. This is a known limitation, not an accident.
+- A move's `next` and `prev` are steps through the stack, not names. Neither wraps, and a step past
+  the end bounces. On the wire they are the strings `"next"` and `"prev"`, read as steps before any
+  name, so an IPC client cannot name a workspace called "next". Binds name a workspace by its place
+  in the config and window rules by its name, so a workspace called "next" is reachable from both.
 
 ## Relaunching an application
 
@@ -55,7 +60,8 @@ moves along the strip within one workspace.
 
 ## Where it lives
 
-`src/workspaces/domain/virtual_workspace.rs` is the store, `src/workspaces/domain/launch_memory.rs` the
+`src/workspaces/domain/virtual_workspace.rs` is the store, `src/workspaces/domain/selector.rs` which
+workspace a selector names and how names compare, `src/workspaces/domain/launch_memory.rs` the
 relaunch records, `src/workspaces/engine/launch.rs` what is recorded in them and the slot a relaunched
 window takes, `src/workspaces/engine/rules.rs` and `src/workspaces/engine/discovery.rs` where it takes
 it, `src/workspaces/engine/affinity.rs` the width it arrives at, and `src/workspaces/engine.rs` the

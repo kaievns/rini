@@ -20,6 +20,7 @@ a restart. Sits above `windows`, `displays` and `layout`.
 | `domain/virtual_workspace.rs` | `WorkspaceStore`, `VirtualWorkspace`: one global workspace list, each display showing one independently |
 | `domain/assignment.rs` | `WorkspaceAssignments`: window → workspace and workspace → windows, one index kept both ways so they cannot disagree |
 | `domain/display_affinity.rs` | What belongs to a display and survives a replug: home, column width, strip order. Keyed by display UUID |
+| `domain/selector.rs` | Which workspace a `WorkspaceSelector` names (`resolve_workspace`), for a move and for an app rule alike, names compared ignoring case (`same_workspace_name`) as the config compares them, and the end of the stack a `next`/`prev` step runs into (`workspace_stack_direction`) |
 | `domain/workspace_focus.rs` | Who takes focus when a workspace becomes active, and where a cycle step lands |
 | `domain/app_rules.rs` | What a window's app rule does to workspace policy as one `AppRuleEffects` (its workspace, floating, position, size, focus), and what the layout does once a window's rules are re-evaluated (`BeforeRules` -> `AfterRules`) |
 | `domain/display_pin.rs` | `DisplayRole`: an app pinned to a display by its role, such as the built-in screen, resolved against whatever is attached (`display_for_role`), a default an explicit move beats |

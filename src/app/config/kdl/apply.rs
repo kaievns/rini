@@ -31,6 +31,7 @@ use crate::input::domain::key::{
     Hotkey, KeyCode, ModKey, Modifiers, normalize_spec, substitute_mod,
 };
 use crate::windows::domain::rules::{FloatingPosition, RuleMatch, WindowRule};
+use crate::workspaces::domain::selector::same_workspace_name;
 
 pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
     let mut problems = Vec::new();
@@ -205,7 +206,7 @@ fn apply_window_rules(
             .iter()
             .filter_map(|rule| rule.open_on_workspace.as_ref())
         {
-            if !names.contains(name) {
+            if !names.iter().any(|declared| same_workspace_name(declared, name)) {
                 problems.push(
                     Problem::new(format!(
                         "a running window rule opens on workspace `{name}`, which is not declared"
@@ -384,7 +385,7 @@ fn apply_workspaces(
         }
         if let Some(earlier) = parts[..index]
             .iter()
-            .find(|earlier| earlier.name.to_lowercase() == workspace.name.to_lowercase())
+            .find(|earlier| same_workspace_name(&earlier.name, &workspace.name))
         {
             problems.push(
                 Problem::at(
@@ -647,7 +648,7 @@ fn paints_only(rule: DecorationRule, span: &Span, problems: &mut Vec<Problem>) -
 }
 
 fn check_workspace_name(name: &str, span: &Span, names: &[String], problems: &mut Vec<Problem>) {
-    if !names.iter().any(|configured| configured == name) {
+    if !names.iter().any(|configured| same_workspace_name(configured, name)) {
         problems.push(
             Problem::at(span, format!("there is no workspace `{name}`"), "not declared")
                 .help(declared(names)),
@@ -821,7 +822,7 @@ fn kept_running_binds(
                 );
             }
             if let (Some(names), Some(name)) = (&checks.names, bind.action.workspace_name())
-                && !names.iter().any(|declared| declared == name)
+                && !names.iter().any(|declared| same_workspace_name(declared, name))
             {
                 problems.push(
                     Problem::new(format!(

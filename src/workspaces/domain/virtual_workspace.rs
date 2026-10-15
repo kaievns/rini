@@ -9,6 +9,7 @@ use crate::layout::ScrollingLayoutSystem;
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleDecision;
 use crate::workspaces::domain::app_rules::{AppRuleEffects, AppRuleResult};
+use crate::workspaces::domain::selector::resolve_workspace;
 use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
 use crate::workspaces::{Direction, WindowStore, WindowWorkspaceInfo};
 
@@ -788,51 +789,31 @@ impl WorkspaceStore {
     }
 
     /// The workspace a rule naming `selector` sends a window to on `space`: the one it names, else
-    /// the window's own, else the default. A name or index that names none is logged.
+    /// the window's own, else the default. An index past the last workspace goes to the default even
+    /// for a window that has its own. A selector that names none is logged.
     fn rule_workspace(
         &mut self,
         space: SpaceId,
         selector: Option<&WorkspaceSelector>,
         existing_assignment: Option<WindowWorkspaceInfo>,
     ) -> Result<VirtualWorkspaceId, WorkspaceError> {
-        let named_index = match selector {
-            None => None,
-            Some(WorkspaceSelector::Index(i)) => Some(*i),
-            Some(WorkspaceSelector::Name(name)) => {
-                let workspaces = self.list_workspaces(space);
-                let index = workspaces.iter().position(|(_, n)| n == name);
-                if index.is_none() {
-                    tracing::warn!(
-                        "App rule references workspace name '{}' which could not be resolved for space {:?}; falling back to default workspace",
-                        name,
-                        space
-                    );
-                }
-                index
-            }
+        let own = existing_assignment.map(|info| info.workspace_id);
+        let Some(selector) = selector else {
+            return own.map_or_else(|| self.get_default_workspace(space), Ok);
         };
-
-        let Some(workspace_idx) = named_index else {
-            return match existing_assignment {
-                Some(existing_assignment) => Ok(existing_assignment.workspace_id),
-                None => self.get_default_workspace(space),
-            };
-        };
-        if workspace_idx >= self.workspace_order.len() {
-            tracing::warn!(
-                "App rule references non-existent workspace index {}, falling back to active workspace",
-                workspace_idx
-            );
-            return self.get_default_workspace(space);
+        let workspaces = self.list_workspaces(space);
+        if let Some(workspace) = resolve_workspace(selector, own, &workspaces) {
+            return Ok(workspace);
         }
-        match self.list_workspaces(space).get(workspace_idx) {
-            Some((workspace_id, _)) => Ok(*workspace_id),
-            None => {
-                tracing::warn!(
-                    "App rule references invalid workspace index {}, falling back to active workspace",
-                    workspace_idx
-                );
-                self.get_default_workspace(space)
+        tracing::warn!(
+            "App rule references workspace {:?} which could not be resolved for space {:?}; falling back",
+            selector,
+            space
+        );
+        match selector {
+            WorkspaceSelector::Index(_) => self.get_default_workspace(space),
+            WorkspaceSelector::Name(_) | WorkspaceSelector::Relative(_) => {
+                own.map_or_else(|| self.get_default_workspace(space), Ok)
             }
         }
     }
@@ -1033,6 +1014,21 @@ mod tests {
             Ok(first)
         );
         assert_eq!(store.rule_workspace(space, Some(&index(7)), own), Ok(first));
+    }
+
+    /// A rule's name finds its workspace as the config's duplicate check compares names.
+    #[test]
+    fn a_rule_names_its_workspace_ignoring_case() {
+        let settings = VirtualWorkspaceSettings {
+            workspace_names: vec!["Main".into(), "Web".into()],
+            ..VirtualWorkspaceSettings::default()
+        };
+        let mut store = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
+        let space = SpaceId::new(1);
+        let web = store.list_workspaces(space)[1].0;
+        let rule = WorkspaceSelector::Name("web".into());
+
+        assert_eq!(store.rule_workspace(space, Some(&rule), None), Ok(web));
     }
 
     #[test]

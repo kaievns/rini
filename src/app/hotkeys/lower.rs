@@ -5,7 +5,7 @@
 //! resolved against the configured names, which are passed in rather than read so the whole thing
 //! stays a function. The config writes workspaces and displays from 1; the wire counts from 0.
 
-use rini_ipc::protocol::{DisplaySelector, RelativeDisplay, WorkspaceSelector};
+use rini_ipc::protocol::{DisplaySelector, RelativeDisplay, RelativeWorkspace, WorkspaceSelector};
 
 use crate::app::reactor;
 use crate::input::domain::binding::{
@@ -13,6 +13,7 @@ use crate::input::domain::binding::{
 };
 use crate::layout::{Direction, ResizeOrientation};
 use crate::workspaces::LayoutCommand;
+use crate::workspaces::domain::selector::same_workspace_name;
 
 /// What the controller should do about a binding.
 #[derive(Debug, Clone, PartialEq)]
@@ -82,10 +83,10 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
             }
         }
         Action::MoveWindowToWorkspaceDown(follow) => {
-            move_to(WorkspaceSelector::Name("next".into()), follow)
+            move_to(WorkspaceSelector::Relative(RelativeWorkspace::Next), follow)
         }
         Action::MoveWindowToWorkspaceUp(follow) => {
-            move_to(WorkspaceSelector::Name("prev".into()), follow)
+            move_to(WorkspaceSelector::Relative(RelativeWorkspace::Prev), follow)
         }
         Action::FocusMonitorLeft => reactor(R::FocusDisplay(direction(Direction::Left))),
         Action::FocusMonitorRight => reactor(R::FocusDisplay(direction(Direction::Right))),
@@ -162,7 +163,7 @@ fn workspace_index(workspace: &WorkspaceReference, names: &[String]) -> Result<u
         WorkspaceReference::Index(index) => Ok(index.saturating_sub(1)),
         WorkspaceReference::Name(name) => names
             .iter()
-            .position(|configured| configured == name)
+            .position(|configured| same_workspace_name(configured, name))
             .ok_or_else(|| name.clone()),
     }
 }

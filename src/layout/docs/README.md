@@ -21,7 +21,7 @@ principle, and deliberately is not reused — see "Why this shape" in
 | `domain/tile.rs` | A tiled window and its slot, the window and the border it wears: the border each window wears (`Borders`), the window inside a slot (`window_in`), the slot of a reported frame (`slot_of`), a slot's limits (`slot_limits`), whether a reported length answers its slot (`answers_slot`), and which axes of a report leave the window as laid out (`kept_axes`) |
 | `domain/preset_width.rs` | Which width the next `Mod+R` asks for, and whether that width is the whole viewport, past the bounds |
 | `domain/area.rs` | The tiling rect: the usable frame minus the outer gaps |
-| `domain/boundary.rs` | The ends of the strip and of the workspace stack: `strip_edge`, the left/right end a command stops at rather than crossing displays, and `workspace_stack_direction`, the end a `next`/`prev` step runs into |
+| `domain/boundary.rs` | The ends of the strip: `strip_edge`, the left/right end a command stops at rather than crossing displays |
 | `settings.rs` | Ratios, gaps and struts, presets, where focus sits (`center-focused-column`) |
 
 ## The shape that matters
