@@ -11,7 +11,7 @@ use rini::app::config::watcher::ConfigWatcher;
 use rini::app::hotkeys::WmController;
 use rini::app::launch_agent::handle_service_command;
 use rini::app::notifications::NotificationCenter;
-use rini::app::reactor::{self, Reactor};
+use rini::app::reactor::{self, Reactor, ReactorParts};
 use rini::app::startup::execute_startup_commands;
 use rini::app::{channels, logging as log};
 use rini::displays::platform::mission_control::NativeMissionControl;
@@ -123,19 +123,19 @@ fn main() {
 
     let pictures = start_pictures(&transitions_tx, &switcher_tx);
 
-    let reactor = Reactor::spawn(
-        config.clone(),
-        layout,
+    let reactor = Reactor::spawn(ReactorParts {
+        config: config.clone(),
+        layout_engine: layout,
         display_memory,
-        event_tap_tx.clone(),
-        Some(cursor_warp_tx.clone()),
-        Some(transitions_tx.clone()),
-        Some(pictures.clone()),
-        Some(switcher_tx.clone()),
-        Some(bar_tx.clone()),
-        Some((rest_tx.clone(), following.clone())),
-        window_tx_store.clone(),
-    );
+        event_tap_tx: event_tap_tx.clone(),
+        cursor_warp_tx: Some(cursor_warp_tx.clone()),
+        transitions_tx: Some(transitions_tx.clone()),
+        pictures: Some(pictures.clone()),
+        switcher_tx: Some(switcher_tx.clone()),
+        bar_tx: Some(bar_tx.clone()),
+        rest: Some((rest_tx.clone(), following.clone())),
+        window_tx_store: window_tx_store.clone(),
+    });
     let events_tx = reactor.sender();
     if !config_usable {
         events_tx.send(reactor::Event::ConfigFileRead { usable: false });

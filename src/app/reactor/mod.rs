@@ -539,24 +539,41 @@ pub struct Reactor {
     reads: SystemReads,
 }
 
+/// What the reactor is made from: the state it starts with, and the queues of the actors it sends
+/// to. An actor left `None` is one the reactor runs without.
+pub struct ReactorParts {
+    pub config: Config,
+    pub layout_engine: LayoutEngine,
+    pub display_memory: DisplayMemory,
+    pub event_tap_tx: event_tap::Sender,
+    pub cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
+    pub transitions_tx: Option<crate::transitions::platform::engine::Sender>,
+    pub pictures: Option<crate::pictures::platform::service::Pictures>,
+    pub switcher_tx: Option<crate::switcher::platform::actor::Sender>,
+    pub bar_tx: Option<crate::bar::platform::actor::Sender>,
+    /// The rest windows' queue, and the switch that has the window server's frames followed for them.
+    pub rest: Option<(
+        crate::decorations::platform::rest::Sender,
+        crate::displays::event::Following,
+    )>,
+    pub window_tx_store: WindowTxStore,
+}
+
 impl Reactor {
-    #[allow(clippy::too_many_arguments, reason = "P4.1")]
-    pub fn spawn(
-        config: Config,
-        layout_engine: LayoutEngine,
-        display_memory: DisplayMemory,
-        event_tap_tx: event_tap::Sender,
-        cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
-        transitions_tx: Option<crate::transitions::platform::engine::Sender>,
-        pictures: Option<crate::pictures::platform::service::Pictures>,
-        switcher_tx: Option<crate::switcher::platform::actor::Sender>,
-        bar_tx: Option<crate::bar::platform::actor::Sender>,
-        rest: Option<(
-            crate::decorations::platform::rest::Sender,
-            crate::displays::event::Following,
-        )>,
-        window_tx_store: WindowTxStore,
-    ) -> ReactorHandle {
+    pub fn spawn(parts: ReactorParts) -> ReactorHandle {
+        let ReactorParts {
+            config,
+            layout_engine,
+            display_memory,
+            event_tap_tx,
+            cursor_warp_tx,
+            transitions_tx,
+            pictures,
+            switcher_tx,
+            bar_tx,
+            rest,
+            window_tx_store,
+        } = parts;
         let (events_tx, events) = channels::channel();
         let events_tx_clone = events_tx.clone();
         let mut reactor = Reactor::new(config, layout_engine, display_memory, window_tx_store);
