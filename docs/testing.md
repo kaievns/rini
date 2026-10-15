@@ -58,7 +58,7 @@ thread's narrower `Reader`, until that thread moves onto the port; and the pictu
 | the window server, from the frames thread that follows windows | `Reader`, a struct of fn pointers (`src/displays/platform/window_notify.rs`), a narrower view of the window server answered through the same free functions, which folds into `WindowServer` when `window_notify` moves onto the port | `LIVE` | a `Reader` of its own fns |
 | displays and spaces, from the spaces actor | `LiveDisplays` and `SpaceKinds`, structs of fn pointers (`src/displays/platform/spaces.rs`) | `from_window_server()` | `LiveDisplays::silent()`, which knows nothing, and `SpaceKinds::for_tests()`, or a struct of its own |
 | the window server and ScreenCaptureKit, from the pictures thread | `Capturer`, a type parameter (`src/pictures/platform/capturer.rs`) | `MacCapturer` | `FakeCapturer`, answering from the frames a test gives it and recording every call |
-| the screens, for `ScreenCache` | `System`, a type parameter (`src/displays/screen.rs`) | `Actual` | a `System` of its own, as the stubs in `screen.rs`'s tests are |
+| the screens, for `ScreenCache`: the displays, their uuids and scales, the main and the built-in display, the menu bar and the Dock, the space each display shows | `System`, a type parameter (`src/displays/screen.rs`) | `Actual` | a `System` of its own, as the stubs in `screen.rs`'s tests are, whose menu bar is hidden, Dock not shown and spaces unknown until stated |
 
 A caller not yet handed a `WindowServer` calls the free functions of the same names in
 `window_server`, answered in a test build by a thread-local `FakeWindowServer` the `set_*_override`
@@ -199,8 +199,8 @@ that reads back without the hold fails on its first run, not on an unlucky one. 
 `a_commit_on_another_thread_drops_a_test_layers_animation_once_the_hold_is_let_go` holds the
 behaviour it rests on.
 
-The suite used to run on one thread for another reason, an abort while macOS frameworks start up
-lazily on two threads at once:
+The suite used to run on one thread for another reason, an abort while SkyLight starts up lazily
+on two threads at once:
 
 ```
 objc[75992]: Cannot form weak reference to instance of class
@@ -208,10 +208,15 @@ SLSWindowManagementFallbackBridge. It is possible that this object was
 over-released, or is in the process of deallocation.
 ```
 
-On 2026-10-10 it took a few percent of 40 parallel runs. It took none of the 47 parallel runs
-on 2026-10-15, with nothing changed that it was traced to; if it comes back the message names it.
-The tests that build capture fixtures still avoid `IOSurface` for that reason, and use a CPU
-bitmap instead.
+Its crash report puts every thread in `SLSWMBridgeDelegate`, which SkyLight sets up on the first
+window-management call, `SLSCopyBestManagedDisplayForRect` here: four `ScreenCache` tests made
+that call at once, through the Dock read `refresh` made itself. A test that reads the machine is
+the cause, so the cure is the seam: `ScreenCache` now asks its `System` for the menu bar, the Dock
+and each display's space, and its tests read no SkyLight. On 2026-10-16 the lib tests aborted in 4
+of 10 runs before that and in 0 of 20 after, and `bin/check.sh` in 0 of 20 consecutive runs
+after. If it comes back, the crash report in `~/Library/Logs/DiagnosticReports` names the tests
+whose threads are in SkyLight. The tests that build capture fixtures avoid `IOSurface` for the
+same reason, and use a CPU bitmap instead.
 
 ## What a flight costs is measured on the screen, by the timing battery
 

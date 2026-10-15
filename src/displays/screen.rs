@@ -100,23 +100,8 @@ impl<S: System> ScreenCache<S> {
         if !should_rebuild {
             // Even when displays are unchanged, the active space per display can change.
             // Recompute spaces against cached UUIDs to avoid stale space ids.
-            let spaces: Vec<Option<SpaceId>> = self
-                .uuids
-                .iter()
-                .map(|screen| unsafe {
-                    CGSManagedDisplayGetCurrentSpace(
-                        SLSMainConnectionID(),
-                        CFRetained::<objc2_core_foundation::CFString>::as_ptr(screen).as_ptr(),
-                    )
-                })
-                .map(|id| {
-                    if id == 0 {
-                        None
-                    } else {
-                        Some(SpaceId::new(id))
-                    }
-                })
-                .collect();
+            let spaces: Vec<Option<SpaceId>> =
+                self.uuids.iter().map(|uuid| self.system.current_space(uuid)).collect();
 
             if let Some(state) = self.state.clone() {
                 let screens = state
@@ -158,7 +143,7 @@ impl<S: System> ScreenCache<S> {
             }
         });
 
-        let main_id = CGMainDisplayID();
+        let main_id = self.system.main_display();
         if let Some(main_screen_idx) = cg_screens.iter().position(|s| s.cg_id.as_u32() == main_id) {
             cg_screens.swap(0, main_screen_idx);
         } else {
@@ -174,14 +159,19 @@ impl<S: System> ScreenCache<S> {
             .map(|screen| screen.bounds.max().y)
             .fold(f64::NEG_INFINITY, f64::max);
         let converter = CoordinateConverter { screen_height: union_max_y };
+        let chrome = self.system.chrome();
 
         let screens: Vec<ScreenInfo> = cg_screens
             .iter()
             .enumerate()
             .map(|(idx, &CGScreenInfo { cg_id, bounds })| {
-                let notch_height = self.system.notch_height(cg_id.as_u32());
-                let frame =
-                    constrain_display_bounds(cg_id.as_u32(), bounds, notch_height, self.top_band);
+                let did = cg_id.as_u32();
+                let menu_bar = menu_bar_inset(
+                    chrome.menu_bar_hidden,
+                    self.system.menu_bar_height(did),
+                    self.system.notch_height(did),
+                );
+                let frame = chrome.frame_on(did, bounds, top_inset(menu_bar, self.top_band));
                 let display_uuid =
                     uuid_strings.get(idx).cloned().filter(|uuid| !uuid.is_empty()).unwrap_or_else(
                         || {
@@ -197,28 +187,14 @@ impl<S: System> ScreenCache<S> {
                     display_uuid,
                     name: ns_screen.and_then(|s| s.name.clone()),
                     space: None,
-                    is_builtin: unsafe { rini_skylight_sys::CGDisplayIsBuiltin(cg_id.as_u32()) },
+                    is_builtin: self.system.is_builtin(did),
                     scale: ns_screen.map_or(ASSUMED_SCALE, |s| s.scale),
                 }
             })
             .collect();
 
-        let spaces: Vec<Option<SpaceId>> = uuids
-            .iter()
-            .map(|screen| unsafe {
-                CGSManagedDisplayGetCurrentSpace(
-                    SLSMainConnectionID(),
-                    CFRetained::<objc2_core_foundation::CFString>::as_ptr(screen).as_ptr(),
-                )
-            })
-            .map(|id| {
-                if id == 0 {
-                    None
-                } else {
-                    Some(SpaceId::new(id))
-                }
-            })
-            .collect();
+        let spaces: Vec<Option<SpaceId>> =
+            uuids.iter().map(|uuid| self.system.current_space(uuid)).collect();
 
         self.uuids = uuids;
         self.processed_generation = self.pending_generation;
@@ -239,16 +215,44 @@ const DOCK_ORIENTATION_LEFT: i32 = 1;
 const DOCK_ORIENTATION_BOTTOM: i32 = 2;
 const DOCK_ORIENTATION_RIGHT: i32 = 3;
 
+/// The menu bar and the Dock as they cover the displays, read once a rebuild.
+#[derive(Debug, Clone, Copy)]
+struct Chrome {
+    menu_bar_hidden: bool,
+    /// The Dock while it is shown, which an auto-hidden one is only while it is out.
+    dock: Option<Dock>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Dock {
+    rect: CGRect,
+    edge: DockEdge,
+    /// The display it is on, `None` when SkyLight names none.
+    display: Option<u32>,
+}
+
+impl Chrome {
+    /// What of `raw`, display `did`'s bounds, is left once `top` is kept clear and a Dock on `did`
+    /// is taken out. A Dock on another display covers nothing here.
+    fn frame_on(&self, did: u32, raw: CGRect, top: f64) -> CGRect {
+        let dock = self.dock.filter(|dock| dock.display == Some(did));
+        usable_frame(raw, top, dock.map(|dock| (dock.rect, dock.edge)))
+    }
+}
+
+fn dock_edge(orientation: i32) -> DockEdge {
+    match orientation {
+        DOCK_ORIENTATION_LEFT => DockEdge::Left,
+        DOCK_ORIENTATION_RIGHT => DockEdge::Right,
+        DOCK_ORIENTATION_BOTTOM => DockEdge::Bottom,
+        _ => DockEdge::Unknown,
+    }
+}
+
 fn menu_bar_hidden() -> bool {
     let mut status = 0;
     unsafe { SLSGetMenuBarAutohideEnabled(*G_CONNECTION, &mut status) };
     status != 0
-}
-
-fn menu_bar_height(did: u32) -> f64 {
-    let mut height: u32 = 0;
-    unsafe { SLSGetDisplayMenubarHeight(did, &mut height) };
-    height as f64
 }
 
 fn dock_hidden() -> bool { unsafe { CoreDockGetAutoHideEnabled() } }
@@ -260,13 +264,6 @@ fn dock_orientation() -> i32 {
     orientation
 }
 
-fn dock_rect() -> CGRect {
-    let mut rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(0.0, 0.0));
-    let mut reason = 0;
-    unsafe { SLSGetDockRectWithReason(*G_CONNECTION, &mut rect, &mut reason) };
-    rect
-}
-
 fn dock_rect_with_reason() -> (CGRect, i32) {
     let mut rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(0.0, 0.0));
     let mut reason = 0;
@@ -274,12 +271,12 @@ fn dock_rect_with_reason() -> (CGRect, i32) {
     (rect, reason)
 }
 
-fn dock_display_id() -> Option<u32> {
+fn display_of_rect(rect: CGRect) -> Option<u32> {
     // SAFETY: the copied uuid is ours, and `CFRetained` releases it.
     let uuid = unsafe {
         CFRetained::<CFString>::from_raw(NonNull::new(CGSCopyBestManagedDisplayForRect(
             *G_CONNECTION,
-            dock_rect(),
+            rect,
         ))?)
     };
     display_id_of_uuid(&uuid)
@@ -300,31 +297,18 @@ fn display_id_of_uuid(uuid: &CFString) -> Option<u32> {
     }
 }
 
-/// Reads the live menu bar and Dock, then asks `domain::screen::usable_frame` what is left of `raw`.
-/// A dock on another display, or an auto-hidden one not currently shown, covers nothing here.
-fn constrain_display_bounds(did: u32, raw: CGRect, notch_height: f64, top_band: f64) -> CGRect {
-    let inset = top_inset(
-        menu_bar_inset(menu_bar_hidden(), menu_bar_height(did), notch_height),
-        top_band,
-    );
-    let (dock, dock_reason) = dock_rect_with_reason();
-    let on_this_display = dock_display_id().is_some_and(|dock_did| dock_did == did);
-    let shown = (!dock_hidden() || dock_reason == 0) && on_this_display;
-    let edge = match dock_orientation() {
-        DOCK_ORIENTATION_LEFT => DockEdge::Left,
-        DOCK_ORIENTATION_RIGHT => DockEdge::Right,
-        DOCK_ORIENTATION_BOTTOM => DockEdge::Bottom,
-        _ => DockEdge::Unknown,
-    };
-    usable_frame(raw, inset, shown.then_some((dock, edge)))
-}
-
 #[allow(private_interfaces, reason = "ScreenCache's test seam")]
 pub trait System {
     fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError>;
     fn display_uuid(&self, screen: &CGScreenInfo) -> CFRetained<CFString>;
     fn ns_screens(&self) -> Vec<NSScreenInfo>;
-    fn notch_height(&self, _did: u32) -> f64 { 0.0 }
+    fn notch_height(&self, did: u32) -> f64;
+    fn main_display(&self) -> u32;
+    fn is_builtin(&self, did: u32) -> bool;
+    /// The space the display with `uuid` shows, `None` for no answer.
+    fn current_space(&self, uuid: &CFString) -> Option<SpaceId>;
+    fn chrome(&self) -> Chrome;
+    fn menu_bar_height(&self, did: u32) -> f64;
 }
 
 #[derive(Debug, Clone)]
@@ -433,6 +417,40 @@ impl System for Actual {
             }
         }
         0.0
+    }
+
+    fn main_display(&self) -> u32 { CGMainDisplayID() }
+
+    fn is_builtin(&self, did: u32) -> bool { unsafe { rini_skylight_sys::CGDisplayIsBuiltin(did) } }
+
+    fn current_space(&self, uuid: &CFString) -> Option<SpaceId> {
+        // SAFETY: `uuid` is live for the call, which only reads it.
+        let id = unsafe {
+            CGSManagedDisplayGetCurrentSpace(
+                SLSMainConnectionID(),
+                uuid as *const CFString as *mut _,
+            )
+        };
+        (id != 0).then(|| SpaceId::new(id))
+    }
+
+    fn chrome(&self) -> Chrome {
+        let (rect, reason) = dock_rect_with_reason();
+        let shown = !dock_hidden() || reason == 0;
+        Chrome {
+            menu_bar_hidden: menu_bar_hidden(),
+            dock: shown.then(|| Dock {
+                rect,
+                edge: dock_edge(dock_orientation()),
+                display: display_of_rect(rect),
+            }),
+        }
+    }
+
+    fn menu_bar_height(&self, did: u32) -> f64 {
+        let mut height: u32 = 0;
+        unsafe { SLSGetDisplayMenubarHeight(did, &mut height) };
+        height as f64
     }
 }
 
@@ -607,17 +625,45 @@ pub fn focus_desktop_window(_screen: &ScreenInfo) -> bool { false }
 
 #[cfg(test)]
 mod test {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
 
     use objc2_core_foundation::{CFRetained, CFString, CGPoint, CGRect, CGSize};
     use objc2_core_graphics::CGError;
 
-    use super::{CGScreenInfo, NSScreenInfo, ScreenCache, ScreenId, System};
+    use super::{
+        CGScreenInfo, Chrome, Dock, DockEdge, NSScreenInfo, ScreenCache, ScreenId, SpaceId, System,
+    };
+
+    /// What a stub machine answers beside its screens: the menu bar hidden, no Dock shown, no
+    /// display main or built in and no space known, until a test says otherwise.
+    struct Machine {
+        main: u32,
+        builtin: Vec<u32>,
+        space: Cell<Option<SpaceId>>,
+        chrome: Chrome,
+        menu_bar_height: f64,
+    }
+
+    impl Default for Machine {
+        fn default() -> Self {
+            Machine {
+                main: 0,
+                builtin: Vec::new(),
+                space: Cell::new(None),
+                chrome: Chrome {
+                    menu_bar_hidden: true,
+                    dock: None,
+                },
+                menu_bar_height: 0.0,
+            }
+        }
+    }
 
     struct Stub {
         cg_screens: Vec<CGScreenInfo>,
         ns_screens: Vec<NSScreenInfo>,
+        machine: Machine,
     }
     impl System for Stub {
         fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError> { Ok(self.cg_screens.clone()) }
@@ -629,12 +675,23 @@ mod test {
         fn ns_screens(&self) -> Vec<NSScreenInfo> { self.ns_screens.clone() }
 
         fn notch_height(&self, _did: u32) -> f64 { 0.0 }
+
+        fn main_display(&self) -> u32 { self.machine.main }
+
+        fn is_builtin(&self, did: u32) -> bool { self.machine.builtin.contains(&did) }
+
+        fn current_space(&self, _uuid: &CFString) -> Option<SpaceId> { self.machine.space.get() }
+
+        fn chrome(&self) -> Chrome { self.machine.chrome }
+
+        fn menu_bar_height(&self, _did: u32) -> f64 { self.machine.menu_bar_height }
     }
 
     struct SequenceSystem {
         cg_screens: RefCell<VecDeque<Vec<CGScreenInfo>>>,
         ns_screens: RefCell<VecDeque<Vec<NSScreenInfo>>>,
         uuids: RefCell<VecDeque<CFRetained<CFString>>>,
+        machine: Machine,
     }
 
     impl SequenceSystem {
@@ -647,6 +704,7 @@ mod test {
                 cg_screens: RefCell::new(VecDeque::from(cg_screens)),
                 ns_screens: RefCell::new(VecDeque::from(ns_screens)),
                 uuids: RefCell::new(VecDeque::from(uuids)),
+                machine: Machine::default(),
             }
         }
     }
@@ -668,82 +726,122 @@ mod test {
         }
 
         fn notch_height(&self, _did: u32) -> f64 { 0.0 }
+
+        fn main_display(&self) -> u32 { self.machine.main }
+
+        fn is_builtin(&self, did: u32) -> bool { self.machine.builtin.contains(&did) }
+
+        fn current_space(&self, _uuid: &CFString) -> Option<SpaceId> { self.machine.space.get() }
+
+        fn chrome(&self) -> Chrome { self.machine.chrome }
+
+        fn menu_bar_height(&self, _did: u32) -> f64 { self.machine.menu_bar_height }
+    }
+
+    fn rect(x: f64, y: f64, width: f64, height: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(width, height))
+    }
+
+    fn cg(id: u32, bounds: CGRect) -> CGScreenInfo {
+        CGScreenInfo {
+            cg_id: ScreenId::new(id),
+            bounds,
+        }
+    }
+
+    fn ns(id: u32, scale: f64) -> NSScreenInfo {
+        NSScreenInfo {
+            cg_id: ScreenId::new(id),
+            name: None,
+            scale,
+        }
+    }
+
+    /// The menu bar keeps its height and a pixel clear on every display; the Dock is taken out of
+    /// the display it is on alone.
+    #[test]
+    fn a_screen_s_frame_is_its_bounds_less_the_menu_bar_and_a_dock_on_its_own_display() {
+        let stub = Stub {
+            cg_screens: vec![
+                cg(1, rect(3840.0, 1080.0, 1512.0, 982.0)),
+                cg(3, rect(0.0, 0.0, 3840.0, 2160.0)),
+            ],
+            ns_screens: vec![ns(3, 2.0), ns(1, 2.0)],
+            machine: Machine {
+                main: 3,
+                chrome: Chrome {
+                    menu_bar_hidden: false,
+                    dock: Some(Dock {
+                        rect: rect(0.0, 2080.0, 3840.0, 80.0),
+                        edge: DockEdge::Bottom,
+                        display: Some(3),
+                    }),
+                },
+                menu_bar_height: 24.0,
+                ..Machine::default()
+            },
+        };
+        let (screens, _) = ScreenCache::new_with(stub).refresh().unwrap();
+        let frame_of = |id: u32| screens.iter().find(|s| s.id == ScreenId::new(id)).unwrap().frame;
+
+        assert_eq!(frame_of(1), rect(3840.0, 1105.0, 1512.0, 957.0));
+        assert_eq!(frame_of(3), rect(0.0, 25.0, 3840.0, 2055.0));
     }
 
     #[test]
-    fn each_screen_s_frame_comes_from_its_display_s_bounds() {
+    fn the_main_display_comes_first() {
         let stub = Stub {
             cg_screens: vec![
-                CGScreenInfo {
-                    cg_id: ScreenId::new(1),
-                    bounds: CGRect::new(CGPoint::new(3840.0, 1080.0), CGSize::new(1512.0, 982.0)),
-                },
-                CGScreenInfo {
-                    cg_id: ScreenId::new(3),
-                    bounds: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(3840.0, 2160.0)),
-                },
+                cg(1, rect(0.0, 0.0, 1440.0, 900.0)),
+                cg(2, rect(1440.0, 0.0, 1440.0, 900.0)),
             ],
-            ns_screens: vec![
-                NSScreenInfo {
-                    cg_id: ScreenId::new(3),
-                    name: None,
-                    scale: 2.0,
-                },
-                NSScreenInfo {
-                    cg_id: ScreenId::new(1),
-                    name: None,
-                    scale: 2.0,
-                },
-            ],
+            ns_screens: vec![],
+            machine: Machine { main: 2, ..Machine::default() },
         };
-        let mut sc = ScreenCache::new_with(stub);
-        let (screens, _) = sc.refresh().unwrap();
+        let (screens, _) = ScreenCache::new_with(stub).refresh().unwrap();
+        assert_eq!(screens.iter().map(|s| s.id).collect::<Vec<_>>(), [
+            ScreenId::new(2),
+            ScreenId::new(1)
+        ]);
+    }
 
-        let secondary = screens.iter().find(|screen| screen.id == ScreenId::new(1)).unwrap();
-        assert_eq!(
-            secondary.frame,
-            super::constrain_display_bounds(
-                1,
-                CGRect::new(CGPoint::new(3840.0, 1080.0), CGSize::new(1512.0, 982.0)),
-                0.0,
-                0.0,
-            )
-        );
+    /// A refresh with nothing dirty rebuilds no screen but still asks which space each shows.
+    #[test]
+    fn each_screen_carries_the_space_its_display_shows_now_and_whether_it_is_built_in() {
+        let stub = Stub {
+            cg_screens: vec![
+                cg(1, rect(0.0, 0.0, 1440.0, 900.0)),
+                cg(2, rect(1440.0, 0.0, 1440.0, 900.0)),
+            ],
+            ns_screens: vec![],
+            machine: Machine {
+                builtin: vec![2],
+                space: Cell::new(Some(SpaceId::new(7))),
+                ..Machine::default()
+            },
+        };
+        let mut cache = ScreenCache::new_with(stub);
+        let (screens, _) = cache.refresh().unwrap();
+        assert!(screens.iter().all(|s| s.space == Some(SpaceId::new(7))));
+        let builtin: Vec<_> = screens.iter().filter(|s| s.is_builtin).map(|s| s.id).collect();
+        assert_eq!(builtin, [ScreenId::new(2)]);
 
-        let primary = screens.iter().find(|screen| screen.id == ScreenId::new(3)).unwrap();
-        assert_eq!(
-            primary.frame,
-            super::constrain_display_bounds(
-                3,
-                CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(3840.0, 2160.0)),
-                0.0,
-                0.0,
-            )
-        );
+        cache.system.machine.space.set(Some(SpaceId::new(9)));
+        let (screens, _) = cache.refresh().unwrap();
+        assert!(screens.iter().all(|s| s.space == Some(SpaceId::new(9))));
     }
 
     /// A Retina built-in beside a 1x external: each screen is measured in its own pixels, which is
     /// what a capture read off its framebuffer comes back in.
     #[test]
     fn each_screen_carries_the_scale_its_display_reports() {
-        let bounds = |x: f64| CGRect::new(CGPoint::new(x, 0.0), CGSize::new(1440.0, 900.0));
-        let ns_screen = |id: u32, scale: f64| NSScreenInfo {
-            cg_id: ScreenId::new(id),
-            name: None,
-            scale,
-        };
         let stub = Stub {
             cg_screens: vec![
-                CGScreenInfo {
-                    cg_id: ScreenId::new(1),
-                    bounds: bounds(0.0),
-                },
-                CGScreenInfo {
-                    cg_id: ScreenId::new(2),
-                    bounds: bounds(1440.0),
-                },
+                cg(1, rect(0.0, 0.0, 1440.0, 900.0)),
+                cg(2, rect(1440.0, 0.0, 1440.0, 900.0)),
             ],
-            ns_screens: vec![ns_screen(1, 2.0), ns_screen(2, 1.0)],
+            ns_screens: vec![ns(1, 2.0), ns(2, 1.0)],
+            machine: Machine::default(),
         };
         let (screens, _) = ScreenCache::new_with(stub).refresh().unwrap();
         let scale_of = |id: u32| screens.iter().find(|s| s.id == ScreenId::new(id)).unwrap().scale;
@@ -753,24 +851,9 @@ mod test {
 
     #[test]
     fn clears_cached_screen_identifiers_when_display_list_is_empty() {
-        let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1440.0, 900.0));
-
         let system = SequenceSystem::new(
-            vec![
-                vec![CGScreenInfo {
-                    cg_id: ScreenId::new(1),
-                    bounds,
-                }],
-                vec![],
-            ],
-            vec![
-                vec![NSScreenInfo {
-                    cg_id: ScreenId::new(1),
-                    name: None,
-                    scale: 2.0,
-                }],
-                vec![],
-            ],
+            vec![vec![cg(1, rect(0.0, 0.0, 1440.0, 900.0))], vec![]],
+            vec![vec![ns(1, 2.0)], vec![]],
             vec![CFString::from_str("uuid-1")],
         );
 
@@ -791,19 +874,10 @@ mod test {
     /// reach it through the cache, and a change has to rebuild what the cache already holds.
     #[test]
     fn a_top_band_rebuilds_the_screens_and_keeps_its_height_clear() {
-        let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1440.0, 900.0));
-        let screen = CGScreenInfo {
-            cg_id: ScreenId::new(1),
-            bounds,
-        };
-        let ns_screen = NSScreenInfo {
-            cg_id: ScreenId::new(1),
-            name: None,
-            scale: 2.0,
-        };
+        let screen = cg(1, rect(0.0, 0.0, 1440.0, 900.0));
         let system = SequenceSystem::new(
             vec![vec![screen.clone()], vec![screen]],
-            vec![vec![ns_screen.clone()], vec![ns_screen]],
+            vec![vec![ns(1, 2.0)], vec![ns(1, 2.0)]],
             vec![CFString::from_str("uuid-1"), CFString::from_str("uuid-1")],
         );
         let mut cache = ScreenCache::new_with(system);
@@ -815,8 +889,7 @@ mod test {
             cache.system.cg_screens.borrow().is_empty(),
             "the band change rebuilt the screens"
         );
-        assert!(screens[0].frame.origin.y >= 32.0);
-        assert!(screens[0].frame.size.height <= 900.0 - 32.0);
+        assert_eq!(screens[0].frame, rect(0.0, 32.0, 1440.0, 868.0));
 
         assert!(!cache.set_top_band(32.0));
         let (screens, _) = cache.refresh().unwrap();
