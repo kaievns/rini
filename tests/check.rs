@@ -116,16 +116,43 @@ fn ci_runs_the_check_and_no_cargo_command_of_its_own() {
     assert!(!workflow.contains("nextest"));
 }
 
-/// The stable toolchain CI installs carries clippy, which its minimal profile leaves out.
+/// The Rust CI checks and releases with. A new stable can add a lint that fails the check with no
+/// change to the code, so CI moves to one only when this and the workflows move with it.
+const PINNED_RUST: &str = "1.98.1";
+
+fn workflow(name: &str) -> String {
+    fs::read_to_string(Path::new(ROOT).join(".github/workflows").join(name)).unwrap()
+}
+
+/// The pinned toolchain CI installs carries clippy, which its minimal profile leaves out.
 #[test]
-fn ci_installs_clippy_with_the_stable_toolchain() {
-    let workflow = fs::read_to_string(Path::new(ROOT).join(".github/workflows/rust.yml")).unwrap();
+fn ci_installs_clippy_with_the_pinned_toolchain() {
+    let workflow = workflow("rust.yml");
     assert!(
-        workflow.contains(
-            "uses: dtolnay/rust-toolchain@stable\n        with:\n          components: clippy\n"
-        ),
+        workflow.contains(&format!(
+            "uses: dtolnay/rust-toolchain@master\n        with:\n          toolchain: {PINNED_RUST}\n          components: clippy\n"
+        )),
         "{workflow}"
     );
+}
+
+/// Every workflow that installs a Rust other than nightly's rustfmt installs the pinned one.
+#[test]
+fn every_workflow_installs_the_pinned_rust() {
+    for name in ["rust.yml", "release.yml"] {
+        let workflow = workflow(name);
+        assert!(!workflow.contains("rust-toolchain@stable"), "{name}");
+        let installs: Vec<&str> =
+            workflow.split("uses: dtolnay/rust-toolchain@master").skip(1).collect();
+        assert!(!installs.is_empty(), "{name} installs no pinned Rust");
+        for install in installs {
+            let toolchain = install
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("toolchain: "))
+                .unwrap_or_default();
+            assert_eq!(toolchain, PINNED_RUST, "{name}");
+        }
+    }
 }
 
 /// Every crate in the workspace takes its lints from `[workspace.lints]`, so a lint set there

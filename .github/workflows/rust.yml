@@ -20,12 +20,13 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      # Nightly for rustfmt first, so the stable install after it is the default toolchain.
+      # Nightly for rustfmt first, so the pinned install after it is the default toolchain.
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.1
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:

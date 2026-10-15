@@ -201,6 +201,12 @@ The checks a change passes are `bin/check.sh`: the nightly format check, a build
 with warnings as errors, `cargo clippy --workspace --all-targets -- -D warnings`, and the suite,
 `tests/architecture.rs` with it. A clippy warning fails the check as a compiler warning does.
 
+CI checks and releases on Rust 1.98.1, pinned in both workflows, because a new stable can add a lint
+that turns `-D warnings` red with no change to the code. Moving the pin is a change of its own, with
+whatever the new lints ask, held by `ci_installs_clippy_with_the_pinned_toolchain` and
+`every_workflow_installs_the_pinned_rust`. The local check runs whichever `cargo` is on `PATH`, so it
+agrees with CI only at the same version.
+
 Every crate takes its lints from `[workspace.lints]` in `Cargo.toml` (`[lints] workspace = true`,
 held by `every_crate_inherits_the_workspace_lints`): clippy's defaults, plus `redundant_lifetimes`,
 `unused_macro_rules` and `allow_attributes_without_reason`. The last means every `#[allow]` says

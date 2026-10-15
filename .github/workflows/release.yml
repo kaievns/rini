@@ -27,8 +27,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust + targets
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.1
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Show toolchain

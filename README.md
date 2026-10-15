@@ -149,7 +149,7 @@ What is not yet where the code map says is the last table in `docs/architecture.
 - **No SIP change.** rini lays virtual workspaces over one native Space per display.
 - macOS 26 is the only version it has run on (Darwin 25.6,
   `docs/permissions-and-the-launch-agent.md`).
-- A Rust toolchain, plus nightly for formatting.
+- Rust 1.98.1, the version CI pins, plus nightly for formatting.
 
 ## Building and running
 
