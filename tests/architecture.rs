@@ -1156,7 +1156,7 @@ const LONG_FNS: [(&str, &str, usize); 40] = [
     ("src/layout/domain/scrolling.rs", "on_window_resized", 105),
     ("src/main.rs", "main", 287),
     ("src/pictures/domain/watch.rs", "seen", 151),
-    ("src/transitions/platform/engine.rs", "merge_now", 120),
+    ("src/transitions/platform/engine.rs", "merge_now", 110),
     ("src/transitions/platform/engine.rs", "start", 229),
     ("src/transitions/platform/engine.rs", "start_surface", 120),
     ("src/windows/platform/app_actor.rs", "handle_notification", 148),
@@ -1183,7 +1183,7 @@ const LONG_FNS: [(&str, &str, usize); 40] = [
 const LONG_FILES: [(&str, usize); 4] = [
     ("src/app/reactor/mod.rs", 4502),
     ("src/layout/domain/scrolling.rs", 1816),
-    ("src/transitions/platform/engine.rs", 2187),
+    ("src/transitions/platform/engine.rs", 2168),
     ("src/workspaces/engine.rs", 2544),
 ];
 

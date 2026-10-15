@@ -238,6 +238,18 @@ impl FlightPlan {
         )
     }
 
+    /// Where `window` lands on the overlay, whatever it rides: a rigid member where its container
+    /// ends, any other where the loose or the floating container does.
+    pub fn destination(&self, window: WindowId) -> Option<OverlayRect> {
+        Some(match self.member(window)? {
+            Member::Rigid { key, rel } => overlay_of(rel, self.position_of(key)),
+            Member::Changing { to, .. } | Member::Entrance { to, .. } => {
+                overlay_of(to, self.position_of(GroupKey::Loose))
+            }
+            Member::Floating { to, .. } => overlay_of(to, self.position_of(GroupKey::Floating)),
+        })
+    }
+
     /// Every window the flight names.
     #[cfg(test)]
     pub fn windows(&self) -> Vec<WindowId> {
@@ -990,6 +1002,47 @@ mod tests {
         viewport(SurfacePoint::origin()).inverse().transform_rect(&on(frame))
     }
 
+    #[test]
+    fn each_member_lands_where_its_container_ends_and_a_window_the_plan_does_not_name_nowhere() {
+        let wid = |idx| WindowId::new(7, idx);
+        let mut reflow = ReflowPlan::empty();
+        reflow.groups[0].members.push(GroupMember {
+            window: wid(1),
+            rel: rect(10.0, 20.0, 300.0, 400.0),
+        });
+        reflow.groups.push(RigidGroup {
+            key: GroupKey::Rigid(1),
+            travel: OverlayVector::new(-863.0, 0.0),
+            members: vec![GroupMember {
+                window: wid(2),
+                rel: rect(900.0, 20.0, 300.0, 400.0),
+            }],
+        });
+        reflow.changing.push((
+            wid(3),
+            rect(0.0, 0.0, 100.0, 100.0),
+            rect(50.0, 60.0, 200.0, 100.0),
+        ));
+        reflow
+            .entrances
+            .push((wid(4), rect(0.0, 0.0, 0.0, 100.0), rect(70.0, 80.0, 90.0, 100.0)));
+        reflow.floating.push((
+            wid(5),
+            rect(0.0, 0.0, 50.0, 50.0),
+            rect(100.0, 100.0, 50.0, 50.0),
+        ));
+        reflow.floating_travel = OverlayVector::new(0.0, 1117.0);
+        let mut plan = FlightPlan::from(reflow);
+        plan.positions.insert(GroupKey::Loose, OverlayPoint::new(5.0, 7.0));
+
+        assert_eq!(plan.destination(wid(1)), Some(rect(10.0, 20.0, 300.0, 400.0)));
+        assert_eq!(plan.destination(wid(2)), Some(rect(37.0, 20.0, 300.0, 400.0)));
+        assert_eq!(plan.destination(wid(3)), Some(rect(55.0, 67.0, 200.0, 100.0)));
+        assert_eq!(plan.destination(wid(4)), Some(rect(75.0, 87.0, 90.0, 100.0)));
+        assert_eq!(plan.destination(wid(5)), Some(rect(100.0, 1217.0, 50.0, 50.0)));
+        assert_eq!(plan.destination(wid(6)), None);
+    }
+
     /// `animation_targets`: what a look composes the motion from and nothing else (Requirement 11.4 of
     /// `rigid-strip-groups`). Plans built with `reflow_plan` on a 1728x1117 display at the origin,
     /// so a frame on the display, on the overlay and in a fresh container are the same numbers.
@@ -1268,17 +1321,6 @@ mod tests {
             FlightPlan::from(reflow_plan(requests, DISPLAY))
         }
 
-        /// A window's destination on the overlay, whatever it rides.
-        fn dest(plan: &FlightPlan, window: WindowId) -> Option<OverlayRect> {
-            Some(match plan.member(window)? {
-                Member::Rigid { key, rel } => overlay_of(rel, plan.position_of(key)),
-                Member::Changing { to, .. } | Member::Entrance { to, .. } => {
-                    overlay_of(to, plan.position_of(GroupKey::Loose))
-                }
-                Member::Floating { to, .. } => overlay_of(to, plan.position_of(GroupKey::Floating)),
-            })
-        }
-
         fn key_of(plan: &FlightPlan, window: WindowId) -> Option<GroupKey> {
             match plan.member(window)? {
                 Member::Rigid { key, .. } => Some(key),
@@ -1381,7 +1423,7 @@ mod tests {
                 shifted(slot, d.respace())
             )]);
             assert_eq!(
-                dest(&merged, wid(3)),
+                merged.destination(wid(3)),
                 Some(shifted(on(c), OverlayVector::new(859.0 + d.x, 0.0))),
                 "a member the pan did not compose rides its group"
             );
@@ -1436,11 +1478,11 @@ mod tests {
                 "the winning cluster confirmed the destination"
             );
             assert!(
-                dest(&merged, wid(2)).unwrap().same_as(on(elsewhere)),
+                merged.destination(wid(2)).unwrap().same_as(on(elsewhere)),
                 "{:?}",
-                dest(&merged, wid(2))
+                merged.destination(wid(2))
             );
-            assert!(dest(&merged, wid(1)).unwrap().same_as(on(shifted(a, v))));
+            assert!(merged.destination(wid(1)).unwrap().same_as(on(shifted(a, v))));
             assert_eq!(delta.new_groups.len(), 1, "no group had that remaining travel");
             assert_eq!(
                 delta.new_groups[0].install, presented[&group],
@@ -1486,7 +1528,7 @@ mod tests {
             let (merged, delta) =
                 merge_plans(&still, &pass, None, &midway(&still).into(), None, VIEWPORT);
             assert_eq!(delta.reparented.len(), 1, "{delta:?}");
-            assert!(dest(&merged, wid(2)).unwrap().same_as(on(past_right)));
+            assert!(merged.destination(wid(2)).unwrap().same_as(on(past_right)));
         }
 
         #[test]
@@ -1549,7 +1591,7 @@ mod tests {
                 group_relative(on(beside), current.position_of(group))
             );
             assert_eq!(rel(wid(2)).origin.x - rel(wid(1)).origin.x, 863.0, "beside 1");
-            assert!(dest(&merged, wid(2)).unwrap().same_as(on(shifted(beside, further))));
+            assert!(merged.destination(wid(2)).unwrap().same_as(on(shifted(beside, further))));
         }
 
         /// Of several groups travelling as a newcomer does, it rides the one holding the window
@@ -1563,12 +1605,15 @@ mod tests {
             ]);
             let second = key_of(&current, wid(2)).unwrap();
             assert_ne!(key_of(&current, wid(1)), Some(second));
-            let beside = shifted(dest(&current, wid(2)).unwrap(), OverlayVector::new(863.0, 0.0));
+            let beside = shifted(
+                current.destination(wid(2)).unwrap(),
+                OverlayVector::new(863.0, 0.0),
+            );
             let pass = reflow_plan(&[(wid(3), screen(beside), screen(beside), false)], DISPLAY);
             let (merged, delta) =
                 merge_plans(&current, &pass, None, &midway(&current).into(), None, VIEWPORT);
             assert_eq!(delta.joined_tiles, vec![(wid(3), second)]);
-            assert!(dest(&merged, wid(3)).unwrap().same_as(beside));
+            assert!(merged.destination(wid(3)).unwrap().same_as(beside));
         }
 
         /// A floating window a switch brings is placed in the floating container where the last pass
@@ -1663,9 +1708,9 @@ mod tests {
             for (w, _, to, _) in &requests {
                 let expected = shifted(to_overlay_space(*to, EXTERNAL), d);
                 assert!(
-                    dest(&merged, *w).unwrap().same_as(expected),
+                    merged.destination(*w).unwrap().same_as(expected),
                     "{w:?}: {:?} vs {expected:?}",
-                    dest(&merged, *w)
+                    merged.destination(*w)
                 );
             }
             assert_eq!(merged.entrances[0].2, shifted(slot_o, d.respace()));
@@ -1705,7 +1750,7 @@ mod tests {
             )]);
             assert!(delta.reparented.is_empty() && delta.joined_tiles.is_empty());
             assert!(
-                dest(&merged, wid(2)).unwrap().same_as(on(shifted(b, further))),
+                merged.destination(wid(2)).unwrap().same_as(on(shifted(b, further))),
                 "rides along"
             );
         }
@@ -1738,7 +1783,7 @@ mod tests {
                             pan = Some(d);
                             let mut p = ReflowPlan::empty();
                             for w in &windows {
-                                let Some(from) = dest(&plan, *w) else { continue };
+                                let Some(from) = plan.destination(*w) else { continue };
                                 if let Some(Member::Rigid { .. }) = plan.member(*w) {
                                     p.place(*w, installed(from), d);
                                 }
@@ -1824,7 +1869,8 @@ mod tests {
                             | Member::Entrance { to, .. }
                             | Member::Floating { to, .. } => on_overlay(to),
                         };
-                        let got = dest(&merged, w)
+                        let got = merged
+                            .destination(w)
                             .unwrap_or_else(|| panic!("{tag}: {w:?} unnamed after merge"));
                         // The one exception: a member sent off the viewport rides its moving container (`rides_out`).
                         let rode_out = pan.is_none()
@@ -1955,7 +2001,7 @@ mod tests {
             let key = key_of(&merged, wid(2)).unwrap();
             assert_ne!(key, group);
             assert_eq!(overlay_of(rel(&merged, wid(2)), install), before, "no jump");
-            assert!(dest(&merged, wid(2)).unwrap().same_as(on(elsewhere)));
+            assert!(merged.destination(wid(2)).unwrap().same_as(on(elsewhere)));
         }
     }
 

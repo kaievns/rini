@@ -266,18 +266,9 @@ enum Took {
 /// rides its group all the same.
 fn sync_tiles_to_plan(tiles: &mut [OverlayTile], plan: &plan::FlightPlan) {
     for tile in tiles.iter_mut() {
-        let Some(member) = plan.member(tile.window) else {
-            continue;
-        };
-        tile.to = match member {
-            plan::Member::Rigid { key, rel } => plan::overlay_of(rel, plan.position_of(key)),
-            plan::Member::Changing { to, .. } | plan::Member::Entrance { to, .. } => {
-                plan::overlay_of(to, plan.position_of(plan::GroupKey::Loose))
-            }
-            plan::Member::Floating { to, .. } => {
-                plan::overlay_of(to, plan.position_of(plan::GroupKey::Floating))
-            }
-        };
+        if let Some(to) = plan.destination(tile.window) {
+            tile.to = to;
+        }
     }
 }
 
@@ -2151,17 +2142,7 @@ impl FlightEngine {
                     );
                 }
                 for (window, from_key, to_key) in &delta.reparented {
-                    let dest = running.plan.member(*window).map(|m| match m {
-                        plan::Member::Rigid { key, rel } => {
-                            plan::overlay_of(rel, running.plan.position_of(key))
-                        }
-                        plan::Member::Changing { to, .. } | plan::Member::Entrance { to, .. } => {
-                            plan::overlay_of(to, running.plan.position_of(plan::GroupKey::Loose))
-                        }
-                        plan::Member::Floating { to, .. } => {
-                            plan::overlay_of(to, running.plan.position_of(plan::GroupKey::Floating))
-                        }
-                    });
+                    let dest = running.plan.destination(*window);
                     let from_to = running.plan.position_of(*from_key);
                     debug!(
                         pid = window.pid,
