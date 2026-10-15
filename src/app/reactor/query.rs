@@ -991,6 +991,22 @@ mod tests {
         assert!(f.view().handle_layout_state_query(Some(10), None).is_some());
     }
 
+    /// A workspace index counts from 0, as `rini-cli query layout --workspace-id` says, and one the
+    /// space does not have answers nothing rather than the nearest.
+    #[test]
+    fn layout_state_reads_a_workspace_index_from_0() {
+        let f = Fixture::new(&[10], &[1]);
+        let view = f.view();
+        let active = view.handle_layout_state_query(Some(10), None).expect("the active workspace");
+        let first = view.handle_layout_state_query(Some(10), Some(0)).expect("the first workspace");
+        assert_eq!(first.workspace_id, 0);
+        assert_eq!(first.is_active_workspace, active.workspace_id == 0);
+        let second = view.handle_layout_state_query(Some(10), Some(1)).expect("the second workspace");
+        assert_eq!(second.workspace_id, 1);
+        assert_ne!(first.is_active_workspace, second.is_active_workspace);
+        assert!(view.handle_layout_state_query(Some(10), Some(99)).is_none());
+    }
+
     /// Metrics answer with an object even when nothing has happened, so a caller can always read the
     /// shape rather than having to handle an absent one.
     #[test]
