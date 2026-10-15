@@ -2736,18 +2736,6 @@ impl Reactor {
         }
     }
 
-    /// Spread every window back onto the display it belongs to, keeping its workspace.
-    ///
-    /// Recovery command. Windows can end up piled into a single workspace on a single display:
-    /// the display-migration feedback loop did that before it was fixed, and any future state
-    /// corruption could do it again. Fixing the loop stops it recurring but does not undo the
-    /// damage, and until now the only remedy was deleting ~/.rini/layout.ron and losing every
-    /// window's size and position.
-    ///
-    /// Only windows whose recorded home display differs from where they currently sit are
-    /// moved, so running this on a healthy layout does nothing. Workspace membership is never
-    /// changed — that is the window's identity, and a recovery command has no business
-    /// guessing at it.
     #[cfg(test)]
     pub(crate) fn probe_switch_window(
         &mut self,
@@ -3087,6 +3075,15 @@ impl Reactor {
         self.focus_window_anywhere(target)
     }
 
+    /// Spread every window back onto the display it belongs to, keeping its workspace.
+    ///
+    /// Recovery command for windows piled into a single workspace on a single display. It undoes
+    /// that without deleting ~/.rini/layout.ron, which would lose every window's size and position.
+    ///
+    /// Only windows whose recorded home display differs from where they currently sit are
+    /// moved, so running this on a healthy layout does nothing. Workspace membership is never
+    /// changed — that is the window's identity, and a recovery command has no business
+    /// guessing at it.
     fn redistribute_windows(&mut self) -> EventOutcome {
         let mut outcome = EventOutcome::default();
         let attached: Vec<(String, SpaceId)> = self
