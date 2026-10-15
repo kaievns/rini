@@ -1030,13 +1030,13 @@ impl Apps {
                     let old_frame = window.frame;
                     window.frame = frame;
                     if !old_frame.same_as(frame) {
-                        events.push(Event::WindowFrameChanged(
-                            wid,
+                        events.push(Event::WindowFrameChanged {
+                            window: wid,
                             frame,
-                            Some(txid),
-                            Requested(true),
-                            None,
-                        ));
+                            last_seen: Some(txid),
+                            requested: Requested(true),
+                            mouse_state: None,
+                        });
                     }
                 }
                 Request::SetBatchWindowFrame(frames, txid, _) => {
@@ -1046,13 +1046,13 @@ impl Apps {
                         let old_frame = window.frame;
                         window.frame = frame;
                         if !old_frame.same_as(frame) {
-                            events.push(Event::WindowFrameChanged(
-                                wid,
+                            events.push(Event::WindowFrameChanged {
+                                window: wid,
                                 frame,
-                                Some(txid),
-                                Requested(true),
-                                None,
-                            ));
+                                last_seen: Some(txid),
+                                requested: Requested(true),
+                                mouse_state: None,
+                            });
                         }
                     }
                 }
@@ -1063,13 +1063,13 @@ impl Apps {
                         let old_frame = window.frame;
                         window.frame.origin = position;
                         if !old_frame.same_as(window.frame) {
-                            events.push(Event::WindowFrameChanged(
-                                wid,
-                                window.frame,
-                                Some(txid),
-                                Requested(true),
-                                None,
-                            ));
+                            events.push(Event::WindowFrameChanged {
+                                window: wid,
+                                frame: window.frame,
+                                last_seen: Some(txid),
+                                requested: Requested(true),
+                                mouse_state: None,
+                            });
                         }
                     }
                 }

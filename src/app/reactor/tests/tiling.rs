@@ -118,13 +118,13 @@ fn matching_rini_frame_clears_pending_target() {
     );
     let txid = reactor.pend_test_frame(wsid, target_frame);
 
-    reactor.handle_event(Event::WindowFrameChanged(
-        wid,
-        target_frame,
-        Some(txid),
-        Requested(true),
-        Some(MouseState::Up),
-    ));
+    reactor.handle_event(Event::WindowFrameChanged {
+        window: wid,
+        frame: target_frame,
+        last_seen: Some(txid),
+        requested: Requested(true),
+        mouse_state: Some(MouseState::Up),
+    });
 
     assert_eq!(
         reactor.transactions().target(&wsid),
@@ -138,26 +138,26 @@ fn matching_rini_frame_clears_pending_target() {
     let accepted = CGRect::new(CGPoint::new(81.0, 40.0), frame.size);
     let txid = reactor.pend_test_frame(wsid, adjusted_target);
     let outcome = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            accepted,
-            Some(txid),
-            Requested(true),
-            Some(MouseState::Up),
-        ))
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: accepted,
+            last_seen: Some(txid),
+            requested: Requested(true),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
     assert!(reactor.test_frame(wid).same_as(accepted));
     assert_eq!(reactor.transactions().target(&wsid), Some(adjusted_target));
     assert!(!outcome.arrange.requested);
 
     // A user drag beginning during the transaction clears it instead of accepting it blindly.
-    reactor.handle_event(Event::WindowFrameChanged(
-        wid,
-        accepted,
-        Some(txid),
-        Requested(true),
-        Some(MouseState::Down),
-    ));
+    reactor.handle_event(Event::WindowFrameChanged {
+        window: wid,
+        frame: accepted,
+        last_seen: Some(txid),
+        requested: Requested(true),
+        mouse_state: Some(MouseState::Down),
+    });
     assert_eq!(reactor.transactions().target(&wsid), None);
 }
 
@@ -177,24 +177,24 @@ fn frame_acknowledgements_and_unchanged_frames_do_not_invalidate_layout() {
     let txid = reactor.pend_test_frame(wsid, target_frame);
 
     let acknowledgement = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            target_frame,
-            Some(txid),
-            Requested(true),
-            Some(MouseState::Up),
-        ))
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: target_frame,
+            last_seen: Some(txid),
+            requested: Requested(true),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
     assert!(!acknowledgement.arrange.requested);
 
     let unchanged = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            target_frame,
-            None,
-            Requested(false),
-            Some(MouseState::Up),
-        ))
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: target_frame,
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
     assert!(!unchanged.arrange.requested);
 
@@ -203,13 +203,13 @@ fn frame_acknowledgements_and_unchanged_frames_do_not_invalidate_layout() {
         target_frame.size,
     );
     let requested = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            explicitly_requested_frame,
-            None,
-            Requested(true),
-            Some(MouseState::Up),
-        ))
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: explicitly_requested_frame,
+            last_seen: None,
+            requested: Requested(true),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
     assert!(!requested.arrange.requested);
 }
@@ -228,13 +228,13 @@ fn genuine_external_frame_changes_invalidate_layout() {
     );
 
     let outcome = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            moved_frame,
-            None,
-            Requested(false),
-            Some(MouseState::Up),
-        ))
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: moved_frame,
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
 
     assert!(outcome.arrange.requested);
@@ -256,40 +256,40 @@ fn stale_and_inactive_frame_events_request_no_arrange_passes() {
     );
     let txid = reactor.pend_test_frame(wsid, target_frame);
     let acknowledgement = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            target_frame,
-            Some(txid),
-            Requested(true),
-            Some(MouseState::Up),
-        ))
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: target_frame,
+            last_seen: Some(txid),
+            requested: Requested(true),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
     assert!(!acknowledgement.arrange.requested);
 
     let duplicate = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            target_frame,
-            None,
-            Requested(false),
-            Some(MouseState::Up),
-        ))
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: target_frame,
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
     assert!(!duplicate.arrange.requested);
 
     // Stale transaction notification while a newer target is pending.
     let current_txid = reactor.pend_test_frame(wsid, target_frame);
     let stale = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            CGRect::new(
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: CGRect::new(
                 CGPoint::new(target_frame.origin.x + 20.0, target_frame.origin.y),
                 target_frame.size,
             ),
-            Some(current_txid.next()),
-            Requested(false),
-            Some(MouseState::Up),
-        ))
+            last_seen: Some(current_txid.next()),
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
     assert!(!stale.arrange.requested);
 
@@ -297,16 +297,16 @@ fn stale_and_inactive_frame_events_request_no_arrange_passes() {
     reactor.transactions_mut().clear_target(&wsid);
     reactor.set_active_spaces(&[]);
     let inactive = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            CGRect::new(
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: CGRect::new(
                 CGPoint::new(target_frame.origin.x + 30.0, target_frame.origin.y),
                 target_frame.size,
             ),
-            None,
-            Requested(false),
-            Some(MouseState::Up),
-        ))
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
     assert!(!inactive.arrange.requested);
 }
@@ -325,13 +325,13 @@ fn external_resize_requests_one_arrange_pass() {
     );
 
     let outcome = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            resized,
-            None,
-            Requested(false),
-            Some(MouseState::Up),
-        ))
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: resized,
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
 
     assert!(outcome.arrange.requested);
@@ -1665,13 +1665,13 @@ impl Strip {
         let app_window = self.apps.windows.get_mut(&window).expect("test window");
         app_window.frame = frame;
         let txid = app_window.last_seen_txid;
-        self.reactor.handle_event(Event::WindowFrameChanged(
+        self.reactor.handle_event(Event::WindowFrameChanged {
             window,
             frame,
-            Some(txid),
-            Requested(false),
-            Some(mouse),
-        ));
+            last_seen: Some(txid),
+            requested: Requested(false),
+            mouse_state: Some(mouse),
+        });
     }
 
     /// Carries rini's requests out as the app would, and returns what they wrote `window`.
@@ -2480,13 +2480,13 @@ mod title_bar_zoom {
         });
         let window = strip.apps.windows.get_mut(&strip.window).expect("test window");
         window.frame = VISIBLE;
-        tx.send(Event::WindowFrameChanged(
-            strip.window,
-            VISIBLE,
-            Some(window.last_seen_txid),
-            Requested(false),
-            Some(MouseState::Up),
-        ));
+        tx.send(Event::WindowFrameChanged {
+            window: strip.window,
+            frame: VISIBLE,
+            last_seen: Some(window.last_seen_txid),
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        });
         // One by one rather than as a loop batch, which would mark the window server busy for the
         // whole process and hold up the display-churn tests that follow.
         while let Ok((_, event)) = rx.try_recv() {
@@ -2513,13 +2513,13 @@ mod title_bar_zoom {
             double_click: true,
         }));
         assert_eq!(reactor.drag().title_bar_click, None);
-        reactor.handle_event(Event::WindowFrameChanged(
-            wid,
-            screen,
-            None,
-            Requested(false),
-            Some(MouseState::Up),
-        ));
+        reactor.handle_event(Event::WindowFrameChanged {
+            window: wid,
+            frame: screen,
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        });
 
         assert!(reactor.layout().is_window_floating(wid));
         assert_eq!(reactor.layout().full_width_of_column(space, wid), None);
@@ -2853,7 +2853,13 @@ fn a_drag_released_inside_a_frame_report_is_the_reports_press() {
             CGPoint::new(frame.origin.x + dx, frame.origin.y + 50.),
             frame.size,
         );
-        Event::WindowFrameChanged(window, to, None, Requested(false), Some(mouse))
+        Event::WindowFrameChanged {
+            window,
+            frame: to,
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(mouse),
+        }
     };
     reactor.handle_event(dragged(200., MouseState::Down));
     causes(&mut rx);

@@ -171,10 +171,10 @@ fn fullscreen_does_not_suppress_other_same_pid_windows() {
 
     reactor.window_server_appeared(original_wsid, fullscreen_space, SpaceEventKind::Fullscreen);
 
-    reactor.handle_event(Event::WindowCreated(
-        second_wid,
-        make_window_info(frame, Some(second_wsid), "Second Window", None),
-        Some(crate::windows::domain::info::WindowServerInfo {
+    reactor.handle_event(Event::WindowCreated {
+        window: second_wid,
+        info: make_window_info(frame, Some(second_wsid), "Second Window", None),
+        server_info: Some(crate::windows::domain::info::WindowServerInfo {
             id: second_wsid,
             pid: original_wid.pid,
             layer: 0,
@@ -182,8 +182,8 @@ fn fullscreen_does_not_suppress_other_same_pid_windows() {
             min_frame: frame.size,
             max_frame: frame.size,
         }),
-        None,
-    ));
+        mouse_state: None,
+    });
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(second_wid),

@@ -100,13 +100,13 @@ impl<W: AxWorld> State<W> {
         let Some(frame) = self.write_frame(wid, &elem, server_id, desired)? else {
             return Ok(());
         };
-        self.send_event(Event::WindowFrameChanged(
-            wid,
+        self.send_event(Event::WindowFrameChanged {
+            window: wid,
             frame,
-            Some(txid),
-            Requested(true),
-            None,
-        ));
+            last_seen: Some(txid),
+            requested: Requested(true),
+            mouse_state: None,
+        });
         Ok(())
     }
 
@@ -130,13 +130,13 @@ impl<W: AxWorld> State<W> {
         else {
             return Ok(());
         };
-        self.send_event(Event::WindowFrameChanged(
-            wid,
+        self.send_event(Event::WindowFrameChanged {
+            window: wid,
             frame,
-            Some(txid),
-            Requested(true),
-            None,
-        ));
+            last_seen: Some(txid),
+            requested: Requested(true),
+            mouse_state: None,
+        });
         Ok(())
     }
 
@@ -307,7 +307,7 @@ mod tests {
         assert!(
             matches!(
                 announced.as_slice(),
-                [Event::WindowFrameChanged(w, frame, ..)] if *w == wid && *frame == desired
+                [Event::WindowFrameChanged { window: w, frame, .. }] if *w == wid && *frame == desired
             ),
             "{announced:?}"
         );
@@ -375,7 +375,7 @@ mod tests {
         assert_eq!(state.ax.positions.borrow().as_slice(), &[(7, to.origin)]);
         let events = announced(&sink);
         assert!(
-            matches!(events.as_slice(), [Event::WindowFrameChanged(w, ..)] if *w == wids[0]),
+            matches!(events.as_slice(), [Event::WindowFrameChanged { window: w, .. }] if *w == wids[0]),
             "{events:?}"
         );
     }
@@ -407,8 +407,8 @@ mod tests {
             matches!(
                 events.as_slice(),
                 [
-                    Event::WindowFrameChanged(a, frame, Some(t), Requested(true), None),
-                    Event::WindowFrameChanged(b, _, Some(u), Requested(false), _),
+                    Event::WindowFrameChanged { window: a, frame, last_seen: Some(t), requested: Requested(true), mouse_state: None },
+                    Event::WindowFrameChanged { window: b, last_seen: Some(u), requested: Requested(false), .. },
                 ] if *a == wids[0] && *frame == landed && *t == txid && *b == wids[0] && *u == txid
             ),
             "{events:?}"

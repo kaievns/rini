@@ -616,8 +616,8 @@ impl Reactor {
     /// Notes on the activity clock the window an event says the window server just moved.
     pub(super) fn note_windowserver_activity(&self, event: &Event) {
         let wsid = match event {
-            Event::WindowFrameChanged(wid, ..) => Some(wid.idx.get()),
-            Event::WindowCreated(wid, ..) => Some(wid.idx.get()),
+            Event::WindowFrameChanged { window: wid, .. } => Some(wid.idx.get()),
+            Event::WindowCreated { window: wid, .. } => Some(wid.idx.get()),
             Event::WindowDestroyed(wid) => Some(wid.idx.get()),
             Event::WindowMinimized(wid) => Some(wid.idx.get()),
             Event::WindowDeminiaturized(wid) => Some(wid.idx.get()),

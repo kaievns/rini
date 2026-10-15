@@ -288,12 +288,12 @@ fn it_ignores_windows_on_disabled_spaces() {
 
     // Make sure it doesn't choke on destroyed events for ignored windows.
     reactor.handle_event(Event::WindowDestroyed(WindowId::new(1, 1)));
-    reactor.handle_event(Event::WindowCreated(
-        WindowId::new(1, 2),
-        make_window(2),
-        None,
-        Some(MouseState::Up),
-    ));
+    reactor.handle_event(Event::WindowCreated {
+        window: WindowId::new(1, 2),
+        info: make_window(2),
+        server_info: None,
+        mouse_state: Some(MouseState::Up),
+    });
     reactor.handle_event(Event::WindowDestroyed(WindowId::new(1, 2)));
 }
 

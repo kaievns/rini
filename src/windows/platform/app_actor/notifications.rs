@@ -63,12 +63,12 @@ impl<W: AxWorld> State<W> {
         };
         let window_server_info = window_server_info
             .or_else(|| window.sys_id.and_then(|id| self.ax.server().get_window(id)));
-        self.send_event(Event::WindowCreated(
-            wid,
-            window,
-            window_server_info,
-            self.ax.mouse_state(),
-        ));
+        self.send_event(Event::WindowCreated {
+            window: wid,
+            info: window,
+            server_info: window_server_info,
+            mouse_state: self.ax.mouse_state(),
+        });
     }
 
     fn on_window_destroyed(&mut self, elem: &W::Element, hinted_wid: Option<WindowId>) {
@@ -132,13 +132,13 @@ impl<W: AxWorld> State<W> {
                 return;
             }
         };
-        self.send_event(Event::WindowFrameChanged(
-            wid,
+        self.send_event(Event::WindowFrameChanged {
+            window: wid,
             frame,
-            txid,
-            Requested(false),
+            last_seen: txid,
+            requested: Requested(false),
             mouse_state,
-        ));
+        });
     }
 
     /// A window the user miniaturized or brought back, which a show of the application leaves as
@@ -276,7 +276,7 @@ mod tests {
         assert!(
             matches!(
                 announced.as_slice(),
-                [Event::WindowCreated(_, _, Some(info), Some(MouseState::Down))]
+                [Event::WindowCreated { server_info: Some(info), mouse_state: Some(MouseState::Down), .. }]
                     if info.id == WindowServerId::new(window)
             ),
             "{announced:?}"
@@ -379,7 +379,7 @@ mod tests {
         assert!(
             matches!(
                 events.as_slice(),
-                [Event::WindowFrameChanged(w, frame, None, Requested(false), Some(MouseState::Down))]
+                [Event::WindowFrameChanged { window: w, frame, last_seen: None, requested: Requested(false), mouse_state: Some(MouseState::Down) }]
                     if *w == wid && *frame == moved
             ),
             "{events:?}"

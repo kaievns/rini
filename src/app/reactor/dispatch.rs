@@ -56,13 +56,13 @@ impl Reactor {
             }
             event @ (Event::WindowServerFocusChanged(..)
             | Event::WindowsDiscovered { .. }
-            | Event::WindowCreated(..)
+            | Event::WindowCreated { .. }
             | Event::WindowDestroyed(_)
             | Event::WindowServerDestroyed(..)
             | Event::WindowServerAppeared(..)
             | Event::WindowMinimized(_)
             | Event::WindowDeminiaturized(_)
-            | Event::WindowFrameChanged(..)
+            | Event::WindowFrameChanged { .. }
             | Event::WindowTitleChanged(..)
             | Event::ApplyOverlayFrames(_)) => self.dispatch_window_event(event, &dispatch),
             event @ (Event::SpaceCreated(_)
@@ -195,11 +195,11 @@ impl Reactor {
                 application_workflow::WindowsDiscoveredPayload { pid, new, known_visible },
                 raised_window,
             ),
-            Event::WindowCreated(wid, window, ws_info, _mouse_state) => self.on_window_created(
+            Event::WindowCreated { window, info, server_info, .. } => self.on_window_created(
                 window_workflow::WindowCreatedPayload {
-                    window_id: wid,
-                    window,
-                    window_server_info: ws_info,
+                    window_id: window,
+                    window: info,
+                    window_server_info: server_info,
                 },
                 raised_window,
             ),
@@ -214,15 +214,20 @@ impl Reactor {
                 window_workflow::handle_window_minimized(&mut self.state, wid)
             }
             Event::WindowDeminiaturized(wid) => self.on_window_deminiaturized(wid),
-            Event::WindowFrameChanged(wid, new_frame, last_seen, requested, mouse_state) => self
-                .on_window_frame_changed(
-                    wid,
-                    new_frame,
-                    last_seen,
-                    requested,
-                    mouse_state,
-                    raised_window,
-                ),
+            Event::WindowFrameChanged {
+                window,
+                frame,
+                last_seen,
+                requested,
+                mouse_state,
+            } => self.on_window_frame_changed(
+                window,
+                frame,
+                last_seen,
+                requested,
+                mouse_state,
+                raised_window,
+            ),
             Event::WindowTitleChanged(wid, new_title) => {
                 let mut outcome = window_workflow::handle_window_title_changed(
                     &mut self.state,

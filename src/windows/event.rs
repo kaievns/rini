@@ -32,23 +32,24 @@ pub enum Event {
         new: Vec<(WindowId, WindowInfo)>,
         known_visible: Vec<WindowId>,
     },
-    WindowCreated(
-        WindowId,
-        WindowInfo,
-        Option<WindowServerInfo>,
-        Option<MouseState>,
-    ),
+    WindowCreated {
+        window: WindowId,
+        info: WindowInfo,
+        server_info: Option<WindowServerInfo>,
+        mouse_state: Option<MouseState>,
+    },
     WindowDestroyed(WindowId),
     WindowMinimized(WindowId),
     WindowDeminiaturized(WindowId),
     /// `Requested` says whether the frame is the echo of a frame rini asked for.
-    WindowFrameChanged(
-        WindowId,
-        CGRect,
-        Option<TransactionId>,
-        Requested,
-        Option<MouseState>,
-    ),
+    WindowFrameChanged {
+        window: WindowId,
+        frame: CGRect,
+        /// The txid of rini's last write to the window when the app read the frame.
+        last_seen: Option<TransactionId>,
+        requested: Requested,
+        mouse_state: Option<MouseState>,
+    },
     WindowTitleChanged(WindowId, String),
     MenuOpened(pid_t),
     MenuClosed(pid_t),

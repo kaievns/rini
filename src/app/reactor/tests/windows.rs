@@ -61,13 +61,13 @@ fn duplicate_minimize_deminimize_and_unknown_window_events_do_not_arrange() {
     let unknown_deminimize =
         reactor.dispatch_workflow(Event::WindowDeminiaturized(unknown)).unwrap();
     let unknown_frame = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            unknown,
-            CGRect::default(),
-            None,
-            Requested(false),
-            Some(MouseState::Up),
-        ))
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: unknown,
+            frame: CGRect::default(),
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
 
     assert!(!unknown_minimize.arrange.requested);
@@ -89,12 +89,12 @@ fn it_ignores_windows_on_nonzero_layers() {
 
     // Make sure it doesn't choke on destroyed events for ignored windows.
     reactor.handle_event(Event::WindowDestroyed(WindowId::new(1, 1)));
-    reactor.handle_event(Event::WindowCreated(
-        WindowId::new(1, 2),
-        make_window(2),
-        None,
-        Some(MouseState::Up),
-    ));
+    reactor.handle_event(Event::WindowCreated {
+        window: WindowId::new(1, 2),
+        info: make_window(2),
+        server_info: None,
+        mouse_state: Some(MouseState::Up),
+    });
     reactor.handle_event(Event::WindowDestroyed(WindowId::new(1, 2)));
 }
 
@@ -596,13 +596,24 @@ fn a_windows_context_event_becomes_the_reactor_event_with_its_payload_intact() {
     use crate::windows::event::Event as W;
     let wid = WindowId::new(7, 3);
     let frame = CGRect::new(CGPoint::new(1., 2.), CGSize::new(30., 40.));
-    let Event::WindowFrameChanged(got_wid, got_frame, txid, requested, mouse) =
-        Event::from(W::WindowFrameChanged(wid, frame, None, Requested(true), None))
+    let Event::WindowFrameChanged {
+        window: got_wid,
+        frame: got_frame,
+        last_seen: txid,
+        requested,
+        mouse_state,
+    } = Event::from(W::WindowFrameChanged {
+        window: wid,
+        frame,
+        last_seen: None,
+        requested: Requested(true),
+        mouse_state: None,
+    })
     else {
         panic!("wrong variant");
     };
     assert_eq!(
-        (got_wid, got_frame, txid, requested.0, mouse),
+        (got_wid, got_frame, txid, requested.0, mouse_state),
         (wid, frame, None, true, None)
     );
     assert!(matches!(Event::from(W::MenuClosed(7)), Event::MenuClosed(7)));

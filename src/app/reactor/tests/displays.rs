@@ -144,13 +144,13 @@ fn a_tiled_scrolling_window_keeps_its_space_when_its_frame_lands_on_another_disp
     );
 
     let _ = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            moved,
-            None,
-            Requested(false),
-            Some(MouseState::Up),
-        ))
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: moved,
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
 
     assert_eq!(
@@ -188,13 +188,13 @@ fn an_unmanageable_window_is_not_tiled_when_its_frame_comes_back_on_screen() {
     reactor.add_test_window(standard, WindowServerId::new(102), Some(space1), off_screen);
 
     for wid in [toolbar, standard] {
-        reactor.handle_event(Event::WindowFrameChanged(
-            wid,
-            on_screen,
-            None,
-            Requested(false),
-            Some(MouseState::Up),
-        ));
+        reactor.handle_event(Event::WindowFrameChanged {
+            window: wid,
+            frame: on_screen,
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        });
     }
 
     assert!(
@@ -434,13 +434,13 @@ fn recent_cross_display_move_ignores_conflicting_geometry_space_change() {
     } = reactor_with_window_moved_to_space2();
     let conflicting_frame = CGRect::new(CGPoint::new(100., 100.), CGSize::new(800., 600.));
 
-    reactor.handle_event(Event::WindowFrameChanged(
-        wid,
-        conflicting_frame,
-        None,
-        Requested(false),
-        Some(MouseState::Up),
-    ));
+    reactor.handle_event(Event::WindowFrameChanged {
+        window: wid,
+        frame: conflicting_frame,
+        last_seen: None,
+        requested: Requested(false),
+        mouse_state: Some(MouseState::Up),
+    });
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
@@ -1016,13 +1016,14 @@ fn display_churn_quarantines_window_frame_and_membership_events() {
     let space = SpaceId::new(7);
     let wsid = WindowServerId::new(77);
 
-    let frame_changed = reactor.should_quarantine_during_display_churn(&Event::WindowFrameChanged(
-        WindowId::new(99, 1),
-        CGRect::new(CGPoint::new(10., 10.), CGSize::new(500., 400.)),
-        None,
-        Requested(false),
-        Some(MouseState::Up),
-    ));
+    let frame_changed =
+        reactor.should_quarantine_during_display_churn(&Event::WindowFrameChanged {
+            window: WindowId::new(99, 1),
+            frame: CGRect::new(CGPoint::new(10., 10.), CGSize::new(500., 400.)),
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        });
     let appeared = reactor.should_quarantine_during_display_churn(&Event::WindowServerAppeared(
         wsid,
         space,

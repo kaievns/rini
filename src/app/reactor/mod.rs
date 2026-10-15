@@ -164,12 +164,12 @@ pub enum Event {
         new: Vec<(WindowId, WindowInfo)>,
         known_visible: Vec<WindowId>,
     },
-    WindowCreated(
-        WindowId,
-        WindowInfo,
-        Option<WindowServerInfo>,
-        Option<MouseState>,
-    ),
+    WindowCreated {
+        window: WindowId,
+        info: WindowInfo,
+        server_info: Option<WindowServerInfo>,
+        mouse_state: Option<MouseState>,
+    },
     WindowDestroyed(WindowId),
     WindowServerDestroyed(rini_core::ids::WindowServerId, SpaceId, SpaceEventKind),
     WindowServerAppeared(rini_core::ids::WindowServerId, SpaceId, SpaceEventKind),
@@ -177,13 +177,14 @@ pub enum Event {
     SpaceDestroyed(SpaceId),
     WindowMinimized(WindowId),
     WindowDeminiaturized(WindowId),
-    WindowFrameChanged(
-        WindowId,
-        CGRect,
-        Option<TransactionId>,
-        Requested,
-        Option<MouseState>,
-    ),
+    WindowFrameChanged {
+        window: WindowId,
+        frame: CGRect,
+        /// The txid of rini's last write to the window when the app read the frame.
+        last_seen: Option<TransactionId>,
+        requested: Requested,
+        mouse_state: Option<MouseState>,
+    },
     WindowTitleChanged(WindowId, String),
     MenuOpened(pid_t),
     MenuClosed(pid_t),
@@ -330,15 +331,33 @@ impl From<crate::windows::event::Event> for Event {
             W::WindowsDiscovered { pid, new, known_visible } => {
                 Event::WindowsDiscovered { pid, new, known_visible }
             }
-            W::WindowCreated(wid, info, server_info, mouse) => {
-                Event::WindowCreated(wid, info, server_info, mouse)
-            }
+            W::WindowCreated {
+                window,
+                info,
+                server_info,
+                mouse_state,
+            } => Event::WindowCreated {
+                window,
+                info,
+                server_info,
+                mouse_state,
+            },
             W::WindowDestroyed(wid) => Event::WindowDestroyed(wid),
             W::WindowMinimized(wid) => Event::WindowMinimized(wid),
             W::WindowDeminiaturized(wid) => Event::WindowDeminiaturized(wid),
-            W::WindowFrameChanged(wid, frame, txid, requested, mouse) => {
-                Event::WindowFrameChanged(wid, frame, txid, requested, mouse)
-            }
+            W::WindowFrameChanged {
+                window,
+                frame,
+                last_seen,
+                requested,
+                mouse_state,
+            } => Event::WindowFrameChanged {
+                window,
+                frame,
+                last_seen,
+                requested,
+                mouse_state,
+            },
             W::WindowTitleChanged(wid, title) => Event::WindowTitleChanged(wid, title),
             W::MenuOpened(pid) => Event::MenuOpened(pid),
             W::MenuClosed(pid) => Event::MenuClosed(pid),
@@ -399,14 +418,14 @@ impl Event {
             | Event::ActiveDisplayChanged { .. }
             | Event::ApplicationTerminated(_)
             | Event::WindowsDiscovered { .. }
-            | Event::WindowCreated(..)
+            | Event::WindowCreated { .. }
             | Event::WindowServerDestroyed(..)
             | Event::WindowServerAppeared(..)
             | Event::SpaceCreated(_)
             | Event::SpaceDestroyed(_)
             | Event::WindowMinimized(_)
             | Event::WindowDeminiaturized(_)
-            | Event::WindowFrameChanged(..)
+            | Event::WindowFrameChanged { .. }
             | Event::WindowTitleChanged(..)
             | Event::MenuOpened(_)
             | Event::MenuClosed(_)
@@ -764,7 +783,7 @@ impl Reactor {
 
     fn log_event(&self, event: &Event) {
         match event {
-            Event::WindowFrameChanged(..)
+            Event::WindowFrameChanged { .. }
             | Event::MouseUp
             | Event::LeftMouseDown(_)
             | Event::MouseMoved(_) => trace!(?event, "Event"),
@@ -775,7 +794,7 @@ impl Reactor {
     fn should_update_notifications(event: &Event) -> bool {
         matches!(
             event,
-            Event::WindowCreated(..)
+            Event::WindowCreated { .. }
                 | Event::WindowDestroyed(..)
                 | Event::WindowServerDestroyed(..)
                 | Event::WindowServerAppeared(..)

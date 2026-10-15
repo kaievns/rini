@@ -51,12 +51,12 @@ impl<W: AxWorld> State<W> {
                 };
                 let window_server_info = window_server_info
                     .or_else(|| info.sys_id.and_then(|id| self.ax.server().get_window(id)));
-                self.send_event(Event::WindowCreated(
-                    wid,
+                self.send_event(Event::WindowCreated {
+                    window: wid,
                     info,
-                    window_server_info,
-                    self.ax.mouse_state(),
-                ));
+                    server_info: window_server_info,
+                    mouse_state: self.ax.mouse_state(),
+                });
                 wid
             }
         };

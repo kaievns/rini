@@ -11,11 +11,11 @@ impl Reactor {
         }
 
         match event {
-            Event::WindowCreated(..)
+            Event::WindowCreated { .. }
             | Event::WindowDestroyed(..)
             | Event::WindowServerDestroyed(..)
             | Event::WindowServerAppeared(..)
-            | Event::WindowFrameChanged(..)
+            | Event::WindowFrameChanged { .. }
             | Event::WindowMinimized(..)
             | Event::WindowDeminiaturized(..)
             | Event::WindowTitleChanged(..)
