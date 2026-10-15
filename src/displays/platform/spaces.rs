@@ -1150,14 +1150,10 @@ impl SpacesActor {
         self.state.display_churn_epoch = self.state.display_churn_epoch.wrapping_add(1);
         self.state.display_topology_state = None;
         self.state.last_sent_spaces = None;
+        display_churn::begin();
         if !was_active {
             self.state.pre_churn_visible_window_spaces = self.state.visible_window_spaces.clone();
-        }
-        if !was_active {
-            let _ = display_churn::begin(flags);
             self.events.send(OutEvent::DisplayChurnBegin);
-        } else {
-            let _ = display_churn::begin(flags);
         }
         self.state.display_churn_epoch
     }
@@ -1279,7 +1275,7 @@ impl SpacesActor {
         self.state.display_churn_epoch = self.state.display_churn_epoch.wrapping_add(1);
         self.state.display_churn_flags = DisplayReconfigFlags::empty();
         self.state.display_topology_state = None;
-        let _ = display_churn::end();
+        display_churn::end();
 
         if schedule_refresh {
             self.schedule_screen_refresh_after(0, 0);
