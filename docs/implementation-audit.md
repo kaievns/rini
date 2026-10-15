@@ -362,8 +362,8 @@ The recent batches moved the opposite way deliberately — pure decisions to
 ### 4.3 Worst code-to-test ratios among tested files
 
 **PARTLY — `rini-cli` is 2 tests to 10 (`37dd37b`), 18 since; the tap's key decisions are
-`input::domain::router::KeyRouter`, with 21 tests, leaving `input_tap.rs` 713 code lines to 5
-tests; the rest stand.**
+`input::domain::router::KeyRouter`, with 21 tests, leaving `input_tap.rs` 5 tests, its size held to
+the file limit by `tests/architecture.rs`; the rest stand.**
 
 ```
 crates/rini-cli/src/main.rs       824 code / 2 tests   412:1
