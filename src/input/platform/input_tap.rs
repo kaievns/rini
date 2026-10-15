@@ -152,11 +152,11 @@ impl InputTap {
         mask: CGEventMask,
         recovery_tx: tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) -> Option<tap::EventTap> {
-        let tap_generation = self.tap_generation.get().wrapping_add(1);
+        let generation = self.tap_generation.get().wrapping_add(1);
         let ctx = Box::new(CallbackCtx {
             this: Arc::clone(self),
             recovery_tx,
-            tap_generation,
+            tap_generation: generation,
         });
         let ctx_ptr = Box::into_raw(ctx) as *mut std::ffi::c_void;
 
@@ -172,14 +172,22 @@ impl InputTap {
             )
         };
 
-        if tap.is_none() {
-            unsafe { drop(Box::from_raw(ctx_ptr as *mut CallbackCtx)) };
+        match tap {
+            Ok(tap) => {
+                self.tap_generation.set(generation);
+                Some(tap)
+            }
+            Err(error) => {
+                unsafe { drop(Box::from_raw(ctx_ptr as *mut CallbackCtx)) };
+                error!(
+                    mask = %format_args!("{mask:#x}"),
+                    generation,
+                    %error,
+                    "Could not create the event tap"
+                );
+                None
+            }
         }
-
-        if tap.is_some() {
-            self.tap_generation.set(tap_generation);
-        }
-        tap
     }
 
     fn rebuild_event_tap_mask_if_needed(
@@ -192,7 +200,6 @@ impl InputTap {
         }
 
         let Some(new_tap) = self.create_tap_with_mask(next_mask, recovery_tx.clone()) else {
-            warn!("Failed to rebuild event tap with updated mask");
             return;
         };
 
@@ -214,7 +221,6 @@ impl InputTap {
 
         let mask = self.event_mask.get();
         let Some(new_tap) = self.create_tap_with_mask(mask, recovery_tx.clone()) else {
-            error!(generation, "Failed to recreate invalidated event tap");
             return;
         };
 

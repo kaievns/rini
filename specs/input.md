@@ -76,6 +76,9 @@ binding naming one is satisfied by the flag alone.
   is listening for puts rini between the user and every keystroke for nothing.
 - A tap the OS disables MUST be re-armed, and a re-arm MUST be matched to the generation that was
   disabled, or a stale recovery re-enables a tap that has since been replaced.
+- A tap rini cannot create MUST be logged as an error naming the mask it asked for and its generation,
+  and MUST free what was allocated for it. Without the tap no hotkey fires, and a silent failure
+  leaves nothing to say why.
 - rini MUST NOT tap trackpad gestures. A swipe MUST do what macOS does with it.
 
 > **Reported 2026-10-10.** Of the trackpad swipes rini handled, Kai: "those are all inherited from rift
