@@ -1942,6 +1942,36 @@ fn a_switch_claims_the_destination_strip_s_layout() {
     assert_eq!(claimed, now, "as the strip has it now");
 }
 
+/// A jump across the stack draws every workspace between the two, each one pitch below the one
+/// above it, and lands on the destination's row.
+#[test]
+fn a_jump_across_the_stack_draws_each_workspace_one_row_below_the_last() {
+    let (mut apps, mut reactor, mut rx) = started(test_reactor_with_workspace_count(4));
+    let pitch = reactor.space_state.screens[0].frame.size.height;
+    reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
+        workspace: rini_ipc::protocol::WorkspaceSelector::Index(2),
+        follow: false,
+        window_id: Some(2),
+    });
+    apps.simulate_until_quiet(&mut reactor);
+    strip_movements(&mut rx);
+
+    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(2));
+
+    let slides = strip_movements(&mut rx);
+    assert_eq!(slides.len(), 1, "one slide down the stack");
+    let row = |window: WindowId| {
+        let drawn = slides[0].windows.iter().find(|drawn| drawn.window == window).unwrap();
+        (drawn.frame.origin.y / pitch).floor()
+    };
+    assert_eq!((row(WindowId::new(1, 1)), row(WindowId::new(1, 2))), (0., 2.));
+    assert_eq!(
+        slides[0].to_offset,
+        SurfacePoint::new(0., 2. * pitch),
+        "two rows down"
+    );
+}
+
 /// A restored layout shows the workspace it was saved on, and the first switch slides from that one.
 #[test]
 fn a_restored_layout_s_first_switch_slides_from_the_workspace_it_opened_on() {

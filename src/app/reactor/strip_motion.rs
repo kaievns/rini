@@ -11,6 +11,7 @@ use rustc_hash::FxHashMap as HashMap;
 use tracing::debug;
 
 use super::{Reactor, ScreenInfo};
+use crate::transitions::domain::request::SurfaceWindow;
 use crate::workspaces::Direction;
 
 impl Reactor {
@@ -216,36 +217,21 @@ impl Reactor {
         // compounded the error on every press, which is what made rapid next/prev jerk back and forth.
         let from_offset = SurfacePoint::new(delta.x, delta.y);
         let to_offset = SurfacePoint::origin();
-        use crate::animation::domain::choreography::{Area, Cue, Look};
+        use crate::animation::domain::choreography::{Cue, Look};
         let look = Look::default();
         let cue = moved.map_or(Cue::Plain, |(window, direction)| Cue::Move { window, direction });
         // A move's pair starts where the look stages it.
         if cue == Cue::Plain {
-            let origin = ScreenPoint::from_cg(display_bounds.origin);
-            let at_rest =
-                |frame| crate::transitions::domain::strip_stack::strip_frame(frame, origin, 0, 0.0);
-            let standing: Vec<(WindowId, SurfaceRect)> =
-                standing.iter().map(|request| (request.window, at_rest(request.from))).collect();
-            let laid_out: Vec<(WindowId, SurfaceRect)> = laid_out
-                .iter()
-                .map(|&(window, frame)| (window, at_rest(ScreenRect::from_cg(frame))))
-                .collect();
-            crate::transitions::domain::strip_move::start_where_standing(
+            start_where_standing(
                 &mut windows,
-                &standing,
-                &laid_out,
+                standing,
+                laid_out,
                 from_offset,
-                at_rest(ScreenRect::from_cg(screen.frame)),
+                display_bounds,
+                screen.frame,
             );
         }
-        let area = Area {
-            frame: rini_geometry::to_overlay_space(
-                ScreenRect::from_cg(screen.frame),
-                ScreenRect::from_cg(display_bounds),
-            ),
-            outer_left: gaps.outer.left,
-            outer_right: gaps.outer.right,
-        };
+        let area = strip_area(screen.frame, display_bounds, &gaps);
         // The plain duration: the look stretches the flight only when it takes the step.
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
@@ -412,63 +398,10 @@ impl Reactor {
             return false;
         }
 
-        let low = from_index.min(to_index);
-        let high = from_index.max(to_index);
-
-        // Strips are stacked one USABLE height apart, so each workspace's tiling area sits directly
-        // on the one above it and a switch reads as the strips scrolling as a single column. The
-        // pitch was once the full display height, which left a menu-bar-sized band of empty desktop
-        // between one workspace and the next as it scrolled past.
-        //
-        // The surface is still expressed in full-display coordinates (the overlay's own), so a
-        // window keeps its position below the bar within its row; only the row-to-row step shrinks.
         let display_bounds = (self.reads.display_bounds)(screen.id);
-        let row_pitch = screen.frame.size.height;
-        let height = row_pitch;
-
-        let mut windows: Vec<crate::transitions::domain::request::SurfaceWindow> = Vec::new();
-        let mut destination_layout = Vec::new();
-        let rings = self.layout_rings();
-        for index in low..=high {
-            let Some((workspace_id, _)) = workspaces.get(index) else {
-                continue;
-            };
-            let layout = self.layout_engine.calculate_layout_for_workspace(
-                &self.state.windows,
-                space,
-                *workspace_id,
-                screen.frame,
-                &gaps,
-            );
-            if index == to_index {
-                destination_layout.clone_from(&layout);
-            }
-            // Stacked below the workspace above it, separated by the menu bar inset, and expressed
-            // relative to the display's own origin so the overlay's space needs no further translation.
-            let row = crate::transitions::domain::strip_stack::row_of(index, from_index, to_index);
-            for (wid, frame) in layout {
-                let Some(window) = self.state.windows.window(wid) else {
-                    continue;
-                };
-                let Some(server_id) = window.info.sys_id else { continue };
-                windows.push(crate::transitions::domain::request::SurfaceWindow {
-                    window: wid,
-                    server_id,
-                    frame: crate::transitions::domain::strip_stack::strip_frame(
-                        ScreenRect::from_cg(frame),
-                        ScreenPoint::from_cg(display_bounds.origin),
-                        row,
-                        row_pitch,
-                    ),
-                    // Never pinned here. A floating window belongs to a workspace, so it leaves with the
-                    // one being left and arrives with the one being entered.
-                    pinned: false,
-                    floating: self.layout_engine.is_window_floating(wid),
-                    from: None,
-                    worn: self.worn(wid, &rings),
-                });
-            }
-        }
+        let height = screen.frame.size.height;
+        let (windows, destination_layout) =
+            self.switch_rows(space, &workspaces, from_index, to_index, &screen, &gaps);
 
         // EVERY window in the layout, not just the destination workspace's. This layout is what the
         // non-animated path would have applied, and it includes the parked positions of windows
@@ -500,34 +433,8 @@ impl Reactor {
             (self.config.settings.animation_duration.max(0.0)) * travel.duration_stretch,
         );
 
-        // The switch owns the destination's horizontal position. Its row is drawn at that scroll already, so
-        // the strip arrives with the target window in view and the only movement the eye sees is vertical.
-        // Without claiming it, the next pass reads the destination's origin as a fresh movement and pans
-        // sideways after the slide has landed. Its layout with it, as the strip the next pan starts from.
-        if let Some(destination) = self.layout_engine.active_workspace(space)
-            && let Some(origin) = self.layout_engine.strip_origin(space)
-        {
-            self.last_strip_origin.insert((space, destination), origin);
-            self.last_strip_layout.insert((space, destination), destination_layout);
-        }
-
-        // That claim suppresses the pan that would otherwise reveal the target, so if the destination row
-        // was NOT drawn scrolled to it, the target stays off screen. That would be a layout problem rather
-        // than an animation one, and it is silent, so say so.
-        if let Some(target) = self.layout_engine.focused_window()
-            && let Some(placed) = windows.iter().find(|window| window.window == target)
-            && !crate::transitions::domain::strip_stack::lands_in_view(
-                placed.frame,
-                display_bounds.size.width,
-            )
-        {
-            tracing::debug!(
-                idx = target.idx.get(),
-                x = placed.frame.origin.x,
-                width = display_bounds.size.width,
-                "the switch target is off the destination row's viewport and will not be revealed"
-            );
-        }
+        self.claim_destination_strip(space, destination_layout);
+        report_target_out_of_view(self.layout_engine.focused_window(), &windows, display_bounds);
 
         self.send_flight(
             space,
@@ -550,6 +457,93 @@ impl Reactor {
         // the pictures service holds a warm until the quiet after the flight (`src/transitions/docs/coordination.md`).
         self.warm_all_workspaces(space);
         true
+    }
+
+    /// Every workspace from `from_index` to `to_index`, laid out and stacked one usable height
+    /// below the one above it, as strip-surface windows; and the destination's own layout.
+    fn switch_rows(
+        &self,
+        space: SpaceId,
+        workspaces: &[(crate::workspaces::VirtualWorkspaceId, String)],
+        from_index: usize,
+        to_index: usize,
+        screen: &ScreenInfo,
+        gaps: &crate::layout::settings::Gaps,
+    ) -> (Vec<SurfaceWindow>, Vec<(WindowId, CGRect)>) {
+        let (low, high) = (from_index.min(to_index), from_index.max(to_index));
+        // Strips are stacked one USABLE height apart, so each workspace's tiling area sits directly
+        // on the one above it and a switch reads as the strips scrolling as a single column. The
+        // pitch was once the full display height, which left a menu-bar-sized band of empty desktop
+        // between one workspace and the next as it scrolled past.
+        //
+        // The surface is still expressed in full-display coordinates (the overlay's own), so a
+        // window keeps its position below the bar within its row; only the row-to-row step shrinks.
+        let display_bounds = (self.reads.display_bounds)(screen.id);
+        let row_pitch = screen.frame.size.height;
+        let mut windows: Vec<SurfaceWindow> = Vec::new();
+        let mut destination_layout = Vec::new();
+        let rings = self.layout_rings();
+        for index in low..=high {
+            let Some((workspace_id, _)) = workspaces.get(index) else {
+                continue;
+            };
+            let layout = self.layout_engine.calculate_layout_for_workspace(
+                &self.state.windows,
+                space,
+                *workspace_id,
+                screen.frame,
+                gaps,
+            );
+            if index == to_index {
+                destination_layout.clone_from(&layout);
+            }
+            // Stacked below the workspace above it, separated by the menu bar inset, and expressed
+            // relative to the display's own origin so the overlay's space needs no further translation.
+            let row = crate::transitions::domain::strip_stack::row_of(index, from_index, to_index);
+            for (wid, frame) in layout {
+                let Some(window) = self.state.windows.window(wid) else {
+                    continue;
+                };
+                let Some(server_id) = window.info.sys_id else { continue };
+                windows.push(SurfaceWindow {
+                    window: wid,
+                    server_id,
+                    frame: crate::transitions::domain::strip_stack::strip_frame(
+                        ScreenRect::from_cg(frame),
+                        ScreenPoint::from_cg(display_bounds.origin),
+                        row,
+                        row_pitch,
+                    ),
+                    // Never pinned here. A floating window belongs to a workspace, so it leaves with the
+                    // one being left and arrives with the one being entered.
+                    pinned: false,
+                    floating: self.layout_engine.is_window_floating(wid),
+                    from: None,
+                    worn: self.worn(wid, &rings),
+                });
+            }
+        }
+
+        (windows, destination_layout)
+    }
+
+    /// The destination's strip claimed by the switch.
+    ///
+    /// The switch owns the destination's horizontal position. Its row is drawn at that scroll already, so
+    /// the strip arrives with the target window in view and the only movement the eye sees is vertical.
+    /// Without claiming it, the next pass reads the destination's origin as a fresh movement and pans
+    /// sideways after the slide has landed. Its layout with it, as the strip the next pan starts from.
+    fn claim_destination_strip(
+        &mut self,
+        space: SpaceId,
+        destination_layout: Vec<(WindowId, CGRect)>,
+    ) {
+        if let Some(destination) = self.layout_engine.active_workspace(space)
+            && let Some(origin) = self.layout_engine.strip_origin(space)
+        {
+            self.last_strip_origin.insert((space, destination), origin);
+            self.last_strip_layout.insert((space, destination), destination_layout);
+        }
     }
 
     /// How far the ACTIVE workspace's strip has moved on screen since a pass last looked at that strip,
@@ -708,5 +702,77 @@ impl Reactor {
             );
         }
         Some(frame)
+    }
+}
+
+/// Says so when the window a switch focuses is off the destination row's viewport.
+///
+/// The switch's claim on the destination strip suppresses the pan that would otherwise reveal the
+/// target, so if the destination row
+/// was NOT drawn scrolled to it, the target stays off screen. That would be a layout problem rather
+/// than an animation one, and it is silent, so say so.
+fn report_target_out_of_view(
+    focused: Option<WindowId>,
+    windows: &[SurfaceWindow],
+    display_bounds: CGRect,
+) {
+    if let Some(target) = focused
+        && let Some(placed) = windows.iter().find(|window| window.window == target)
+        && !crate::transitions::domain::strip_stack::lands_in_view(
+            placed.frame,
+            display_bounds.size.width,
+        )
+    {
+        tracing::debug!(
+            idx = target.idx.get(),
+            x = placed.frame.origin.x,
+            width = display_bounds.size.width,
+            "the switch target is off the destination row's viewport and will not be revealed"
+        );
+    }
+}
+
+/// Each window of a plain pan started where it stands if on screen, else where the strip had it,
+/// both on the surface at rest (`strip_move::start_where_standing`).
+fn start_where_standing(
+    windows: &mut [SurfaceWindow],
+    standing: &[crate::transitions::domain::request::AnimationRequest],
+    laid_out: &[(WindowId, CGRect)],
+    from_offset: SurfacePoint,
+    display_bounds: CGRect,
+    screen_frame: CGRect,
+) {
+    let origin = ScreenPoint::from_cg(display_bounds.origin);
+    let at_rest =
+        |frame| crate::transitions::domain::strip_stack::strip_frame(frame, origin, 0, 0.0);
+    let standing: Vec<(WindowId, SurfaceRect)> =
+        standing.iter().map(|request| (request.window, at_rest(request.from))).collect();
+    let laid_out: Vec<(WindowId, SurfaceRect)> = laid_out
+        .iter()
+        .map(|&(window, frame)| (window, at_rest(ScreenRect::from_cg(frame))))
+        .collect();
+    crate::transitions::domain::strip_move::start_where_standing(
+        windows,
+        &standing,
+        &laid_out,
+        from_offset,
+        at_rest(ScreenRect::from_cg(screen_frame)),
+    );
+}
+
+/// The area a look stages a strip move in: the screen's frame in the overlay's space, with the
+/// strip's outer gaps.
+fn strip_area(
+    screen_frame: CGRect,
+    display_bounds: CGRect,
+    gaps: &crate::layout::settings::Gaps,
+) -> crate::animation::domain::choreography::Area {
+    crate::animation::domain::choreography::Area {
+        frame: rini_geometry::to_overlay_space(
+            ScreenRect::from_cg(screen_frame),
+            ScreenRect::from_cg(display_bounds),
+        ),
+        outer_left: gaps.outer.left,
+        outer_right: gaps.outer.right,
     }
 }
