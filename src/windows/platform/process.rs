@@ -24,7 +24,6 @@ impl ProcessInfo {
 type FourCharCode = u32;
 type OSType = FourCharCode;
 
-#[allow(dead_code)]
 #[allow(non_snake_case)]
 #[repr(C, packed(2))]
 #[derive(Default)]
