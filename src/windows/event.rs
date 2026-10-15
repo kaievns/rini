@@ -7,7 +7,7 @@ use rini_core::ids::{WindowId, pid_t};
 
 use crate::windows::domain::attention::Attention;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
-use crate::windows::domain::request::{AppThreadHandle, Quiet};
+use crate::windows::domain::request::{AppThreadHandle, Quiet, RaiseSequence};
 use crate::windows::domain::transaction::{Requested, TransactionId};
 use crate::windows::platform::mouse::MouseState;
 
@@ -32,23 +32,24 @@ pub enum Event {
         new: Vec<(WindowId, WindowInfo)>,
         known_visible: Vec<WindowId>,
     },
-    WindowCreated(
-        WindowId,
-        WindowInfo,
-        Option<WindowServerInfo>,
-        Option<MouseState>,
-    ),
+    WindowCreated {
+        window: WindowId,
+        info: WindowInfo,
+        server_info: Option<WindowServerInfo>,
+        mouse_state: Option<MouseState>,
+    },
     WindowDestroyed(WindowId),
     WindowMinimized(WindowId),
     WindowDeminiaturized(WindowId),
     /// `Requested` says whether the frame is the echo of a frame rini asked for.
-    WindowFrameChanged(
-        WindowId,
-        CGRect,
-        Option<TransactionId>,
-        Requested,
-        Option<MouseState>,
-    ),
+    WindowFrameChanged {
+        window: WindowId,
+        frame: CGRect,
+        /// The txid of rini's last write to the window when the app read the frame.
+        last_seen: Option<TransactionId>,
+        requested: Requested,
+        mouse_state: Option<MouseState>,
+    },
     WindowTitleChanged(WindowId, String),
     MenuOpened(pid_t),
     MenuClosed(pid_t),
@@ -56,11 +57,11 @@ pub enum Event {
     /// `src/windows/docs/admission-and-raise-findings.md` for why it is not retried.
     RaiseCompleted {
         window_id: WindowId,
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
     },
     /// A raise sequence ran past the raise manager's deadline; its pending raises are dropped.
     RaiseTimeout {
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
     },
     /// The raise manager has nothing running or waiting, having received `requests_seen` raise
     /// requests in all.

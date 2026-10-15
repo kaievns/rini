@@ -228,6 +228,7 @@ mod tests {
 
     use super::fixtures::{PID, Sink, raisable};
     use super::*;
+    use crate::windows::domain::request::RaiseSequence;
     use crate::windows::platform::ax::world::FakeAx;
 
     /// Runs the actor over `requests` with a raise of `raised` queued ahead of them, and answers
@@ -242,12 +243,12 @@ mod tests {
         let (requests_tx, requests_rx) = channels::channel();
         let (_notifications_tx, notifications_rx) = channels::channel();
         let (raises_tx, raises_rx) = channels::channel();
-        raises_tx.send(RaiseRequest(
-            vec![raised],
-            CancellationToken::new(),
-            1,
-            Quiet::No,
-        ));
+        raises_tx.send(RaiseRequest {
+            windows: vec![raised],
+            token: CancellationToken::new(),
+            sequence_id: RaiseSequence(1),
+            quiet: Quiet::No,
+        });
         state.raises_tx = raises_tx;
         for request in requests {
             requests_tx.send(request);

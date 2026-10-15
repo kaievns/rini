@@ -16,17 +16,17 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, trace, warn};
 
 use super::State;
-use crate::windows::domain::request::Quiet;
+use crate::windows::domain::request::{Quiet, RaiseSequence};
 use crate::windows::event::Event;
 use crate::windows::platform::ax::element::{AX_STANDARD_WINDOW_SUBROLE, Error as AxError};
 use crate::windows::platform::ax::world::AxWorld;
 
-pub(super) struct RaiseRequest(
-    pub(super) Vec<WindowId>,
-    pub(super) CancellationToken,
-    pub(super) u64,
-    pub(super) Quiet,
-);
+pub(super) struct RaiseRequest {
+    pub(super) windows: Vec<WindowId>,
+    pub(super) token: CancellationToken,
+    pub(super) sequence_id: RaiseSequence,
+    pub(super) quiet: Quiet,
+}
 
 #[derive(Debug)]
 #[allow(dead_code, reason = "used by Debug impls")]
@@ -60,8 +60,13 @@ impl<W: AxWorld> State<W> {
         mut rx: channels::Receiver<RaiseRequest>,
     ) {
         while let Some((span, raise)) = rx.recv().await {
-            let RaiseRequest(wids, token, sequence_id, quiet) = raise;
-            if let Err(e) = Self::handle_raise_request(this, wids, &token, sequence_id, quiet)
+            let RaiseRequest {
+                windows,
+                token,
+                sequence_id,
+                quiet,
+            } = raise;
+            if let Err(e) = Self::handle_raise_request(this, windows, &token, sequence_id, quiet)
                 .instrument(span)
                 .await
             {
@@ -88,7 +93,7 @@ impl<W: AxWorld> State<W> {
         this_ref: &RefCell<Self>,
         wids: Vec<WindowId>,
         token: &CancellationToken,
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
         quiet: Quiet,
     ) -> Result<(), RaiseError> {
         let check_cancel = || {
@@ -194,7 +199,7 @@ impl<W: AxWorld> State<W> {
         &mut self,
         wids: &[WindowId],
         first_raised: bool,
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
         quiet: Quiet,
         mut raising: Option<MutexGuard<'static, ()>>,
     ) -> Result<(), AxError> {
@@ -309,7 +314,7 @@ mod tests {
             &state,
             vec![foreign, wid],
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
         let done = raise
@@ -345,7 +350,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
 
@@ -370,7 +375,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
 
@@ -395,7 +400,7 @@ mod tests {
             &state,
             order.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
 
@@ -420,7 +425,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::Yes
         ));
 
@@ -442,7 +447,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::Yes
         ));
 
@@ -467,7 +472,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
 
@@ -491,7 +496,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
 
@@ -512,7 +517,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
         assert!(poll_once(raise.as_mut()).is_pending());
@@ -542,7 +547,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
         assert!(poll_once(raise.as_mut()).is_pending());
@@ -568,7 +573,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
 
@@ -594,7 +599,7 @@ mod tests {
         Executor::run(async move {
             let token = CancellationToken::new();
             select! {
-                result = State::handle_raise_request(&raising, raised, &token, 1, Quiet::No) => {
+                result = State::handle_raise_request(&raising, raised, &token, RaiseSequence(1), Quiet::No) => {
                     *finished.borrow_mut() = Some(result.is_ok());
                 }
                 () = Timer::sleep(Duration::from_secs(5)) => {}
@@ -628,7 +633,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
 
@@ -652,7 +657,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
 
@@ -679,7 +684,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
 

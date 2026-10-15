@@ -28,6 +28,8 @@ pub enum Event {
     SessionDidResignActive,
     SessionDidBecomeActive,
     DisplayChurnBegin,
+    /// The reconfiguration settled or was given up on. A settled one sends its snapshot first.
+    DisplayChurnEnd,
     /// The Dock reported Mission Control (or App Exposé / Show Desktop) opening.
     MissionControlEntered,
     MissionControlExited,

@@ -91,15 +91,29 @@ enum Launch {
     Kickstart { kill: bool },
 }
 
+/// What `service start` or `service restart` did to the plist on disk before launching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlistChange {
+    Unchanged,
+    Rewritten,
+}
+
+/// Which service command is launching the job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asked {
+    Start,
+    Restart,
+}
+
 /// launchd runs the job definition it LOADED, not the file on disk. So a plist that changed while the
 /// job is loaded only takes effect after a bootout and a fresh bootstrap — a kickstart, with or without
 /// `-k`, would run the old binary again, which is how a rewritten plist could still leave a stale build
 /// running.
-fn launch_plan(loaded: bool, plist_changed: bool, restart: bool) -> Launch {
-    match (loaded, plist_changed) {
+fn launch_plan(loaded: bool, plist: PlistChange, asked: Asked) -> Launch {
+    match (loaded, plist) {
         (false, _) => Launch::Bootstrap,
-        (true, true) => Launch::Reload,
-        (true, false) => Launch::Kickstart { kill: restart },
+        (true, PlistChange::Rewritten) => Launch::Reload,
+        (true, PlistChange::Unchanged) => Launch::Kickstart { kill: asked == Asked::Restart },
     }
 }
 
@@ -138,15 +152,15 @@ fn launch(plan: Launch, plist_path: &Path) -> io::Result<()> {
     }
 }
 
-/// Point the plist at the build running this command. True when that changed it.
+/// Point the plist at the build running this command.
 ///
 /// Skipped without `USER` and `PATH` in the environment, which the plist is built from; an existing
 /// plist is then left as it is rather than rewritten with gaps.
-fn refresh_plist(plist_path: &Path, allow_move: bool) -> io::Result<bool> {
+fn refresh_plist(plist_path: &Path, allow_move: bool) -> io::Result<PlistChange> {
     if env::var_os("USER").is_some() && env::var_os("PATH").is_some() {
         ensure_plist_up_to_date(plist_path, allow_move)
     } else {
-        Ok(false)
+        Ok(PlistChange::Unchanged)
     }
 }
 
@@ -306,20 +320,20 @@ pub fn service_install_internal(plist_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn ensure_plist_up_to_date(plist_path: &Path, allow_move: bool) -> io::Result<bool> {
+fn ensure_plist_up_to_date(plist_path: &Path, allow_move: bool) -> io::Result<PlistChange> {
     let desired = plist_contents()?;
     match fs::read_to_string(plist_path) {
-        Ok(existing) if existing == desired => Ok(false),
+        Ok(existing) if existing == desired => Ok(PlistChange::Unchanged),
         Ok(existing) => {
             let invoked = program_in_plist(&desired).unwrap_or_default();
             check_binary_move(program_in_plist(&existing), invoked, allow_move)
                 .map_err(|message| io::Error::new(io::ErrorKind::PermissionDenied, message))?;
             write_file_atomic(plist_path, &desired)?;
-            Ok(true)
+            Ok(PlistChange::Rewritten)
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
             write_file_atomic(plist_path, &desired)?;
-            Ok(true)
+            Ok(PlistChange::Rewritten)
         }
         Err(err) => Err(err),
     }
@@ -368,9 +382,9 @@ pub fn service_start(allow_move: bool) -> io::Result<()> {
             )
         })?;
     }
-    let plist_changed = refresh_plist(&plist_path, allow_move)?;
+    let plist = refresh_plist(&plist_path, allow_move)?;
     launch(
-        launch_plan(service_is_loaded(), plist_changed, false),
+        launch_plan(service_is_loaded(), plist, Asked::Start),
         &plist_path,
     )
 }
@@ -384,9 +398,9 @@ pub fn service_restart(allow_move: bool) -> io::Result<()> {
             format!("service file '{}' is not installed", plist_path.display()),
         ));
     }
-    let plist_changed = refresh_plist(&plist_path, allow_move)?;
+    let plist = refresh_plist(&plist_path, allow_move)?;
     launch(
-        launch_plan(service_is_loaded(), plist_changed, true),
+        launch_plan(service_is_loaded(), plist, Asked::Restart),
         &plist_path,
     )
 }
@@ -459,27 +473,30 @@ mod tests {
         assert_eq!(agent_executable(&link), link);
     }
 
-    /// The case that left a stale build running: a plist rewritten while the job is loaded has to be
-    /// reloaded, for a start AND a restart, because launchd runs what it loaded.
+    /// A changed plist under a loaded job is reloaded, for a start AND a restart, because launchd
+    /// runs what it loaded: the case that left a stale build running. An unloaded job is
+    /// bootstrapped whatever changed. A current plist is kickstarted: a start leaves a running
+    /// instance alone, a restart kills it first.
     #[test]
-    fn a_changed_plist_under_a_loaded_job_is_reloaded() {
-        assert_eq!(launch_plan(true, true, false), Launch::Reload);
-        assert_eq!(launch_plan(true, true, true), Launch::Reload);
-    }
-
-    #[test]
-    fn an_unloaded_job_is_bootstrapped_whatever_changed() {
-        assert_eq!(launch_plan(false, true, false), Launch::Bootstrap);
-        assert_eq!(launch_plan(false, false, true), Launch::Bootstrap);
-    }
-
-    /// A start leaves a running instance alone; a restart kills it first.
-    #[test]
-    fn a_current_plist_is_just_kickstarted() {
-        assert_eq!(launch_plan(true, false, false), Launch::Kickstart {
-            kill: false
-        });
-        assert_eq!(launch_plan(true, false, true), Launch::Kickstart { kill: true });
+    fn a_launch_plan_follows_the_job_the_plist_and_the_command() {
+        use Asked::{Restart, Start};
+        use PlistChange::{Rewritten, Unchanged};
+        for (loaded, plist, asked, plan) in [
+            (true, Rewritten, Start, Launch::Reload),
+            (true, Rewritten, Restart, Launch::Reload),
+            (false, Rewritten, Start, Launch::Bootstrap),
+            (false, Rewritten, Restart, Launch::Bootstrap),
+            (false, Unchanged, Start, Launch::Bootstrap),
+            (false, Unchanged, Restart, Launch::Bootstrap),
+            (true, Unchanged, Start, Launch::Kickstart { kill: false }),
+            (true, Unchanged, Restart, Launch::Kickstart { kill: true }),
+        ] {
+            assert_eq!(
+                launch_plan(loaded, plist, asked),
+                plan,
+                "{loaded}, {plist:?}, {asked:?}"
+            );
+        }
     }
 
     #[test]
@@ -518,7 +535,10 @@ mod tests {
         assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(fs::read_to_string(&plist_path).unwrap(), installed);
 
-        assert!(ensure_plist_up_to_date(&plist_path, true).unwrap());
+        assert_eq!(
+            ensure_plist_up_to_date(&plist_path, true).unwrap(),
+            PlistChange::Rewritten
+        );
         let moved = fs::read_to_string(&plist_path).unwrap();
         assert_ne!(program_in_plist(&moved), Some("/somewhere/else/rini"));
     }

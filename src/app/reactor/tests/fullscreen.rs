@@ -171,10 +171,10 @@ fn fullscreen_does_not_suppress_other_same_pid_windows() {
 
     reactor.window_server_appeared(original_wsid, fullscreen_space, SpaceEventKind::Fullscreen);
 
-    reactor.handle_event(Event::WindowCreated(
-        second_wid,
-        make_window_info(frame, Some(second_wsid), "Second Window", None),
-        Some(crate::windows::domain::info::WindowServerInfo {
+    reactor.handle_event(Event::WindowCreated {
+        window: second_wid,
+        info: make_window_info(frame, Some(second_wsid), "Second Window", None),
+        server_info: Some(crate::windows::domain::info::WindowServerInfo {
             id: second_wsid,
             pid: original_wid.pid,
             layer: 0,
@@ -182,8 +182,8 @@ fn fullscreen_does_not_suppress_other_same_pid_windows() {
             min_frame: frame.size,
             max_frame: frame.size,
         }),
-        None,
-    ));
+        mouse_state: None,
+    });
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(second_wid),
@@ -495,7 +495,7 @@ fn fullscreen_startup_applies_app_rules_to_hidden_user_space_windows() {
         user_space,
         secondary_workspace: target_workspace,
         ..
-    } = fullscreen_startup_fixture(true, false);
+    } = fullscreen_startup_fixture(SecondWorkspaceBy::AppRule);
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
@@ -516,7 +516,7 @@ fn fullscreen_startup_discovery_preserves_existing_hidden_assignment_without_app
         user_space,
         default_workspace,
         secondary_workspace,
-    } = fullscreen_startup_fixture(false, true);
+    } = fullscreen_startup_fixture(SecondWorkspaceBy::EarlierAssignment);
 
     assert_ne!(secondary_workspace, default_workspace);
     assert_eq!(

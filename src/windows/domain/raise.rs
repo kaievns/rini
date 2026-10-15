@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
 use crate::windows::domain::raise_order::AppBatch;
-use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
+use crate::windows::domain::request::{AppThreadHandle, Quiet, RaiseSequence, Request};
 use crate::windows::event::{Event as WindowsEvent, EventSink};
 
 /// Messages that can be sent to the raise manager
@@ -23,10 +23,10 @@ pub enum Event {
     RaiseRequest(RaiseRequest),
     RaiseCompleted {
         window_id: WindowId,
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
     },
     RaiseTimeout {
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
     },
 }
 
@@ -65,7 +65,7 @@ pub struct RaiseManager {
     active_sequence: Option<ActiveSequence>,
     /// Queued sequences waiting to be processed
     queued_sequences: VecDeque<RaiseRequest>,
-    next_sequence_id: u64,
+    next_sequence_id: RaiseSequence,
     requests_seen: u64,
     warp: Box<dyn Fn(CGPoint)>,
 }
@@ -73,7 +73,7 @@ pub struct RaiseManager {
 /// Tracks an executing sequence of raises.
 #[derive(Debug)]
 struct ActiveSequence {
-    sequence_id: u64,
+    sequence_id: RaiseSequence,
     focus_window: Option<WindowId>,
     pending_raises: HashSet<WindowId>,
     focus_batch: Option<(pid_t, Vec<WindowId>, Option<CGPoint>, Quiet)>,
@@ -152,7 +152,7 @@ impl RaiseManager {
         Self {
             active_sequence: None,
             queued_sequences: VecDeque::new(),
-            next_sequence_id: 1,
+            next_sequence_id: RaiseSequence(1),
             requests_seen: 0,
             warp: Box::new(warp),
         }
@@ -173,7 +173,7 @@ impl RaiseManager {
                     if let Some(active) = self.active_sequence.take_if(|a| a.focus_window.is_some())
                     {
                         debug!(
-                            sequence = active.sequence_id,
+                            sequence = active.sequence_id.0,
                             "superseded; cancelling its raises"
                         );
                         active.raise_token.cancel();
@@ -253,7 +253,7 @@ impl RaiseManager {
         }: RaiseRequest,
     ) {
         let sequence_id = self.next_sequence_id;
-        self.next_sequence_id += 1;
+        self.next_sequence_id = sequence_id.next();
 
         // Send all raise requests with completion notification
         let mut pending_raises = HashSet::default();
@@ -279,12 +279,12 @@ impl RaiseManager {
                 continue;
             };
             if app_handle
-                .send(Request::Raise(
-                    wids.clone(),
-                    raise_token.clone(),
+                .send(Request::Raise {
+                    windows: wids.clone(),
+                    token: raise_token.clone(),
                     sequence_id,
-                    Quiet::Yes,
-                ))
+                    quiet: Quiet::Yes,
+                })
                 .is_ok()
             {
                 pending_raises.extend(wids);
@@ -327,12 +327,12 @@ impl RaiseManager {
             let app_handle = sequence.app_handles.get(&pid);
             if let Some(handle) = app_handle {
                 if handle
-                    .send(Request::Raise(
-                        wids.clone(),
-                        sequence.raise_token.clone(),
-                        sequence.sequence_id, // Use proper sequence ID for tracking
+                    .send(Request::Raise {
+                        windows: wids.clone(),
+                        token: sequence.raise_token.clone(),
+                        sequence_id: sequence.sequence_id,
                         quiet,
-                    ))
+                    })
                     .is_ok()
                 {
                     // Add focus window to pending raises so we wait for completion.
@@ -411,9 +411,15 @@ mod tests {
         expected_seq_id: u64,
         expected_quiet: Quiet,
     ) {
-        if let Request::Raise(wid, _, seq_id, quiet) = request {
+        if let Request::Raise {
+            windows: wid,
+            sequence_id: seq_id,
+            quiet,
+            ..
+        } = request
+        {
             assert_eq!(*wid, vec![expected_wid]);
-            assert_eq!(*seq_id, expected_seq_id);
+            assert_eq!(*seq_id, RaiseSequence(expected_seq_id));
             assert_eq!(*quiet, expected_quiet);
         } else {
             panic!("Expected raise request, got: {:?}", request);
@@ -422,7 +428,7 @@ mod tests {
 
     fn find_raise_request(requests: &[Request], expected_wid: WindowId) -> bool {
         requests.iter().any(|r| {
-            if let Request::Raise(wid, _, _, quiet) = r {
+            if let Request::Raise { windows: wid, quiet, .. } = r {
                 *wid == vec![expected_wid] && *quiet == Quiet::No
             } else {
                 false
@@ -448,7 +454,7 @@ mod tests {
             // Verify that an active sequence was created
             assert!(raise_manager.active_sequence.is_some());
             let sequence = raise_manager.active_sequence.as_ref().unwrap();
-            assert_eq!(sequence.sequence_id, 1);
+            assert_eq!(sequence.sequence_id, RaiseSequence(1));
             assert_eq!(sequence.pending_raises.len(), 2);
             assert!(sequence.focus_batch.is_some());
         });
@@ -479,7 +485,7 @@ mod tests {
             // Send completion for one window
             let completion_msg = Event::RaiseCompleted {
                 window_id: WindowId::new(1, 1),
-                sequence_id: 1,
+                sequence_id: RaiseSequence(1),
             };
 
             raise_manager.handle_message(completion_msg);
@@ -512,7 +518,7 @@ mod tests {
             );
 
             // Send timeout directly
-            raise_manager.handle_message(Event::RaiseTimeout { sequence_id: 1 });
+            raise_manager.handle_message(Event::RaiseTimeout { sequence_id: RaiseSequence(1) });
 
             // Verify that the sequence was completed
             assert!(raise_manager.active_sequence.is_none());
@@ -549,12 +555,12 @@ mod tests {
             // Send completions for both raise windows
             raise_manager.handle_message(Event::RaiseCompleted {
                 window_id: WindowId::new(1, 1),
-                sequence_id: 1,
+                sequence_id: RaiseSequence(1),
             });
 
             raise_manager.handle_message(Event::RaiseCompleted {
                 window_id: WindowId::new(1, 2),
-                sequence_id: 1,
+                sequence_id: RaiseSequence(1),
             });
 
             // Check that focus window request was sent
@@ -571,7 +577,7 @@ mod tests {
             // Complete the focus window raise
             raise_manager.handle_message(Event::RaiseCompleted {
                 window_id: WindowId::new(1, 3),
-                sequence_id: 1,
+                sequence_id: RaiseSequence(1),
             });
 
             // Verify that the sequence was completed and removed
@@ -602,7 +608,7 @@ mod tests {
             );
 
             // Send timeout for the sequence
-            raise_manager.handle_message(Event::RaiseTimeout { sequence_id: 1 });
+            raise_manager.handle_message(Event::RaiseTimeout { sequence_id: RaiseSequence(1) });
 
             // Check that focus window request was sent after timeout
             let requests = collect_requests(&mut app_rx);
@@ -614,7 +620,7 @@ mod tests {
             // Complete the focus window raise
             raise_manager.handle_message(Event::RaiseCompleted {
                 window_id: WindowId::new(1, 3),
-                sequence_id: 1,
+                sequence_id: RaiseSequence(1),
             });
 
             // Verify that the sequence was completed and removed
@@ -645,12 +651,15 @@ mod tests {
             raise_manager.handle_message(msg1);
             raise_manager.handle_message(msg2);
 
-            assert_eq!(raise_manager.active_sequence.as_ref().unwrap().sequence_id, 1);
+            assert_eq!(
+                raise_manager.active_sequence.as_ref().unwrap().sequence_id,
+                RaiseSequence(1)
+            );
             assert_eq!(raise_manager.queued_sequences.len(), 1);
 
             raise_manager.handle_message(Event::RaiseCompleted {
                 window_id: WindowId::new(1, 1),
-                sequence_id: 1,
+                sequence_id: RaiseSequence(1),
             });
 
             let sequence = raise_manager.active_sequence.as_ref().unwrap();
@@ -665,11 +674,11 @@ mod tests {
 
             raise_manager.handle_message(Event::RaiseCompleted {
                 window_id: WindowId::new(1, 2),
-                sequence_id: 1,
+                sequence_id: RaiseSequence(1),
             });
 
             let sequence = raise_manager.active_sequence.as_ref().unwrap();
-            assert_eq!(sequence.sequence_id, 2);
+            assert_eq!(sequence.sequence_id, RaiseSequence(2));
             assert!(sequence.pending_raises.contains(&WindowId::new(1, 3)));
             assert_eq!(raise_manager.queued_sequences.len(), 0);
 
@@ -679,7 +688,7 @@ mod tests {
 
             raise_manager.handle_message(Event::RaiseCompleted {
                 window_id: WindowId::new(1, 3),
-                sequence_id: 2,
+                sequence_id: RaiseSequence(2),
             });
 
             assert!(raise_manager.active_sequence.is_none());
@@ -743,7 +752,7 @@ mod tests {
             for window in [WindowId::new(1, 1), WindowId::new(1, 2)] {
                 raise_manager.handle_message(Event::RaiseCompleted {
                     window_id: window,
-                    sequence_id: 1,
+                    sequence_id: RaiseSequence(1),
                 });
             }
             assert!(!raise_manager.is_busy());
@@ -771,7 +780,10 @@ mod tests {
                 ));
             }
 
-            assert_eq!(raise_manager.active_sequence.as_ref().unwrap().sequence_id, 1);
+            assert_eq!(
+                raise_manager.active_sequence.as_ref().unwrap().sequence_id,
+                RaiseSequence(1)
+            );
             let waiting: Vec<_> = raise_manager
                 .queued_sequences
                 .iter()
@@ -840,7 +852,10 @@ mod tests {
 
             // Verify first sequence is active, others queued
             assert!(raise_manager.active_sequence.is_some());
-            assert_eq!(raise_manager.active_sequence.as_ref().unwrap().sequence_id, 1);
+            assert_eq!(
+                raise_manager.active_sequence.as_ref().unwrap().sequence_id,
+                RaiseSequence(1)
+            );
             assert_eq!(raise_manager.queued_sequences.len(), 2);
 
             // Complete the first sequence's only raise - this should trigger multiple iterations:
@@ -850,7 +865,7 @@ mod tests {
             // Without multiple iterations, the second sequence's focus wouldn't be sent
             raise_manager.handle_message(Event::RaiseCompleted {
                 window_id: WindowId::new(1, 1),
-                sequence_id: 1,
+                sequence_id: RaiseSequence(1),
             });
 
             // After the completion, we should have:
@@ -858,7 +873,10 @@ mod tests {
             // - Third sequence still queued
             // - Focus request for second sequence should have been sent
             assert!(raise_manager.active_sequence.is_some());
-            assert_eq!(raise_manager.active_sequence.as_ref().unwrap().sequence_id, 2);
+            assert_eq!(
+                raise_manager.active_sequence.as_ref().unwrap().sequence_id,
+                RaiseSequence(2)
+            );
             assert!(
                 raise_manager
                     .active_sequence
@@ -874,8 +892,16 @@ mod tests {
             // wouldn't have a chance to send its focus request
             let requests = collect_requests(&mut app_rx);
             let second_focus_sent = requests.iter().any(|r| {
-                if let Request::Raise(wid, _, seq_id, quiet) = r {
-                    *wid == vec![WindowId::new(1, 3)] && *seq_id == 2 && *quiet == Quiet::No
+                if let Request::Raise {
+                    windows: wid,
+                    sequence_id: seq_id,
+                    quiet,
+                    ..
+                } = r
+                {
+                    *wid == vec![WindowId::new(1, 3)]
+                        && *seq_id == RaiseSequence(2)
+                        && *quiet == Quiet::No
                 } else {
                     false
                 }
@@ -923,16 +949,28 @@ mod tests {
             let requests = collect_requests(&mut app_rx);
 
             // Verify second and third batches are processed first.
-            if let Request::Raise(wids, _, seq_id, quiet) = &requests[0] {
+            if let Request::Raise {
+                windows: wids,
+                sequence_id: seq_id,
+                quiet,
+                ..
+            } = &requests[0]
+            {
                 assert_eq!(*wids, vec![WindowId::new(1, 3), WindowId::new(1, 4)]);
-                assert_eq!(*seq_id, 1);
+                assert_eq!(*seq_id, RaiseSequence(1));
                 assert_eq!(*quiet, Quiet::Yes);
             } else {
                 panic!("Expected Raise request for second batch");
             }
-            if let Request::Raise(wids, _, seq_id, quiet) = &requests[1] {
+            if let Request::Raise {
+                windows: wids,
+                sequence_id: seq_id,
+                quiet,
+                ..
+            } = &requests[1]
+            {
                 assert_eq!(*wids, vec![WindowId::new(1, 5), WindowId::new(1, 6)]);
-                assert_eq!(*seq_id, 1);
+                assert_eq!(*seq_id, RaiseSequence(1));
                 assert_eq!(*quiet, Quiet::Yes);
             } else {
                 panic!("Expected Raise request for third batch");
@@ -945,7 +983,10 @@ mod tests {
                 WindowId::new(1, 5),
                 WindowId::new(1, 6),
             ] {
-                let completion_msg = Event::RaiseCompleted { window_id: wid, sequence_id: 1 };
+                let completion_msg = Event::RaiseCompleted {
+                    window_id: wid,
+                    sequence_id: RaiseSequence(1),
+                };
                 raise_manager.handle_message(completion_msg);
             }
 
@@ -956,13 +997,19 @@ mod tests {
             // Verify first batch is processed last.
             // The focus_window should have been moved to the end.
             assert_eq!(requests.len(), 1);
-            if let Request::Raise(wids, _, seq_id, quiet) = &requests[0] {
+            if let Request::Raise {
+                windows: wids,
+                sequence_id: seq_id,
+                quiet,
+                ..
+            } = &requests[0]
+            {
                 assert_eq!(*wids, vec![
                     WindowId::new(1, 1),
                     WindowId::new(1, 2),
                     WindowId::new(1, 7),
                 ]);
-                assert_eq!(*seq_id, 1);
+                assert_eq!(*seq_id, RaiseSequence(1));
                 assert_eq!(*quiet, Quiet::No);
             } else {
                 panic!("Expected Raise request for first batch");

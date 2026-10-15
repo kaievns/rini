@@ -32,7 +32,8 @@ pub fn handle_application_launched(
         window_server_info,
     } = payload;
     apps.insert(pid, AppState { info: info.clone(), handle });
-    Ok(EventOutcome::window_membership_changed(false, true)
+    Ok(EventOutcome::window_membership_changed()
+        .with_window_notification_refresh()
         .with_window_server_updates(window_server_info)
         .with_discovery(WindowDiscoveryRequest {
             pid,
@@ -67,7 +68,7 @@ pub fn handle_application_thread_terminated(
     pid: i32,
 ) -> anyhow::Result<EventOutcome> {
     apps.remove(&pid);
-    let mut outcome = EventOutcome::window_membership_changed(false, true);
+    let mut outcome = EventOutcome::window_membership_changed().with_window_notification_refresh();
     let windows: Vec<WindowId> = state.windows.window_ids_for_pid(pid).collect();
     for window in windows {
         outcome.absorb(window::handle_window_destroyed(
@@ -113,14 +114,12 @@ pub fn handle_windows_discovered(
     payload: WindowsDiscoveredPayload,
 ) -> anyhow::Result<EventOutcome> {
     let WindowsDiscoveredPayload { pid, new, known_visible } = payload;
-    Ok(
-        EventOutcome::window_membership_changed(false, true).with_discovery(
-            WindowDiscoveryRequest {
-                pid,
-                new,
-                known_visible,
-                app_info: None,
-            },
-        ),
-    )
+    Ok(EventOutcome::window_membership_changed()
+        .with_window_notification_refresh()
+        .with_discovery(WindowDiscoveryRequest {
+            pid,
+            new,
+            known_visible,
+            app_info: None,
+        }))
 }

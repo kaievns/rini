@@ -44,6 +44,7 @@ use std::path::PathBuf;
 use std::thread;
 
 use events::{EventOutcome, WindowFrameWriteRequest, focus as focus_service};
+use layout_pass::Pass;
 use objc2_core_foundation::CGRect;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::space::{FromCg, ScreenRect};
@@ -65,7 +66,9 @@ use crate::transitions::domain::request::Cause;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::raise::RaiseManager;
-use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
+use crate::windows::domain::request::{
+    AppThreadHandle, Quiet, RaiseSequence, Request, SuppressEnhancedUi,
+};
 use crate::windows::domain::transaction::{TransactionId, WindowTxStore};
 use crate::windows::platform::mouse::MouseState;
 use crate::workspaces::domain::display_memory::DisplayMemory;
@@ -162,12 +165,12 @@ pub enum Event {
         new: Vec<(WindowId, WindowInfo)>,
         known_visible: Vec<WindowId>,
     },
-    WindowCreated(
-        WindowId,
-        WindowInfo,
-        Option<WindowServerInfo>,
-        Option<MouseState>,
-    ),
+    WindowCreated {
+        window: WindowId,
+        info: WindowInfo,
+        server_info: Option<WindowServerInfo>,
+        mouse_state: Option<MouseState>,
+    },
     WindowDestroyed(WindowId),
     WindowServerDestroyed(rini_core::ids::WindowServerId, SpaceId, SpaceEventKind),
     WindowServerAppeared(rini_core::ids::WindowServerId, SpaceId, SpaceEventKind),
@@ -175,13 +178,14 @@ pub enum Event {
     SpaceDestroyed(SpaceId),
     WindowMinimized(WindowId),
     WindowDeminiaturized(WindowId),
-    WindowFrameChanged(
-        WindowId,
-        CGRect,
-        Option<TransactionId>,
-        Requested,
-        Option<MouseState>,
-    ),
+    WindowFrameChanged {
+        window: WindowId,
+        frame: CGRect,
+        /// The txid of rini's last write to the window when the app read the frame.
+        last_seen: Option<TransactionId>,
+        requested: Requested,
+        mouse_state: Option<MouseState>,
+    },
     WindowTitleChanged(WindowId, String),
     MenuOpened(pid_t),
     MenuClosed(pid_t),
@@ -226,6 +230,7 @@ pub enum Event {
     SessionDidBecomeActive,
 
     DisplayChurnBegin,
+    DisplayChurnEnd,
 
     MissionControlNativeEntered,
     MissionControlNativeExited,
@@ -234,13 +239,13 @@ pub enum Event {
     /// all raise requests in a sequence have finished.
     RaiseCompleted {
         window_id: WindowId,
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
     },
 
     /// A raise sequence timed out. Used by the raise manager to clean up
     /// pending raises that took too long.
     RaiseTimeout {
-        sequence_id: u64,
+        sequence_id: RaiseSequence,
     },
 
     /// The raise manager has nothing running or waiting. See `RaiseEcho::idle`.
@@ -287,6 +292,7 @@ impl From<crate::displays::event::Event> for Event {
             D::SessionDidResignActive => Event::SessionDidResignActive,
             D::SessionDidBecomeActive => Event::SessionDidBecomeActive,
             D::DisplayChurnBegin => Event::DisplayChurnBegin,
+            D::DisplayChurnEnd => Event::DisplayChurnEnd,
             D::MissionControlEntered => Event::MissionControlNativeEntered,
             D::MissionControlExited => Event::MissionControlNativeExited,
             D::WindowServerFocusChanged(window, space) => {
@@ -328,15 +334,33 @@ impl From<crate::windows::event::Event> for Event {
             W::WindowsDiscovered { pid, new, known_visible } => {
                 Event::WindowsDiscovered { pid, new, known_visible }
             }
-            W::WindowCreated(wid, info, server_info, mouse) => {
-                Event::WindowCreated(wid, info, server_info, mouse)
-            }
+            W::WindowCreated {
+                window,
+                info,
+                server_info,
+                mouse_state,
+            } => Event::WindowCreated {
+                window,
+                info,
+                server_info,
+                mouse_state,
+            },
             W::WindowDestroyed(wid) => Event::WindowDestroyed(wid),
             W::WindowMinimized(wid) => Event::WindowMinimized(wid),
             W::WindowDeminiaturized(wid) => Event::WindowDeminiaturized(wid),
-            W::WindowFrameChanged(wid, frame, txid, requested, mouse) => {
-                Event::WindowFrameChanged(wid, frame, txid, requested, mouse)
-            }
+            W::WindowFrameChanged {
+                window,
+                frame,
+                last_seen,
+                requested,
+                mouse_state,
+            } => Event::WindowFrameChanged {
+                window,
+                frame,
+                last_seen,
+                requested,
+                mouse_state,
+            },
             W::WindowTitleChanged(wid, title) => Event::WindowTitleChanged(wid, title),
             W::MenuOpened(pid) => Event::MenuOpened(pid),
             W::MenuClosed(pid) => Event::MenuClosed(pid),
@@ -397,14 +421,14 @@ impl Event {
             | Event::ActiveDisplayChanged { .. }
             | Event::ApplicationTerminated(_)
             | Event::WindowsDiscovered { .. }
-            | Event::WindowCreated(..)
+            | Event::WindowCreated { .. }
             | Event::WindowServerDestroyed(..)
             | Event::WindowServerAppeared(..)
             | Event::SpaceCreated(_)
             | Event::SpaceDestroyed(_)
             | Event::WindowMinimized(_)
             | Event::WindowDeminiaturized(_)
-            | Event::WindowFrameChanged(..)
+            | Event::WindowFrameChanged { .. }
             | Event::WindowTitleChanged(..)
             | Event::MenuOpened(_)
             | Event::MenuClosed(_)
@@ -420,6 +444,7 @@ impl Event {
             | Event::SessionDidResignActive
             | Event::SessionDidBecomeActive
             | Event::DisplayChurnBegin
+            | Event::DisplayChurnEnd
             | Event::MissionControlNativeEntered
             | Event::MissionControlNativeExited
             | Event::RaiseCompleted { .. }
@@ -518,24 +543,41 @@ pub struct Reactor {
     reads: SystemReads,
 }
 
+/// What the reactor is made from: the state it starts with, and the queues of the actors it sends
+/// to. An actor left `None` is one the reactor runs without.
+pub struct ReactorParts {
+    pub config: Config,
+    pub layout_engine: LayoutEngine,
+    pub display_memory: DisplayMemory,
+    pub event_tap_tx: event_tap::Sender,
+    pub cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
+    pub transitions_tx: Option<crate::transitions::platform::engine::Sender>,
+    pub pictures: Option<crate::pictures::platform::service::Pictures>,
+    pub switcher_tx: Option<crate::switcher::platform::actor::Sender>,
+    pub bar_tx: Option<crate::bar::platform::actor::Sender>,
+    /// The rest windows' queue, and the switch that has the window server's frames followed for them.
+    pub rest: Option<(
+        crate::decorations::platform::rest::Sender,
+        crate::displays::event::Following,
+    )>,
+    pub window_tx_store: WindowTxStore,
+}
+
 impl Reactor {
-    #[allow(clippy::too_many_arguments, reason = "P4.1")]
-    pub fn spawn(
-        config: Config,
-        layout_engine: LayoutEngine,
-        display_memory: DisplayMemory,
-        event_tap_tx: event_tap::Sender,
-        cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
-        transitions_tx: Option<crate::transitions::platform::engine::Sender>,
-        pictures: Option<crate::pictures::platform::service::Pictures>,
-        switcher_tx: Option<crate::switcher::platform::actor::Sender>,
-        bar_tx: Option<crate::bar::platform::actor::Sender>,
-        rest: Option<(
-            crate::decorations::platform::rest::Sender,
-            crate::displays::event::Following,
-        )>,
-        window_tx_store: WindowTxStore,
-    ) -> ReactorHandle {
+    pub fn spawn(parts: ReactorParts) -> ReactorHandle {
+        let ReactorParts {
+            config,
+            layout_engine,
+            display_memory,
+            event_tap_tx,
+            cursor_warp_tx,
+            transitions_tx,
+            pictures,
+            switcher_tx,
+            bar_tx,
+            rest,
+            window_tx_store,
+        } = parts;
         let (events_tx, events) = channels::channel();
         let events_tx_clone = events_tx.clone();
         let mut reactor = Reactor::new(config, layout_engine, display_memory, window_tx_store);
@@ -651,15 +693,7 @@ impl Reactor {
                 stale_cleanup_state: StaleCleanupState::Enabled,
                 refocus_state: RefocusState::None,
             },
-            refresh_quarantine_manager: managers::RefreshQuarantineManager {
-                sleeping: false,
-                session_inactive: false,
-                display_churn_active: false,
-                awaiting_post_wake_snapshot: false,
-                awaiting_post_session_snapshot: false,
-                pending_visible_refresh: false,
-                deferred_refresh_tracks_mission_control: false,
-            },
+            refresh_quarantine_manager: managers::RefreshQuarantineManager::default(),
             pending_space_change: None,
             active_spaces: HashSet::default(),
             last_autosave: None,
@@ -735,7 +769,7 @@ impl Reactor {
             self.handle_loop_event(event);
         }
         if self.refresh_borders() {
-            self.update_layout(false, false, None);
+            self.update_layout(Pass::Plain, None);
         }
         self.publish_bar();
         self.publish_rest();
@@ -762,7 +796,7 @@ impl Reactor {
 
     fn log_event(&self, event: &Event) {
         match event {
-            Event::WindowFrameChanged(..)
+            Event::WindowFrameChanged { .. }
             | Event::MouseUp
             | Event::LeftMouseDown(_)
             | Event::MouseMoved(_) => trace!(?event, "Event"),
@@ -773,7 +807,7 @@ impl Reactor {
     fn should_update_notifications(event: &Event) -> bool {
         matches!(
             event,
-            Event::WindowCreated(..)
+            Event::WindowCreated { .. }
                 | Event::WindowDestroyed(..)
                 | Event::WindowServerDestroyed(..)
                 | Event::WindowServerAppeared(..)
@@ -1041,12 +1075,12 @@ impl Reactor {
             TransactionId::default()
         };
         if let Some(app) = self.apps.get(&write.window.pid)
-            && let Err(error) = app.handle.send(Request::SetWindowFrame(
-                write.window,
-                write.frame,
-                transaction,
-                true,
-            ))
+            && let Err(error) = app.handle.send(Request::SetWindowFrame {
+                window: write.window,
+                frame: write.frame,
+                txid: transaction,
+                enhanced_ui: SuppressEnhancedUi::Yes,
+            })
         {
             warn!(window = ?write.window, %error, "failed to write requested window frame");
         }
@@ -1058,14 +1092,11 @@ impl Reactor {
         let mut layout_changed = false;
         if let Some(passes) = outcome.arrange.passes_to_run(self.is_in_drag()) {
             for _ in 0..passes {
-                layout_changed |= self.update_layout(
-                    outcome.arrange.is_resize,
-                    matches!(
-                        self.workspace_switch_manager.workspace_switch_state,
-                        WorkspaceSwitchState::Active
-                    ),
-                    outcome.arrange.space_scope,
+                let pass = Pass::of(
+                    &outcome.arrange,
+                    &self.workspace_switch_manager.workspace_switch_state,
                 );
+                layout_changed |= self.update_layout(pass, outcome.arrange.space_scope);
             }
         }
         // A move is only a move for the passes its command asked for.

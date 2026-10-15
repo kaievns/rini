@@ -16,7 +16,14 @@ use super::{Event, Reactor, ReactorCommand};
 struct Dispatch {
     raised_window: Option<WindowId>,
     update_notifications: bool,
-    duplicate_global_activation: bool,
+    global_activation: GlobalActivation,
+}
+
+/// Whether an event is a global activation of the app already globally frontmost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum GlobalActivation {
+    New,
+    Repeated,
 }
 
 impl Dispatch {
@@ -56,13 +63,13 @@ impl Reactor {
             }
             event @ (Event::WindowServerFocusChanged(..)
             | Event::WindowsDiscovered { .. }
-            | Event::WindowCreated(..)
+            | Event::WindowCreated { .. }
             | Event::WindowDestroyed(_)
             | Event::WindowServerDestroyed(..)
             | Event::WindowServerAppeared(..)
             | Event::WindowMinimized(_)
             | Event::WindowDeminiaturized(_)
-            | Event::WindowFrameChanged(..)
+            | Event::WindowFrameChanged { .. }
             | Event::WindowTitleChanged(..)
             | Event::ApplyOverlayFrames(_)) => self.dispatch_window_event(event, &dispatch),
             event @ (Event::SpaceCreated(_)
@@ -76,6 +83,7 @@ impl Reactor {
             | Event::SessionDidResignActive
             | Event::SessionDidBecomeActive
             | Event::DisplayChurnBegin
+            | Event::DisplayChurnEnd
             | Event::RegisterWmSender(_)) => self.dispatch_system_event(event, &dispatch),
             event @ (Event::MouseUp
             | Event::LeftMouseDown(_)
@@ -101,11 +109,14 @@ impl Reactor {
     /// the faces it turned, and what the reducers are handed besides the event.
     fn take_focus_report(&mut self, event: &Event) -> Dispatch {
         let update_notifications = Self::should_update_notifications(event);
-        let duplicate_global_activation = matches!(
-            event,
+        let global_activation = match event {
             Event::ApplicationGloballyActivated(pid)
-                if self.main_window_tracker.is_globally_frontmost(*pid)
-        );
+                if self.main_window_tracker.is_globally_frontmost(*pid) =>
+            {
+                GlobalActivation::Repeated
+            }
+            _ => GlobalActivation::New,
+        };
         let key_before = self.main_window_tracker.key_window();
         let raised_window = event
             .focus_event()
@@ -115,7 +126,7 @@ impl Reactor {
         Dispatch {
             raised_window,
             update_notifications,
-            duplicate_global_activation,
+            global_activation,
         }
     }
 
@@ -172,7 +183,7 @@ impl Reactor {
             }
             Event::ApplicationGloballyActivated(pid) => self.on_application_globally_activated(
                 pid,
-                dispatch.duplicate_global_activation,
+                dispatch.global_activation,
                 dispatch.update_notifications,
             ),
             Event::ApplicationMainWindowChanged(..) => Ok(dispatch.focus_changed()),
@@ -195,11 +206,11 @@ impl Reactor {
                 application_workflow::WindowsDiscoveredPayload { pid, new, known_visible },
                 raised_window,
             ),
-            Event::WindowCreated(wid, window, ws_info, _mouse_state) => self.on_window_created(
+            Event::WindowCreated { window, info, server_info, .. } => self.on_window_created(
                 window_workflow::WindowCreatedPayload {
-                    window_id: wid,
-                    window,
-                    window_server_info: ws_info,
+                    window_id: window,
+                    window: info,
+                    window_server_info: server_info,
                 },
                 raised_window,
             ),
@@ -214,15 +225,20 @@ impl Reactor {
                 window_workflow::handle_window_minimized(&mut self.state, wid)
             }
             Event::WindowDeminiaturized(wid) => self.on_window_deminiaturized(wid),
-            Event::WindowFrameChanged(wid, new_frame, last_seen, requested, mouse_state) => self
-                .on_window_frame_changed(
-                    wid,
-                    new_frame,
-                    last_seen,
-                    requested,
-                    mouse_state,
-                    raised_window,
-                ),
+            Event::WindowFrameChanged {
+                window,
+                frame,
+                last_seen,
+                requested,
+                mouse_state,
+            } => self.on_window_frame_changed(
+                window,
+                frame,
+                last_seen,
+                requested,
+                mouse_state,
+                raised_window,
+            ),
             Event::WindowTitleChanged(wid, new_title) => {
                 let mut outcome = window_workflow::handle_window_title_changed(
                     &mut self.state,
@@ -277,6 +293,7 @@ impl Reactor {
             Event::SessionDidResignActive => Ok(self.on_session_did_resign_active()),
             Event::SessionDidBecomeActive => Ok(self.on_session_did_become_active()),
             Event::DisplayChurnBegin => Ok(self.on_display_churn_begin()),
+            Event::DisplayChurnEnd => Ok(self.on_display_churn_end()),
             Event::RegisterWmSender(sender) => Ok(system_workflow::handle_register_wm_sender(
                 &mut self.communication_manager,
                 sender,
@@ -382,7 +399,7 @@ mod tests {
         Dispatch {
             raised_window,
             update_notifications: true,
-            duplicate_global_activation: false,
+            global_activation: GlobalActivation::New,
         }
     }
 

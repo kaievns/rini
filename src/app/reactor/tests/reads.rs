@@ -31,7 +31,6 @@ fn a_test_reactor_reads_unknown_from_everything_it_was_not_told() {
     assert_eq!((reactor.reads().mouse)(), None);
     assert!((reactor.reads().running_app)(4242).is_none());
     assert!(!(reactor.reads().low_power)());
-    assert!(!(reactor.reads().display_churn)());
     assert_eq!(
         (reactor.reads().display_bounds)(rini_core::ids::ScreenId::new(1)),
         CGRect::ZERO
@@ -263,13 +262,13 @@ fn a_frame_report_with_no_mouse_state_reads_the_pointer_from_the_reads() {
         let target = CGRect::new(CGPoint::new(200., 200.), CGSize::new(600., 400.));
         let txid = reactor.pend_test_frame(wsid, target);
         let elsewhere = CGRect::new(CGPoint::new(260., 230.), CGSize::new(600., 400.));
-        reactor.handle_event(Event::WindowFrameChanged(
-            wid,
-            elsewhere,
-            Some(txid),
-            Requested(false),
-            None,
-        ));
+        reactor.handle_event(Event::WindowFrameChanged {
+            window: wid,
+            frame: elsewhere,
+            last_seen: Some(txid),
+            requested: Requested(false),
+            mouse_state: None,
+        });
         reactor.transactions().target(&wsid)
     };
 

@@ -25,7 +25,6 @@ use crate::displays::domain::topology::{
     snapshot_is_committable,
 };
 use crate::displays::event::{Event as OutEvent, EventSink};
-use crate::displays::platform::display_churn;
 use crate::displays::screen::ScreenCache;
 use crate::windows::platform::window_server::{self, WindowServer};
 
@@ -490,7 +489,6 @@ impl SpacesActor {
         let windows = &self.state.forwarded.visible_window_spaces;
         let step = self.state.churn.next(ChurnEdge::Reconfigured(flags, windows));
         self.state.last_sent_spaces = None;
-        display_churn::begin();
         if step == ChurnStep::Began {
             self.events.send(OutEvent::DisplayChurnBegin);
         }
@@ -532,7 +530,7 @@ impl SpacesActor {
         if self.state.churn.next(ChurnEdge::Ended(expected_epoch)) == ChurnStep::Stale {
             return;
         }
-        display_churn::end();
+        self.events.send(OutEvent::DisplayChurnEnd);
         if schedule_refresh {
             self.schedule_screen_refresh_after(0, 0);
         }

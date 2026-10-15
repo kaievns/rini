@@ -55,7 +55,7 @@ takes itself, of a window that just opened, beside the `WindowServer` it reads.
 | what the code asks | seam | production | a test passes |
 |---|---|---|---|
 | the window server: windows, frames, levels, spaces, order, the space lists, the key window, the listings and the name each window's owner goes by, a display's desktop windows; `make_key_window`, `take_stack_place`, and `focus_desktop` over them | `WindowServer`, an `Arc<dyn WindowServer>` (`src/windows/platform/window_server/port.rs`) | `window_server::live()` | a clone of an `Arc<FakeWindowServer>`, answers stated with its `set_` methods, commands read back with `commands()`, reads counted with `reads()`; every read unknown until stated |
-| what the reactor asks of the machine: the window server, the desktop focus included, the pointer, Low Power Mode, the displays' bounds, display churn, the space kinds, the running applications; and the two notes it hands back, the window-server activity clock and the windows it wants notifications for | `SystemReads`, one value of the `WindowServer` port and fn pointers (`src/app/system_reads.rs`). A reducer takes the answer it needs as a parameter. The five that judge manageability (`handle_window_created`, `handle_window_deminiaturized`, `sync_existing_window_state`, `process_window_list`, `update_window_states`) take the port instead: their facts are read lazily, each only while those in hand do not turn the window away (`turned_away_before_accessibility`), so no stickiness or level is read for a minimized window or one off layer 0 | `SystemReads::live()`, built in `Reactor::new` | `SystemReads::fake`, which `Reactor::new_for_test` builds over a `FakeWindowServer` of its own, stated through `reactor.window_server()`; a field swapped for a fn of the test's, `reactor.reads_mut().low_power = \|\| true`; every read unknown, false or none until then (`a_test_reactor_reads_unknown_from_everything_it_was_not_told`) |
+| what the reactor asks of the machine: the window server, the desktop focus included, the pointer, Low Power Mode, the displays' bounds, the space kinds, the running applications; and the two notes it hands back, the window-server activity clock and the windows it wants notifications for | `SystemReads`, one value of the `WindowServer` port and fn pointers (`src/app/system_reads.rs`). A reducer takes the answer it needs as a parameter. The five that judge manageability (`handle_window_created`, `handle_window_deminiaturized`, `sync_existing_window_state`, `process_window_list`, `update_window_states`) take the port instead: their facts are read lazily, each only while those in hand do not turn the window away (`turned_away_before_accessibility`), so no stickiness or level is read for a minimized window or one off layer 0 | `SystemReads::live()`, built in `Reactor::new` | `SystemReads::fake`, which `Reactor::new_for_test` builds over a `FakeWindowServer` of its own, stated through `reactor.window_server()`; a field swapped for a fn of the test's, `reactor.reads_mut().low_power = \|\| true`; every read unknown, false or none until then (`a_test_reactor_reads_unknown_from_everything_it_was_not_told`) |
 | Accessibility, the window server, the pointer state and Command-W, from the per-app thread | `AxWorld`, a type parameter (`src/windows/platform/ax/world.rs`), whose `server()` is the `WindowServer` port; the thread asks nothing past it and its tests take no path through `window_server` or `mouse`, `MouseState` re-exported from the world (`the_app_actor_reaches_the_platform_only_through_its_world`) | `MacAx`, its server `window_server::live()` | `FakeAx`, whose elements are numbers; an element with nothing recorded answers as a window that has gone; its server a `FakeWindowServer` (`made_key()` the windows made key), its pointer state `mouse`, its Command-W posts counted in `command_w_posts` |
 | displays and spaces, from the spaces actor | `LiveDisplays` (`src/displays/platform/spaces/live.rs`) and `SpaceKinds` (`src/displays/domain/snapshot.rs`), structs of fn pointers, beside the `WindowServer` port for each space's windows and the spaces each window is on; `window_space` takes the actor's `SpaceKinds` to pick a window's home among them, so whether a space is a user space is stated once, by the classifier, and the port has no read of it | `from_window_server()`, and `window_server::live()` | `LiveDisplays::silent()`, which knows nothing, and `SpaceKinds::for_tests()`, which only a test build has, or a struct of its own; a `FakeWindowServer` (`hand_window_server`) |
 | when the spaces actor asks again: a refresh's retries, a churn's checks | `Schedule`, a trait object (`src/displays/platform/spaces/schedule.rs`) | `MainQueue`, the main dispatch queue | `Recorded`, which keeps every notification asked for and sends none, so a test feeds them back to run a retry to its cap (`a_churn_that_never_settles_is_checked_up_to_its_cap_then_ends_with_a_refresh`) |
@@ -143,27 +143,20 @@ developer's own desktop in it. `std::backtrace::Backtrace::force_capture()` in t
 
 A `static` is one value for the whole test binary, so in a parallel run a test that reads
 one sees whatever a test beside it wrote. A reset when the writer ends is not enough on
-its own: the reader can run in the middle. Each static a test writes is held one of two
-ways:
-
-- **Injected at its reader**, so no test reads the static at all. The reader takes a
-  function, the production one reads the static, and a test's default answers for it.
-- **Held for the test's lifetime** by a guard modelled on
-  `display_churn::hold_for_test`: a mutex, so one such test runs at a time, and a reset in
-  `Drop`, so the value is clear when the test ends, pass or fail
-  (`a_test_that_panics_holding_the_flag_leaves_it_clear`).
+its own: the reader can run in the middle. Each static a test writes is **injected at its
+reader**, so no test reads the static at all. The reader takes a function, the production one
+reads the static, and a test's default answers for it. What one actor tells another goes as an
+event rather than a static: the display churn reaches the reactor as `DisplayChurnBegin` and
+`DisplayChurnEnd`, in the order it handles everything else.
 
 | static | tests that write it | tests that read it | held by |
 |---|---|---|---|
-| `DISPLAY_CHURN_ACTIVE` (`src/displays/platform/display_churn.rs`) | spaces actor tests, through `begin` and `end` | `a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set`, under `hold_for_test`; every other reactor reads its `SystemReads::display_churn`, false under test | `hold_for_test` around every writer and that reader |
 | `LAST_WINDOWSERVER_ACTIVITY_US` (`src/windows/platform/window_server.rs`) | two spaces actor tests, through `note_windowserver_activity`; no reactor test, whose reads note on a clock of their own (`a_window_event_is_noted_on_the_reads_activity_clock`) | `the_production_reader_reports_a_window_server_that_just_moved_as_busy`, which only asks whether it is busy right after setting it; the spaces actor reads `LiveDisplays::window_server_quiet` | injection; the one reader holds because every writer moves the clock later |
 | `LOW_POWER_MODE` (`src/app/power.rs`), `MOUSE_STATE` (`src/windows/platform/mouse.rs`) | none: only the notification handler and the event tap write them | the input tap's start reads the initial value; the reactor reads them through `SystemReads`, which a test reactor answers not in Low Power Mode and the pointer unknown; the app actor reads `MOUSE_STATE` only through `AxWorld::mouse_state`, which `FakeAx` answers | injection at the reactor and the app actor; a test that writes one injects it first |
 | `SAVE_TEMP_COUNTER` (`src/workspaces/engine/persistence/mod.rs`) | persistence tests | none read its value; it only makes temp names unique | nothing needed |
 
-The tests that hold this: `a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag` and
-`display_churn_waits_for_a_quiet_window_server_as_its_reader_reports_it`. The production readers
-behind both injections are held by
-`a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set` and
+The test that holds this: `display_churn_waits_for_a_quiet_window_server_as_its_reader_reports_it`.
+The production reader behind its injection is held by
 `the_production_reader_reports_a_window_server_that_just_moved_as_busy`.
 
 ## The suite runs in parallel, and a Core Animation read-back holds its lock
@@ -264,7 +257,7 @@ Every crate takes its lints from `[workspace.lints]` in `Cargo.toml` (`[lints] w
 held by `every_crate_inherits_the_workspace_lints`): clippy's defaults, plus `redundant_lifetimes`,
 `unused_macro_rules` and `allow_attributes_without_reason`. The last means every `#[allow]` says
 why, in one of three ways. One a roadmap task removes names the quality roadmap's task id
-(`reason = "P4.1"`) and sits on the one item it covers, and only when that task's done-criterion
+(`reason = "P5.1"`) and sits on the one item it covers, and only when that task's done-criterion
 takes the lint away: splitting a function or a file leaves its parameter lists as long. One allowed
 for good names what makes it right, such as a C name, a reference count Core Foundation drives too,
 or a `RefMut` dropped before the await clippy counts it across. One no task removes says so: a long
@@ -291,8 +284,6 @@ Nothing else in the repo cites an id; a comment or a doc names the work in words
 
 | Id | Task | Done when |
 |---|---|---|
-| P4.1 | Named structs for positional tuples: `Request::SetWindowFrame(.., bool)`, `Event::WindowFrameChanged`, `ReactorParts` for an 11-parameter `spawn` | no tuple over 3 in an enum variant or pub fn type at these sites |
-| P4.8 | Small enums: `Pass` for `update_layout(bool, bool, ..)`, `Press`, `Axis`, the repaint subsets in `StageSummary`/`Flight` | no fn with 2+ bool parameters (`clippy::fn_params_excessive_bools` denied) |
 | P5.1 | SAFETY comments everywhere; deny `undocumented_unsafe_blocks` and `unsafe_op_in_unsafe_fn`; replace `static mut SERVER` in `rini-ipc` | clippy clean with both denied; 0 `static mut` in the repo |
 
 `unsafe_op_in_unsafe_fn` is not in `[workspace.lints]`. Edition 2024 warns on it already, and

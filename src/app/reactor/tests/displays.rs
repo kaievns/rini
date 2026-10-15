@@ -6,14 +6,13 @@ use rini_geometry::CGRectExt;
 use test_log::test;
 
 use super::fixtures::*;
-use crate::app::reactor::managers::RefreshQuarantineState;
+use crate::app::reactor::managers::{Churn, RefreshQuarantineState, Session, VisibleRefresh, Wake};
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::displays::domain::topology::{DisplaySet, Topology};
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::raise_order::AppBatch;
 use crate::windows::domain::request::Request;
-use crate::windows::platform::window_server::FakeWindowServer;
 use crate::workspaces as layout;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent, WorkspaceCommand};
 
@@ -145,13 +144,13 @@ fn a_tiled_scrolling_window_keeps_its_space_when_its_frame_lands_on_another_disp
     );
 
     let _ = reactor
-        .dispatch_workflow(Event::WindowFrameChanged(
-            wid,
-            moved,
-            None,
-            Requested(false),
-            Some(MouseState::Up),
-        ))
+        .dispatch_workflow(Event::WindowFrameChanged {
+            window: wid,
+            frame: moved,
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        })
         .unwrap();
 
     assert_eq!(
@@ -189,13 +188,13 @@ fn an_unmanageable_window_is_not_tiled_when_its_frame_comes_back_on_screen() {
     reactor.add_test_window(standard, WindowServerId::new(102), Some(space1), off_screen);
 
     for wid in [toolbar, standard] {
-        reactor.handle_event(Event::WindowFrameChanged(
-            wid,
-            on_screen,
-            None,
-            Requested(false),
-            Some(MouseState::Up),
-        ));
+        reactor.handle_event(Event::WindowFrameChanged {
+            window: wid,
+            frame: on_screen,
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        });
     }
 
     assert!(
@@ -435,13 +434,13 @@ fn recent_cross_display_move_ignores_conflicting_geometry_space_change() {
     } = reactor_with_window_moved_to_space2();
     let conflicting_frame = CGRect::new(CGPoint::new(100., 100.), CGSize::new(800., 600.));
 
-    reactor.handle_event(Event::WindowFrameChanged(
-        wid,
-        conflicting_frame,
-        None,
-        Requested(false),
-        Some(MouseState::Up),
-    ));
+    reactor.handle_event(Event::WindowFrameChanged {
+        window: wid,
+        frame: conflicting_frame,
+        last_seen: None,
+        requested: Requested(false),
+        mouse_state: Some(MouseState::Up),
+    });
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
@@ -584,7 +583,7 @@ fn a_space_change_held_through_mission_control_is_laid_out_before_the_exit_refre
         .requests()
         .into_iter()
         .filter_map(|request| match request {
-            Request::SetWindowFrame(window, frame, ..) => Some((window, frame)),
+            Request::SetWindowFrame { window, frame, .. } => Some((window, frame)),
             _ => None,
         })
         .collect();
@@ -850,7 +849,7 @@ fn moving_tiled_window_to_display_applies_destination_layout_after_transfer_fram
         .requests()
         .into_iter()
         .flat_map(|request| match request {
-            Request::SetWindowFrame(wid, frame, _, _) if wid == moved => vec![frame],
+            Request::SetWindowFrame { window: wid, frame, .. } if wid == moved => vec![frame],
             Request::SetBatchWindowFrame(frames, _, _) => frames
                 .into_iter()
                 .filter_map(|(wid, frame)| (wid == moved).then_some(frame))
@@ -1013,17 +1012,18 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
 #[test]
 fn display_churn_quarantines_window_frame_and_membership_events() {
     let mut reactor = test_reactor();
-    reactor.reads_mut().display_churn = || true;
+    reactor.handle_event(Event::DisplayChurnBegin);
     let space = SpaceId::new(7);
     let wsid = WindowServerId::new(77);
 
-    let frame_changed = reactor.should_quarantine_during_display_churn(&Event::WindowFrameChanged(
-        WindowId::new(99, 1),
-        CGRect::new(CGPoint::new(10., 10.), CGSize::new(500., 400.)),
-        None,
-        Requested(false),
-        Some(MouseState::Up),
-    ));
+    let frame_changed =
+        reactor.should_quarantine_during_display_churn(&Event::WindowFrameChanged {
+            window: WindowId::new(99, 1),
+            frame: CGRect::new(CGPoint::new(10., 10.), CGSize::new(500., 400.)),
+            last_seen: None,
+            requested: Requested(false),
+            mouse_state: Some(MouseState::Up),
+        });
     let appeared = reactor.should_quarantine_during_display_churn(&Event::WindowServerAppeared(
         wsid,
         space,
@@ -1063,33 +1063,83 @@ fn display_churn_quarantines_window_frame_and_membership_events() {
     );
 }
 
-/// A test reactor reads its own churn reader, never the process-wide flag a spaces test sets beside it.
+/// The churn is the reactor's own, heard in order: window events are dropped from the spaces
+/// actor's `DisplayChurnBegin` to its `DisplayChurnEnd`, and refreshes stay held until the snapshot
+/// after it.
 #[test]
-fn a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag() {
-    let reactor = test_reactor();
-    let _held = crate::displays::platform::display_churn::hold_for_test();
-    crate::displays::platform::display_churn::begin();
-    assert!(!reactor.should_quarantine_during_display_churn(&Event::SpaceCreated(SpaceId::new(7))));
+fn window_events_pass_once_the_churn_ends_and_refreshes_once_its_snapshot_is_incorporated() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, SpaceId::new(1), 1, make_windows(1));
+    apps.requests();
+    let destroyed = Event::WindowDestroyed(WindowId::new(1, 1));
+
+    reactor.handle_event(Event::DisplayChurnBegin);
+    assert!(reactor.should_quarantine_during_display_churn(&destroyed));
+    assert!(reactor.refreshes_blocked());
+
+    reactor.handle_event(Event::DisplayChurnEnd);
+    assert!(!reactor.should_quarantine_during_display_churn(&destroyed));
+    assert_eq!(
+        reactor.refresh_quarantine_state(),
+        RefreshQuarantineState::DisplayChurn
+    );
+    reactor.check_for_new_windows();
+    assert!(apps.requests().is_empty(), "the refresh waits for the snapshot");
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
+    assert!(!reactor.refreshes_blocked());
+    assert_eq!(
+        apps.requests()
+            .into_iter()
+            .filter(|request| matches!(request, Request::GetVisibleWindows))
+            .count(),
+        1
+    );
 }
 
-/// The reads production builds take the process-wide churn flag; a test build gives them a fake
-/// window server, as it can give no other.
+/// A settled churn's snapshot, which carries the churn's window delta, comes ahead of its
+/// `DisplayChurnEnd`, so the snapshot itself ends the churn before it is incorporated: display
+/// affinity is observed again, a closed window's home forgotten, and the end that follows changes
+/// nothing.
 #[test]
-fn a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set() {
-    let reads = SystemReads::live_with(std::sync::Arc::new(FakeWindowServer::default()));
-    let reactor = Reactor::with_reads(
-        crate::app::config::Config::default(),
-        LayoutEngine::new(
-            &crate::app::config::VirtualWorkspaceSettings::default(),
-            &crate::app::config::LayoutSettings::default(),
-        ),
-        DisplayMemory::default(),
-        WindowTxStore::new(),
-        reads,
+fn a_settled_churn_s_snapshot_ends_the_churn_before_it_is_incorporated() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let space = SpaceId::new(1);
+    let closed = WindowId::new(1, 1);
+    set_space_membership(&reactor, &[(space, &[901])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspace = reactor.test_workspace(space, 0);
+    reactor.add_test_window(closed, WindowServerId::new(901), Some(space), screen);
+    assert!(reactor.assign_test_window_to_workspace(space, closed, workspace));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(space, closed));
+    reactor.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(closed));
+    reactor.windows_mut().remove_window(closed);
+    set_space_membership(&reactor, &[(space, &[])]);
+    assert_eq!(
+        reactor.display_affinity().window_home(closed),
+        Some("test-display-0")
     );
-    let _held = crate::displays::platform::display_churn::hold_for_test();
-    crate::displays::platform::display_churn::begin();
-    assert!(reactor.should_quarantine_during_display_churn(&Event::SpaceCreated(SpaceId::new(7))));
+
+    reactor.handle_event(Event::DisplayChurnBegin);
+    reactor.handle_event(space_state_event_with(
+        vec![screen],
+        vec![Some(space)],
+        |state| {
+            state.topology_window_delta = Some(Default::default());
+        },
+    ));
+    assert_eq!(
+        reactor.display_affinity().window_home(closed),
+        None,
+        "the settled snapshot observes display affinity again"
+    );
+    assert_eq!(reactor.quarantine().churn(), Churn::Steady);
+    reactor.handle_event(Event::DisplayChurnEnd);
+    assert_eq!(reactor.quarantine().churn(), Churn::Steady);
+    assert!(!reactor.refreshes_blocked());
 }
 
 #[test]
@@ -1148,45 +1198,51 @@ fn each_quarantine_event_sets_its_quarantine_flag_and_moves_no_focus() {
     apps.requests();
 
     reactor.handle_event(Event::DisplayChurnBegin);
-    assert!(reactor.quarantine().display_churn_active);
+    assert_eq!(reactor.quarantine().churn(), Churn::Churning);
     assert_eq!(
         reactor.refresh_quarantine_state(),
         RefreshQuarantineState::DisplayChurn
     );
 
     reactor.handle_event(Event::SessionDidResignActive);
-    assert!(reactor.quarantine().session_inactive);
-    assert!(!reactor.quarantine().awaiting_post_session_snapshot);
+    assert_eq!(reactor.quarantine().session(), Session::Inactive);
     assert_eq!(
         reactor.refresh_quarantine_state(),
         RefreshQuarantineState::SessionInactive
     );
 
     reactor.handle_event(Event::SystemWillSleep);
-    assert!(reactor.quarantine().sleeping);
-    assert!(!reactor.quarantine().awaiting_post_wake_snapshot);
+    assert_eq!(reactor.quarantine().wake(), Wake::Asleep);
     assert_eq!(
         reactor.refresh_quarantine_state(),
         RefreshQuarantineState::Sleeping
     );
 
     reactor.handle_event(Event::SystemWoke);
-    assert!(reactor.quarantine().sleeping);
-    assert!(reactor.quarantine().awaiting_post_wake_snapshot);
-    assert!(reactor.quarantine().pending_visible_refresh);
+    assert_eq!(reactor.quarantine().wake(), Wake::AwaitingSnapshot);
 
-    reactor.quarantine_mut().pending_visible_refresh = false;
     reactor.handle_event(Event::SessionDidBecomeActive);
-    assert!(reactor.quarantine().session_inactive);
-    assert!(reactor.quarantine().awaiting_post_session_snapshot);
-    assert!(reactor.quarantine().pending_visible_refresh);
+    assert_eq!(reactor.quarantine().session(), Session::AwaitingSnapshot);
 
     assert_eq!(reactor.focus_tracker().key_window(), Some(focused));
     assert_eq!(test_layout(&mut reactor, space, screen), layout);
     assert!(
-        !apps.requests().iter().any(|request| matches!(request, Request::Raise(..))),
+        !apps.requests().iter().any(|request| matches!(request, Request::Raise { .. })),
         "a quarantine event is not a focus edge, so nothing is raised"
     );
+}
+
+/// Each on a reactor that owes nothing, so neither can pass on the other's debt.
+#[test]
+fn waking_and_unlocking_the_reactor_each_owe_a_refresh_tracking_mission_control() {
+    let tracked = VisibleRefresh { tracks_mission_control: true };
+    for event in [Event::SystemWoke, Event::SessionDidBecomeActive] {
+        let name = format!("{event:?}");
+        let mut reactor = test_reactor();
+        assert_eq!(reactor.quarantine().owed(), None);
+        reactor.handle_event(event);
+        assert_eq!(reactor.quarantine().owed(), Some(tracked), "{name}");
+    }
 }
 
 #[test]

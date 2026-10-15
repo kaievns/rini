@@ -51,12 +51,12 @@ impl<W: AxWorld> State<W> {
                 };
                 let window_server_info = window_server_info
                     .or_else(|| info.sys_id.and_then(|id| self.ax.server().get_window(id)));
-                self.send_event(Event::WindowCreated(
-                    wid,
+                self.send_event(Event::WindowCreated {
+                    window: wid,
                     info,
-                    window_server_info,
-                    self.ax.mouse_state(),
-                ));
+                    server_info: window_server_info,
+                    mouse_state: self.ax.mouse_state(),
+                });
                 wid
             }
         };
@@ -151,7 +151,7 @@ mod tests {
     use super::super::fixtures::{PID, app_with, main_window_changes, poll_once};
     use super::*;
     use crate::windows::domain::ax_events::AxNotificationKind;
-    use crate::windows::domain::request::Request;
+    use crate::windows::domain::request::{RaiseSequence, Request};
 
     /// The windows a batch raises before its last are always quiet, so the activation its first
     /// window waits for is quiet whatever the batch asked.
@@ -165,7 +165,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::No
         ));
         assert!(poll_once(raise.as_mut()).is_pending());
@@ -209,7 +209,7 @@ mod tests {
             &state,
             wids.clone(),
             &token,
-            1,
+            RaiseSequence(1),
             Quiet::Yes
         ));
         assert!(poll_once(raise.as_mut()).is_pending());

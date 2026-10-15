@@ -8,6 +8,7 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use tracing::{info, warn};
 
 use super::events::EventOutcome;
+use super::layout_pass::Pass;
 use super::{Reactor, RefocusState, StaleCleanupState};
 use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::topology::{
@@ -36,7 +37,8 @@ impl Reactor {
         &mut self,
         space_state: ForwardedSpaceState,
     ) -> anyhow::Result<EventOutcome> {
-        let mut outcome = EventOutcome::window_membership_changed(false, true);
+        let mut outcome =
+            EventOutcome::window_membership_changed().with_window_notification_refresh();
         let analysis = crate::displays::domain::topology::analyze_space_snapshot(
             &self.space_state,
             &self.active_spaces,
@@ -481,7 +483,7 @@ impl Reactor {
             }
 
             self.refocus_manager.refocus_state = RefocusState::Pending(space);
-            self.update_layout(false, false, None);
+            self.update_layout(Pass::Plain, None);
             self.update_focus_follows_mouse_state();
         }
     }

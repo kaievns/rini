@@ -11,7 +11,7 @@ use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::displays::domain::topology::Topology;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
-use crate::windows::domain::request::Request;
+use crate::windows::domain::request::{Request, SuppressEnhancedUi};
 use crate::workspaces::{LayoutCommand, LayoutEvent, WorkspaceCommand};
 
 #[test]
@@ -320,7 +320,7 @@ fn workspace_switch_batches_all_window_positions_with_eui_enabled() {
         requests.iter().any(|req| {
             matches!(
                 req,
-                Request::SetWorkspaceSwitchPositions(positions, _, true)
+                Request::SetWorkspaceSwitchPositions(positions, _, SuppressEnhancedUi::Yes)
                     if positions.iter().any(|(wid, _)| *wid == WindowId::new(1, 1))
             )
         }),
@@ -345,7 +345,7 @@ fn non_workspace_instant_layout_keeps_full_frame_batch() {
     assert!(
         requests.iter().any(|request| matches!(
             request,
-            Request::SetBatchWindowFrame(frames, _, true)
+            Request::SetBatchWindowFrame(frames, _, SuppressEnhancedUi::Yes)
                 if frames.as_slice() == [(wid, target)]
         )),
         "ordinary instant layouts must retain full-frame writes: {requests:?}"
@@ -375,7 +375,7 @@ fn workspace_switch_layout_falls_back_to_full_frames_for_size_changes() {
     assert!(
         requests.iter().any(|request| matches!(
             request,
-            Request::SetBatchWindowFrame(frames, _, true)
+            Request::SetBatchWindowFrame(frames, _, SuppressEnhancedUi::Yes)
                 if frames.as_slice() == [(wid, target)]
         )),
         "workspace layouts with size changes must retain full-frame writes: {requests:?}"
@@ -419,7 +419,7 @@ fn topology_change_clears_stale_pending_hide_target_before_next_workspace_layout
 
     reactor.pend_test_frame(wsid, hidden_target);
 
-    assert!(!reactor.update_layout(false, true, None));
+    assert!(!reactor.update_layout(Pass::WorkspaceSwitch, None));
     assert!(
         apps.requests().is_empty(),
         "a stale pending target suppresses the hide write before topology invalidation"
@@ -437,10 +437,10 @@ fn topology_change_clears_stale_pending_hide_target_before_next_workspace_layout
     assert!(
         requests.iter().any(|req| {
             matches!(req,
-                Request::SetWindowFrame(req_wid, frame, _, true)
+                Request::SetWindowFrame { window: req_wid, frame, enhanced_ui: SuppressEnhancedUi::Yes, .. }
                     if *req_wid == wid && frame.same_as(hidden_target)
             ) || matches!(req,
-                Request::SetBatchWindowFrame(frames, _, true)
+                Request::SetBatchWindowFrame(frames, _, SuppressEnhancedUi::Yes)
                     if frames.iter().any(|(req_wid, frame)| *req_wid == wid && frame.same_as(hidden_target))
             )
         }),
@@ -520,7 +520,7 @@ fn auto_workspace_switch_follows_activated_window_when_same_app_is_visible_elsew
     let requests = apps.requests();
     assert!(
         requests.iter().any(|request| match request {
-            Request::SetWindowFrame(wid, _, _, _) => *wid == activated,
+            Request::SetWindowFrame { window: wid, .. } => *wid == activated,
             Request::SetBatchWindowFrame(frames, _, _) => {
                 frames.iter().any(|(wid, _)| *wid == activated)
             }
@@ -1863,7 +1863,7 @@ fn writes_a_frame(requests: &[Request]) -> bool {
     requests.iter().any(|request| {
         matches!(
             request,
-            Request::SetWindowFrame(..)
+            Request::SetWindowFrame { .. }
                 | Request::SetBatchWindowFrame(..)
                 | Request::SetWorkspaceSwitchPositions(..)
         )
@@ -1928,8 +1928,8 @@ fn a_switch_claims_the_destination_strip_s_layout() {
 
     reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
 
-    let (claimed, now) = reactor.take_strip_layout(space).expect("a strip");
-    let claimed = claimed.expect("the switch drew the destination");
+    let strip = reactor.take_strip_layout(space).expect("a strip");
+    let (claimed, now) = (strip.before.expect("the switch drew the destination"), strip.now);
     assert!(
         claimed.iter().any(|(window, _)| *window == WindowId::new(1, 2)),
         "{claimed:?}"

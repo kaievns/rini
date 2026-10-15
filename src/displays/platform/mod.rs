@@ -2,7 +2,6 @@
 
 pub mod cgs_notify;
 pub mod cursor_warp;
-pub mod display_churn;
 pub mod mission_control;
 pub mod space_query;
 pub mod spaces;

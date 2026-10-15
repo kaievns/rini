@@ -6,6 +6,7 @@ use test_log::test;
 
 use super::fixtures::*;
 use crate::app::hotkeys::WmEvent;
+use crate::app::reactor::managers::QuarantineSignal;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::info::WindowInfo;
@@ -133,9 +134,7 @@ fn it_retains_windows_without_server_ids_after_login_visibility_failure() {
     reactor.handle_events(apps.make_app_with_opts(
         1,
         vec![window],
-        Some(WindowId::new(1, 1)),
-        true,
-        false,
+        AppLaunch::frontmost(Some(WindowId::new(1, 1))).without_ws_info(),
     ));
     apps.simulate_until_quiet(&mut reactor);
 
@@ -180,11 +179,11 @@ fn lifecycle_events_are_quarantined_during_sleep_and_session_inactivity() {
     let mut reactor = test_reactor();
     let space = SpaceId::new(8);
 
-    reactor.quarantine_mut().sleeping = true;
+    reactor.quarantine_on(QuarantineSignal::WillSleep);
     assert!(reactor.should_quarantine_space_lifecycle_event(&Event::SpaceCreated(space)));
 
-    reactor.quarantine_mut().sleeping = false;
-    reactor.quarantine_mut().session_inactive = true;
+    let mut reactor = test_reactor();
+    reactor.quarantine_on(QuarantineSignal::SessionResigned);
     assert!(reactor.should_quarantine_space_lifecycle_event(&Event::SpaceDestroyed(space)));
 }
 
@@ -292,7 +291,7 @@ fn ax_invalidation_during_refresh_quarantine_is_deferred_without_layout_mutation
 
     apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(1));
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
-    reactor.quarantine_mut().display_churn_active = true;
+    reactor.quarantine_on(QuarantineSignal::ChurnBegan);
 
     reactor.handle_event(Event::WindowDestroyed(wid));
 
@@ -634,7 +633,7 @@ fn a_discovery_lays_its_window_out_where_it_hands_it_back() {
         .requests()
         .into_iter()
         .map(|request| match request {
-            Request::SetWindowFrame(window, frame, ..) => (Some(window), Some(frame == placed)),
+            Request::SetWindowFrame { window, frame, .. } => (Some(window), Some(frame == placed)),
             Request::GetVisibleWindows => (None, None),
             other => panic!("unexpected {other:?}"),
         })

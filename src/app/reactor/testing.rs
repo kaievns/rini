@@ -488,10 +488,6 @@ impl Reactor {
         &self.refresh_quarantine_manager
     }
 
-    pub(super) fn quarantine_mut(&mut self) -> &mut super::managers::RefreshQuarantineManager {
-        &mut self.refresh_quarantine_manager
-    }
-
     pub(super) fn drag(&self) -> &super::managers::DragManager { &self.drag_manager }
 
     pub(super) fn drag_mut(&mut self) -> &mut super::managers::DragManager {
@@ -872,6 +868,35 @@ pub struct Apps {
     pub windows: BTreeMap<WindowId, TestWindowState>,
 }
 
+/// How a test app launches: its main window, whether it is frontmost, and whether the launch
+/// reports its windows' window-server info.
+#[derive(Debug, Clone, Copy)]
+pub struct AppLaunch {
+    pub main_window: Option<WindowId>,
+    pub is_frontmost: bool,
+    pub with_ws_info: bool,
+}
+
+impl AppLaunch {
+    pub fn frontmost(main_window: Option<WindowId>) -> Self {
+        Self {
+            main_window,
+            is_frontmost: true,
+            with_ws_info: true,
+        }
+    }
+
+    pub fn background(main_window: Option<WindowId>) -> Self {
+        Self {
+            main_window,
+            is_frontmost: false,
+            with_ws_info: true,
+        }
+    }
+
+    pub fn without_ws_info(self) -> Self { Self { with_ws_info: false, ..self } }
+}
+
 #[derive(Default, PartialEq, Debug, Clone)]
 pub struct TestWindowState {
     pub last_seen_txid: TransactionId,
@@ -890,18 +915,21 @@ impl Apps {
     }
 
     pub fn make_app(&mut self, pid: pid_t, windows: Vec<WindowInfo>) -> Vec<Event> {
-        let frontmost = windows.first().map(|_| WindowId::new(pid, 1));
-        self.make_app_with_opts(pid, windows, frontmost, false, true)
+        let main_window = windows.first().map(|_| WindowId::new(pid, 1));
+        self.make_app_with_opts(pid, windows, AppLaunch::background(main_window))
     }
 
     pub fn make_app_with_opts(
         &mut self,
         pid: pid_t,
         windows: Vec<WindowInfo>,
-        main_window: Option<WindowId>,
-        is_frontmost: bool,
-        with_ws_info: bool,
+        launch: AppLaunch,
     ) -> Vec<Event> {
+        let AppLaunch {
+            main_window,
+            is_frontmost,
+            with_ws_info,
+        } = launch;
         let windows: Vec<WindowInfo> = windows
             .into_iter()
             .enumerate()
@@ -1023,19 +1051,19 @@ impl Apps {
                 Request::ApplicationGloballyActivated(pid) => {
                     events.push(Event::ApplicationActivated(pid, Quiet::No));
                 }
-                Request::SetWindowFrame(wid, frame, txid, _) => {
+                Request::SetWindowFrame { window: wid, frame, txid, .. } => {
                     let window = self.windows.entry(wid).or_default();
                     window.last_seen_txid = txid;
                     let old_frame = window.frame;
                     window.frame = frame;
                     if !old_frame.same_as(frame) {
-                        events.push(Event::WindowFrameChanged(
-                            wid,
+                        events.push(Event::WindowFrameChanged {
+                            window: wid,
                             frame,
-                            Some(txid),
-                            Requested(true),
-                            None,
-                        ));
+                            last_seen: Some(txid),
+                            requested: Requested(true),
+                            mouse_state: None,
+                        });
                     }
                 }
                 Request::SetBatchWindowFrame(frames, txid, _) => {
@@ -1045,13 +1073,13 @@ impl Apps {
                         let old_frame = window.frame;
                         window.frame = frame;
                         if !old_frame.same_as(frame) {
-                            events.push(Event::WindowFrameChanged(
-                                wid,
+                            events.push(Event::WindowFrameChanged {
+                                window: wid,
                                 frame,
-                                Some(txid),
-                                Requested(true),
-                                None,
-                            ));
+                                last_seen: Some(txid),
+                                requested: Requested(true),
+                                mouse_state: None,
+                            });
                         }
                     }
                 }
@@ -1062,17 +1090,17 @@ impl Apps {
                         let old_frame = window.frame;
                         window.frame.origin = position;
                         if !old_frame.same_as(window.frame) {
-                            events.push(Event::WindowFrameChanged(
-                                wid,
-                                window.frame,
-                                Some(txid),
-                                Requested(true),
-                                None,
-                            ));
+                            events.push(Event::WindowFrameChanged {
+                                window: wid,
+                                frame: window.frame,
+                                last_seen: Some(txid),
+                                requested: Requested(true),
+                                mouse_state: None,
+                            });
                         }
                     }
                 }
-                Request::Raise(..) => todo!(),
+                Request::Raise { .. } => todo!(),
                 Request::CloseWindow(..) => todo!(),
             }
         }

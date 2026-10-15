@@ -6,6 +6,7 @@ use rustc_hash::FxHashSet as HashSet;
 use tracing::{debug, warn};
 
 use super::events::{EventOutcome, window_discovery};
+use super::layout_pass::Pass;
 use super::{Reactor, StaleCleanupState, WindowFilter};
 use crate::app::system_reads::server_facts;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
@@ -116,7 +117,7 @@ impl Reactor {
         self.mission_control_manager.pending_mission_control_refresh.clear();
         self.force_refresh_all_windows();
         self.check_for_new_windows();
-        self.update_layout(false, false, None);
+        self.update_layout(Pass::Plain, None);
     }
 
     // Uses the same "pending refresh" path as Mission Control recovery so a bulk

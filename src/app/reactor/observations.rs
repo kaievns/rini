@@ -12,10 +12,12 @@ use objc2_core_foundation::CGRect;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use tracing::{debug, trace};
 
+use super::dispatch::GlobalActivation;
 use super::events::{
     EventOutcome, app as application_workflow, drag as interaction_workflow,
     space as topology_workflow, system as system_workflow, window as window_workflow,
 };
+use super::managers::QuarantineSignal;
 use super::{DragState, Event, Reactor};
 use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
 use crate::input::event::LeftPress;
@@ -25,14 +27,12 @@ use crate::windows::domain::zoom::{self, Zoom};
 use crate::windows::platform::mouse::MouseState;
 use crate::workspaces::LayoutEvent;
 
-/// The five events that move the refresh quarantine: sleep, wake, session activation and display
-/// churn. Wake also has the bars read the clock again. None of them is a focus edge, so focus
-/// tracking passes them by.
+/// The six events that move the refresh quarantine: sleep, wake, the session resigning and
+/// activating, and display churn beginning and ending. Wake also has the bars read the clock
+/// again. None of them is a focus edge, so focus tracking passes them by.
 impl Reactor {
     pub(super) fn on_system_will_sleep(&mut self) -> EventOutcome {
-        let quarantine = &mut self.refresh_quarantine_manager;
-        quarantine.sleeping = true;
-        quarantine.awaiting_post_wake_snapshot = false;
+        self.quarantine_on(QuarantineSignal::WillSleep);
         // Sleep is the last chance to persist before a possible reboot, so write out any
         // debounced change rather than risk losing it.
         if self.autosave_pending {
@@ -42,32 +42,29 @@ impl Reactor {
     }
 
     pub(super) fn on_system_woke(&mut self) -> EventOutcome {
-        let quarantine = &mut self.refresh_quarantine_manager;
-        quarantine.sleeping = true;
-        quarantine.awaiting_post_wake_snapshot = true;
+        self.quarantine_on(QuarantineSignal::Woke);
         let outcome = system_workflow::handle_system_woke();
-        self.defer_visible_refresh(true);
         self.bar_clock_changed();
         outcome
     }
 
     pub(super) fn on_session_did_resign_active(&mut self) -> EventOutcome {
-        let quarantine = &mut self.refresh_quarantine_manager;
-        quarantine.session_inactive = true;
-        quarantine.awaiting_post_session_snapshot = false;
+        self.quarantine_on(QuarantineSignal::SessionResigned);
         EventOutcome::default()
     }
 
     pub(super) fn on_session_did_become_active(&mut self) -> EventOutcome {
-        let quarantine = &mut self.refresh_quarantine_manager;
-        quarantine.session_inactive = true;
-        quarantine.awaiting_post_session_snapshot = true;
-        self.defer_visible_refresh(true);
+        self.quarantine_on(QuarantineSignal::SessionActivated);
         EventOutcome::default()
     }
 
     pub(super) fn on_display_churn_begin(&mut self) -> EventOutcome {
-        self.refresh_quarantine_manager.display_churn_active = true;
+        self.quarantine_on(QuarantineSignal::ChurnBegan);
+        EventOutcome::default()
+    }
+
+    pub(super) fn on_display_churn_end(&mut self) -> EventOutcome {
+        self.quarantine_on(QuarantineSignal::ChurnEnded);
         EventOutcome::default()
     }
 }
@@ -234,26 +231,28 @@ impl Reactor {
         mouse_state: Option<MouseState>,
         raised_window: Option<WindowId>,
     ) -> anyhow::Result<EventOutcome> {
-        let mission_control_active = self.is_mission_control_active();
-        let mut mouse_state = mouse_state;
         let zoom = if requested.0 {
             None
         } else {
             self.title_bar_zoom(window, new_frame)
         };
+        let mut report = window_workflow::FrameReport {
+            window,
+            frame: new_frame,
+            last_seen,
+            requested,
+            mouse_state,
+            pointer: (self.reads.mouse)(),
+            mission_control_active: self.is_mission_control_active(),
+            zoom: zoom.is_some(),
+        };
         let disposition = window_workflow::classify_window_frame_change(
             &mut self.state,
             &self.transactions,
             &mut self.drag_manager,
-            window,
-            new_frame,
-            last_seen,
-            requested.0,
-            &mut mouse_state,
-            (self.reads.mouse)(),
-            mission_control_active,
-            zoom.is_some(),
+            &mut report,
         );
+        let mouse_state = report.mouse_state;
         // A mouse release still has to terminate an open drag session, including on the paths the
         // reducer returns early from: frame acknowledgements and no-op geometry changes.
         let ends_a_drag = mouse_state == Some(MouseState::Up) && self.is_in_drag();
@@ -410,10 +409,10 @@ impl Reactor {
     pub(super) fn on_application_globally_activated(
         &mut self,
         pid: pid_t,
-        duplicate: bool,
+        activation: GlobalActivation,
         should_update_notifications: bool,
     ) -> anyhow::Result<EventOutcome> {
-        if duplicate {
+        if activation == GlobalActivation::Repeated {
             trace!(pid, "Ignoring duplicate global application activation");
             return Ok(EventOutcome::focus_changed(None, should_update_notifications));
         }
@@ -538,16 +537,10 @@ impl Reactor {
         space_state: ForwardedSpaceState,
     ) -> anyhow::Result<EventOutcome> {
         let releases_lifecycle = space_state.releases_lifecycle_refresh_quarantine;
+        // A settled churn's snapshot is queued ahead of its DisplayChurnEnd.
+        self.quarantine_on(QuarantineSignal::ChurnEnded);
         let outcome = self.handle_authoritative_space_snapshot(space_state)?;
-        // Every snapshot the spaces actor forwards is coherent, so each one, once incorporated,
-        // releases the display-churn quarantine and owes one visible-window refresh, made once
-        // every quarantine this snapshot releases is lifted.
-        self.refresh_quarantine_manager.display_churn_active = false;
-        self.defer_visible_refresh(true);
-        if releases_lifecycle {
-            self.release_post_instability_quarantine_after_authoritative_snapshot();
-        }
-        self.flush_deferred_visible_refresh();
+        self.quarantine_on(QuarantineSignal::Incorporated { releases_lifecycle });
         // Flush any debounced save now: after a display was plugged in or unplugged, the
         // arrangement about to be replaced is the one worth remembering, and it is also when the
         // layout file gets consulted to put windows back on the display they came from.
@@ -616,8 +609,8 @@ impl Reactor {
     /// Notes on the activity clock the window an event says the window server just moved.
     pub(super) fn note_windowserver_activity(&self, event: &Event) {
         let wsid = match event {
-            Event::WindowFrameChanged(wid, ..) => Some(wid.idx.get()),
-            Event::WindowCreated(wid, ..) => Some(wid.idx.get()),
+            Event::WindowFrameChanged { window: wid, .. } => Some(wid.idx.get()),
+            Event::WindowCreated { window: wid, .. } => Some(wid.idx.get()),
             Event::WindowDestroyed(wid) => Some(wid.idx.get()),
             Event::WindowMinimized(wid) => Some(wid.idx.get()),
             Event::WindowDeminiaturized(wid) => Some(wid.idx.get()),
@@ -653,6 +646,7 @@ impl Reactor {
             | Event::SessionDidResignActive
             | Event::SessionDidBecomeActive
             | Event::DisplayChurnBegin
+            | Event::DisplayChurnEnd
             | Event::MissionControlNativeEntered
             | Event::MissionControlNativeExited
             | Event::RaiseCompleted { .. }
