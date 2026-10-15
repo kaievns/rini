@@ -11,7 +11,8 @@ use super::events::EventOutcome;
 use super::{Reactor, RefocusState, StaleCleanupState};
 use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::topology::{
-    DisplaySetDelta, ForwardedSpaceState, Topology, TopologyWindowDelta, display_set_delta,
+    DisplaySetDelta, ForwardedSpaceState, SnapshotReach, Topology, TopologyWindowDelta,
+    display_set_delta,
 };
 use crate::windows::domain::request::Request;
 use crate::workspaces::LayoutEvent;
@@ -69,7 +70,7 @@ impl Reactor {
         self.space_state.has_seen_display_set = has_seen_display_set;
         self.space_state.fullscreen_spaces = fullscreen_spaces;
         self.space_state.active_spaces = active_spaces;
-        if analysis.command_space_only_update {
+        if analysis.reach == SnapshotReach::CommandSpaceOnly {
             self.space_state.menu_bar_space = menu_bar_space;
             self.space_state.command_space = command_space;
             return Ok(outcome);
@@ -104,7 +105,7 @@ impl Reactor {
         // the windows that were there, rather than whichever windows now occupy those slots.
         self.record_departing_display_homes(&display_set.departed);
         self.replace_screens(screens);
-        if analysis.invalidates_pending_targets {
+        if analysis.reach == SnapshotReach::InvalidatesPendingTargets {
             self.clear_pending_hidden_window_targets();
         }
         if self.is_mission_control_active() {
