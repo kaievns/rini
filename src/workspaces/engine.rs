@@ -48,6 +48,15 @@ pub struct OnScreenEntry {
     pub max_size: Option<CGSize>,
 }
 
+/// Every window an app lists on a space, as `WindowsOnScreenUpdated` carries them, with what is
+/// known of the app.
+#[derive(Debug, Clone)]
+pub struct AppWindows {
+    pub pid: pid_t,
+    pub windows: Vec<OnScreenEntry>,
+    pub app_info: Option<AppInfo>,
+}
+
 /// The entry for `wid`. A window the store no longer has is resizable, sized zero, untitled.
 pub fn on_screen_entry(wid: WindowId, window: Option<&WindowState>) -> OnScreenEntry {
     OnScreenEntry {
@@ -66,7 +75,7 @@ pub fn on_screen_entry(wid: WindowId, window: Option<&WindowState>) -> OnScreenE
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum LayoutEvent {
-    WindowsOnScreenUpdated(SpaceId, pid_t, Vec<OnScreenEntry>, Option<AppInfo>),
+    WindowsOnScreenUpdated(SpaceId, AppWindows),
     /// The complete cross-space discovery batch for one application has been applied.
     WindowDiscoveryCompleted(pid_t, Option<String>, Vec<SpaceId>),
     AppClosed(pid_t),
@@ -487,14 +496,12 @@ impl LayoutEngine {
                 self.debug_tree(space);
                 self.expose_layouts(space, size);
             }
-            LayoutEvent::WindowsOnScreenUpdated(space, pid, windows_with_titles, app_info) => {
+            LayoutEvent::WindowsOnScreenUpdated(space, app) => {
                 return self.on_windows_on_screen_updated(
                     window_store,
                     memory,
                     space,
-                    pid,
-                    windows_with_titles,
-                    app_info,
+                    app,
                     app_rule_outcome,
                 );
             }
@@ -1008,7 +1015,11 @@ mod tests {
             app: Option<AppInfo>,
         ) -> LayoutEventOutcome {
             let pid = windows[0].wid.pid;
-            self.event(LayoutEvent::WindowsOnScreenUpdated(space, pid, windows, app))
+            self.event(LayoutEvent::WindowsOnScreenUpdated(space, AppWindows {
+                pid,
+                windows,
+                app_info: app,
+            }))
         }
 
         fn command(&mut self, space: SpaceId, command: impl Into<EngineCommand>) -> EventResponse {

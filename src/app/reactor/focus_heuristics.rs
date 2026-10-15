@@ -143,8 +143,9 @@ impl Reactor {
             LayoutEvent::WindowAdded(space, wid) => {
                 self.request_refocus_if_hidden(*space, *wid);
             }
-            LayoutEvent::WindowsOnScreenUpdated(space, _, windows, _) => {
-                let hidden_exists = windows
+            LayoutEvent::WindowsOnScreenUpdated(space, app) => {
+                let hidden_exists = app
+                    .windows
                     .iter()
                     .any(|entry| self.affinity().window_in_non_active_workspace(*space, entry.wid));
                 if hidden_exists {

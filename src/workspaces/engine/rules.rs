@@ -15,6 +15,7 @@ use crate::workspaces::domain::app_rules::{
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::{VirtualWorkspaceId, WorkspaceError};
 use crate::workspaces::engine::LayoutEngine;
+use crate::workspaces::engine::discovery::Admitted;
 use crate::workspaces::{AppRuleEffects, AppRuleResult, RuleFloating, WindowStore};
 
 impl LayoutEngine {
@@ -65,12 +66,15 @@ impl LayoutEngine {
             memory,
             window_id,
             space,
-            app_info.and_then(|a| a.bundle_id.as_deref()),
-            app_info.and_then(|a| a.localized_name.as_deref()),
-            Some(title.as_str()),
-            ax_role.as_deref(),
-            ax_subrole.as_deref(),
-            is_modal,
+            WindowRuleContext {
+                app_bundle_id: app_info.and_then(|a| a.bundle_id.as_deref()),
+                app_name: app_info.and_then(|a| a.localized_name.as_deref()),
+                window_title: Some(title.as_str()),
+                ax_role: ax_role.as_deref(),
+                ax_subrole: ax_subrole.as_deref(),
+                is_modal,
+                state: RuleState::default(),
+            },
         )
     }
 
@@ -115,29 +119,20 @@ impl LayoutEngine {
         AfterRules::for_result(before, result.as_ref().map_err(|_| ()), in_layout_now)
     }
 
-    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
+    /// Places `window_id` by the rules `window` matches as it opens, else where its application's
+    /// windows were when it last ran.
     pub fn assign_window_with_app_info(
         &mut self,
         window_store: &mut WindowStore,
         memory: &mut DisplayMemory,
         window_id: WindowId,
         space: SpaceId,
-        app_bundle_id: Option<&str>,
-        app_name: Option<&str>,
-        window_title: Option<&str>,
-        ax_role: Option<&str>,
-        ax_subrole: Option<&str>,
-        is_modal: bool,
+        window: WindowRuleContext<'_>,
     ) -> Result<AppRuleResult, WorkspaceError> {
-        let decision = self.app_rules.evaluate(WindowRuleContext {
-            app_bundle_id,
-            app_name,
-            window_title,
-            ax_role,
-            ax_subrole,
-            is_modal,
-            state: RuleState::default(),
-        });
+        let WindowRuleContext {
+            app_bundle_id, window_title, ..
+        } = window;
+        let decision = self.app_rules.evaluate(window);
 
         // Where this application's windows were, but only when the config had nothing to say and the
         // window has no assignment already. This is the first sighting of a launching application's
@@ -194,17 +189,15 @@ impl LayoutEngine {
         )
     }
 
-    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
     pub(super) fn apply_app_rule_outcome(
         &mut self,
         window_store: &mut WindowStore,
-        window: WindowId,
         space: SpaceId,
-        was_floating: bool,
-        result: AppRuleResult,
+        admitted: Admitted,
         app_rule_outcome: &mut AppRuleOutcome,
         tiled_by_workspace: &mut HashMap<VirtualWorkspaceId, Vec<WindowId>>,
     ) -> Option<(WindowId, VirtualWorkspaceId)> {
+        let Admitted { window, was_floating, result } = admitted;
         let AppRuleResult::Managed(effects) = result else {
             return None;
         };

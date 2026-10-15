@@ -13,7 +13,7 @@ use crate::windows::domain::request::{Request, SuppressEnhancedUi};
 use crate::windows::domain::transaction::TransactionId;
 use crate::workspaces::LayoutEvent;
 use crate::workspaces::domain::app_rules::AfterRules;
-use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
+use crate::workspaces::engine::{AppWindows, OnScreenEntry, on_screen_entry};
 
 impl Reactor {
     pub(super) fn apply_app_rules_for_activated_spaces(&mut self, activated: &[SpaceId]) {
@@ -207,12 +207,11 @@ impl Reactor {
                 .map(|&wid| on_screen_entry(wid, self.state.windows.window(wid)))
                 .collect();
 
-            self.send_layout_event(LayoutEvent::WindowsOnScreenUpdated(
-                space,
+            self.send_layout_event(LayoutEvent::WindowsOnScreenUpdated(space, AppWindows {
                 pid,
-                windows_with_titles,
-                Some(app_info.clone()),
-            ));
+                windows: windows_with_titles,
+                app_info: Some(app_info.clone()),
+            }));
         }
     }
 }

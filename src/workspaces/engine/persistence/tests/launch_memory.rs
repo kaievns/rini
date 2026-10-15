@@ -5,6 +5,7 @@ use rini_core::ids::WindowServerId;
 
 use super::*;
 use crate::windows::domain::info::WindowInfo;
+use crate::windows::domain::rules::WindowRuleContext;
 use crate::windows::domain::state::WindowState;
 use crate::workspaces::LayoutEvent;
 use crate::workspaces::domain::display_memory::DisplayMemory;
@@ -402,12 +403,12 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
             &mut memory,
             window,
             space,
-            Some("com.apple.TextEdit"),
-            Some("TextEdit"),
-            Some("Untitled"),
-            None,
-            None,
-            false,
+            WindowRuleContext {
+                app_bundle_id: Some("com.apple.TextEdit"),
+                app_name: Some("TextEdit"),
+                window_title: Some("Untitled"),
+                ..WindowRuleContext::default()
+            },
         )
         .expect("assignment should succeed");
 

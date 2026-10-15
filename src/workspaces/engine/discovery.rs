@@ -8,10 +8,11 @@ use tracing::warn;
 
 use crate::layout::WindowLayoutConstraints;
 use crate::windows::domain::info::AppInfo;
+use crate::windows::domain::rules::{RuleState, WindowRuleContext};
 use crate::workspaces::domain::app_rules::{AppRuleOutcome, AppRuleWorkspaceFocus};
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
-use crate::workspaces::engine::{EventResponse, LayoutEngine, OnScreenEntry};
+use crate::workspaces::engine::{AppWindows, EventResponse, LayoutEngine, OnScreenEntry};
 use crate::workspaces::{AppRuleEffects, AppRuleResult, RuleFloating, WindowStore};
 
 /// The layout constraints `entry` reports.
@@ -38,23 +39,33 @@ fn constraints_change_layout(
         && (now.constrains_layout() || previous.is_some_and(|old| old.constrains_layout()))
 }
 
+/// A window its rules or the auto-assignment found a workspace for: what they made of it, and
+/// whether it floated before.
+pub(super) struct Admitted {
+    pub(super) window: WindowId,
+    pub(super) was_floating: bool,
+    pub(super) result: AppRuleResult,
+}
+
 impl LayoutEngine {
     /// Every window an app has on a space, as the app itself reports them.
     ///
     /// The authoritative list: windows missing from it are gone, and windows in it rini has not
     /// placed are new. App rules are applied here, because this is where a window first arrives with
     /// its bundle id and title known.
-    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
     pub(super) fn on_windows_on_screen_updated(
         &mut self,
         window_store: &mut WindowStore,
         memory: &mut DisplayMemory,
         space: SpaceId,
-        pid: pid_t,
-        windows_with_titles: Vec<OnScreenEntry>,
-        app_info: Option<AppInfo>,
+        app: AppWindows,
         app_rule_outcome: &mut AppRuleOutcome,
     ) -> EventResponse {
+        let AppWindows {
+            pid,
+            windows: windows_with_titles,
+            app_info,
+        } = app;
         self.debug_tree(space);
         self.floating.clear_active_for_app(space, pid);
         let mut constraints_changed = false;
@@ -76,23 +87,15 @@ impl LayoutEngine {
             );
             constraints_changed |= self.note_constraints(&entry);
 
-            let was_floating = self.floating.is_floating(wid);
-            let Some(outcome) = self.admit_window(
-                window_store,
-                memory,
-                space,
-                &entry,
-                app_info.as_ref(),
-                was_floating,
-            ) else {
+            let Some(admitted) =
+                self.admit_window(window_store, memory, space, &entry, app_info.as_ref())
+            else {
                 continue;
             };
             if let Some(request) = self.apply_app_rule_outcome(
                 window_store,
-                wid,
                 space,
-                was_floating,
-                outcome,
+                admitted,
                 app_rule_outcome,
                 &mut tiled_by_workspace,
             ) {
@@ -128,32 +131,35 @@ impl LayoutEngine {
         space: SpaceId,
         entry: &OnScreenEntry,
         app_info: Option<&AppInfo>,
-        was_floating: bool,
-    ) -> Option<AppRuleResult> {
+    ) -> Option<Admitted> {
         let wid = entry.wid;
-        let ruled = self.assign_window_with_app_info(
-            window_store,
-            memory,
-            wid,
-            space,
-            app_info.and_then(|info| info.bundle_id.as_deref()),
-            app_info.and_then(|info| info.localized_name.as_deref()),
-            entry.title.as_deref(),
-            entry.ax_role.as_deref(),
-            entry.ax_subrole.as_deref(),
-            entry.is_modal,
-        );
+        let was_floating = self.floating.is_floating(wid);
+        let admitted = |result| Admitted {
+            window: wid,
+            was_floating,
+            result,
+        };
+        let ruled =
+            self.assign_window_with_app_info(window_store, memory, wid, space, WindowRuleContext {
+                app_bundle_id: app_info.and_then(|info| info.bundle_id.as_deref()),
+                app_name: app_info.and_then(|info| info.localized_name.as_deref()),
+                window_title: entry.title.as_deref(),
+                ax_role: entry.ax_role.as_deref(),
+                ax_subrole: entry.ax_subrole.as_deref(),
+                is_modal: entry.is_modal,
+                state: RuleState::default(),
+            });
         if let Ok(outcome) = ruled {
-            return Some(outcome);
+            return Some(admitted(outcome));
         }
         match self.virtual_workspace_manager.auto_assign_window(window_store, wid, space) {
-            Ok(ws) => Some(AppRuleResult::Managed(AppRuleEffects {
+            Ok(ws) => Some(admitted(AppRuleResult::Managed(AppRuleEffects {
                 workspace_id: ws,
                 floating: RuleFloating::as_is(was_floating),
                 position: None,
                 size: None,
                 focus: false,
-            })),
+            }))),
             Err(_) => {
                 warn!(
                     "Could not determine workspace for window {:?} on space {:?}; skipping assignment",

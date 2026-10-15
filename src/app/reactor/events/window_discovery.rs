@@ -16,7 +16,7 @@ use crate::windows::platform::window_server::WindowServer;
 use crate::workspaces::AppRuleResult;
 use crate::workspaces::domain::app_rules::AfterRules;
 use crate::workspaces::domain::virtual_workspace::WorkspaceError;
-use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
+use crate::workspaces::engine::{AppWindows, OnScreenEntry, on_screen_entry};
 
 /// Handler for window discovery events, responsible for processing newly discovered windows
 /// and managing the lifecycle of window state in the reactor.
@@ -482,12 +482,12 @@ pub(crate) fn emit_layout_events(
             })
             .collect();
 
-        outcome = outcome.with_layout_event(LayoutEvent::WindowsOnScreenUpdated(
-            space,
-            pid,
-            windows_with_titles,
-            app_info.clone(),
-        ));
+        outcome =
+            outcome.with_layout_event(LayoutEvent::WindowsOnScreenUpdated(space, AppWindows {
+                pid,
+                windows: windows_with_titles,
+                app_info: app_info.clone(),
+            }));
     }
 
     // Matching is allowed to observe every native-space slice for this application before stale
