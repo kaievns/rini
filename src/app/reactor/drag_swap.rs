@@ -74,12 +74,12 @@ impl Reactor {
                 }
                 let other_space = self.affinity().best_space_for_window_state(other_state)?;
                 if other_space != space
-                    || !self.layout_manager.layout_engine.is_window_in_active_workspace(
+                    || !self.layout_engine.is_window_in_active_workspace(
                         &self.state.windows,
                         space,
                         other_wid,
                     )
-                    || self.layout_manager.layout_engine.is_window_floating(other_wid)
+                    || self.layout_engine.is_window_floating(other_wid)
                 {
                     return None;
                 }
@@ -105,7 +105,7 @@ impl Reactor {
         // kept writing the stale stored position underneath the drag. The window ended up
         // wherever the last tug-of-war left it, which reads as snapping back part of the
         // way — roughly a third of the distance, in the reported case.
-        if self.layout_manager.layout_engine.is_window_floating(wid) {
+        if self.layout_engine.is_window_floating(wid) {
             trace!(
                 ?wid,
                 "Skipping swap: floating windows do not participate in strip swaps"
@@ -162,11 +162,10 @@ impl Reactor {
             return;
         }
 
-        if !self.layout_manager.layout_engine.is_window_in_active_workspace(
-            &self.state.windows,
-            space,
-            wid,
-        ) {
+        if !self
+            .layout_engine
+            .is_window_in_active_workspace(&self.state.windows, space, wid)
+        {
             return;
         }
 

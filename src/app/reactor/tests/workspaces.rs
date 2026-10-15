@@ -156,19 +156,19 @@ fn workspace_commands_follow_active_display_space_across_active_displays() {
     assert_eq!(reactor.workspace_command_space(), Some(left_space));
     assert_eq!(reactor.command_context_space(), Some(left_space));
     assert_eq!(
-        reactor.layout_manager.layout_engine.active_workspace(right_space),
+        reactor.layout_engine.active_workspace(right_space),
         Some(right_workspace)
     );
 
     reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
 
     assert_eq!(
-        reactor.layout_manager.layout_engine.active_workspace(left_space),
+        reactor.layout_engine.active_workspace(left_space),
         Some(next_left_workspace),
         "workspace commands should follow the active display space"
     );
     assert_eq!(
-        reactor.layout_manager.layout_engine.active_workspace(right_space),
+        reactor.layout_engine.active_workspace(right_space),
         Some(right_workspace),
         "workspace commands should not switch the focused window's display when it is not active"
     );
@@ -318,12 +318,7 @@ fn non_workspace_instant_layout_keeps_full_frame_batch() {
     let _ = apps.requests();
 
     let target = CGRect::new(CGPoint::new(25., 30.), CGSize::new(700., 650.));
-    assert!(crate::app::reactor::animation::AnimationManager::instant_layout(
-        &mut reactor,
-        space,
-        &[(wid, target)],
-        None,
-    ));
+    assert!(reactor.instant_layout(space, &[(wid, target)], None,));
 
     let requests = apps.requests();
     assert!(
@@ -353,15 +348,7 @@ fn workspace_switch_layout_falls_back_to_full_frames_for_size_changes() {
     let _ = apps.requests();
 
     let target = CGRect::new(CGPoint::new(25., 30.), CGSize::new(700., 650.));
-    assert!(
-        crate::app::reactor::animation::AnimationManager::workspace_switch_layout(
-            &mut reactor,
-            space,
-            None,
-            &[(wid, target)],
-            None,
-        )
-    );
+    assert!(reactor.workspace_switch_layout(space, None, &[(wid, target)], None,));
 
     let requests = apps.requests();
     assert!(
@@ -404,7 +391,6 @@ fn topology_change_clears_stale_pending_hide_target_before_next_workspace_layout
 
     let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
     let hidden_target = reactor
-        .layout_manager
         .layout_engine
         .calculate_layout_with_virtual_workspaces(
             &reactor.state.windows,
@@ -493,7 +479,7 @@ fn auto_workspace_switch_follows_activated_window_when_same_app_is_visible_elsew
     while raise_manager_rx.try_recv().is_ok() {}
 
     assert!(
-        reactor.layout_manager.layout_engine.is_window_in_active_workspace(
+        reactor.layout_engine.is_window_in_active_workspace(
             &reactor.state.windows,
             space,
             same_app_visible
@@ -503,7 +489,7 @@ fn auto_workspace_switch_follows_activated_window_when_same_app_is_visible_elsew
     reactor.handle_event(Event::ApplicationGloballyActivated(activated.pid));
     assert_eq!(reactor.main_window(), Some(activated));
     assert_eq!(
-        reactor.layout_manager.layout_engine.active_workspace_idx(space),
+        reactor.layout_engine.active_workspace_idx(space),
         Some(0),
         "Carbon activation must wait for the app thread to resolve its AX focus"
     );
@@ -581,10 +567,7 @@ fn dock_activation_reveals_window_in_active_scrolling_workspace() {
     assert_eq!(outcome.focused_window, Some(activated));
 
     reactor.apply_event_outcome(outcome);
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(activated)
-    );
+    assert_eq!(reactor.layout_engine.focused_window(), Some(activated));
     assert!(
         !apps.requests().is_empty(),
         "revealing the activated scrolling window should write the adjusted strip layout"
@@ -773,7 +756,7 @@ fn display_churn_end_refresh_preserves_non_default_workspace_without_app_rules()
         "visibility refresh must preserve an existing non-default assignment when no app rule matches"
     );
     assert_eq!(
-        reactor.layout_manager.layout_engine.active_workspace(space),
+        reactor.layout_engine.active_workspace(space),
         Some(secondary_workspace),
         "refresh must not switch the active workspace back to default"
     );
@@ -847,7 +830,6 @@ fn wsid_rekey_preserves_non_default_workspace_without_app_rules() {
     );
     assert_eq!(
         reactor
-            .layout_manager
             .layout_engine
             .virtual_workspace_manager()
             .workspace_info_for_window_any(&reactor.state.windows, old_wid),
@@ -892,12 +874,12 @@ fn displays_share_workspaces_but_switch_between_them_independently() {
     assert!(reactor.set_test_active_workspace(external_space, external_workspaces[3]));
 
     assert_eq!(
-        reactor.layout_manager.layout_engine.active_workspace(external_space),
+        reactor.layout_engine.active_workspace(external_space),
         Some(external_workspaces[3]),
         "the external follows the switch"
     );
     assert_eq!(
-        reactor.layout_manager.layout_engine.active_workspace(builtin_space),
+        reactor.layout_engine.active_workspace(builtin_space),
         Some(builtin_workspaces[0]),
         "and the built-in is unaffected: displays switch independently"
     );
@@ -925,7 +907,7 @@ fn reconnect_under_a_new_space_id_keeps_every_windows_workspace() {
     assert!(reactor.assign_test_window_to_workspace(old_space, window, workspace));
     reactor.send_layout_event(LayoutEvent::WindowAdded(old_space, window));
 
-    reactor.layout_manager.layout_engine.remap_space(
+    reactor.layout_engine.remap_space(
         &mut reactor.state.windows,
         &mut reactor.state.display_memory,
         old_space,
@@ -943,7 +925,7 @@ fn reconnect_under_a_new_space_id_keeps_every_windows_workspace() {
         "and it is the SAME workspace: a new space id is not a new workspace"
     );
     assert_eq!(
-        reactor.layout_manager.layout_engine.active_workspace(new_space),
+        reactor.layout_engine.active_workspace(new_space),
         Some(workspace),
         "the display carries on showing what it was showing"
     );
@@ -2001,7 +1983,6 @@ mod query_view {
         assert!(reactor.query_workspaces(Some(never_seen)).is_empty());
         assert!(
             reactor
-                .layout_manager
                 .layout_engine
                 .virtual_workspace_manager()
                 .existing_workspaces()

@@ -61,7 +61,7 @@ impl Reactor {
             .iter()
             .filter_map(|screen| screen.space.map(|space| (space, screen.display_uuid.clone())))
             .collect::<Vec<_>>();
-        self.layout_manager.layout_engine.reconcile_startup_spaces(
+        self.layout_engine.reconcile_startup_spaces(
             &mut self.state.windows,
             &mut self.state.display_memory,
             &current_display_spaces,
@@ -143,7 +143,7 @@ impl Reactor {
                 "Recording display affinity for windows on a departing display"
             );
             for window in residents {
-                self.layout_manager.layout_engine.set_window_display_home(
+                self.layout_engine.set_window_display_home(
                     &mut self.state.display_memory,
                     window,
                     departing_space,
@@ -159,7 +159,7 @@ impl Reactor {
             .iter()
             .filter_map(|screen| screen.display_uuid_owned())
             .collect();
-        self.layout_manager.layout_engine.set_connected_displays(connected);
+        self.layout_engine.set_connected_displays(connected);
         // Cursor warping is derived from display geometry, so it has to be told whenever
         // that geometry changes — docking, undocking, or rearranging in System Settings.
         // Pushing it from here rather than having the actor poll CGDisplayBounds keeps one
@@ -169,11 +169,11 @@ impl Reactor {
             self.clear_pending_hidden_window_targets();
         }
         if self.is_mission_control_active() {
-            self.pending_space_change_manager.pending_space_change = Some(pending_space_state);
+            self.pending_space_change = Some(pending_space_state);
             return Ok(outcome);
         }
         for (previous_space, space) in space_remaps {
-            self.layout_manager.layout_engine.remap_space(
+            self.layout_engine.remap_space(
                 &mut self.state.windows,
                 &mut self.state.display_memory,
                 previous_space,
@@ -204,7 +204,7 @@ impl Reactor {
             else {
                 continue;
             };
-            self.layout_manager.layout_engine.update_space_display(
+            self.layout_engine.update_space_display(
                 &mut self.state.display_memory,
                 space,
                 Some(display_uuid.to_string()),
@@ -232,10 +232,7 @@ impl Reactor {
             if !self.is_space_active(space) {
                 continue;
             }
-            self.layout_manager
-                .layout_engine
-                .virtual_workspace_manager_mut()
-                .list_workspaces(space);
+            self.layout_engine.virtual_workspace_manager_mut().list_workspaces(space);
             outcome = outcome.with_layout_event(LayoutEvent::SpaceExposed(space, size));
         }
         if let Some(delta) = topology_window_delta {
@@ -276,7 +273,7 @@ impl Reactor {
     }
 
     fn try_apply_pending_space_change(&mut self) {
-        if let Some(pending) = self.pending_space_change_manager.pending_space_change.take() {
+        if let Some(pending) = self.pending_space_change.take() {
             if pending.screens.len() == self.space_state.screens.len() {
                 // During native Mission Control we must preserve the full forwarded snapshot,
                 // not just the raw spaces vector, otherwise command-space and per-display space
@@ -285,7 +282,7 @@ impl Reactor {
                     self.apply_event_outcome(outcome);
                 }
             } else {
-                self.pending_space_change_manager.pending_space_change = Some(pending);
+                self.pending_space_change = Some(pending);
             }
         }
     }
@@ -326,7 +323,7 @@ impl Reactor {
             .workspace_command_space()
             .or_else(|| spaces.iter().copied().flatten().find(|space| self.is_space_active(*space)))
         {
-            self.layout_manager.layout_engine.ensure_active_workspace_info(space);
+            self.layout_engine.ensure_active_workspace_info(space);
         }
     }
 
@@ -359,7 +356,7 @@ impl Reactor {
                     .windows
                     .restore_window_from_native_fullscreen(record.current_window_id);
 
-                if let Some(app) = self.app_manager.apps.get(&record.current_window_id.pid)
+                if let Some(app) = self.apps.get(&record.current_window_id.pid)
                     && let Err(e) = app.handle.send(Request::GetVisibleWindows)
                 {
                     warn!(
@@ -391,7 +388,7 @@ impl Reactor {
                         .map(|screen| screen.frame.size)
                         .unwrap_or_else(|| CGSize::new(0.0, 0.0));
 
-                    let response = self.layout_manager.layout_engine.move_window_to_space(
+                    let response = self.layout_engine.move_window_to_space(
                         &mut self.state.windows,
                         &mut self.state.display_memory,
                         source_space,

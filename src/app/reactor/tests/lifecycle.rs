@@ -444,7 +444,7 @@ fn autosave_preserves_floating_restore_frame() {
     // transiently in this harness. That is fine and is why the reactor logs and
     // continues instead of propagating. What must hold is that ATTEMPTING the save
     // does not disturb live state.
-    let _ = reactor.layout_manager.layout_engine.autosave_current_layout(
+    let _ = reactor.layout_engine.autosave_current_layout(
         path.clone(),
         &reactor.state.windows,
         &reactor.state.display_memory,
@@ -473,13 +473,7 @@ fn an_autosave_forgets_a_space_the_display_moved_off_and_left_empty() {
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(old)]));
     reactor.handle_event(space_state_event(vec![screen], vec![Some(new)]));
-    let spaces = || {
-        reactor
-            .layout_manager
-            .layout_engine
-            .virtual_workspace_manager()
-            .initialized_spaces()
-    };
+    let spaces = || reactor.layout_engine.virtual_workspace_manager().initialized_spaces();
     assert!(
         spaces().contains(&old),
         "the fixture has the old space to forget"
@@ -489,11 +483,7 @@ fn an_autosave_forgets_a_space_the_display_moved_off_and_left_empty() {
     let _ = std::fs::remove_dir_all(&dir);
 
     assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .virtual_workspace_manager()
-            .initialized_spaces(),
+        reactor.layout_engine.virtual_workspace_manager().initialized_spaces(),
         vec![new]
     );
 }
@@ -518,11 +508,7 @@ fn an_autosave_keeps_an_empty_desktop_macos_still_lists_off_screen() {
     reactor.save_layout_now();
     let _ = std::fs::remove_dir_all(&dir);
 
-    let mut spaces = reactor
-        .layout_manager
-        .layout_engine
-        .virtual_workspace_manager()
-        .initialized_spaces();
+    let mut spaces = reactor.layout_engine.virtual_workspace_manager().initialized_spaces();
     spaces.sort_unstable();
     assert_eq!(spaces, vec![other, shown]);
 }
@@ -548,11 +534,7 @@ fn the_quit_save_keeps_an_empty_desktop_macos_still_lists_off_screen() {
     let _ = std::fs::remove_dir_all(&dir);
 
     saved.unwrap();
-    let mut spaces = reactor
-        .layout_manager
-        .layout_engine
-        .virtual_workspace_manager()
-        .initialized_spaces();
+    let mut spaces = reactor.layout_engine.virtual_workspace_manager().initialized_spaces();
     spaces.sort_unstable();
     assert_eq!(spaces, vec![other, shown]);
 }
@@ -583,11 +565,7 @@ fn a_save_forgets_nothing_when_the_window_server_did_not_list_the_spaces() {
     let _ = std::fs::remove_dir_all(&dir);
 
     saved.unwrap();
-    let mut spaces = reactor
-        .layout_manager
-        .layout_engine
-        .virtual_workspace_manager()
-        .initialized_spaces();
+    let mut spaces = reactor.layout_engine.virtual_workspace_manager().initialized_spaces();
     spaces.sort_unstable();
     assert_eq!(spaces, vec![other, shown]);
 }
@@ -608,11 +586,7 @@ fn the_quit_save_forgets_a_space_the_display_moved_off_and_left_empty() {
 
     saved.unwrap();
     assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .virtual_workspace_manager()
-            .initialized_spaces(),
+        reactor.layout_engine.virtual_workspace_manager().initialized_spaces(),
         vec![new]
     );
 }

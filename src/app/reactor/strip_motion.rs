@@ -65,7 +65,7 @@ impl Reactor {
             if let Some(wsid) = wsid {
                 self.transaction_manager.update_txid_entries([(wsid, txid, frame)]);
             }
-            if let Some(app) = self.app_manager.apps.get(&wid.pid) {
+            if let Some(app) = self.apps.get(&wid.pid) {
                 _ = app.handle.send(crate::windows::domain::request::Request::SetWindowFrame(
                     wid, frame, txid, true,
                 ));
@@ -100,11 +100,7 @@ impl Reactor {
         else {
             return;
         };
-        let workspaces = self
-            .layout_manager
-            .layout_engine
-            .virtual_workspace_manager_mut()
-            .list_workspaces(space);
+        let workspaces = self.layout_engine.virtual_workspace_manager_mut().list_workspaces(space);
         let gaps = self
             .config
             .settings
@@ -114,7 +110,7 @@ impl Reactor {
 
         let mut targets: Vec<crate::pictures::domain::target::PictureTarget> = Vec::new();
         for (workspace_id, _) in &workspaces {
-            let layout = self.layout_manager.layout_engine.calculate_layout_for_workspace(
+            let layout = self.layout_engine.calculate_layout_for_workspace(
                 &self.state.windows,
                 space,
                 *workspace_id,
@@ -147,16 +143,12 @@ impl Reactor {
     ///
     /// Every pass takes it, not only a switch's: a space has to have an origin before its first switch.
     pub(super) fn take_workspace_movement(&mut self, space: SpaceId) -> Option<(usize, usize)> {
-        let active = self.layout_manager.layout_engine.active_workspace(space)?;
+        let active = self.layout_engine.active_workspace(space)?;
         let drawn = self.drawn_workspace.insert(space, active)?;
         if drawn == active {
             return None;
         }
-        let workspaces = self
-            .layout_manager
-            .layout_engine
-            .virtual_workspace_manager_mut()
-            .list_workspaces(space);
+        let workspaces = self.layout_engine.virtual_workspace_manager_mut().list_workspaces(space);
         let index = |workspace| workspaces.iter().position(|(id, _)| *id == workspace);
         Some((index(drawn)?, index(active)?))
     }
@@ -196,7 +188,7 @@ impl Reactor {
         let Some((screen, gaps)) = self.strip_screen(space) else {
             return false;
         };
-        let full = self.layout_manager.layout_engine.calculate_layout_for_workspace(
+        let full = self.layout_engine.calculate_layout_for_workspace(
             &self.state.windows,
             space,
             workspace_id,
@@ -278,7 +270,7 @@ impl Reactor {
                     .into_iter()
                     .map(|(wid, frame)| (wid, ScreenRect::from_cg(frame)))
                     .collect(),
-                focus: self.layout_manager.layout_engine.focused_window(),
+                focus: self.layout_engine.focused_window(),
                 focused_before: self.focused_as_event_began,
                 key: self.main_window_tracker.key_window(),
                 duration,
@@ -307,7 +299,7 @@ impl Reactor {
                 continue;
             };
             let Some(server_id) = window.info.sys_id else { continue };
-            let floating = self.layout_manager.layout_engine.is_window_floating(*wid);
+            let floating = self.layout_engine.is_window_floating(*wid);
             windows.push(crate::transitions::domain::request::SurfaceWindow {
                 window: *wid,
                 server_id,
@@ -347,7 +339,7 @@ impl Reactor {
         else {
             return;
         };
-        let Some(workspace_id) = self.layout_manager.layout_engine.active_workspace(space) else {
+        let Some(workspace_id) = self.layout_engine.active_workspace(space) else {
             return;
         };
         let gaps = self
@@ -356,7 +348,7 @@ impl Reactor {
             .layout
             .gaps
             .effective_for_display(screen.display_uuid_opt());
-        let layout = self.layout_manager.layout_engine.calculate_layout_for_workspace(
+        let layout = self.layout_engine.calculate_layout_for_workspace(
             &self.state.windows,
             space,
             workspace_id,
@@ -382,7 +374,7 @@ impl Reactor {
                 .into_iter()
                 .map(|(wid, frame)| (wid, ScreenRect::from_cg(frame)))
                 .collect(),
-            focus: self.layout_manager.layout_engine.focused_window(),
+            focus: self.layout_engine.focused_window(),
             duration,
             look: crate::animation::domain::choreography::Look::default(),
             cue: crate::animation::domain::choreography::Cue::Plain,
@@ -417,11 +409,7 @@ impl Reactor {
             return false;
         };
 
-        let workspaces = self
-            .layout_manager
-            .layout_engine
-            .virtual_workspace_manager_mut()
-            .list_workspaces(space);
+        let workspaces = self.layout_engine.virtual_workspace_manager_mut().list_workspaces(space);
         if workspaces.is_empty() {
             return false;
         }
@@ -447,7 +435,7 @@ impl Reactor {
             let Some((workspace_id, _)) = workspaces.get(index) else {
                 continue;
             };
-            let layout = self.layout_manager.layout_engine.calculate_layout_for_workspace(
+            let layout = self.layout_engine.calculate_layout_for_workspace(
                 &self.state.windows,
                 space,
                 *workspace_id,
@@ -477,7 +465,7 @@ impl Reactor {
                     // Never pinned here. A floating window belongs to a workspace, so it leaves with the
                     // one being left and arrives with the one being entered.
                     pinned: false,
-                    floating: self.layout_manager.layout_engine.is_window_floating(wid),
+                    floating: self.layout_engine.is_window_floating(wid),
                     from: None,
                     worn: self.worn(wid, &rings),
                 });
@@ -518,8 +506,8 @@ impl Reactor {
         // the strip arrives with the target window in view and the only movement the eye sees is vertical.
         // Without claiming it, the next pass reads the destination's origin as a fresh movement and pans
         // sideways after the slide has landed. Its layout with it, as the strip the next pan starts from.
-        if let Some(destination) = self.layout_manager.layout_engine.active_workspace(space)
-            && let Some(origin) = self.layout_manager.layout_engine.strip_origin(space)
+        if let Some(destination) = self.layout_engine.active_workspace(space)
+            && let Some(origin) = self.layout_engine.strip_origin(space)
         {
             self.last_strip_origin.insert((space, destination), origin);
             self.last_strip_layout.insert((space, destination), destination_layout);
@@ -528,7 +516,7 @@ impl Reactor {
         // That claim suppresses the pan that would otherwise reveal the target, so if the destination row
         // was NOT drawn scrolled to it, the target stays off screen. That would be a layout problem rather
         // than an animation one, and it is silent, so say so.
-        if let Some(target) = self.layout_manager.layout_engine.focused_window()
+        if let Some(target) = self.layout_engine.focused_window()
             && let Some(placed) = windows.iter().find(|window| window.window == target)
             && !crate::transitions::domain::strip_stack::lands_in_view(
                 placed.frame,
@@ -550,7 +538,7 @@ impl Reactor {
                 from_offset,
                 to_offset,
                 final_frames,
-                focus: self.layout_manager.layout_engine.focused_window(),
+                focus: self.layout_engine.focused_window(),
                 focused_before: self.focused_as_event_began,
                 key: self.main_window_tracker.key_window(),
                 duration,
@@ -577,13 +565,13 @@ impl Reactor {
     /// The first look at a workspace reports no movement, which is what a switch onto it needs: the switch
     /// itself is vertical, and the destination's own scroll is drawn into the strip surface rather than panned to.
     pub(crate) fn take_strip_movement(&mut self, space: SpaceId) -> Option<CGPoint> {
-        let workspace = self.layout_manager.layout_engine.active_workspace(space)?;
-        let now = self.layout_manager.layout_engine.strip_origin(space)?;
+        let workspace = self.layout_engine.active_workspace(space)?;
+        let now = self.layout_engine.strip_origin(space)?;
         let before = self.last_strip_origin.insert((space, workspace), now);
         tracing::debug!(
             now,
             before = before.unwrap_or(now),
-            focused = format!("{:?}", self.layout_manager.layout_engine.focused_window()),
+            focused = format!("{:?}", self.layout_engine.focused_window()),
             "strip movement"
         );
         Some(CGPoint::new(now - before.unwrap_or(now), 0.0))
@@ -598,9 +586,9 @@ impl Reactor {
         &mut self,
         space: SpaceId,
     ) -> Option<(Option<Vec<(WindowId, CGRect)>>, Vec<(WindowId, CGRect)>)> {
-        let workspace = self.layout_manager.layout_engine.active_workspace(space)?;
+        let workspace = self.layout_engine.active_workspace(space)?;
         let (screen, gaps) = self.strip_screen(space)?;
-        let now = self.layout_manager.layout_engine.calculate_layout_for_workspace(
+        let now = self.layout_engine.calculate_layout_for_workspace(
             &self.state.windows,
             space,
             workspace,

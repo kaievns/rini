@@ -4,10 +4,10 @@ use rustc_hash::FxHashMap as HashMap;
 use tracing::{trace, warn};
 
 use crate::app::reactor::events::EventOutcome;
-use crate::app::reactor::managers::{DragManager, LayoutManager};
+use crate::app::reactor::managers::DragManager;
 use crate::app::reactor::state::RiniState;
 use crate::app::reactor::{DragState, LayoutEvent};
-use crate::workspaces::LayoutCommand;
+use crate::workspaces::{LayoutCommand, LayoutEngine};
 
 #[derive(Debug, Clone)]
 pub struct MouseUpPayload {
@@ -20,7 +20,7 @@ pub struct MouseUpPayload {
 
 pub fn handle_mouse_up(
     state: &mut RiniState,
-    layout: &mut LayoutManager,
+    layout: &mut LayoutEngine,
     drag: &mut DragManager,
     payload: MouseUpPayload,
 ) -> anyhow::Result<EventOutcome> {
@@ -31,7 +31,7 @@ pub fn handle_mouse_up(
         trace!(?dragged, ?target, "performing deferred drag swap");
         drag.skip_layout_for_window = Some(dragged);
         if state.windows.contains_window(dragged) && state.windows.contains_window(target) {
-            let response = layout.layout_engine.handle_command(
+            let response = layout.handle_command(
                 &mut state.windows,
                 &mut state.display_memory,
                 payload.swap_space,
@@ -71,27 +71,24 @@ pub fn handle_mouse_up(
                 // window between strips; only an explicit move-to-workspace command may move
                 // it between workspaces.
                 let workspace = layout
-                    .layout_engine
                     .virtual_workspace_manager()
                     .workspace_info_for_window_any(&state.windows, window)
                     .map(|assignment| assignment.workspace_id)
-                    .or_else(|| layout.layout_engine.active_workspace(space));
+                    .or_else(|| layout.active_workspace(space));
                 if let Some(workspace) = workspace
-                    && !layout
-                        .layout_engine
-                        .virtual_workspace_manager_mut()
-                        .assign_window_to_workspace(&mut state.windows, space, window, workspace)
+                    && !layout.virtual_workspace_manager_mut().assign_window_to_workspace(
+                        &mut state.windows,
+                        space,
+                        window,
+                        workspace,
+                    )
                 {
                     warn!(?window, ?workspace, "failed to assign dragged window");
                 }
                 // Dragging a window to another display is the user choosing where it
                 // lives, so it becomes the window's home. Without this a later replug
                 // would repatriate it back to the display it was dragged off.
-                layout.layout_engine.set_window_display_home(
-                    &mut state.display_memory,
-                    window,
-                    space,
-                );
+                layout.set_window_display_home(&mut state.display_memory, window, space);
                 outcome = outcome.with_layout_event(LayoutEvent::WindowAdded(space, window));
             }
             drag.skip_layout_for_window = Some(window);
@@ -102,23 +99,17 @@ pub fn handle_mouse_up(
         }
 
         if let Some(space) = payload.final_space
-            && layout.layout_engine.is_window_floating(window)
+            && layout.is_window_floating(window)
         {
             if session.origin_space != payload.final_space {
-                layout.layout_engine.remove_floating_position(window);
+                layout.remove_floating_position(window);
             }
             if let Some(workspace) = layout
-                .layout_engine
                 .virtual_workspace_manager()
                 .workspace_for_window(&state.windows, space, window)
-                .or_else(|| layout.layout_engine.active_workspace(space))
+                .or_else(|| layout.active_workspace(space))
             {
-                layout.layout_engine.store_floating_position(
-                    space,
-                    workspace,
-                    window,
-                    session.last_frame,
-                );
+                layout.store_floating_position(space, workspace, window, session.last_frame);
             }
         }
     }

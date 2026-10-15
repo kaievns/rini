@@ -54,7 +54,6 @@ impl Reactor {
     pub(super) fn focus_desktop_if_active_workspace_empty(&mut self, space: SpaceId) -> bool {
         if !self.is_space_active(space)
             || !self
-                .layout_manager
                 .layout_engine
                 .windows_in_active_workspace(&self.state.windows, space)
                 .is_empty()
@@ -68,18 +67,13 @@ impl Reactor {
             return false;
         }
 
-        self.layout_manager.layout_engine.commit_workspace_focus(
-            &mut self.state.windows,
-            space,
-            None,
-        );
+        self.layout_engine.commit_workspace_focus(&mut self.state.windows, space, None);
         true
     }
 
     pub(super) fn last_focused_window_in_space(&self, space: SpaceId) -> Option<WindowId> {
-        let active_workspace = self.layout_manager.layout_engine.active_workspace(space)?;
+        let active_workspace = self.layout_engine.active_workspace(space)?;
         let wid = self
-            .layout_manager
             .layout_engine
             .virtual_workspace_manager()
             .last_focused_window(space, active_workspace)?;
@@ -110,11 +104,9 @@ impl Reactor {
         let in_space = |wid: WindowId| {
             self.state.windows.window(wid).is_some_and(|w| w.info.sys_id.is_some())
                 && self.affinity().best_space_for_window_id(wid) == Some(space)
-                && self.layout_manager.layout_engine.is_window_in_active_workspace(
-                    &self.state.windows,
-                    space,
-                    wid,
-                )
+                && self
+                    .layout_engine
+                    .is_window_in_active_workspace(&self.state.windows, space, wid)
         };
         let is_visible_in_space = |wid: WindowId| {
             in_space(wid)
@@ -128,7 +120,6 @@ impl Reactor {
         let remembered =
             self.last_focused_window_in_space(space).filter(|wid| is_visible_in_space(*wid));
         let first_visible = self
-            .layout_manager
             .layout_engine
             .windows_in_active_workspace(&self.state.windows, space)
             .into_iter()
@@ -172,14 +163,14 @@ impl Reactor {
         };
 
         if !window.matches_filter(WindowFilter::EffectivelyManageable)
-            && !self.layout_manager.layout_engine.is_window_floating(wid)
+            && !self.layout_engine.is_window_floating(wid)
         {
             return false;
         }
 
         let candidate_frame = window.frame_monotonic;
 
-        if matches!(self.menu_manager.menu_state, MenuState::Open(_)) {
+        if matches!(self.menu_state, MenuState::Open(_)) {
             trace!(?wid, "Skipping autoraise while menu open");
             return false;
         }
@@ -193,11 +184,10 @@ impl Reactor {
             return false;
         }
 
-        if !self.layout_manager.layout_engine.is_window_in_active_workspace(
-            &self.state.windows,
-            space,
-            wid,
-        ) {
+        if !self
+            .layout_engine
+            .is_window_in_active_workspace(&self.state.windows, space, wid)
+        {
             trace!("Ignoring mouse over window {:?} - not in active workspace", wid);
             return false;
         }
@@ -213,7 +203,7 @@ impl Reactor {
         let above = order.into_iter().take_while(|&id| id != candidate_u32).filter_map(|id| {
             let wsid = WindowServerId::new(id);
             let wid = self.state.windows.tracked_window_id(wsid)?;
-            if !self.layout_manager.layout_engine.is_window_floating(wid) {
+            if !self.layout_engine.is_window_floating(wid) {
                 return None;
             }
             let frame = self.state.windows.window(wid)?.frame_monotonic;
@@ -255,17 +245,17 @@ impl Reactor {
 
     #[instrument(skip(self))]
     pub(super) fn clear_menu_state_for_pid(&mut self, pid: pid_t) {
-        if matches!(self.menu_manager.menu_state, MenuState::Open(owner) if owner == pid) {
+        if matches!(self.menu_state, MenuState::Open(owner) if owner == pid) {
             debug!(pid, "Clearing menu-open state for deactivated app");
-            self.menu_manager.menu_state = MenuState::Closed;
+            self.menu_state = MenuState::Closed;
             self.update_focus_follows_mouse_state();
         }
     }
 
     pub(super) fn clear_menu_state_for_non_owner(&mut self, pid: pid_t) {
-        if matches!(self.menu_manager.menu_state, MenuState::Open(owner) if owner != pid) {
+        if matches!(self.menu_state, MenuState::Open(owner) if owner != pid) {
             debug!(pid, "Clearing stale menu-open state after app focus changed");
-            self.menu_manager.menu_state = MenuState::Closed;
+            self.menu_state = MenuState::Closed;
             self.update_focus_follows_mouse_state();
         }
     }
@@ -278,7 +268,7 @@ impl Reactor {
 
     pub(super) fn update_focus_follows_mouse_state(&mut self) {
         let should_enable = self.config.settings.focus_follows_mouse
-            && matches!(self.menu_manager.menu_state, MenuState::Closed)
+            && matches!(self.menu_state, MenuState::Closed)
             && !self.is_mission_control_active();
         self.set_focus_follows_mouse_enabled(should_enable);
     }

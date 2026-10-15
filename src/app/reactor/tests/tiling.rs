@@ -305,7 +305,7 @@ fn title_change_reapply_does_not_rebalance_unchanged_layout() {
 
     make_active_app_with_count(&mut apps, &mut reactor, 1, 3, Some(WindowId::new(1, 1)));
 
-    assert!(reactor.layout_manager.layout_engine.selected_window(space).is_some());
+    assert!(reactor.layout_engine.selected_window(space).is_some());
     reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Up));
     apps.simulate_until_quiet(&mut reactor);
 
@@ -330,13 +330,13 @@ fn title_change_reapply_does_not_rebalance_when_window_stays_floating() {
 
     make_active_app_with_count(&mut apps, &mut reactor, 1, 3, Some(WindowId::new(1, 1)));
 
-    assert!(reactor.layout_manager.layout_engine.selected_window(space).is_some());
+    assert!(reactor.layout_engine.selected_window(space).is_some());
     reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Up));
     apps.simulate_until_quiet(&mut reactor);
 
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     apps.simulate_until_quiet(&mut reactor);
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(WindowId::new(1, 1)));
+    assert!(reactor.layout_engine.is_window_floating(WindowId::new(1, 1)));
 
     let modified = test_layout(&mut reactor, space, full_screen);
 
@@ -345,7 +345,7 @@ fn title_change_reapply_does_not_rebalance_when_window_stays_floating() {
         "Renamed floating window".to_string(),
     ));
 
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(WindowId::new(1, 1)));
+    assert!(reactor.layout_engine.is_window_floating(WindowId::new(1, 1)));
     assert_eq!(test_layout(&mut reactor, space, full_screen), modified);
 }
 
@@ -372,13 +372,7 @@ fn animated_layout_handles_windows_without_server_ids() {
     apps.requests();
 
     let target = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
-    assert!(crate::app::reactor::animation::AnimationManager::animate_layout(
-        &mut reactor,
-        space,
-        &[(WindowId::new(1, 1), target)],
-        true,
-        None,
-    ));
+    assert!(reactor.animate_layout(space, &[(WindowId::new(1, 1), target)], true, None,));
 
     let requests = apps.requests();
     assert!(
@@ -563,14 +557,10 @@ fn wsid_rekey_preserves_floating_membership_and_position() {
 
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     apps.simulate_until_quiet(&mut reactor);
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(old_wid));
+    assert!(reactor.layout_engine.is_window_floating(old_wid));
 
-    let active_workspace = reactor
-        .layout_manager
-        .layout_engine
-        .active_workspace(space)
-        .expect("active workspace");
-    reactor.layout_manager.layout_engine.store_floating_position(
+    let active_workspace = reactor.layout_engine.active_workspace(space).expect("active workspace");
+    reactor.layout_engine.store_floating_position(
         space,
         active_workspace,
         old_wid,
@@ -579,22 +569,14 @@ fn wsid_rekey_preserves_floating_membership_and_position() {
 
     rekey_window(&mut reactor, old_wid, new_wid);
 
-    assert!(!reactor.layout_manager.layout_engine.is_window_floating(old_wid));
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(new_wid));
+    assert!(!reactor.layout_engine.is_window_floating(old_wid));
+    assert!(reactor.layout_engine.is_window_floating(new_wid));
     assert_eq!(
-        reactor.layout_manager.layout_engine.get_floating_position(
-            space,
-            active_workspace,
-            old_wid
-        ),
+        reactor.layout_engine.get_floating_position(space, active_workspace, old_wid),
         None
     );
     assert_eq!(
-        reactor.layout_manager.layout_engine.get_floating_position(
-            space,
-            active_workspace,
-            new_wid
-        ),
+        reactor.layout_engine.get_floating_position(space, active_workspace, new_wid),
         Some(stored_position)
     );
 }
@@ -632,7 +614,7 @@ fn dragging_a_floating_window_keeps_the_layout_skip_for_the_whole_gesture() {
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, floating));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     assert!(
-        reactor.layout_manager.layout_engine.is_window_floating(floating),
+        reactor.layout_engine.is_window_floating(floating),
         "test setup must make the window floating"
     );
 
@@ -712,7 +694,7 @@ fn strip_navigation_skips_floating_windows_and_resumes_where_it_was() {
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, floater));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     assert!(
-        reactor.layout_manager.layout_engine.is_window_floating(floater),
+        reactor.layout_engine.is_window_floating(floater),
         "test setup must make the third window floating"
     );
 
@@ -720,7 +702,7 @@ fn strip_navigation_skips_floating_windows_and_resumes_where_it_was() {
     // not on the first column and not on another floating window.
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
 
-    let focused = reactor.layout_manager.layout_engine.focused_window();
+    let focused = reactor.layout_engine.focused_window();
     assert_ne!(
         focused,
         Some(floater),
@@ -793,7 +775,7 @@ mod strip_regroup {
         reactor.send_layout_event(LayoutEvent::WindowFocused(space, window(1)));
         reactor.send_layout_event(LayoutEvent::WindowFocused(space, window(4)));
         reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
-        assert!(reactor.layout_manager.layout_engine.is_window_floating(window(4)));
+        assert!(reactor.layout_engine.is_window_floating(window(4)));
         // The frames the strip has on screen right now: two columns visible, the third parked off
         // the right edge. Set directly; the engine's scroll position is not what these tests are about.
         for (idx, frame) in [(1, left), (2, right), (3, parked), (4, settings)] {
@@ -1051,10 +1033,7 @@ mod strip_regroup {
 
         reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
 
-        assert_eq!(
-            reactor.layout_manager.layout_engine.focused_window(),
-            Some(WindowId::new(1, 2))
-        );
+        assert_eq!(reactor.layout_engine.focused_window(), Some(WindowId::new(1, 2)));
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(
             request.raise_windows,
@@ -1093,10 +1072,7 @@ mod strip_regroup {
 
         reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
 
-        assert_eq!(
-            reactor.layout_manager.layout_engine.focused_window(),
-            Some(WindowId::new(1, 3))
-        );
+        assert_eq!(reactor.layout_engine.focused_window(), Some(WindowId::new(1, 3)));
         assert!(
             !reactor.affinity().is_window_parked_offscreen(WindowId::new(1, 3)),
             "the layout pass brought the target on screen: {:?}",
@@ -1180,10 +1156,7 @@ mod strip_regroup {
             Some(toolbar),
             "setup: the toolbar has focus"
         );
-        assert_eq!(
-            reactor.layout_manager.layout_engine.focused_window(),
-            Some(WindowId::new(1, 1))
-        );
+        assert_eq!(reactor.layout_engine.focused_window(), Some(WindowId::new(1, 1)));
         assert!(
             raise_request(&mut raise_rx).is_none(),
             "the strip must not be lifted over the call"
@@ -1223,13 +1196,7 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
         layout.push((wid, target));
     }
 
-    crate::app::reactor::animation::AnimationManager::animate_layout(
-        &mut reactor,
-        space,
-        &layout,
-        false,
-        None,
-    );
+    reactor.animate_layout(space, &layout, false, None);
 
     let mut animated: Vec<crate::transitions::domain::request::AnimationRequest> = Vec::new();
     while let Ok((_, event)) = animation_rx.try_recv() {
@@ -1283,7 +1250,7 @@ fn a_pass_s_requests_carry_each_tiled_window_s_place_on_the_strip() {
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
     apps.simulate_until_quiet(&mut reactor);
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(floating));
+    assert!(reactor.layout_engine.is_window_floating(floating));
     while rx.try_recv().is_ok() {}
     apps.requests();
     let before = reactor.test_strip_layout(space);
@@ -1369,13 +1336,7 @@ fn a_request_carries_the_ring_and_focus_its_window_ends_with() {
             )
         })
         .collect();
-    crate::app::reactor::animation::AnimationManager::animate_layout(
-        &mut reactor,
-        space,
-        &layout,
-        false,
-        None,
-    );
+    reactor.animate_layout(space, &layout, false, None);
 
     let mut animated = Vec::new();
     while let Ok((_, event)) = animation_rx.try_recv() {
@@ -1428,13 +1389,7 @@ fn a_one_point_move_is_placed_rather_than_animated() {
         layout.push((wid, target));
     }
 
-    crate::app::reactor::animation::AnimationManager::animate_layout(
-        &mut reactor,
-        space,
-        &layout,
-        false,
-        None,
-    );
+    reactor.animate_layout(space, &layout, false, None);
 
     while let Ok((_, event)) = animation_rx.try_recv() {
         assert!(
@@ -1518,13 +1473,7 @@ fn a_layout_pass_does_not_fly_when_animations_are_off() {
         layout.push((wid, target));
     }
 
-    crate::app::reactor::animation::AnimationManager::animate_layout(
-        &mut reactor,
-        space,
-        &layout,
-        false,
-        None,
-    );
+    reactor.animate_layout(space, &layout, false, None);
 
     while let Ok((_, event)) = animation_rx.try_recv() {
         assert!(
@@ -1596,10 +1545,7 @@ impl Strip {
             bottom: 8.,
             right: 8.,
         };
-        reactor
-            .layout_manager
-            .layout_engine
-            .set_layout_settings(&reactor.config.settings.layout);
+        reactor.layout_engine.set_layout_settings(&reactor.config.settings.layout);
         let space = SpaceId::new(1);
         let members: Vec<u32> = (1..=count as u32).collect();
         set_space_membership(&reactor, &[(space, members.as_slice())]);
@@ -1759,7 +1705,7 @@ fn a_floating_window_keeps_its_frame_under_a_border() {
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     apps.simulate_until_quiet(&mut reactor);
     let floating = WindowId::new(1, 1);
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(floating));
+    assert!(reactor.layout_engine.is_window_floating(floating));
     let before = test_layout(&mut reactor, space, screen);
 
     reload_with_border(&mut reactor, 4.);
@@ -1853,7 +1799,6 @@ fn every_report_of_a_drag_measures_from_where_the_drag_started() {
         crate::layout::settings::CenterFocusedColumn::Always;
     strip
         .reactor
-        .layout_manager
         .layout_engine
         .set_layout_settings(&strip.reactor.config.settings.layout);
     strip
@@ -1896,7 +1841,6 @@ fn left_edge_drag_released_over(under_cursor: Option<fn(&Strip) -> WindowId>) ->
     strip.reactor.config.settings.layout.scrolling.column_width_ratio = 0.4;
     strip
         .reactor
-        .layout_manager
         .layout_engine
         .set_layout_settings(&strip.reactor.config.settings.layout);
     strip
@@ -1953,10 +1897,7 @@ fn a_left_edge_drag_let_go_over_its_own_window_keeps_its_right_edge() {
 #[test]
 fn a_left_edge_drag_let_go_over_the_window_behind_its_edge_keeps_its_focus_and_right_edge() {
     let strip = left_edge_drag_released_over(Some(|strip| strip.window));
-    assert_eq!(
-        strip.reactor.layout_manager.layout_engine.focused_window(),
-        Some(strip.other)
-    );
+    assert_eq!(strip.reactor.layout_engine.focused_window(), Some(strip.other));
 }
 
 /// Kai, 2026-10-06, after the left edge first grew to the left: "it makes a weird back and fourth
@@ -1970,7 +1911,6 @@ fn a_left_edge_drags_release_draws_the_dragged_window_from_where_it_was_let_go()
     strip.reactor.config.settings.layout.scrolling.column_width_ratio = 0.4;
     strip
         .reactor
-        .layout_manager
         .layout_engine
         .set_layout_settings(&strip.reactor.config.settings.layout);
     strip
@@ -2043,7 +1983,6 @@ fn a_left_edge_drags_release_leaves_the_dragged_window_exactly_where_it_was_let_
         crate::layout::settings::CenterFocusedColumn::Never;
     strip
         .reactor
-        .layout_manager
         .layout_engine
         .set_layout_settings(&strip.reactor.config.settings.layout);
     for _ in 0..2 {
@@ -2117,7 +2056,6 @@ fn a_left_edge_shrink_flush_right_leaves_the_column_beyond_the_right_edge_where_
     };
     strip
         .reactor
-        .layout_manager
         .layout_engine
         .set_layout_settings(&strip.reactor.config.settings.layout);
     strip
@@ -2213,10 +2151,7 @@ mod title_bar_zoom {
         }
 
         fn full_width(&self) -> Option<bool> {
-            self.reactor
-                .layout_manager
-                .layout_engine
-                .full_width_of_column(self.space, self.window)
+            self.reactor.layout_engine.full_width_of_column(self.space, self.window)
         }
 
         fn title_bar_of(&self, window: WindowId) -> CGPoint {
@@ -2533,11 +2468,8 @@ mod title_bar_zoom {
             Some(MouseState::Up),
         ));
 
-        assert!(reactor.layout_manager.layout_engine.is_window_floating(wid));
-        assert_eq!(
-            reactor.layout_manager.layout_engine.full_width_of_column(space, wid),
-            None
-        );
+        assert!(reactor.layout_engine.is_window_floating(wid));
+        assert_eq!(reactor.layout_engine.full_width_of_column(space, wid), None);
         assert_eq!(laid_out_frame(&mut reactor, space, screen, wid), before);
         assert_eq!(before, Some(floating_frame));
     }
@@ -2654,7 +2586,7 @@ fn every_mod_r_on_the_last_column_flies() {
                 _ => {}
             }
             land_layout_passes(&mut apps, &mut reactor, &mut rx);
-            let full = reactor.layout_manager.layout_engine.full_width_of_column(space, last);
+            let full = reactor.layout_engine.full_width_of_column(space, last);
             assert_eq!(full, Some(start == "Mod+F"), "{case}");
 
             for press in 0..5 {
@@ -2734,7 +2666,7 @@ fn a_resize_key_and_the_full_width_toggle_on_the_last_column_fly() {
             );
         }
         assert_eq!(
-            reactor.layout_manager.layout_engine.full_width_of_column(space, last),
+            reactor.layout_engine.full_width_of_column(space, last),
             Some(false)
         );
     }

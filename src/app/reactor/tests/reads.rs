@@ -159,7 +159,7 @@ fn closing_the_last_window_of_the_workspace_makes_the_display_s_desktop_key() {
         );
 
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, wid));
-    assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(wid));
+    assert_eq!(reactor.layout_engine.focused_window(), Some(wid));
     let wsid = reactor.test_window_server_id(wid);
     reactor.window_server().set_window_ordered_in(wsid, Some(true));
     reactor.handle_event(Event::WindowDestroyed(wid));
@@ -245,12 +245,12 @@ fn in_low_power_mode_a_layout_pass_flies_no_window() {
 
     reactor.reads.low_power = || true;
     let moved = layout(&reactor, 120.);
-    animation::AnimationManager::animate_layout(&mut reactor, space, &moved, false, None);
+    reactor.animate_layout(space, &moved, false, None);
     assert!(!flew(&mut animation_rx));
 
     reactor.reads.low_power = || false;
     let moved = layout(&reactor, 120.);
-    animation::AnimationManager::animate_layout(&mut reactor, space, &moved, false, None);
+    reactor.animate_layout(space, &moved, false, None);
     assert!(flew(&mut animation_rx), "the same pass flies out of it");
 }
 

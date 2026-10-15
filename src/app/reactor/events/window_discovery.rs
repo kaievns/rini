@@ -90,11 +90,10 @@ fn sync_existing_window_state(
 
 fn should_emit_window_for_space(
     state: &crate::app::reactor::state::RiniState,
-    layout: &crate::app::reactor::managers::LayoutManager,
+    engine: &crate::workspaces::LayoutEngine,
     space: SpaceId,
     wid: WindowId,
 ) -> bool {
-    let engine = &layout.layout_engine;
     let assigned_workspace =
         engine
             .virtual_workspace_manager()
@@ -109,7 +108,7 @@ fn should_emit_window_for_space(
 
 fn sync_window_server_id_mapping(
     state: &mut crate::app::reactor::state::RiniState,
-    layout: &mut crate::app::reactor::managers::LayoutManager,
+    layout: &mut crate::workspaces::LayoutEngine,
     focus: &mut MainWindowTracker,
     wid: WindowId,
     old_sys_id: Option<WindowServerId>,
@@ -128,7 +127,7 @@ fn sync_window_server_id_mapping(
         if let Some(previous_wid) = state.windows.track_window_server_id(new_wsid, wid)
             && previous_wid != wid
         {
-            layout.layout_engine.rekey_window_identity(
+            layout.rekey_window_identity(
                 &mut state.windows,
                 &mut state.display_memory,
                 previous_wid,
@@ -280,7 +279,7 @@ pub(crate) struct ObservedWindow {
 pub(crate) fn process_window_list(
     state: &mut crate::app::reactor::state::RiniState,
     window_server: &dyn WindowServer,
-    layout: &mut crate::app::reactor::managers::LayoutManager,
+    layout: &mut crate::workspaces::LayoutEngine,
     focus: &mut MainWindowTracker,
     observed: Vec<ObservedWindow>,
     app_info: &Option<AppInfo>,
@@ -422,7 +421,7 @@ pub(crate) struct EmitLayoutPayload<'a> {
 
 pub(crate) fn emit_layout_events(
     state: &mut crate::app::reactor::state::RiniState,
-    layout: &mut crate::app::reactor::managers::LayoutManager,
+    layout: &mut crate::workspaces::LayoutEngine,
     payload: EmitLayoutPayload<'_>,
 ) -> crate::app::reactor::events::EventOutcome {
     let EmitLayoutPayload {
@@ -520,7 +519,7 @@ pub(crate) fn emit_layout_events(
         for &wid in windows_for_space {
             assignment_results.insert(
                 (space, wid),
-                layout.layout_engine.assign_window_by_rules(
+                layout.assign_window_by_rules(
                     &mut state.windows,
                     &mut state.display_memory,
                     wid,
@@ -538,7 +537,7 @@ pub(crate) fn emit_layout_events(
         if !windows_for_space.is_empty() {
             for &wid in &windows_for_space {
                 let assign_result = assignment_results.remove(&(space, wid)).unwrap_or_else(|| {
-                    layout.layout_engine.assign_window_by_rules(
+                    layout.assign_window_by_rules(
                         &mut state.windows,
                         &mut state.display_memory,
                         wid,
@@ -547,14 +546,9 @@ pub(crate) fn emit_layout_events(
                     )
                 });
                 // Discovery re-lists every window below, so only the removal matters here.
-                let before = layout.layout_engine.before_rules(&state.windows, space, wid);
-                if layout.layout_engine.settle_app_rule(
-                    &mut state.windows,
-                    wid,
-                    space,
-                    before,
-                    &assign_result,
-                ) == AfterRules::RemoveFromLayout
+                let before = layout.before_rules(&state.windows, space, wid);
+                if layout.settle_app_rule(&mut state.windows, wid, space, before, &assign_result)
+                    == AfterRules::RemoveFromLayout
                 {
                     outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(wid));
                 }

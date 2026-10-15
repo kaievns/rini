@@ -10,7 +10,7 @@ use crate::workspaces::LayoutEvent;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 
 /// The maximize toggle has to report `changed`, because that is the only thing that routes it into
-/// `update_layout` and so into `AnimationManager::animate_layout`. A response of `default()` here
+/// `update_layout` and so into `Reactor::animate_layout`. A response of `default()` here
 /// would leave the windows to jump to their new columns with no flight.
 #[test]
 fn maximizing_reports_a_geometry_change_so_the_move_is_animated() {

@@ -474,8 +474,8 @@ pub struct Reactor {
     /// The applications asking for attention, whose windows are drawn urgent.
     attention: crate::windows::domain::attention::Attention,
     rest: decorations::RestFeed,
-    app_manager: managers::AppManager,
-    layout_manager: managers::LayoutManager,
+    apps: HashMap<pid_t, AppState>,
+    layout_engine: LayoutEngine,
     pub(crate) state: RiniState,
     space_state: ForwardedSpaceState,
     /// Where each WORKSPACE's strip started on screen the last time a layout pass looked
@@ -522,13 +522,15 @@ pub struct Reactor {
     communication_manager: managers::CommunicationManager,
     /// The workspace each space's last layout pass drew, where its next switch slides from.
     drawn_workspace: HashMap<SpaceId, crate::workspaces::VirtualWorkspaceId>,
-    notification_manager: managers::NotificationManager,
+    /// The window-server ids rini last asked to be told about, sorted.
+    last_sls_notification_ids: Vec<u32>,
     transaction_manager: TransactionManager,
-    menu_manager: managers::MenuManager,
+    menu_state: MenuState,
     mission_control_manager: managers::MissionControlManager,
     refocus_manager: managers::RefocusManager,
     refresh_quarantine_manager: managers::RefreshQuarantineManager,
-    pending_space_change_manager: managers::PendingSpaceChangeManager,
+    /// The space snapshot that arrived while Mission Control was open, applied once it closes.
+    pending_space_change: Option<ForwardedSpaceState>,
     active_spaces: HashSet<SpaceId>,
     /// When the layout file was last written, for debouncing autosaves.
     last_autosave: Option<std::time::Instant>,
@@ -621,8 +623,8 @@ impl Reactor {
             attention: Default::default(),
             rest: decorations::RestFeed::default(),
             config: config.clone(),
-            app_manager: managers::AppManager::new(),
-            layout_manager: managers::LayoutManager { layout_engine },
+            apps: HashMap::default(),
+            layout_engine,
             state: RiniState {
                 display_memory,
                 ..Default::default()
@@ -667,11 +669,9 @@ impl Reactor {
                 wm_sender: None,
                 events_tx: None,
             },
-            notification_manager: managers::NotificationManager {
-                last_sls_notification_ids: Vec::new(),
-            },
+            last_sls_notification_ids: Vec::new(),
             transaction_manager: TransactionManager::new(window_tx_store),
-            menu_manager: managers::MenuManager { menu_state: MenuState::Closed },
+            menu_state: MenuState::Closed,
             mission_control_manager: managers::MissionControlManager {
                 mission_control_state: MissionControlState::Inactive,
                 pending_mission_control_refresh: HashSet::default(),
@@ -689,9 +689,7 @@ impl Reactor {
                 pending_visible_refresh: false,
                 deferred_refresh_tracks_mission_control: false,
             },
-            pending_space_change_manager: managers::PendingSpaceChangeManager {
-                pending_space_change: None,
-            },
+            pending_space_change: None,
             active_spaces: HashSet::default(),
             last_autosave: None,
             autosave_pending: false,
@@ -705,7 +703,7 @@ impl Reactor {
         SpaceAffinity {
             windows: &self.state.windows,
             spaces: &self.space_state,
-            engine: &self.layout_manager.layout_engine,
+            engine: &self.layout_engine,
             transactions: &self.transaction_manager,
             active_spaces: &self.active_spaces,
             space_kinds: self.reads.space_kinds,
@@ -716,15 +714,14 @@ impl Reactor {
 
     /// The localised name of the application `window` belongs to, empty when rini has none.
     fn app_name(&self, window: WindowId) -> String {
-        self.app_manager
-            .apps
+        self.apps
             .get(&window.pid)
             .and_then(|app| app.info.localized_name.clone())
             .unwrap_or_default()
     }
 
     fn is_login_window_pid(&self, pid: pid_t) -> bool {
-        self.app_manager.apps.get(&pid).and_then(|a| a.info.bundle_id.as_deref())
+        self.apps.get(&pid).and_then(|a| a.info.bundle_id.as_deref())
             == Some("com.apple.loginwindow")
     }
 
@@ -824,7 +821,7 @@ impl Reactor {
             what: event.what(),
         };
         let outer_cause = std::mem::replace(&mut self.cause, cause);
-        let began = self.layout_manager.layout_engine.focused_window();
+        let began = self.layout_engine.focused_window();
         let outer = std::mem::replace(&mut self.focused_as_event_began, began);
         match self.dispatch_workflow(event) {
             Ok(outcome) => self.apply_event_outcome(outcome),
@@ -914,7 +911,7 @@ impl Reactor {
             }
             Event::ApplicationTerminated(pid) => {
                 return application_workflow::handle_application_terminated(
-                    &self.app_manager,
+                    &self.apps,
                     &mut self.state,
                     pid,
                 );
@@ -922,7 +919,7 @@ impl Reactor {
             Event::ApplicationThreadTerminated(pid) => {
                 self.clear_menu_state_for_pid(pid);
                 return application_workflow::handle_application_thread_terminated(
-                    &mut self.app_manager,
+                    &mut self.apps,
                     &mut self.state,
                     &self.transaction_manager,
                     &mut self.drag_manager,
@@ -1035,10 +1032,10 @@ impl Reactor {
                 return Ok(EventOutcome::no_change());
             }
             Event::MenuOpened(pid) => {
-                return Ok(system_workflow::handle_menu_opened(&mut self.menu_manager, pid));
+                return Ok(system_workflow::handle_menu_opened(&mut self.menu_state, pid));
             }
             Event::MenuClosed(pid) => {
-                return Ok(system_workflow::handle_menu_closed(&mut self.menu_manager, pid));
+                return Ok(system_workflow::handle_menu_closed(&mut self.menu_state, pid));
             }
             Event::MouseMoved(wsid) => {
                 return self.on_mouse_moved(wsid);
@@ -1076,7 +1073,7 @@ impl Reactor {
             Event::ConfigUpdated(new_cfg) => {
                 return command_workflow::handle_config_updated(
                     &mut self.config,
-                    &mut self.layout_manager,
+                    &mut self.layout_engine,
                     &mut self.drag_manager,
                     *new_cfg,
                 );
@@ -1215,9 +1212,7 @@ impl Reactor {
                     })
             });
             if let Some(space) = active_space {
-                if let Some(app_info) =
-                    self.app_manager.apps.get(&window.pid).map(|app| app.info.clone())
-                {
+                if let Some(app_info) = self.apps.get(&window.pid).map(|app| app.info.clone()) {
                     if let Some(window_server_id) =
                         self.state.windows.window(window).and_then(|state| state.info.sys_id)
                     {
@@ -1271,7 +1266,7 @@ impl Reactor {
             } else {
                 TransactionId::default()
             };
-            if let Some(app) = self.app_manager.apps.get(&write.window.pid)
+            if let Some(app) = self.apps.get(&write.window.pid)
                 && let Err(error) = app.handle.send(Request::SetWindowFrame(
                     write.window,
                     write.frame,
@@ -1384,9 +1379,11 @@ impl Reactor {
         if outcome.refresh_window_notifications {
             let tracked =
                 self.state.windows.iter_tracked_window_server_ids().map(|wsid| wsid.as_u32());
-            if let Some(ids) = self.notification_manager.notification_ids_to_publish(tracked) {
+            if let Some(ids) =
+                managers::notification_ids_to_publish(&self.last_sls_notification_ids, tracked)
+            {
                 (self.reads.watch_windows)(&ids);
-                self.notification_manager.last_sls_notification_ids = ids;
+                self.last_sls_notification_ids = ids;
             }
         }
         if outcome.refresh_focus_follows_mouse {
@@ -1395,7 +1392,7 @@ impl Reactor {
         // Requests which schedule fresh discovery are last so observers see
         // the fully reconciled model, layout and UI.
         for (pid, request) in outcome.app_requests {
-            if let Some(app) = self.app_manager.apps.get(&pid)
+            if let Some(app) = self.apps.get(&pid)
                 && let Err(error) = app.handle.send(request)
             {
                 warn!(pid, %error, "failed to send deferred application request");
@@ -1408,7 +1405,7 @@ impl Reactor {
         app_handles: &mut HashMap<pid_t, AppThreadHandle>,
         wid: WindowId,
     ) {
-        if let Some(app) = self.app_manager.apps.get(&wid.pid) {
+        if let Some(app) = self.apps.get(&wid.pid) {
             app_handles.insert(wid.pid, app.handle.clone());
         }
     }
@@ -1421,7 +1418,7 @@ impl Reactor {
     }
 
     fn request_close_window(&mut self, pid: pid_t, window_server_id: Option<WindowServerId>) {
-        if let Some(app) = self.app_manager.apps.get(&pid)
+        if let Some(app) = self.apps.get(&pid)
             && let Err(err) = app.handle.send(Request::CloseWindow(window_server_id))
         {
             warn!(

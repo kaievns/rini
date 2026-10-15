@@ -81,7 +81,7 @@ fn passive_command_space_change_does_not_override_clicked_window_focus() {
     ));
 
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout_engine.focused_window(),
         Some(old_focus),
         "a passive display snapshot must leave focus ownership to the AX click event"
     );
@@ -96,7 +96,7 @@ fn passive_command_space_change_does_not_override_clicked_window_focus() {
         Quiet::No,
     ));
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout_engine.focused_window(),
         Some(destination_focus),
         "the subsequent AX focus event should select the window that activated the display"
     );
@@ -134,7 +134,7 @@ fn discovery_does_not_replay_another_apps_global_main_window() {
 
     assert_eq!(reactor.main_window(), Some(WindowId::new(1, 1)));
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout_engine.focused_window(),
         Some(app_two_window),
         "app-scoped discovery must not replay another app's global main window"
     );
@@ -241,7 +241,7 @@ fn focus_follows_mouse_emits_focus_without_explicit_arrange() {
     let window = WindowId::new(7, 1);
 
     let outcome = window_workflow::handle_mouse_moved_over_window(
-        &reactor.app_manager,
+        &reactor.apps,
         window_workflow::MouseMovedPayload {
             window: Some(window),
             should_sync: true,
@@ -281,10 +281,7 @@ fn resolved_activation_without_main_window_does_not_choose_arbitrary_app_window(
     reactor.handle_event(Event::ApplicationMainWindowChanged(pid, None, Quiet::No));
     reactor.handle_event(Event::ApplicationActivated(pid, Quiet::No));
 
-    assert_eq!(
-        reactor.layout_manager.layout_engine.active_workspace_idx(space),
-        Some(0)
-    );
+    assert_eq!(reactor.layout_engine.active_workspace_idx(space), Some(0));
 }
 
 #[test]
@@ -300,7 +297,7 @@ fn menu_open_state_is_cleared_when_owner_deactivates() {
         disable,
         crate::input::platform::input_tap::Request::SetFocusFollowsMouseEnabled(false)
     ));
-    assert_eq!(reactor.menu_manager.menu_state, MenuState::Open(1));
+    assert_eq!(reactor.menu_state, MenuState::Open(1));
 
     reactor.handle_event(Event::ApplicationDeactivated(1));
     let enable = event_tap_rx
@@ -311,7 +308,7 @@ fn menu_open_state_is_cleared_when_owner_deactivates() {
         enable,
         crate::input::platform::input_tap::Request::SetFocusFollowsMouseEnabled(true)
     ));
-    assert_eq!(reactor.menu_manager.menu_state, MenuState::Closed);
+    assert_eq!(reactor.menu_state, MenuState::Closed);
 }
 
 #[test]
@@ -323,7 +320,7 @@ fn stale_menu_open_state_is_cleared_when_other_app_activates() {
 
     reactor.handle_event(Event::MenuOpened(1));
     let _ = event_tap_rx.try_recv().expect("menu-open should update event tap");
-    assert_eq!(reactor.menu_manager.menu_state, MenuState::Open(1));
+    assert_eq!(reactor.menu_state, MenuState::Open(1));
 
     reactor.handle_event(Event::ApplicationGloballyActivated(2));
     let enable = event_tap_rx
@@ -334,7 +331,7 @@ fn stale_menu_open_state_is_cleared_when_other_app_activates() {
         enable,
         crate::input::platform::input_tap::Request::SetFocusFollowsMouseEnabled(true)
     ));
-    assert_eq!(reactor.menu_manager.menu_state, MenuState::Closed);
+    assert_eq!(reactor.menu_state, MenuState::Closed);
 }
 
 /// The strip is one z-order group (`raise_order::regroup_tiled`): focus landing on a strip window while a floating
@@ -413,14 +410,14 @@ fn strip_navigation_stops_at_the_edge_rather_than_focusing_a_floating_window() {
 
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, floater));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(floater));
+    assert!(reactor.layout_engine.is_window_floating(floater));
 
     // Sit on the rightmost column and keep walking right.
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, right));
     for _ in 0..3 {
         reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
         assert_ne!(
-            reactor.layout_manager.layout_engine.focused_window(),
+            reactor.layout_engine.focused_window(),
             Some(floater),
             "walking off the end of the strip must not focus a floating window"
         );
@@ -535,10 +532,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
         vec![(OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
         "the strip's end: one bounce to the left carrying both columns"
     );
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(last_column)
-    );
+    assert_eq!(reactor.layout_engine.focused_window(), Some(last_column));
 
     reactor.handle_test_layout_command(LayoutCommand::PrevWorkspace(None));
     assert_eq!(
@@ -546,10 +540,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
         vec![(OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
         "the top of the stack: one bounce downward"
     );
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(last_column)
-    );
+    assert_eq!(reactor.layout_engine.focused_window(), Some(last_column));
 
     // A step that lands somewhere is a switch, not a bounce.
     reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
@@ -595,7 +586,7 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
         "the strip's end: one bounce to the left carrying both columns"
     );
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout_engine.focused_window(),
         Some(last_column),
         "the window stays put and stays focused"
     );
@@ -631,10 +622,7 @@ fn a_focus_report_from_rinis_own_raise_does_not_move_the_selection() {
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, intended));
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(intended)
-    );
+    assert_eq!(reactor.layout_engine.focused_window(), Some(intended));
 
     reactor.raise_echo.expect(
         [intended, echoed].into_iter(),
@@ -643,7 +631,7 @@ fn a_focus_report_from_rinis_own_raise_does_not_move_the_selection() {
     );
     reactor.handle_event(Event::WindowServerFocusChanged(echoed, space));
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout_engine.focused_window(),
         Some(intended),
         "the echo must not become the selection"
     );
@@ -652,10 +640,7 @@ fn a_focus_report_from_rinis_own_raise_does_not_move_the_selection() {
     // cascade is over.
     reactor.raise_echo = crate::windows::domain::focus::RaiseEcho::default();
     reactor.handle_event(Event::WindowServerFocusChanged(echoed, space));
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(echoed)
-    );
+    assert_eq!(reactor.layout_engine.focused_window(), Some(echoed));
 }
 
 mod main_window_tracking {
@@ -690,7 +675,7 @@ mod main_window_tracking {
         reactor.handle_events(apps.make_app_with_opts(2, make_windows(2), None, false, true));
         assert_eq!(Some(WindowId::new(1, 1)), reactor.main_window());
         assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
+            reactor.layout_engine.selected_window(space),
             Some(WindowId::new(1, 1))
         );
 
@@ -706,7 +691,7 @@ mod main_window_tracking {
         ));
         assert_eq!(Some(WindowId::new(2, 2)), reactor.main_window());
         assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
+            reactor.layout_engine.selected_window(space),
             Some(WindowId::new(2, 2))
         );
         reactor.handle_event(ApplicationMainWindowChanged(
@@ -732,7 +717,7 @@ mod main_window_tracking {
         ));
         assert_eq!(Some(WindowId::new(3, 1)), reactor.main_window());
         assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
+            reactor.layout_engine.selected_window(space),
             Some(WindowId::new(3, 1))
         );
     }
@@ -760,7 +745,7 @@ mod main_window_tracking {
         reactor.handle_events(apps.make_app_with_opts(2, make_windows(2), None, false, true));
         assert_eq!(Some(WindowId::new(1, 1)), reactor.main_window());
         assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
+            reactor.layout_engine.selected_window(space),
             Some(WindowId::new(1, 1))
         );
 
@@ -776,13 +761,13 @@ mod main_window_tracking {
         ));
         assert_eq!(Some(WindowId::new(2, 2)), reactor.main_window());
         assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
+            reactor.layout_engine.selected_window(space),
             Some(WindowId::new(1, 1))
         );
 
         reactor.handle_event(ApplicationActivated(2, Quiet::No));
         assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
+            reactor.layout_engine.selected_window(space),
             Some(WindowId::new(2, 2))
         );
 
@@ -793,7 +778,7 @@ mod main_window_tracking {
         ));
         assert_eq!(Some(WindowId::new(2, 1)), reactor.main_window());
         assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
+            reactor.layout_engine.selected_window(space),
             Some(WindowId::new(2, 2))
         );
 
@@ -801,7 +786,7 @@ mod main_window_tracking {
         reactor.handle_event(ApplicationGloballyActivated(1));
         assert_eq!(Some(WindowId::new(1, 1)), reactor.main_window());
         assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
+            reactor.layout_engine.selected_window(space),
             Some(WindowId::new(2, 2))
         );
 
@@ -812,7 +797,7 @@ mod main_window_tracking {
         ));
         assert_eq!(Some(WindowId::new(1, 2)), reactor.main_window());
         assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
+            reactor.layout_engine.selected_window(space),
             Some(WindowId::new(1, 2))
         );
     }
@@ -851,7 +836,7 @@ mod main_window_tracking {
 
         reactor.handle_event(space_state_event(vec![screen_frame], vec![Some(space)]));
         assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
+            reactor.layout_engine.selected_window(space),
             Some(WindowId::new(3, 1))
         );
     }
@@ -985,22 +970,16 @@ fn a_late_report_for_an_earlier_press_does_not_pull_the_focus_back() {
 
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(third)
-    );
+    assert_eq!(reactor.layout_engine.focused_window(), Some(third));
 
     reactor.handle_event(Event::WindowServerFocusChanged(second, space));
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout_engine.focused_window(),
         Some(third),
         "the first press's late report is an echo"
     );
     reactor.handle_event(Event::WindowServerFocusChanged(third, space));
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(third)
-    );
+    assert_eq!(reactor.layout_engine.focused_window(), Some(third));
 }
 
 /// When the raise manager reports it has finished, a report is the user again once the cascade is
@@ -1022,10 +1001,7 @@ fn a_report_after_the_raises_have_run_is_followed() {
     std::thread::sleep(std::time::Duration::from_millis(450));
     reactor.handle_event(Event::WindowServerFocusChanged(second, space));
 
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(second)
-    );
+    assert_eq!(reactor.layout_engine.focused_window(), Some(second));
 }
 
 /// The reported case: after a restart nothing moves, so no layout pass asked for a single picture,

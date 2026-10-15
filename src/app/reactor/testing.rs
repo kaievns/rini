@@ -69,8 +69,7 @@ impl Reactor {
         &mut self,
         space: rini_core::ids::SpaceId,
     ) -> Vec<crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId> {
-        self.layout_manager
-            .layout_engine
+        self.layout_engine
             .virtual_workspace_manager_mut()
             .list_workspaces(space)
             .iter()
@@ -96,7 +95,7 @@ impl Reactor {
         &self,
         space: rini_core::ids::SpaceId,
     ) -> Option<crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId> {
-        self.layout_manager.layout_engine.active_workspace(space)
+        self.layout_engine.active_workspace(space)
     }
 
     pub fn test_workspace_for_window(
@@ -104,10 +103,11 @@ impl Reactor {
         space: rini_core::ids::SpaceId,
         wid: WindowId,
     ) -> Option<crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId> {
-        self.layout_manager
-            .layout_engine
-            .virtual_workspace_manager()
-            .workspace_for_window(&self.state.windows, space, wid)
+        self.layout_engine.virtual_workspace_manager().workspace_for_window(
+            &self.state.windows,
+            space,
+            wid,
+        )
     }
 
     pub fn test_window_server_id(&self, wid: WindowId) -> WindowServerId {
@@ -119,9 +119,7 @@ impl Reactor {
     }
 
     pub fn test_active_workspace_windows(&self, space: SpaceId) -> Vec<WindowId> {
-        self.layout_manager
-            .layout_engine
-            .windows_in_active_workspace(&self.state.windows, space)
+        self.layout_engine.windows_in_active_workspace(&self.state.windows, space)
     }
 
     pub fn test_workspace_windows(
@@ -129,7 +127,7 @@ impl Reactor {
         space: SpaceId,
         workspace: crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId,
     ) -> Vec<WindowId> {
-        self.layout_manager.layout_engine.virtual_workspace_manager().workspace_windows(
+        self.layout_engine.virtual_workspace_manager().workspace_windows(
             &self.state.windows,
             space,
             workspace,
@@ -142,10 +140,12 @@ impl Reactor {
         wid: WindowId,
         workspace: crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId,
     ) -> bool {
-        self.layout_manager
-            .layout_engine
-            .virtual_workspace_manager_mut()
-            .assign_window_to_workspace(&mut self.state.windows, space, wid, workspace)
+        self.layout_engine.virtual_workspace_manager_mut().assign_window_to_workspace(
+            &mut self.state.windows,
+            space,
+            wid,
+            workspace,
+        )
     }
 
     pub fn set_test_active_workspace(
@@ -153,14 +153,13 @@ impl Reactor {
         space: SpaceId,
         workspace: crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId,
     ) -> bool {
-        self.layout_manager
-            .layout_engine
+        self.layout_engine
             .virtual_workspace_manager_mut()
             .set_active_workspace(space, workspace)
     }
 
     pub fn handle_test_workspace_command(&mut self, space: SpaceId, command: &LayoutCommand) {
-        let _ = self.layout_manager.layout_engine.handle_virtual_workspace_command(
+        let _ = self.layout_engine.handle_virtual_workspace_command(
             &mut self.state.windows,
             &mut self.state.display_memory,
             space,
@@ -210,7 +209,7 @@ impl Reactor {
 
     /// Where the active workspace's strip had each window at the last pass.
     pub fn test_strip_layout(&self, space: SpaceId) -> Vec<(WindowId, CGRect)> {
-        let workspace = self.layout_manager.layout_engine.active_workspace(space);
+        let workspace = self.layout_engine.active_workspace(space);
         workspace
             .and_then(|workspace| self.last_strip_layout.get(&(space, workspace)).cloned())
             .unwrap_or_default()
@@ -266,7 +265,7 @@ impl Reactor {
     pub fn set_test_app_rules(&mut self, rules: Vec<crate::windows::domain::rules::WindowRule>) {
         self.config.virtual_workspaces.app_rules = rules;
         let settings = self.config.virtual_workspaces.clone();
-        self.layout_manager.layout_engine.update_virtual_workspace_settings(&settings);
+        self.layout_engine.update_virtual_workspace_settings(&settings);
     }
 
     pub fn add_test_app(&mut self, pid: pid_t) {
@@ -275,7 +274,7 @@ impl Reactor {
 
     pub fn add_test_app_with_info(&mut self, pid: pid_t, bundle_id: &str, name: &str) {
         let (app_tx, _app_rx) = channels::channel();
-        self.app_manager.apps.insert(pid, super::AppState {
+        self.apps.insert(pid, super::AppState {
             info: AppInfo {
                 bundle_id: Some(bundle_id.to_string()),
                 localized_name: Some(name.to_string()),

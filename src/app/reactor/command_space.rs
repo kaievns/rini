@@ -49,8 +49,7 @@ impl Reactor {
 
     pub(super) fn command_context_space(&self) -> Option<SpaceId> {
         self.workspace_command_space().or_else(|| {
-            self.layout_manager
-                .layout_engine
+            self.layout_engine
                 .focused_window()
                 .and_then(|wid| {
                     self.affinity()

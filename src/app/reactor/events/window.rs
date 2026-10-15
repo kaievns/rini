@@ -305,7 +305,7 @@ fn query_mouse_for_active_drag(
 
 pub fn handle_window_frame_changed(
     state: &mut crate::app::reactor::state::RiniState,
-    layout: &mut crate::app::reactor::managers::LayoutManager,
+    layout: &mut crate::workspaces::LayoutEngine,
     drag: &mut DragManager,
     payload: WindowFrameChangedPayload,
 ) -> anyhow::Result<EventOutcome> {
@@ -432,11 +432,10 @@ pub fn handle_window_frame_changed(
                 // 301x45 meeting toolbar was tiled as a column of the active workspace and the
                 // strip scrolled to show it, pushing the focused window half off screen.
                 if new_space_active && manageable {
-                    if let Some(workspace) = layout.layout_engine.active_workspace(space) {
-                        let _ = layout
-                            .layout_engine
-                            .virtual_workspace_manager_mut()
-                            .assign_window_to_workspace(&mut state.windows, space, wid, workspace);
+                    if let Some(workspace) = layout.active_workspace(space) {
+                        let manager = layout.virtual_workspace_manager_mut();
+                        let windows = &mut state.windows;
+                        let _ = manager.assign_window_to_workspace(windows, space, wid, workspace);
                     }
                     outcome = outcome.with_layout_event(LayoutEvent::WindowAdded(space, wid));
                 }
@@ -493,7 +492,7 @@ pub struct MouseMovedPayload {
 }
 
 pub fn handle_mouse_moved_over_window(
-    apps: &crate::app::reactor::managers::AppManager,
+    apps: &rustc_hash::FxHashMap<rini_core::ids::pid_t, crate::app::reactor::AppState>,
     payload: MouseMovedPayload,
 ) -> anyhow::Result<crate::app::reactor::events::EventOutcome> {
     let Some(window) = payload.window else {
@@ -506,7 +505,7 @@ pub fn handle_mouse_moved_over_window(
     let mut outcome = crate::app::reactor::events::EventOutcome::default();
     if !payload.is_main {
         let mut app_handles = rustc_hash::FxHashMap::default();
-        if let Some(app) = apps.apps.get(&window.pid) {
+        if let Some(app) = apps.get(&window.pid) {
             app_handles.insert(window.pid, app.handle.clone());
         }
         outcome = outcome.with_raise_request(crate::windows::domain::raise::Event::RaiseRequest(

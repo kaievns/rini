@@ -13,7 +13,7 @@ use crate::windows::domain::request::Quiet;
 impl Reactor {
     /// Which z-order group a window belongs to.
     fn stack_group_of(&self, window: WindowId) -> StackGroup {
-        StackGroup::of(self.layout_manager.layout_engine.is_window_floating(window))
+        StackGroup::of(self.layout_engine.is_window_floating(window))
     }
 
     /// Puts the strip back in front of the windows that are not on it, after focus lands on the strip.
@@ -36,7 +36,6 @@ impl Reactor {
     ) -> Vec<WindowId> {
         let depths = self.reads.window_server.front_to_back_depths();
         let mut order: Vec<StackedWindow> = self
-            .layout_manager
             .layout_engine
             .windows_in_active_workspace(&self.state.windows, space)
             .into_iter()
@@ -76,7 +75,7 @@ impl Reactor {
     /// it will produce is the one wanted.
     pub(super) fn regroup_after_layout(&mut self) {
         let already = std::mem::take(&mut self.regroup_raised);
-        let Some(focused) = self.layout_manager.layout_engine.focused_window() else {
+        let Some(focused) = self.layout_engine.focused_window() else {
             return;
         };
         // The layout's focus is stale when the window that really has focus is one the layout

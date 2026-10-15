@@ -82,15 +82,12 @@ fn layout_commands_follow_active_display_space_across_active_displays() {
 
     assert_eq!(reactor.workspace_command_space(), Some(left_space));
     assert_eq!(reactor.command_context_space(), Some(left_space));
-    assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
-        Some(target_a)
-    );
+    assert_eq!(reactor.layout_engine.focused_window(), Some(target_a));
 
     reactor.handle_test_layout_command(LayoutCommand::NextWindow);
 
     assert_eq!(
-        reactor.layout_manager.layout_engine.focused_window(),
+        reactor.layout_engine.focused_window(),
         Some(source),
         "non-workspace layout commands should follow the active display space"
     );
@@ -208,27 +205,18 @@ fn an_unmanageable_window_is_not_tiled_when_its_frame_comes_back_on_screen() {
 fn cross_display_drag_clears_source_floating_position() {
     let (mut reactor, wid, _wsid, space1, space2, initial_frame, screen2) =
         reactor_with_window_on_space1_two_displays();
-    let source_workspace = reactor
-        .layout_manager
-        .layout_engine
-        .active_workspace(space1)
-        .expect("source workspace");
-    let target_workspace = reactor
-        .layout_manager
-        .layout_engine
-        .active_workspace(space2)
-        .expect("target workspace");
+    let source_workspace =
+        reactor.layout_engine.active_workspace(space1).expect("source workspace");
+    let target_workspace =
+        reactor.layout_engine.active_workspace(space2).expect("target workspace");
 
     reactor.send_layout_event(LayoutEvent::WindowAdded(space1, wid));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space1, wid));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(wid));
-    reactor.layout_manager.layout_engine.store_floating_position(
-        space1,
-        source_workspace,
-        wid,
-        initial_frame,
-    );
+    assert!(reactor.layout_engine.is_window_floating(wid));
+    reactor
+        .layout_engine
+        .store_floating_position(space1, source_workspace, wid, initial_frame);
 
     let moved_frame = CGRect::new(
         CGPoint::new(screen2.origin.x + 120.0, initial_frame.origin.y),
@@ -249,7 +237,7 @@ fn cross_display_drag_clears_source_floating_position() {
     let (visible_spaces, visible_space_centers) = reactor.visible_spaces_for_layout(true);
     let outcome = crate::app::reactor::events::drag::handle_mouse_up(
         &mut reactor.state,
-        &mut reactor.layout_manager,
+        &mut reactor.layout_engine,
         &mut reactor.drag_manager,
         crate::app::reactor::events::drag::MouseUpPayload {
             pending_swap: None,
@@ -268,18 +256,12 @@ fn cross_display_drag_clears_source_floating_position() {
         Some(space2)
     );
     assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .get_floating_position(space1, source_workspace, wid),
+        reactor.layout_engine.get_floating_position(space1, source_workspace, wid),
         None,
         "cross-display drags must clear the source workspace's floating position"
     );
     assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .get_floating_position(space2, target_workspace, wid),
+        reactor.layout_engine.get_floating_position(space2, target_workspace, wid),
         Some(moved_frame)
     );
 }
@@ -504,18 +486,18 @@ fn forwarded_space_state_is_queued_during_mission_control_and_applied_on_exit() 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(new_space)]));
 
     assert_eq!(
-        reactor
-            .pending_space_change_manager
-            .pending_space_change
-            .as_ref()
-            .map(|pending| pending.screens.iter().map(|screen| screen.space).collect::<Vec<_>>()),
+        reactor.pending_space_change.as_ref().map(|pending| pending
+            .screens
+            .iter()
+            .map(|screen| screen.space)
+            .collect::<Vec<_>>()),
         Some(vec![Some(new_space)])
     );
 
     reactor.handle_event(Event::MissionControlNativeExited);
 
     assert_eq!(reactor.workspace_command_space(), Some(new_space));
-    assert!(reactor.pending_space_change_manager.pending_space_change.is_none());
+    assert!(reactor.pending_space_change.is_none());
 }
 
 #[test]
@@ -716,7 +698,7 @@ fn it_preserves_layout_after_login_screen() {
     make_active_app_with_count(&mut apps, &mut reactor, 1, 3, Some(WindowId::new(1, 1)));
     let default = test_layout(&mut reactor, space, full_screen);
 
-    assert!(reactor.layout_manager.layout_engine.selected_window(space).is_some());
+    assert!(reactor.layout_engine.selected_window(space).is_some());
     // Was MoveNode(Up), a tree operation. In a scrolling strip of single-window columns
     // there is nothing above a window, so that command is a no-op and the layout never
     // changed — the assert_ne below then failed for the wrong reason. Moving a column
@@ -1370,11 +1352,11 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
 
     // The mapping is overwritten by update_space_display regardless, so asserting on
     // it proves nothing. What matters is whether the WINDOW came back with the display.
-    let landed = reactor
-        .layout_manager
-        .layout_engine
-        .virtual_workspace_manager()
-        .workspace_for_window(&reactor.state.windows, replugged_space, wid);
+    let landed = reactor.layout_engine.virtual_workspace_manager().workspace_for_window(
+        &reactor.state.windows,
+        replugged_space,
+        wid,
+    );
     assert!(
         landed.is_some(),
         "the window arranged on the external display must be reachable under its new \
@@ -1949,10 +1931,7 @@ fn replug_rebuilds_strip_adjacency() {
         Some(builtin_space),
         Some(external_space),
     ]));
-    let strip_before = reactor
-        .layout_manager
-        .layout_engine
-        .ordered_windows_in_active_workspace(external_space);
+    let strip_before = reactor.layout_engine.ordered_windows_in_active_workspace(external_space);
     assert_eq!(
         strip_before,
         vec![chrome, terminal_a, terminal_b, editor],
@@ -1978,10 +1957,7 @@ fn replug_rebuilds_strip_adjacency() {
         |state| state.display_set_changed = true,
     ));
 
-    let strip_after = reactor
-        .layout_manager
-        .layout_engine
-        .ordered_windows_in_active_workspace(replugged_space);
+    let strip_after = reactor.layout_engine.ordered_windows_in_active_workspace(replugged_space);
     assert_eq!(
         strip_after, strip_before,
         "the strip must come back in the order it was left, keeping adjacent windows adjacent"
@@ -2215,7 +2191,7 @@ fn redistribute_returns_windows_to_their_home_display_only() {
     reactor.add_test_window(displaced, WindowServerId::new(901), Some(builtin_space), builtin);
     assert!(reactor.assign_test_window_to_workspace(builtin_space, displaced, workspaces[2]));
     reactor.send_layout_event(LayoutEvent::WindowAdded(builtin_space, displaced));
-    reactor.layout_manager.layout_engine.set_window_display_home(
+    reactor.layout_engine.set_window_display_home(
         &mut reactor.state.display_memory,
         displaced,
         external_space,
@@ -2225,7 +2201,7 @@ fn redistribute_returns_windows_to_their_home_display_only() {
     reactor.add_test_window(settled, WindowServerId::new(902), Some(builtin_space), builtin);
     assert!(reactor.assign_test_window_to_workspace(builtin_space, settled, workspaces[0]));
     reactor.send_layout_event(LayoutEvent::WindowAdded(builtin_space, settled));
-    reactor.layout_manager.layout_engine.set_window_display_home(
+    reactor.layout_engine.set_window_display_home(
         &mut reactor.state.display_memory,
         settled,
         builtin_space,

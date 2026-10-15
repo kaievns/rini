@@ -444,7 +444,7 @@ fn toggling_floating_refolds_and_relays_the_window_out() {
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     reactor.handle_test_batch(Vec::new());
     let model = models(&mut rest).pop().expect("sent");
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(window));
+    assert!(reactor.layout_engine.is_window_floating(window));
     assert_eq!(
         (
             worn_border(&model, &reactor, window),

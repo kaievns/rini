@@ -282,7 +282,6 @@ fn switching_away_and_back_returns_to_the_same_window() {
 
     assert_eq!(
         reactor
-            .layout_manager
             .layout_engine
             .virtual_workspace_manager()
             .last_focused_window(space, workspaces[0]),

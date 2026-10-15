@@ -20,7 +20,7 @@ the strip, workspace switches, resizes, entrances and the edge bounce are all
 flights of it. When each step of one happens is the coordinator's ("The lifecycle"); how the engine
 and the renderer talk is "Threads".
 
-`AnimationManager` (`src/app/reactor/animation.rs`) is the layout side: it
+`Reactor::animate_layout` (`src/app/reactor/animation.rs`) is the layout side: it
 gathers a `PassWindow` per window from the stores, sorts the pass with
 `crate::transitions::domain::pass::plan` (moves, unmoved windows the overlay must still
 draw, warm targets), decides whether the overlay flies (no `animations › off` in the
@@ -1050,7 +1050,7 @@ measured yet.*
    was inline and untested; it has five tests now.
 
    What is left in `animate_layout` is the flight decision (skip reasons, pan
-   detection) and dispatch. It still takes `&mut Reactor`, and legitimately: it reads
+   detection) and dispatch. It is a `&mut self` method on `Reactor`, and legitimately: it reads
    the config, the layout engine and the drag state, and sends to the flight engine.
    Those are the reactor's, not a narrower capability's.
 2. **Reactor-side strip builders share boilerplate.** `start_strip_switch`,

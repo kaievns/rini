@@ -102,7 +102,7 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
     reactor.handle_event(space_state_event(vec![screen], vec![Some(user_space)]));
 
     let (app_tx, mut app_rx) = crate::app::channels::channel();
-    reactor.app_manager.apps.insert(pid, AppState {
+    reactor.apps.insert(pid, AppState {
         info: AppInfo {
             bundle_id: Some("com.test.pending-fullscreen".to_string()),
             localized_name: Some("Pending Fullscreen".to_string()),
@@ -207,11 +207,8 @@ fn fullscreen_exit_removes_non_queryable_duplicate_from_layout() {
     let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
     let duplicate_wid = WindowId::new(original_wid.pid, 27481);
     let duplicate_wsid = WindowServerId::new(27481);
-    let active_workspace = reactor
-        .layout_manager
-        .layout_engine
-        .active_workspace(user_space)
-        .expect("active workspace");
+    let active_workspace =
+        reactor.layout_engine.active_workspace(user_space).expect("active workspace");
 
     window_server_appeared(
         &mut reactor,

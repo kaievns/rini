@@ -59,7 +59,7 @@ impl Reactor {
         let space_is_active = resolved_space.is_some_and(|space| self.is_space_active(space));
         match command_workflow::handle_command_reactor_focus_window(
             &self.state,
-            &self.app_manager,
+            &self.apps,
             command_workflow::FocusWindowPayload {
                 window_id: window,
                 window_server_id: self
@@ -199,8 +199,7 @@ impl Reactor {
             .iter()
             .map(|entry| {
                 let icon = self.config.settings.switcher.icon_for(
-                    self.app_manager
-                        .apps
+                    self.apps
                         .get(&entry.front().window.pid)
                         .and_then(|app| app.info.bundle_id.as_deref()),
                     home.as_deref(),
@@ -277,7 +276,6 @@ impl Reactor {
                 continue;
             }
             let workspace_index = self
-                .layout_manager
                 .layout_engine
                 .virtual_workspace_manager_mut()
                 .list_workspaces(space)
@@ -323,7 +321,7 @@ impl Reactor {
                 .map(|info| info.workspace_id)
                 .or_else(|| {
                     let space = self.command_context_space()?;
-                    self.layout_manager.layout_engine.active_workspace(space)
+                    self.layout_engine.active_workspace(space)
                 })
                 .map(Scope::Workspace),
         }

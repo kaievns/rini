@@ -235,10 +235,11 @@ Its largest methods: `handle_command` (261), `calculate_layout_with_virtual_work
 `src/app/reactor/` splits `Reactor` by concern: `mod.rs` holds the struct, its `Event`, the
 loop, `dispatch_workflow` and `apply_event_outcome`, and each file beside it is one concern's
 `impl Reactor` (`src/app/docs/README.md`, "What it owns"). No in-file tests. Direct field
-reaches, as counted when this was found: `state` 112, `layout_manager` 61, `space_state` 43, `drag_manager` 18,
-`communication_manager` 17, `refresh_quarantine_manager` 14,
-`transaction_manager` 11, `pending_space_change_manager` 3. Eight "manager"
-structs plus `RiniState`.
+reaches, as counted when this was found: `state` 112, the layout engine 61, `space_state` 43,
+`drag_manager` 18, `communication_manager` 17, `refresh_quarantine_manager` 14,
+`transaction_manager` 11. The one-field wrappers are gone: the layout engine, the applications,
+the menu state, the notification ids and the pending space change are plain `Reactor` fields.
+Six multi-field managers remain in `reactor/managers.rs`, plus `RiniState`.
 
 Largest methods, and what each one turned out to be:
 
@@ -302,10 +303,11 @@ DONE — the variant is deleted, and `WindowPlacement` with it, since nothing re
 for a window that goes fullscreen before rini has one, which the rekey path needs. A test caught
 that immediately.
 
-`src/app/reactor/animation.rs` and `managers.rs` take `reactor: &mut Reactor`
-rather than `&mut self` on a narrower borrow — 9 signatures. `animate_layout`'s own
-doc (`src/transitions/docs/coordination.md`, "Structural findings") already calls
-this out and names the fix: a `present(motion)` boundary.
+The layout pass (`src/app/reactor/layout_pass.rs`) and its animation (`animation.rs`) are
+`impl Reactor` methods on `&mut self`: no function outside `impl Reactor` takes the reactor, but
+each still borrows all of it rather than the stores it writes. `animate_layout`'s own doc
+(`src/transitions/docs/coordination.md`, "Structural findings") names the fix: a
+`present(motion)` boundary.
 
 ### 3.4 `src/displays/screen.rs` straddles domain and platform
 

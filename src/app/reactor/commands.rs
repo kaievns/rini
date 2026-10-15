@@ -41,7 +41,7 @@ impl Reactor {
         let resolved_space = self.best_space_for_tracked_window(window_id);
         command_workflow::handle_command_reactor_focus_window(
             &self.state,
-            &self.app_manager,
+            &self.apps,
             command_workflow::FocusWindowPayload {
                 window_id,
                 window_server_id,
@@ -70,8 +70,7 @@ impl Reactor {
         let focus_window = screen.as_ref().and_then(|screen| {
             let space = screen.space?;
             self.last_focused_window_in_space(space).or_else(|| {
-                self.layout_manager
-                    .layout_engine
+                self.layout_engine
                     .windows_in_active_workspace(&self.state.windows, space)
                     .into_iter()
                     .next()
@@ -122,7 +121,7 @@ impl Reactor {
         let (visible_spaces, visible_space_centers) = self.visible_spaces_for_layout(false);
         command_workflow::handle_command_layout(
             &mut self.state,
-            &mut self.layout_manager,
+            &mut self.layout_engine,
             &mut self.workspace_switch_manager,
             command_workflow::LayoutCommandPayload {
                 command,
@@ -140,7 +139,7 @@ impl Reactor {
     /// the main window, else the one under the cursor, else the first on the command space.
     fn window_for_move_command(&self, index: Option<u32>) -> Option<WindowId> {
         let command_space = self.workspace_command_space();
-        let workspaces = self.layout_manager.layout_engine.virtual_workspace_manager();
+        let workspaces = self.layout_engine.virtual_workspace_manager();
         let by_index = |index| {
             command_space
                 .and_then(|space| workspaces.find_window_by_idx(&self.state.windows, space, index))
@@ -221,7 +220,7 @@ impl Reactor {
         }
         command_workflow::handle_command_reactor_move_window_to_display(
             &mut self.state,
-            &mut self.layout_manager,
+            &mut self.layout_engine,
             command_workflow::MoveWindowToDisplayPayload {
                 window,
                 window_server_id,

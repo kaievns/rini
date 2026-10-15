@@ -145,10 +145,10 @@ impl Reactor {
     pub(crate) fn view(&self) -> StateView<'_> {
         StateView {
             windows: &self.state.windows,
-            engine: &self.layout_manager.layout_engine,
+            engine: &self.layout_engine,
             memory: &self.state.display_memory,
             spaces: &self.space_state,
-            apps: &self.app_manager.apps,
+            apps: &self.apps,
             settings: &self.config.settings,
             active_spaces: &self.active_spaces,
             main_window: self.main_window(),

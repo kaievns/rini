@@ -71,7 +71,7 @@ impl Reactor {
         }
 
         let mut refreshed_pids = Vec::new();
-        for (&pid, app) in &self.app_manager.apps {
+        for (&pid, app) in &self.apps {
             // Errors mean the app terminated (and a termination event is coming); ignore.
             if app.handle.send(Request::GetVisibleWindows).is_ok() {
                 refreshed_pids.push(pid);
@@ -137,8 +137,7 @@ impl Reactor {
         known_visible: Vec<WindowId>,
         app_info: Option<AppInfo>,
     ) {
-        let app_info =
-            app_info.or_else(|| self.app_manager.apps.get(&pid).map(|app| app.info.clone()));
+        let app_info = app_info.or_else(|| self.apps.get(&pid).map(|app| app.info.clone()));
         let ws = self.reads.window_server.clone();
         let inactive_windows = self
             .state
@@ -221,7 +220,7 @@ impl Reactor {
         let (new_windows, process_outcome) = window_discovery::process_window_list(
             &mut self.state,
             &*ws,
-            &mut self.layout_manager,
+            &mut self.layout_engine,
             &mut self.main_window_tracker,
             observed_windows,
             &app_info,
@@ -260,7 +259,7 @@ impl Reactor {
         let focused_window = self.focused_window_for_discovery(pid);
         outcome.absorb(window_discovery::emit_layout_events(
             &mut self.state,
-            &mut self.layout_manager,
+            &mut self.layout_engine,
             window_discovery::EmitLayoutPayload {
                 pid,
                 known_visible: &known_visible,

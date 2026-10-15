@@ -36,7 +36,7 @@ impl Reactor {
         }
 
         for (pid, window_ids) in windows_by_pid {
-            let Some(app_state) = self.app_manager.apps.get(&pid) else {
+            let Some(app_state) = self.apps.get(&pid) else {
                 continue;
             };
 
@@ -68,7 +68,7 @@ impl Reactor {
             return;
         }
 
-        let app_info = match self.app_manager.apps.get(&window_id.pid) {
+        let app_info = match self.apps.get(&window_id.pid) {
             Some(app_state) => app_state.info.clone(),
             None => return,
         };
@@ -110,7 +110,7 @@ impl Reactor {
             } else {
                 TransactionId::default()
             };
-            if let Some(app) = self.app_manager.apps.get(&placement.window.pid)
+            if let Some(app) = self.apps.get(&placement.window.pid)
                 && let Err(error) = app.handle.send(Request::SetWindowFrame(
                     placement.window,
                     frame,
@@ -140,7 +140,7 @@ impl Reactor {
                 continue;
             };
             let new_frame = resize.resized_frame(window.frame_monotonic);
-            self.layout_manager.layout_engine.apply_app_rule_resize(
+            self.layout_engine.apply_app_rule_resize(
                 resize,
                 new_frame,
                 screen.frame,
@@ -180,7 +180,7 @@ impl Reactor {
             let mut windows_needing_layout_refresh: Vec<WindowId> = Vec::new();
 
             for &wid in &wids {
-                let engine = &mut self.layout_manager.layout_engine;
+                let engine = &mut self.layout_engine;
                 let before = engine.before_rules(&self.state.windows, space, wid);
                 let result = engine.assign_window_by_rules(
                     &mut self.state.windows,

@@ -50,8 +50,8 @@ impl Reactor {
             .windows
             .iter_windows()
             .filter_map(|(window, state)| {
-                let app = self.app_manager.apps.get(&window.pid);
-                let decision = self.layout_manager.layout_engine.evaluate_app_rules(
+                let app = self.apps.get(&window.pid);
+                let decision = self.layout_engine.evaluate_app_rules(
                     app.and_then(|app| app.info.bundle_id.as_deref()),
                     app.and_then(|app| app.info.localized_name.as_deref()),
                     Some(state.info.title.as_str()),
@@ -93,8 +93,7 @@ impl Reactor {
         // removes windows with WindowRemovedPreserveFloating, which does not clear it.
         // Measured: the external's affinity list held three long-closed windows while every
         // live window was homed to the built-in, so a replug had nothing to move back.
-        self.layout_manager
-            .layout_engine
+        self.layout_engine
             .forget_affinity_for_dead_windows(&self.state.windows, &mut self.state.display_memory);
         // Pins first. Both this and the observation below write a home only if one is absent, so
         // whichever runs first decides — and for a pinned window the answer must be its rule, not
@@ -110,8 +109,7 @@ impl Reactor {
                 self.is_space_active(space).then_some((space, uuid))
             })
             .map(|(space, uuid)| {
-                let windows =
-                    self.layout_manager.layout_engine.ordered_windows_in_active_workspace(space);
+                let windows = self.layout_engine.ordered_windows_in_active_workspace(space);
                 (uuid, windows)
             })
             .collect();
@@ -119,7 +117,7 @@ impl Reactor {
             if windows.is_empty() {
                 continue;
             }
-            self.layout_manager.layout_engine.sync_display_affinity(
+            self.layout_engine.sync_display_affinity(
                 &mut self.state.display_memory,
                 &uuid,
                 &windows,
@@ -150,7 +148,7 @@ impl Reactor {
 
         let mut moved = 0usize;
         for (display_uuid, target_space) in &attached {
-            let windows = self.layout_manager.layout_engine.windows_to_repatriate(
+            let windows = self.layout_engine.windows_to_repatriate(
                 &self.state.windows,
                 &self.state.display_memory,
                 display_uuid,
@@ -169,17 +167,12 @@ impl Reactor {
                 let Some(assignment) = self.state.windows.workspace_info_for_window(window) else {
                     continue;
                 };
-                if self
-                    .layout_manager
-                    .layout_engine
-                    .virtual_workspace_manager_mut()
-                    .assign_window_to_workspace(
-                        &mut self.state.windows,
-                        *target_space,
-                        window,
-                        assignment.workspace_id,
-                    )
-                {
+                if self.layout_engine.virtual_workspace_manager_mut().assign_window_to_workspace(
+                    &mut self.state.windows,
+                    *target_space,
+                    window,
+                    assignment.workspace_id,
+                ) {
                     moved += 1;
                 }
             }
@@ -225,7 +218,7 @@ impl Reactor {
             return outcome;
         };
 
-        let windows = self.layout_manager.layout_engine.windows_to_repatriate(
+        let windows = self.layout_engine.windows_to_repatriate(
             &self.state.windows,
             &self.state.display_memory,
             display_uuid,
@@ -276,7 +269,7 @@ impl Reactor {
             if let Some(state) = self.state.windows.window_mut(window) {
                 state.frame_monotonic = target_frame;
             }
-            let response = self.layout_manager.layout_engine.move_window_to_space(
+            let response = self.layout_engine.move_window_to_space(
                 &mut self.state.windows,
                 &mut self.state.display_memory,
                 source_space,
@@ -363,14 +356,12 @@ impl Reactor {
         self.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
 
         let _ = self
-            .layout_manager
             .layout_engine
             .virtual_workspace_manager_mut()
             .list_workspaces(authoritative_space);
 
         let assigned = if preserve_workspace_ordinal {
-            self.layout_manager
-                .layout_engine
+            self.layout_engine
                 .virtual_workspace_manager_mut()
                 .assign_window_to_workspace_preserving_ordinal(
                     &mut self.state.windows,
@@ -380,26 +371,20 @@ impl Reactor {
                 .is_some()
         } else {
             let Some(target_workspace) = self
-                .layout_manager
                 .layout_engine
                 .ensure_active_workspace_info(authoritative_space)
                 .map(|(workspace_id, _)| workspace_id)
-                .or_else(|| {
-                    self.layout_manager.layout_engine.active_workspace(authoritative_space)
-                })
+                .or_else(|| self.layout_engine.active_workspace(authoritative_space))
             else {
                 return assigned_space.is_some_and(|space| self.is_space_active(space));
             };
 
-            self.layout_manager
-                .layout_engine
-                .virtual_workspace_manager_mut()
-                .assign_window_to_workspace(
-                    &mut self.state.windows,
-                    authoritative_space,
-                    wid,
-                    target_workspace,
-                )
+            self.layout_engine.virtual_workspace_manager_mut().assign_window_to_workspace(
+                &mut self.state.windows,
+                authoritative_space,
+                wid,
+                target_workspace,
+            )
         };
         if !assigned {
             return assigned_space.is_some_and(|space| self.is_space_active(space));

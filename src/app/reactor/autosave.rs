@@ -35,7 +35,7 @@ impl Reactor {
         let active_space = self.active_display_space();
         command_workflow::save_layout_before_exit(
             &self.state,
-            &mut self.layout_manager,
+            &mut self.layout_engine,
             path,
             active_space,
             self.space_state.listed_spaces().as_deref(),
@@ -55,13 +55,13 @@ impl Reactor {
             .iter()
             .filter_map(|screen| screen.display_uuid_owned())
             .collect();
-        self.layout_manager.layout_engine.remember_launch_slots(
+        self.layout_engine.remember_launch_slots(
             &self.state.windows,
             &mut self.state.display_memory,
             &connected,
         );
         if let Some(listed) = self.space_state.listed_spaces() {
-            self.layout_manager.layout_engine.forget_vacant_spaces(
+            self.layout_engine.forget_vacant_spaces(
                 &self.state.windows,
                 &self.state.display_memory,
                 &listed,
@@ -73,7 +73,7 @@ impl Reactor {
         // floating window, because the frame it should return to had already been
         // overwritten. The only live state an autosave changes is the forgetting
         // above, of spaces macOS no longer lists and no window is on.
-        if let Err(e) = self.layout_manager.layout_engine.autosave_current_layout(
+        if let Err(e) = self.layout_engine.autosave_current_layout(
             path.clone(),
             &self.state.windows,
             &self.state.display_memory,

@@ -1,18 +1,17 @@
 //! A layout event handed to the engine and its response carried out, and the layout pass that
 //! places every active space's windows after it.
 
-use objc2_core_foundation::CGPoint;
+use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::{SpaceId, WindowId};
-use rustc_hash::FxHashMap as HashMap;
-use tracing::debug;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use tracing::{debug, trace};
 
-use super::managers::LayoutManager;
 use super::{Reactor, RefocusState, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 use crate::displays::domain::screen::order_visible_spaces_by_position;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::raise_order;
 use crate::windows::domain::request::Quiet;
-use crate::workspaces::{self as layout, LayoutEvent};
+use crate::workspaces::{self as layout, LayoutEngine, LayoutEvent};
 
 impl Reactor {
     pub(super) fn send_layout_event(&mut self, event: LayoutEvent) {
@@ -23,10 +22,10 @@ impl Reactor {
         let focus_desktop = matches!(
             event,
             LayoutEvent::WindowRemoved(wid)
-                if self.layout_manager.layout_engine.focused_window() == Some(wid)
+                if self.layout_engine.focused_window() == Some(wid)
         );
         let event_clone = event.clone();
-        let layout_outcome = self.layout_manager.layout_engine.handle_event(
+        let layout_outcome = self.layout_engine.handle_event(
             &mut self.state.windows,
             &mut self.state.display_memory,
             event,
@@ -40,7 +39,7 @@ impl Reactor {
             self.store_current_floating_positions(request.space);
             self.workspace_switch_manager
                 .start_workspace_switch(WorkspaceSwitchOrigin::Auto);
-            response = self.layout_manager.layout_engine.switch_to_workspace_with_focus(
+            response = self.layout_engine.switch_to_workspace_with_focus(
                 &self.state.windows,
                 request.space,
                 request.workspace_index,
@@ -66,7 +65,7 @@ impl Reactor {
             self.focus_desktop_if_active_workspace_empty(space);
         }
         for space in self.space_state.iter_known_spaces() {
-            self.layout_manager.layout_engine.debug_tree_desc(space, "after event");
+            self.layout_engine.debug_tree_desc(space, "after event");
         }
     }
 
@@ -145,8 +144,7 @@ impl Reactor {
                 } else {
                     let skip_center_warp = workspace_switch_space
                         .map(|space| {
-                            self.layout_manager
-                                .layout_engine
+                            self.layout_engine
                                 .windows_in_active_workspace(&self.state.windows, space)
                                 .is_empty()
                         })
@@ -256,11 +254,8 @@ impl Reactor {
 
         let focus_window = focus_window.filter(|wid| self.is_window_on_active_space(*wid));
         if let Some(space) = workspace_switch_space {
-            self.layout_manager.layout_engine.commit_workspace_focus(
-                &mut self.state.windows,
-                space,
-                focus_window,
-            );
+            self.layout_engine
+                .commit_workspace_focus(&mut self.state.windows, space, focus_window);
         }
         let batches = raise_order::group_by_app_and_space(&raise_windows, |wid| {
             self.affinity().best_space_for_window_id(wid)
@@ -319,11 +314,10 @@ impl Reactor {
 
     pub(super) fn store_current_floating_positions(&mut self, space: SpaceId) {
         let floating_windows_in_workspace = self
-            .layout_manager
             .layout_engine
             .windows_in_active_workspace(&self.state.windows, space)
             .into_iter()
-            .filter(|&wid| self.layout_manager.layout_engine.is_window_floating(wid))
+            .filter(|&wid| self.layout_engine.is_window_floating(wid))
             .filter_map(|wid| {
                 self.state
                     .windows
@@ -333,8 +327,7 @@ impl Reactor {
             .collect::<Vec<_>>();
 
         if !floating_windows_in_workspace.is_empty() {
-            self.layout_manager
-                .layout_engine
+            self.layout_engine
                 .store_floating_window_positions(space, &floating_windows_in_workspace);
         }
     }
@@ -345,8 +338,9 @@ impl Reactor {
         is_workspace_switch: bool,
         space_scope: Option<SpaceId>,
     ) -> bool {
-        let changed =
-            LayoutManager::update_layout(self, is_resize, is_workspace_switch, space_scope);
+        self.refresh_borders();
+        let layout_result = self.calculate_layout(space_scope);
+        let changed = self.apply_layout(layout_result, is_resize, is_workspace_switch);
         if changed {
             // Re-observe affinity before saving, so the file records the arrangement that
             // was just applied. This is the path that catches a window dragged between
@@ -356,5 +350,227 @@ impl Reactor {
             self.autosave_layout();
         }
         changed
+    }
+
+    fn calculate_layout(&mut self, space_scope: Option<SpaceId>) -> LayoutResult {
+        if self.state.windows.tracked_window_count() == 0 {
+            return LayoutResult::new();
+        }
+        let screens = self.space_state.screens.clone();
+        let all_screen_frames: Vec<CGRect> = screens.iter().map(|s| s.frame).collect();
+        let active_space_count = screens
+            .iter()
+            .filter_map(|screen| screen.space)
+            .filter(|space| self.is_space_active(*space))
+            .count();
+        let mut layout_result = LayoutResult::new();
+
+        for screen in screens {
+            let Some(space) = screen.space else {
+                continue;
+            };
+            if space_scope.is_some_and(|scope| scope != space) {
+                continue;
+            }
+            if !self.is_space_active(space) {
+                continue;
+            }
+            let display_uuid_opt = screen.display_uuid_owned();
+            let gaps = self
+                .config
+                .settings
+                .layout
+                .gaps
+                .effective_for_display(display_uuid_opt.as_deref());
+            // A reconnected display's layout is NOT reattached here any more.
+            //
+            // This ran a whole-space remap on every layout pass, from the display's last
+            // known space id onto its current one. Two problems: remap_space deletes the
+            // workspaces already on the target id and drops their window assignments, and a
+            // layout pass is far too hot a path to be mutating space identity from — it fired
+            // on ordinary space switches too. Window placement across a display change is now
+            // decided by per-window affinity in Reactor::repatriate_windows_to_display, which
+            // runs once per topology change.
+            self.layout_engine.update_space_display(
+                &mut self.state.display_memory,
+                space,
+                display_uuid_opt.clone(),
+            );
+            let mut layout = self.layout_engine.calculate_layout_with_virtual_workspaces(
+                &self.state.windows,
+                space,
+                screen.frame,
+                &gaps,
+                |wid| self.state.windows.window(wid).map(|w| w.frame_monotonic),
+                &all_screen_frames,
+            );
+            if active_space_count > 1 {
+                let active_workspace_windows: HashSet<WindowId> = self
+                    .layout_engine
+                    .windows_in_active_workspace(&self.state.windows, space)
+                    .into_iter()
+                    .collect();
+                bound_scrolling_tiled_frames_to_screen(
+                    &self.layout_engine,
+                    &mut layout,
+                    screen.frame,
+                    &active_workspace_windows,
+                );
+            }
+            layout_result.push((space, layout));
+        }
+
+        layout_result
+    }
+
+    fn apply_layout(
+        &mut self,
+        layout_result: LayoutResult,
+        is_resize: bool,
+        is_workspace_switch: bool,
+    ) -> bool {
+        let main_window = self.main_window();
+        trace!(?main_window);
+        // Skipped for the whole drag, not one pass: a drag produces many passes, each of which would
+        // reassert the window's stored frame, which for a floating window is its saved position, so
+        // releasing the mouse snapped it back. The marker is cleared where the drag ends: on mouse-up
+        // (`events/drag.rs`) and when the window stops being dragged (`drag_swap.rs`).
+        let skip_wid = self
+            .drag_manager
+            .skip_layout_for_window
+            .or(self.drag_manager.drag_swap_manager.dragged());
+        let mut any_frame_changed = false;
+
+        for (space, layout) in layout_result {
+            let movement = self.take_workspace_movement(space);
+            if is_workspace_switch {
+                any_frame_changed |=
+                    self.workspace_switch_layout(space, movement, &layout, skip_wid);
+            } else if self.workspace_switch_manager.active_workspace_switch.is_some() {
+                any_frame_changed |= self.instant_layout(space, &layout, skip_wid);
+            } else {
+                any_frame_changed |= self.animate_layout(space, &layout, is_resize, skip_wid);
+            }
+        }
+
+        any_frame_changed
+    }
+}
+
+type LayoutResult = Vec<(SpaceId, Vec<(WindowId, CGRect)>)>;
+
+/// How much of a fully-scrolled-away window stays on screen, in points.
+///
+/// macOS will not let a window be positioned entirely outside every display — it
+/// clamps it back — so a scrolling layout has to leave a deliberate sliver
+/// visible at the edge. 1pt is the smallest value that still satisfies the window
+/// server while being visually negligible.
+///
+/// Was 10pt, which is individually small but stacks: with a dozen scrolled-away
+/// columns parked at the same edge the result is a conspicuous ~10pt band of
+/// overlapping window edges on both sides of the screen, and it is worse on a
+/// wide external display where more columns are off-strip.
+const WINDOW_HIDDEN_THRESHOLD: f64 = 1.0;
+
+fn bound_frame_to_screen(frame: CGRect, screen: CGRect) -> CGRect {
+    let screen_left = screen.origin.x;
+    let screen_top = screen.origin.y;
+    let screen_right = screen.max().x;
+    let screen_bottom = screen.max().y;
+    let max_y = (screen_bottom - frame.size.height).max(screen_top);
+    let x = if frame.max().x <= screen_left {
+        screen_left - frame.size.width + WINDOW_HIDDEN_THRESHOLD
+    } else if frame.origin.x >= screen_right {
+        screen_right - WINDOW_HIDDEN_THRESHOLD
+    } else {
+        frame.origin.x
+    };
+
+    CGRect::new(
+        CGPoint::new(x, frame.origin.y.clamp(screen_top, max_y)),
+        frame.size,
+    )
+}
+
+// A scrolled-away column keeps the stacking it had, so a parked sliver can sit on top of a window
+// on screen. AX has AXRaise and no lower, and the sliver is another app's window: SkyLight orders
+// and levels only the caller's own windows, and AppKit orders rini's own against another
+// process's (src/decorations/docs/README.md, "Ordering a rest window"), which cannot lower that
+// app's. Keeping the sliver small is the mitigation.
+
+fn bound_scrolling_tiled_frames_to_screen(
+    engine: &LayoutEngine,
+    layout: &mut [(WindowId, CGRect)],
+    screen: CGRect,
+    active_workspace_windows: &HashSet<WindowId>,
+) {
+    for (wid, frame) in layout.iter_mut() {
+        if !active_workspace_windows.contains(wid) || engine.is_window_floating(*wid) {
+            continue;
+        }
+        *frame = bound_frame_to_screen(*frame, screen);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+
+    use super::{WINDOW_HIDDEN_THRESHOLD, bound_frame_to_screen};
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    #[test]
+    fn bound_frame_to_screen_keeps_partial_overlap_for_strip_behavior() {
+        let screen = rect(2000.0, 0.0, 1000.0, 800.0);
+        let frame = rect(1500.0, 50.0, 700.0, 400.0);
+        let bounded = bound_frame_to_screen(frame, screen);
+        assert_eq!(bounded.origin.x, 1500.0);
+        assert_eq!(bounded.size.width, 700.0);
+    }
+
+    #[test]
+    fn bound_frame_to_screen_parks_fully_offscreen_windows_to_hidden_sliver() {
+        let screen = rect(2000.0, 0.0, 1000.0, 800.0);
+        let frame = rect(1200.0, 80.0, 600.0, 300.0);
+        let bounded = bound_frame_to_screen(frame, screen);
+        // Derived from WINDOW_HIDDEN_THRESHOLD rather than hardcoded, so tuning the
+        // sliver width does not require editing the expectations.
+        assert_eq!(bounded.origin.x, 2000.0 - 600.0 + WINDOW_HIDDEN_THRESHOLD);
+        assert_eq!(bounded.size.width, 600.0);
+    }
+
+    #[test]
+    fn bound_frame_to_screen_parks_right_offscreen_windows_to_hidden_sliver() {
+        let screen = rect(2000.0, 0.0, 1000.0, 800.0);
+        let frame = rect(3200.0, 80.0, 600.0, 300.0);
+        let bounded = bound_frame_to_screen(frame, screen);
+        assert_eq!(bounded.origin.x, 3000.0 - WINDOW_HIDDEN_THRESHOLD);
+        assert_eq!(bounded.size.width, 600.0);
+    }
+
+    /// The sliver must stay small enough not to read as a visible band of window
+    /// edges when many columns are parked at the same screen edge, but non-zero:
+    /// macOS refuses to leave a window entirely outside every display.
+    #[test]
+    fn hidden_sliver_is_minimal_but_nonzero() {
+        const {
+            assert!(
+                WINDOW_HIDDEN_THRESHOLD > 0.0 && WINDOW_HIDDEN_THRESHOLD <= 2.0,
+                "sliver must be >0 (macOS clamps fully off-screen windows back) and \
+                 small enough to be visually negligible"
+            )
+        };
+    }
+
+    #[test]
+    fn bound_frame_to_screen_does_not_park_partially_visible_right_windows() {
+        let screen = rect(2000.0, 0.0, 1000.0, 800.0);
+        let frame = rect(2998.0, 80.0, 600.0, 300.0);
+        let bounded = bound_frame_to_screen(frame, screen);
+        assert_eq!(bounded.origin.x, 2998.0);
+        assert_eq!(bounded.size.width, 600.0);
     }
 }

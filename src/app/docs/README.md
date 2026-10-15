@@ -13,7 +13,7 @@ knows the features and converts what they emit.
 | `reactor/space_snapshot.rs` | A snapshot of the displays' spaces taken in: screens and spaces replaced, a departing display's windows given it as their home, the topology's window moves, windows back from a native fullscreen space, and the snapshot held while Mission Control is open |
 | `reactor/display_homes.rs` | Which display each window belongs on: the arrangement in force, display pins, homes observed from the live layout, windows moved back to a returning display or by the redistribute command |
 | `reactor/window_refresh.rs` | The applications asked for their windows again, and what they report taken in: window-server info applied, stale windows cleaned up, the refresh after Mission Control |
-| `reactor/layout_pass.rs` | A layout event handed to the engine and its response carried out, and the layout pass after it |
+| `reactor/layout_pass.rs` | A layout event handed to the engine and its response carried out, and the layout pass after it: every active space laid out, a scrolled-away column parked at a 1pt sliver (`bound_frame_to_screen`), and each space handed to the animation |
 | `reactor/strip_motion.rs` | The strip's motion on the overlay: overlay frames placed, a pan along the strip, an edge bounce, a workspace switch, and what the transitions engine is told about the display and its journal |
 | `reactor/regroup.rs` | The strip kept one group in front of the floating windows after focus lands on it (`strip_group_to_lift_for`), and each raise sent with the focus reports it will provoke |
 | `reactor/focus_heuristics.rs` | Where focus goes when nothing names it: the window under the cursor, an empty workspace's desktop, the window a workspace switch focuses (`choose_switch_focus`), raise on mouse over, focus follows mouse |
@@ -42,8 +42,8 @@ knows the features and converts what they emit.
 | `reactor/query.rs` | Answers from a borrowed `StateView` |
 | `reactor/present.rs` | The frame-writing capability: record a destination, number the write; and `instant_requests`, what a pass that does not fly sends one application |
 | `reactor/bar.rs` | The bar's half here: its model built from the stores after every batch and sent only when it changed, and what a click on it asks for |
-| `reactor/managers.rs` | The handles: ten manager structs plus the layout manager |
-| `reactor/animation.rs` | `AnimationManager`: whether each layout pass flies on the overlay, and placing the real windows when it does not, from `transitions::domain::pass`'s plan |
+| `reactor/managers.rs` | The state the reactor keeps per concern in more than one field: the drag, Mission Control, the workspace switch, refocus, the refresh quarantine and the channels to the other actors; and `notification_ids_to_publish` |
+| `reactor/animation.rs` | `animate_layout`: whether each layout pass flies on the overlay, and placing the real windows when it does not, from `transitions::domain::pass`'s plan |
 | `reactor/decorations.rs` | The decorations' half here: what each managed window wears as its window rules have it, who wears the ring, each tiled window's border, and what the rest windows are told after a batch |
 | `reactor/diagnostics.rs` | What a query answers about when it was not told (`default_query_space`), and what the diagnostics dump counts as wrong (`orphaned_windows`, `stale_display_homes`) |
 | `reactor/testing.rs` | Built only for tests: the reactors, screens and space-state events the reactor's tests start from |

@@ -120,23 +120,16 @@ pub fn reactor_with_floating_window() -> (Reactor, WindowId, SpaceId, CGRect, CG
     reactor.send_layout_event(LayoutEvent::WindowAdded(space1, wid));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space1, wid));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
-    assert!(reactor.layout_manager.layout_engine.is_window_floating(wid));
+    assert!(reactor.layout_engine.is_window_floating(wid));
 
-    let workspace = reactor
-        .layout_manager
-        .layout_engine
-        .active_workspace(space1)
-        .expect("workspace");
+    let workspace = reactor.layout_engine.active_workspace(space1).expect("workspace");
     let floating_frame = CGRect::new(CGPoint::new(100., 100.), CGSize::new(400., 300.));
     if let Some(w) = reactor.state.windows.window_mut(wid) {
         w.frame_monotonic = floating_frame;
     }
-    reactor.layout_manager.layout_engine.store_floating_position(
-        space1,
-        workspace,
-        wid,
-        floating_frame,
-    );
+    reactor
+        .layout_engine
+        .store_floating_position(space1, workspace, wid, floating_frame);
 
     (reactor, wid, space1, screen, floating_frame)
 }
@@ -254,7 +247,6 @@ pub fn has_window_in_layout(
 ) -> bool {
     let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
     reactor
-        .layout_manager
         .layout_engine
         .calculate_layout(space, screen, &gaps)
         .iter()
@@ -267,7 +259,7 @@ pub fn test_layout(
     screen: CGRect,
 ) -> Vec<(WindowId, CGRect)> {
     let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
-    reactor.layout_manager.layout_engine.calculate_layout(space, screen, &gaps)
+    reactor.layout_engine.calculate_layout(space, screen, &gaps)
 }
 
 pub fn make_active_app(
@@ -314,7 +306,6 @@ pub fn laid_out_frame(
 ) -> Option<CGRect> {
     let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
     reactor
-        .layout_manager
         .layout_engine
         .calculate_layout_with_virtual_workspaces(
             &reactor.state.windows,

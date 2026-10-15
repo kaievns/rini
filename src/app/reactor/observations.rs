@@ -155,8 +155,7 @@ impl Reactor {
             .tracked_window_id(wsid)
             .and_then(|wid| {
                 let assignment = self.state.windows.workspace_info_for_window(wid)?;
-                let showing =
-                    self.layout_manager.layout_engine.active_workspace(assignment.space)?;
+                let showing = self.layout_engine.active_workspace(assignment.space)?;
                 if assignment.workspace_id == showing {
                     return Some(false);
                 }
@@ -174,7 +173,7 @@ impl Reactor {
         let context = self.window_server_context(wsid);
         let window_server_info = self.reads.window_server.get_window(wsid);
         let owner_pid = window_server_info.as_ref().map(|info| info.pid);
-        let app_known = owner_pid.is_some_and(|pid| self.app_manager.apps.contains_key(&pid));
+        let app_known = owner_pid.is_some_and(|pid| self.apps.contains_key(&pid));
         let running_app_info = owner_pid.filter(|_| !app_known).and_then(self.reads.running_app);
         let observations = topology_workflow::WindowServerAppearedObservations {
             is_parked_by_rini: self.is_parked_by_rini(wsid, space),
@@ -214,14 +213,13 @@ impl Reactor {
         let window = self.state.windows.tracked_window_id(wsid);
         let active_space = window.and_then(|window| self.active_space_for_window(window));
         window_workflow::handle_mouse_moved_over_window(
-            &self.app_manager,
+            &self.apps,
             window_workflow::MouseMovedPayload {
                 window,
                 should_sync: window.is_some_and(|window| self.should_raise_on_mouse_over(window)),
                 is_main: window.is_some_and(|window| self.main_window() == Some(window)),
-                needs_layout_sync: window.is_some_and(|window| {
-                    self.layout_manager.layout_engine.focused_window() != Some(window)
-                }),
+                needs_layout_sync: window
+                    .is_some_and(|window| self.layout_engine.focused_window() != Some(window)),
                 active_space,
             },
         )
@@ -287,9 +285,8 @@ impl Reactor {
             }),
             assigned_space: self.affinity().assigned_space_for_window_id(window),
             keep_assigned_for_scrolling: old_space.is_some_and(|space| {
-                !self.layout_manager.layout_engine.is_window_floating(window)
+                !self.layout_engine.is_window_floating(window)
                     && self
-                        .layout_manager
                         .layout_engine
                         .virtual_workspace_manager()
                         .workspace_for_window(&self.state.windows, space, window)
@@ -307,7 +304,7 @@ impl Reactor {
         };
         let mut outcome = window_workflow::handle_window_frame_changed(
             &mut self.state,
-            &mut self.layout_manager,
+            &mut self.layout_engine,
             &mut self.drag_manager,
             payload,
         )?;
@@ -335,7 +332,7 @@ impl Reactor {
                 .sys_id
                 .and_then(|server| self.transaction_manager.get_target_frame(server)),
             display: self.space_state.screen_by_space(space).map(|screen| screen.bounds),
-            column: self.layout_manager.layout_engine.full_width_of_column(space, window).is_some(),
+            column: self.layout_engine.full_width_of_column(space, window).is_some(),
         };
         let zoom = zoom::read(
             &mut self.drag_manager.title_bar_click,
@@ -350,9 +347,9 @@ impl Reactor {
     /// any later press replaces it: a drag that starts after the double-click is not its zoom.
     pub(super) fn on_left_mouse_down(&mut self, press: LeftPress) {
         let clicked = press.double_click.then(|| {
-            let tiled = self.iter_active_spaces().flat_map(|space| {
-                self.layout_manager.layout_engine.ordered_windows_in_active_workspace(space)
-            });
+            let tiled = self
+                .iter_active_spaces()
+                .flat_map(|space| self.layout_engine.ordered_windows_in_active_workspace(space));
             let frames = tiled.filter_map(|window| {
                 Some((window, self.state.windows.window(window)?.frame_monotonic))
             });
@@ -371,7 +368,7 @@ impl Reactor {
     ) -> anyhow::Result<EventOutcome> {
         let pid = payload.pid;
         let mut outcome =
-            application_workflow::handle_application_launched(&mut self.app_manager, payload)?;
+            application_workflow::handle_application_launched(&mut self.apps, payload)?;
         if self.main_window_tracker.is_globally_frontmost(pid) {
             outcome.app_requests.push((pid, Request::ApplicationGloballyActivated(pid)));
         }
@@ -412,7 +409,7 @@ impl Reactor {
         }
         self.clear_menu_state_for_non_owner(pid);
         if !self.is_login_window_pid(pid)
-            && let Some(app) = self.app_manager.apps.get(&pid)
+            && let Some(app) = self.apps.get(&pid)
         {
             let _ = app.handle.send(Request::ApplicationGloballyActivated(pid));
         }
@@ -429,11 +426,11 @@ impl Reactor {
         if let Some(pictures) = &self.communication_manager.pictures {
             pictures.hint(crate::pictures::domain::watch::Hint::Focused(window));
         }
-        if self.layout_manager.layout_engine.focused_window() == Some(window) {
+        if self.layout_engine.focused_window() == Some(window) {
             return Ok(EventOutcome::default());
         }
         if !self.state.windows.contains_window(window) {
-            if let Some(app) = self.app_manager.apps.get(&window.pid) {
+            if let Some(app) = self.apps.get(&window.pid) {
                 let _ = app.handle.send(Request::GetVisibleWindows);
             }
             return Ok(EventOutcome::default());
@@ -588,7 +585,7 @@ impl Reactor {
         });
         let mut outcome = interaction_workflow::handle_mouse_up(
             &mut self.state,
-            &mut self.layout_manager,
+            &mut self.layout_engine,
             &mut self.drag_manager,
             interaction_workflow::MouseUpPayload {
                 pending_swap,

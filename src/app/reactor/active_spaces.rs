@@ -59,10 +59,7 @@ impl Reactor {
         let Some(screen) = self.space_state.screen_by_space(space) else {
             return;
         };
-        self.layout_manager
-            .layout_engine
-            .virtual_workspace_manager_mut()
-            .list_workspaces(space);
+        self.layout_engine.virtual_workspace_manager_mut().list_workspaces(space);
         self.send_layout_event(LayoutEvent::SpaceExposed(space, screen.frame.size));
     }
 

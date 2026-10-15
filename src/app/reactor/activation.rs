@@ -48,8 +48,7 @@ impl Reactor {
             return EventOutcome::no_change();
         }
 
-        let Some(bundle_id_str) =
-            self.app_manager.apps.get(&pid).and_then(|app| app.info.bundle_id.clone())
+        let Some(bundle_id_str) = self.apps.get(&pid).and_then(|app| app.info.bundle_id.clone())
         else {
             return EventOutcome::no_change();
         };
@@ -113,7 +112,7 @@ impl Reactor {
             "app activation picked a parked window; focusing the one it was in instead"
         );
         let mut app_handles = HashMap::default();
-        if let Some(app) = self.app_manager.apps.get(&target.pid) {
+        if let Some(app) = self.apps.get(&target.pid) {
             app_handles.insert(target.pid, app.handle.clone());
         }
         let space = self.affinity().best_space_for_window_id(target);
@@ -137,11 +136,9 @@ impl Reactor {
             return false;
         };
         self.is_space_active(space)
-            && self.layout_manager.layout_engine.is_window_in_active_workspace(
-                &self.state.windows,
-                space,
-                window,
-            )
+            && self
+                .layout_engine
+                .is_window_in_active_workspace(&self.state.windows, space, window)
     }
 
     pub(super) fn maybe_auto_switch_to_window_workspace(
@@ -150,7 +147,7 @@ impl Reactor {
         app_window_id: WindowId,
         window_space: SpaceId,
     ) -> EventOutcome {
-        let workspace_state = self.layout_manager.layout_engine.virtual_workspace_manager();
+        let workspace_state = self.layout_engine.virtual_workspace_manager();
         let Some(window_workspace) =
             workspace_state.workspace_for_window(&self.state.windows, window_space, app_window_id)
         else {
@@ -174,18 +171,13 @@ impl Reactor {
             );
         }
 
-        let Some(current_workspace) =
-            self.layout_manager.layout_engine.active_workspace(window_space)
-        else {
+        let Some(current_workspace) = self.layout_engine.active_workspace(window_space) else {
             return EventOutcome::no_change();
         };
 
         if window_workspace != current_workspace {
-            let workspaces = self
-                .layout_manager
-                .layout_engine
-                .virtual_workspace_manager_mut()
-                .list_workspaces(window_space);
+            let workspaces =
+                self.layout_engine.virtual_workspace_manager_mut().list_workspaces(window_space);
             if let Some((workspace_index, _)) =
                 workspaces.iter().enumerate().find(|(_, (ws_id, _))| *ws_id == window_workspace)
             {
@@ -198,7 +190,7 @@ impl Reactor {
                 self.workspace_switch_manager
                     .start_workspace_switch(WorkspaceSwitchOrigin::Auto);
 
-                let response = self.layout_manager.layout_engine.switch_to_workspace_with_focus(
+                let response = self.layout_engine.switch_to_workspace_with_focus(
                     &self.state.windows,
                     window_space,
                     workspace_index,
