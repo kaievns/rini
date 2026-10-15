@@ -1002,7 +1002,7 @@ const LONG_FNS: [(&str, &str, usize); 42] = [
     ),
     ("src/app/reactor/mod.rs", "start_strip_switch", 132),
     ("src/app/reactor/query.rs", "handle_diagnostics_query", 161),
-    ("src/displays/platform/spaces.rs", "build_forwarded_state", 118),
+    ("src/displays/platform/spaces.rs", "build_forwarded_state", 117),
     ("src/displays/platform/spaces.rs", "handle_event", 118),
     ("src/displays/screen.rs", "refresh_snapshot", 130),
     ("src/input/platform/keyboard.rs", "build_cg_keycode_table", 125),

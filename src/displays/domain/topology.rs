@@ -41,9 +41,6 @@ pub struct ForwardedSpaceState {
     pub allow_space_remap: bool,
     pub should_force_refresh_layout: bool,
     pub releases_lifecycle_refresh_quarantine: bool,
-    /// Releases the reactor's display-churn quarantine only after this authoritative
-    /// snapshot has been incorporated into its workspace model.
-    pub releases_display_churn_refresh_quarantine: bool,
     pub resized_spaces: Vec<(SpaceId, CGSize)>,
     pub topology_window_delta: Option<TopologyWindowDelta>,
     pub active_window_spaces: HashMap<WindowServerId, SpaceId>,

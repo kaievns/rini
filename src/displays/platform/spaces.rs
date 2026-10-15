@@ -668,10 +668,6 @@ impl SpacesActor {
             allow_space_remap,
             should_force_refresh_layout,
             releases_lifecycle_refresh_quarantine,
-            // Every coherent authoritative snapshot is a valid acknowledgement for
-            // the reactor's display-churn quarantine, including ordinary refreshes after
-            // stabilization has already ended.
-            releases_display_churn_refresh_quarantine: true,
             resized_spaces,
             topology_window_delta: self.state.pending_topology_window_delta.take(),
             active_window_spaces: self.state.visible_window_spaces.clone(),

@@ -899,7 +899,6 @@ fn normal_refresh_retries_duplicate_user_space_snapshot_until_valid() {
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(left), Some(right)]
             );
-            assert!(state.releases_display_churn_refresh_quarantine);
         }
         other => panic!("unexpected wm event: {other:?}"),
     }
@@ -1035,7 +1034,6 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(left), Some(right)]
             );
-            assert!(state.releases_display_churn_refresh_quarantine);
         }
         other => panic!("unexpected wm event: {other:?}"),
     }

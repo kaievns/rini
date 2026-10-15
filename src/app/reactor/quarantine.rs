@@ -98,11 +98,6 @@ impl Reactor {
     // All lifecycle churn is upstreamed through the spaces actor. The reactor
     // only remembers that one visibility refresh is owed, then flushes it once
     // every upstream quarantine is lifted.
-    pub(super) fn request_refresh_when_spaces_actor_stabilizes(&mut self) {
-        self.defer_visible_refresh(true);
-        self.flush_deferred_visible_refresh();
-    }
-
     pub(super) fn release_post_instability_quarantine_after_authoritative_snapshot(&mut self) {
         let released_wake = self.refresh_quarantine_manager.awaiting_post_wake_snapshot;
         let released_session = self.refresh_quarantine_manager.awaiting_post_session_snapshot;
