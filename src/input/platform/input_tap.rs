@@ -13,7 +13,6 @@
 //! Requests from the main thread arrive via the actor channel (`Receiver`).
 
 use std::cell::{Cell, RefCell};
-use std::panic::AssertUnwindSafe;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -386,9 +385,8 @@ impl InputTap {
                 should_rebuild_mask = true;
             }
             Request::SetSwitchKeys(keys) => {
-                // Through the `state` this function already holds. Re-borrowing `self.state` here
-                // panicked the input thread on startup: `on_request` takes one `borrow_mut` for the
-                // whole match, so every arm has to go through it.
+                // Through the `state` this function already holds: `on_request` takes one
+                // `borrow_mut` for the whole match, and a second borrow panics, which aborts rini.
                 //
                 // A session in progress is ended rather than left running: the keys it was watching
                 // for may no longer exist, so nothing would be left to close it.
@@ -716,20 +714,14 @@ unsafe extern "C-unwind" fn mouse_callback(
     let ctx = unsafe { &*(user_info as *const CallbackCtx) };
     let event = unsafe { event_ref.as_ref() };
 
-    // Keep rejected high-frequency mouse events out of catch_unwind and the
-    // actor/state path entirely. The admission check is scalar-only and has
-    // no fallible or panicking operations.
     if event_type == CGEventType::MouseMoved && !ctx.this.admit_mouse_move(event) {
         return event_ref.as_ptr();
     }
 
-    let result =
-        std::panic::catch_unwind(AssertUnwindSafe(|| ctx.this.on_event(event_type, event)));
-
-    match result {
-        Ok(true) => event_ref.as_ptr(),
-        Ok(false) => core::ptr::null_mut(),
-        Err(_) => event_ref.as_ptr(),
+    if ctx.this.on_event(event_type, event) {
+        event_ref.as_ptr()
+    } else {
+        core::ptr::null_mut()
     }
 }
 

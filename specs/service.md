@@ -32,7 +32,13 @@ rini runs as a per-user launchd agent. This is what starting and restarting it m
 > 2026-09-24, the second an August build. The second half — a rewritten definition not taking effect —
 > was found while fixing the first.
 
+## A panic
+
+- A panic anywhere MUST end rini, and launchd MUST relaunch it.
+- Code outside a test MUST NOT catch a panic. The panic hook aborts the process before an unwind
+  reaches a `catch_unwind`, so a catch reads as a thread that survives a panic and never runs.
+
 ## Where it lives
 
-`src/app/launch_agent.rs` builds the definition and drives launchd. The measurements behind these
-rules are in `docs/permissions-and-the-launch-agent.md`.
+`src/app/launch_agent.rs` builds the definition and drives launchd, and `install_panic_hook` in
+`src/main.rs` aborts on a panic. The measurements behind these rules are in `docs/permissions-and-the-launch-agent.md`.

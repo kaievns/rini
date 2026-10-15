@@ -324,6 +324,35 @@ fn rini_taps_no_trackpad_gesture() {
     );
 }
 
+/// The code of `path` above its first top-level `#[cfg(test)]`, comments stripped.
+fn production_lines(path: &Path) -> Vec<(usize, String)> {
+    let source = fs::read_to_string(path).expect("readable source");
+    let tests_from = source
+        .lines()
+        .position(|line| line.starts_with("#[cfg(test)]"))
+        .map_or(usize::MAX, |n| n + 1);
+    code_lines(path).into_iter().filter(|(line, _)| *line < tests_from).collect()
+}
+
+/// rini's panic hook aborts before an unwind reaches a `catch_unwind`, so a catch outside a test is
+/// code that never runs (specs/service.md).
+#[test]
+fn no_panic_is_caught_outside_a_test() {
+    let mut broken = Vec::new();
+    for path in rust_files(Path::new("src")).into_iter().chain(rust_files(Path::new("crates"))) {
+        for (line, code) in production_lines(&path) {
+            if code.contains("catch_unwind") {
+                broken.push(format!("{}:{line}: {}", slash(&path), code.trim()));
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "a panic aborts rini and launchd relaunches it, so these catches never run:\n{}",
+        broken.join("\n")
+    );
+}
+
 #[test]
 fn every_named_exception_still_exists() {
     for name in MIXED {
