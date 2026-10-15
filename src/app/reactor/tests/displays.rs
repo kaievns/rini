@@ -1052,6 +1052,34 @@ fn display_churn_snapshot_ack_triggers_visible_window_refresh() {
 }
 
 #[test]
+fn the_quarantine_events_leave_focus_and_the_layout_as_they_were() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let space = SpaceId::new(1);
+    let focused = WindowId::new(1, 2);
+
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(2));
+    reactor.set_test_focus(focused);
+    let layout = test_layout(&mut reactor, space, screen);
+    apps.requests();
+
+    reactor.handle_events(vec![
+        Event::DisplayChurnBegin,
+        Event::SystemWillSleep,
+        Event::SessionDidResignActive,
+        Event::SystemWoke,
+        Event::SessionDidBecomeActive,
+    ]);
+
+    assert_eq!(reactor.main_window_tracker.key_window(), Some(focused));
+    assert_eq!(test_layout(&mut reactor, space, screen), layout);
+    assert!(
+        !apps.requests().iter().any(|request| matches!(request, Request::Raise(..))),
+        "a quarantine event is not a focus edge, so nothing is raised"
+    );
+}
+
+#[test]
 fn display_churn_end_refresh_is_idempotent_without_topology_change() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
