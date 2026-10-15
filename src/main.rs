@@ -24,6 +24,7 @@ use rini::windows::platform::lifecycle::ProcessActor;
 use rini::windows::platform::sub_level::init_window_sub_level_server_port;
 use rini::workspaces::LayoutEngine;
 use rini::workspaces::domain::display_memory::DisplayMemory;
+use rini_core::ids::{WindowId, WindowServerId};
 use rini_core::paths::restore_file;
 use rini_geometry::space::{ScreenRect, ToCg};
 use rini_ipc as ipc;
@@ -168,7 +169,7 @@ fn main() {
     let fresh = || LayoutEngine::new(&config.virtual_workspaces, &config.settings.layout);
     let (mut layout, display_memory) = if !opt.no_restore {
         let path = restore_file();
-        match LayoutEngine::load_for_startup_restore(path.clone()) {
+        match load_saved_layout(path.clone()) {
             Ok(loaded) => loaded,
             Err(error) => {
                 eprintln!(
@@ -466,6 +467,21 @@ fn main() {
             supervise("rest", rest_actor.run()),
         );
     });
+}
+
+/// The saved layout, without the saved windows neither the window server nor a running
+/// application still has.
+fn load_saved_layout(path: std::path::PathBuf) -> anyhow::Result<(LayoutEngine, DisplayMemory)> {
+    let window_server = rini::windows::platform::window_server::live();
+    LayoutEngine::load_for_startup_restore(
+        path,
+        |window: WindowId, id| {
+            window_server
+                .get_window(WindowServerId::new(id))
+                .is_some_and(|info| info.pid == window.pid)
+        },
+        rini::windows::platform::app::is_bundle_running,
+    )
 }
 
 fn install_panic_hook() {

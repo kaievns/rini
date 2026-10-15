@@ -8,6 +8,7 @@
 //! are named as the free functions in `window_server` are, so a caller moves onto the port by
 //! swapping `window_server::` for its handle.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::ffi::c_int;
 use std::sync::Arc;
@@ -26,8 +27,8 @@ use crate::windows::domain::stack::{StackPlace, WindowLevel};
 ///
 /// A read answers `None`, or an empty list, when the window server gives no answer. That is no
 /// evidence about the window, where `Some(false)` is: a negative answer retires a window, so a read
-/// must never guess one.
-pub trait WindowServer: Send + Sync {
+/// must never guess one. `Any`, so a test reaches the fake it handed over as the port.
+pub trait WindowServer: Any + Send + Sync {
     /// `id`, unless the window server has no window by that id or one too faint to be a window.
     fn get_window(&self, id: WindowServerId) -> Option<WindowServerInfo>;
     /// Each of `ids` `get_window` would answer, in one query.

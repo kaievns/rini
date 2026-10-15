@@ -6,6 +6,7 @@ use tracing::{debug, trace};
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::DragManager;
 use crate::app::reactor::{DragState, Quiet};
+use crate::app::system_reads::server_facts;
 use crate::layout::domain::edge_drag::Drag;
 use crate::windows::domain::info::{WindowInfo as Window, WindowServerInfo};
 use crate::windows::domain::manageable::{Facts, manageable};
@@ -13,7 +14,7 @@ use crate::windows::domain::state::{WindowFilter, WindowState};
 use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 use crate::windows::domain::zoom::Zoom;
 use crate::windows::platform::mouse::MouseState;
-use crate::windows::platform::window_server;
+use crate::windows::platform::window_server::WindowServer;
 use crate::workspaces::LayoutEvent;
 
 #[derive(Debug)]
@@ -26,6 +27,7 @@ pub struct WindowCreatedPayload {
 pub fn handle_window_created(
     state: &mut crate::app::reactor::state::RiniState,
     transactions: &TransactionManager,
+    window_server: &dyn WindowServer,
     payload: WindowCreatedPayload,
 ) -> anyhow::Result<EventOutcome> {
     let WindowCreatedPayload {
@@ -43,7 +45,8 @@ pub fn handle_window_created(
     }
 
     let mut window_state: WindowState = window.into();
-    let is_manageable = manageable(window_server::with_server_facts(
+    let is_manageable = manageable(server_facts(
+        window_server,
         Facts::of(&window_state.info),
         window_state.info.sys_id,
         |wsid| state.windows.get_window_server_info(wsid),
@@ -151,6 +154,7 @@ pub struct WindowDeminiaturizedPayload {
 
 pub fn handle_window_deminiaturized(
     state: &mut crate::app::reactor::state::RiniState,
+    window_server: &dyn WindowServer,
     payload: WindowDeminiaturizedPayload,
 ) -> anyhow::Result<crate::app::reactor::events::EventOutcome> {
     let WindowDeminiaturizedPayload { window: wid, active_space } = payload;
@@ -170,7 +174,7 @@ pub fn handle_window_deminiaturized(
             return Ok(crate::app::reactor::events::EventOutcome::no_change());
         }
     };
-    let is_manageable = manageable(window_server::with_server_facts(ax, server_id, |wsid| {
+    let is_manageable = manageable(server_facts(window_server, ax, server_id, |wsid| {
         state.windows.get_window_server_info(wsid)
     }));
     if let Some(window) = state.windows.window_mut(wid) {
@@ -219,11 +223,12 @@ pub fn classify_window_frame_change(
     last_seen: Option<TransactionId>,
     requested: bool,
     mouse_state: &mut Option<MouseState>,
+    pointer: Option<MouseState>,
     mission_control_active: bool,
     zoom: bool,
 ) -> FrameChangeDisposition {
     let Some(window) = state.windows.window(wid) else {
-        query_mouse_for_active_drag(drag, mouse_state);
+        query_mouse_for_active_drag(drag, mouse_state, pointer);
         return FrameChangeDisposition::Handled;
     };
     let server_id = window.info.sys_id;
@@ -248,11 +253,11 @@ pub fn classify_window_frame_change(
         && let Some(seen) = last_seen
     {
         if seen != transactions.get_last_sent_txid(server) {
-            query_mouse_for_active_drag(drag, mouse_state);
+            query_mouse_for_active_drag(drag, mouse_state, pointer);
             return FrameChangeDisposition::Handled;
         }
         if mouse_state.is_none() {
-            *mouse_state = crate::windows::platform::mouse::get_mouse_state();
+            *mouse_state = pointer;
         }
         if *mouse_state == Some(MouseState::Down) {
             transactions.clear_target_for_window(server);
@@ -267,7 +272,7 @@ pub fn classify_window_frame_change(
         }
     }
     if requested {
-        query_mouse_for_active_drag(drag, mouse_state);
+        query_mouse_for_active_drag(drag, mouse_state, pointer);
         if let Some(window) = state.windows.window_mut(wid) {
             window.frame_monotonic = new_frame;
         }
@@ -278,19 +283,23 @@ pub fn classify_window_frame_change(
     }
 
     if mouse_state.is_none() {
-        *mouse_state = crate::windows::platform::mouse::get_mouse_state();
+        *mouse_state = pointer;
     }
     FrameChangeDisposition::NeedsGeometryAnalysis
 }
 
-fn query_mouse_for_active_drag(drag: &DragManager, mouse_state: &mut Option<MouseState>) {
+fn query_mouse_for_active_drag(
+    drag: &DragManager,
+    mouse_state: &mut Option<MouseState>,
+    pointer: Option<MouseState>,
+) {
     if mouse_state.is_none()
         && matches!(
             drag.drag_state,
             DragState::Active { .. } | DragState::PendingSwap { .. }
         )
     {
-        *mouse_state = crate::windows::platform::mouse::get_mouse_state();
+        *mouse_state = pointer;
     }
 }
 
@@ -580,7 +589,6 @@ mod tests {
         }
     }
 
-    /// `mouse_state` is always passed in, because a `None` makes the classifier read the live mouse.
     #[allow(clippy::too_many_arguments, reason = "P4.8")]
     fn classify(
         state: &mut RiniState,
@@ -627,6 +635,7 @@ mod tests {
             last_seen,
             requested,
             &mut mouse,
+            None,
             mission_control,
             zoom,
         )
@@ -758,6 +767,34 @@ mod tests {
             None,
             "rini stops waiting for its own write"
         );
+    }
+
+    /// A report that carries no mouse state takes the pointer's, which the reducer is handed.
+    #[test]
+    fn a_report_with_no_mouse_state_takes_the_pointer_it_is_handed() {
+        let mut s = state();
+        let wsid = WindowServerId::new(WSID);
+        let tx = TransactionManager::new(WindowTxStore::new());
+        let txid = TransactionId::default().next();
+        tx.store_txid(wsid, txid, rect(50.0, 50.0));
+        let mut reported = None;
+
+        let d = classify_window_frame_change(
+            &mut s,
+            &tx,
+            &mut drag(),
+            wid(),
+            rect(9.0, 9.0),
+            Some(txid),
+            false,
+            &mut reported,
+            Some(MouseState::Down),
+            false,
+            false,
+        );
+        assert!(!handled(&d), "the held pointer makes it the user's drag");
+        assert_eq!(reported, Some(MouseState::Down));
+        assert_eq!(tx.get_target_frame(wsid), None);
     }
 
     #[test]

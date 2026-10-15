@@ -6,12 +6,13 @@ use tracing::{debug, trace};
 
 use super::window;
 use crate::app::reactor::LayoutEvent;
+use crate::app::system_reads::server_facts;
 use crate::windows::domain::focus::MainWindowTracker;
 use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::domain::manageable::{Facts, looks_gone, manageable};
 use crate::windows::domain::state::{WindowFilter, WindowState};
 use crate::windows::domain::transaction::TransactionManager;
-use crate::windows::platform::window_server;
+use crate::windows::platform::window_server::WindowServer;
 use crate::workspaces::domain::app_rules::AfterRules;
 use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
 
@@ -19,6 +20,7 @@ use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
 /// and managing the lifecycle of window state in the reactor.
 fn sync_existing_window_state(
     state: &mut crate::app::reactor::state::RiniState,
+    window_server: &dyn WindowServer,
     wid: WindowId,
     info: &WindowInfo,
     active_space: Option<SpaceId>,
@@ -50,14 +52,14 @@ fn sync_existing_window_state(
 
     let outcome = match (was_minimized, info.is_minimized) {
         (false, true) => window::handle_window_minimized(state, wid)?,
-        (true, false) => {
-            window::handle_window_deminiaturized(state, window::WindowDeminiaturizedPayload {
-                window: wid,
-                active_space,
-            })?
-        }
+        (true, false) => window::handle_window_deminiaturized(
+            state,
+            window_server,
+            window::WindowDeminiaturizedPayload { window: wid, active_space },
+        )?,
         _ => {
-            let manageable = manageable(window_server::with_server_facts(
+            let manageable = manageable(server_facts(
+                window_server,
                 Facts::of(info),
                 info.sys_id,
                 |wsid| state.windows.get_window_server_info(wsid),
@@ -277,6 +279,7 @@ pub(crate) struct ObservedWindow {
 
 pub(crate) fn process_window_list(
     state: &mut crate::app::reactor::state::RiniState,
+    window_server: &dyn WindowServer,
     layout: &mut crate::app::reactor::managers::LayoutManager,
     focus: &mut MainWindowTracker,
     observed: Vec<ObservedWindow>,
@@ -317,13 +320,14 @@ pub(crate) fn process_window_list(
                     window.current_native_space,
                 ));
                 if let Ok(existing_outcome) =
-                    sync_existing_window_state(state, wid, info, window.active_space)
+                    sync_existing_window_state(state, window_server, wid, info, window.active_space)
                 {
                     outcome.absorb(existing_outcome);
                 }
             } else {
                 let mut window_state: WindowState = WindowState::from((*info).clone());
-                let manageable = manageable(window_server::with_server_facts(
+                let manageable = manageable(server_facts(
+                    window_server,
                     Facts::of(&window_state.info),
                     window_state.info.sys_id,
                     |wsid| state.windows.get_window_server_info(wsid),
@@ -364,7 +368,7 @@ pub(crate) fn process_window_list(
                 current_native_space,
             ));
             if let Ok(existing_outcome) =
-                sync_existing_window_state(state, wid, &info, active_space)
+                sync_existing_window_state(state, window_server, wid, &info, active_space)
             {
                 outcome.absorb(existing_outcome);
             }
@@ -388,12 +392,14 @@ pub(crate) fn process_window_list(
 /// Inserts the newly discovered window snapshots into domain state.
 pub(crate) fn update_window_states(
     rini_state: &mut crate::app::reactor::state::RiniState,
+    window_server: &dyn WindowServer,
     new_windows: Vec<(WindowId, WindowInfo)>,
 ) {
     // Update or insert window states
     for (wid, info) in new_windows {
         let mut state: WindowState = info.into();
-        let manageable = manageable(window_server::with_server_facts(
+        let manageable = manageable(server_facts(
+            window_server,
             Facts::of(&state.info),
             state.info.sys_id,
             |wsid| rini_state.windows.get_window_server_info(wsid),

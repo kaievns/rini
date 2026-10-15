@@ -17,7 +17,6 @@ use crate::decorations::domain::style::Ring;
 use crate::decorations::platform::rest::{Event as RestEvent, Receiver};
 use crate::windows::domain::attention::Attention;
 use crate::windows::domain::rules::RuleMatch;
-use crate::windows::platform::window_server::set_space_window_list_for_space_override;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 const GHOSTTY: i32 = 1;
@@ -32,14 +31,6 @@ struct Desk {
     right: SpaceId,
 }
 
-impl Drop for Desk {
-    fn drop(&mut self) {
-        for space in [self.left, self.right] {
-            set_space_window_list_for_space_override(space.get(), None);
-        }
-    }
-}
-
 fn left_ghostty() -> WindowId { WindowId::new(GHOSTTY, 1) }
 
 fn left_zen() -> WindowId { WindowId::new(ZEN, 1) }
@@ -50,7 +41,7 @@ fn desk() -> Desk {
     let (left, right) = (SpaceId::new(1), SpaceId::new(2));
     let left_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
     let right_frame = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
-    set_space_membership(&[(left, &[901, 902]), (right, &[903, 904])]);
+    set_space_membership(&reactor, &[(left, &[901, 902]), (right, &[903, 904])]);
     reactor.handle_test_batch(vec![space_state_event(vec![left_frame, right_frame], vec![
         Some(left),
         Some(right),
@@ -280,7 +271,7 @@ fn a_window_on_a_space_its_display_is_not_showing_is_sent_no_band() {
     let left_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
     let right_frame = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
     let other = SpaceId::new(3);
-    set_space_membership(&[(left, &[901, 902]), (other, &[])]);
+    set_space_membership(&desk.reactor, &[(left, &[901, 902]), (other, &[])]);
     desk.reactor
         .handle_test_batch(vec![space_state_event(vec![left_frame, right_frame], vec![
             Some(left),

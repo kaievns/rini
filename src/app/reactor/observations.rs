@@ -16,15 +16,13 @@ use super::events::{
     EventOutcome, app as application_workflow, drag as interaction_workflow,
     space as topology_workflow, system as system_workflow, window as window_workflow,
 };
-use super::{DragState, Reactor};
+use super::{DragState, Event, Reactor};
 use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
 use crate::input::event::LeftPress;
-use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::request::{Quiet, Request};
 use crate::windows::domain::transaction::{Requested, TransactionId};
 use crate::windows::domain::zoom::{self, Zoom};
 use crate::windows::platform::mouse::MouseState;
-use crate::windows::platform::window_server;
 use crate::workspaces::LayoutEvent;
 
 /// The five events that move the refresh quarantine: sleep, wake, session activation and display
@@ -128,7 +126,7 @@ impl Reactor {
             resolved_space: self.affinity().resolve_native_space(wsid, None),
             active_spaces: self.active_spaces.clone(),
             mission_control_active: self.is_mission_control_active(),
-            ordered_in: window_server::window_ordered_in(wsid),
+            ordered_in: self.reads.window_server.window_ordered_in(wsid),
             assigned_space: context.assigned_space,
         };
         topology_workflow::handle_window_server_destroyed(
@@ -162,7 +160,7 @@ impl Reactor {
                 if assignment.workspace_id == showing {
                     return Some(false);
                 }
-                Some(!window_server::window_spaces(wsid).contains(&space))
+                Some(!self.reads.window_server.window_spaces(wsid).contains(&space))
             })
             .unwrap_or(false)
     }
@@ -174,13 +172,10 @@ impl Reactor {
         kind: SpaceEventKind,
     ) -> anyhow::Result<EventOutcome> {
         let context = self.window_server_context(wsid);
-        let window_server_info = window_server::get_window(wsid);
+        let window_server_info = self.reads.window_server.get_window(wsid);
         let owner_pid = window_server_info.as_ref().map(|info| info.pid);
         let app_known = owner_pid.is_some_and(|pid| self.app_manager.apps.contains_key(&pid));
-        let running_app_info = owner_pid.filter(|_| !app_known).and_then(|pid| {
-            objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
-                .map(|app| AppInfo::from(&*app))
-        });
+        let running_app_info = owner_pid.filter(|_| !app_known).and_then(self.reads.running_app);
         let observations = topology_workflow::WindowServerAppearedObservations {
             is_parked_by_rini: self.is_parked_by_rini(wsid, space),
             resolved_space: self.affinity().resolve_native_space(wsid, Some(space)),
@@ -210,6 +205,7 @@ impl Reactor {
         let active_space = self.active_space_for_window(window);
         window_workflow::handle_window_deminiaturized(
             &mut self.state,
+            &*self.reads.window_server,
             window_workflow::WindowDeminiaturizedPayload { window, active_space },
         )
     }
@@ -256,6 +252,7 @@ impl Reactor {
             last_seen,
             requested.0,
             &mut mouse_state,
+            (self.reads.mouse)(),
             mission_control_active,
             zoom.is_some(),
         );
@@ -501,6 +498,7 @@ impl Reactor {
         let mut outcome = window_workflow::handle_window_created(
             &mut self.state,
             &self.transaction_manager,
+            &*self.reads.window_server,
             payload,
         )?;
         outcome.focused_window = raised_window;
@@ -604,5 +602,64 @@ impl Reactor {
             outcome = outcome.with_layout_event(LayoutEvent::WindowFocused(space, window));
         }
         Ok(outcome)
+    }
+}
+
+impl Reactor {
+    /// Notes on the activity clock the window an event says the window server just moved.
+    pub(super) fn note_windowserver_activity(&self, event: &Event) {
+        let wsid = match event {
+            Event::WindowFrameChanged(wid, ..) => Some(wid.idx.get()),
+            Event::WindowCreated(wid, ..) => Some(wid.idx.get()),
+            Event::WindowDestroyed(wid) => Some(wid.idx.get()),
+            Event::WindowMinimized(wid) => Some(wid.idx.get()),
+            Event::WindowDeminiaturized(wid) => Some(wid.idx.get()),
+            Event::MouseMoved(_) => None,
+            Event::WindowServerDestroyed(wsid, ..) => Some(wsid.as_u32()),
+            Event::WindowServerAppeared(wsid, ..) => Some(wsid.as_u32()),
+            Event::ApplyOverlayFrames(_)
+            | Event::SpaceStateChanged(_)
+            | Event::ActiveDisplayChanged { .. }
+            | Event::ApplicationLaunched { .. }
+            | Event::ApplicationTerminated(_)
+            | Event::ApplicationThreadTerminated(_)
+            | Event::ApplicationActivated(..)
+            | Event::ApplicationDeactivated(_)
+            | Event::ApplicationGloballyActivated(_)
+            | Event::ApplicationGloballyDeactivated(_)
+            | Event::ApplicationMainWindowChanged(..)
+            | Event::WindowServerFocusChanged(..)
+            | Event::WindowsDiscovered { .. }
+            | Event::SpaceCreated(_)
+            | Event::SpaceDestroyed(_)
+            | Event::WindowTitleChanged(..)
+            | Event::MenuOpened(_)
+            | Event::MenuClosed(_)
+            | Event::MouseUp
+            | Event::LeftMouseDown(_)
+            | Event::Switch(_)
+            | Event::SwitchPicked(_)
+            | Event::BarAction(_)
+            | Event::SystemWoke
+            | Event::ClockChanged
+            | Event::SystemWillSleep
+            | Event::SessionDidResignActive
+            | Event::SessionDidBecomeActive
+            | Event::DisplayChurnBegin
+            | Event::MissionControlNativeEntered
+            | Event::MissionControlNativeExited
+            | Event::RaiseCompleted { .. }
+            | Event::RaiseTimeout { .. }
+            | Event::RaisesIdle { .. }
+            | Event::AttentionChanged(_)
+            | Event::Query(_)
+            | Event::Command(_)
+            | Event::RegisterWmSender(_)
+            | Event::ConfigUpdated(_)
+            | Event::ConfigFileRead { .. } => None,
+        };
+        if let Some(wsid) = wsid {
+            (self.reads.note_activity)(wsid);
+        }
     }
 }

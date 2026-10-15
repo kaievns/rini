@@ -4,7 +4,8 @@
 //! them back. `config` reads `config.kdl` and fills each feature's settings type. `api` is the
 //! outward surface: the IPC backend and the query DTOs. `notifications` demultiplexes NSWorkspace
 //! for the two features that want it, `hotkeys` lowers a binding to a command, `launch_agent` owns
-//! the plist, `power` keeps Low Power Mode current, and `startup` runs the configured startup commands.
+//! the plist, `power` keeps Low Power Mode current, `startup` runs the configured startup commands, and
+//! `system_reads` is what the reactor reads of the machine, handed to it as one value.
 //!
 //! Nothing here is imported by a feature. See `docs/architecture.md`.
 
@@ -19,3 +20,4 @@ pub mod notifications;
 pub mod power;
 pub mod reactor;
 pub mod startup;
+pub(crate) mod system_reads;

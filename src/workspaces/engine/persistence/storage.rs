@@ -22,21 +22,22 @@ impl LayoutEngine {
 
     /// Load the saved snapshot used for process startup and report its persisted coverage.
     /// Validation and menu previews continue to use `load` without emitting restore logs.
-    pub fn load_for_startup_restore(path: PathBuf) -> anyhow::Result<(Self, DisplayMemory)> {
+    ///
+    /// `window_exists` says whether the window server still has a saved window's id for its
+    /// process, `application_runs` whether an application with a bundle id is running: a saved
+    /// window neither answers yes for is dropped before anything matches against it.
+    pub fn load_for_startup_restore(
+        path: PathBuf,
+        window_exists: impl FnMut(WindowId, u32) -> bool,
+        application_runs: impl FnMut(&str) -> bool,
+    ) -> anyhow::Result<(Self, DisplayMemory)> {
         let loaded = Self::load_file(&path)?;
         let schema_version = loaded.schema_version;
         let memory = loaded.memory;
         let mut engine = loaded.layout?;
         engine.startup_restore_pending = true;
-        let unavailable_windows = engine.discard_unmatchable_startup_candidates(
-            |window, id| {
-                crate::windows::platform::window_server::get_window(
-                    rini_core::ids::WindowServerId::new(id),
-                )
-                .is_some_and(|info| info.pid == window.pid)
-            },
-            crate::windows::platform::app::is_bundle_running,
-        );
+        let unavailable_windows =
+            engine.discard_unmatchable_startup_candidates(window_exists, application_runs);
         tracing::info!(
             path = %path.display(),
             schema_version,

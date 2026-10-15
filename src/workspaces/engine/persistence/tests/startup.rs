@@ -255,7 +255,7 @@ fn startup_restore_remaps_saved_space_by_display_identity_once() {
     snapshot.save(&memory, path.clone()).unwrap();
 
     let (mut restored, _restored_memory) =
-        LayoutEngine::load_for_startup_restore(path.clone()).unwrap();
+        LayoutEngine::load_for_startup_restore(path.clone(), |_, _| false, |_| false).unwrap();
     let _ = std::fs::remove_file(path);
     let mut window_store = WindowStore::default();
     // An incomplete first topology snapshot must not consume the one-shot reconciliation.
@@ -328,7 +328,7 @@ fn startup_restore_handles_space_id_swaps_between_displays() {
     snapshot.save(&memory, path.clone()).unwrap();
 
     let (mut restored, _restored_memory) =
-        LayoutEngine::load_for_startup_restore(path.clone()).unwrap();
+        LayoutEngine::load_for_startup_restore(path.clone(), |_, _| false, |_| false).unwrap();
     let _ = std::fs::remove_file(path);
     let mut window_store = WindowStore::default();
     // display-a comes back as space_b and vice versa.
@@ -450,4 +450,47 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
         "a window on an attached display keeps its saved slot, so the release path must \
          leave it alone entirely"
     );
+}
+
+/// Startup restore asks only the two reads it is handed whether a saved window is still there: a
+/// window the window server still has, or one whose application runs, is kept; one neither finds
+/// is dropped.
+#[test]
+fn startup_restore_keeps_the_saved_windows_its_reads_still_find() {
+    let space = SpaceId::new(630);
+    let (gone, open, restarted) =
+        (WindowId::new(50, 1), WindowId::new(51, 2), WindowId::new(52, 3));
+    let mut snapshot = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut store = WindowStore::default();
+    let _ = snapshot.handle_event(
+        &mut store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
+    );
+    for window in [gone, open, restarted] {
+        let _ =
+            snapshot.handle_event(&mut store, &mut memory, LayoutEvent::WindowAdded(space, window));
+        snapshot.persistence.windows.insert(window, WindowFingerprint {
+            window_server_id: Some(window.idx.get()),
+            title: None,
+            width: 600.0,
+            height: 400.0,
+            app_id: Some(format!("com.example.{}", window.pid)),
+        });
+    }
+    let path =
+        std::env::temp_dir().join(format!("rini-startup-reads-test-{}.ron", std::process::id(),));
+    snapshot.save(&memory, path.clone()).unwrap();
+
+    let (restored, _) = LayoutEngine::load_for_startup_restore(
+        path.clone(),
+        |window, id| window == open && id == open.idx.get(),
+        |app| app == "com.example.52",
+    )
+    .unwrap();
+    let _ = std::fs::remove_file(path);
+
+    let saved = |window| restored.persistence.windows.contains_key(&window);
+    assert_eq!((saved(gone), saved(open), saved(restarted)), (false, true, true));
 }

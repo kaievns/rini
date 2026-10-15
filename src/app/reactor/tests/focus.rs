@@ -398,7 +398,7 @@ fn strip_navigation_stops_at_the_edge_rather_than_focusing_a_floating_window() {
     let right = WindowId::new(1, 2);
     let floater = WindowId::new(1, 3);
 
-    set_space_membership(&[(space, &[901, 902, 903])]);
+    set_space_membership(&reactor, &[(space, &[901, 902, 903])]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     reactor.add_test_app(1);
     let workspace = reactor.test_workspace(space, 0);
@@ -873,7 +873,7 @@ mod a_panel_taking_the_focus_report {
         let mut reactor = test_reactor();
         let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
         let space = SpaceId::new(1);
-        set_space_membership(&[(space, &[901, 902, 903, 904])]);
+        set_space_membership(&reactor, &[(space, &[901, 902, 903, 904])]);
         reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
         reactor.add_test_app(1);
         reactor.add_test_app(2);
@@ -1034,7 +1034,7 @@ fn the_first_pass_to_lay_a_window_out_pictures_it() {
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
     let (here, elsewhere) = (WindowId::new(1, 1), WindowId::new(1, 2));
-    set_space_membership(&[(space, &[901, 902])]);
+    set_space_membership(&reactor, &[(space, &[901, 902])]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     reactor.add_test_app(1);
     let workspaces = reactor.test_workspace_ids(space);
@@ -1073,7 +1073,7 @@ fn a_window_found_after_the_first_pass_is_pictured_too() {
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
     let (early, late) = (WindowId::new(1, 1), WindowId::new(2, 1));
-    set_space_membership(&[(space, &[901, 902])]);
+    set_space_membership(&reactor, &[(space, &[901, 902])]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     reactor.add_test_app(1);
     reactor.add_test_app(2);

@@ -1,7 +1,7 @@
 //! TEMPORARY, for callers not yet handed a [`WindowServer`] port: the free functions they call and
 //! the `set_*_override` setters their tests state answers with. Production answers from
-//! [`LiveWindowServer`], a test build from a thread-local [`FakeWindowServer`]. Once the reactor,
-//! the flight engine, the app actor and the spaces actor are handed a port, this module goes.
+//! [`LiveWindowServer`], a test build from a thread-local [`FakeWindowServer`]. Once the flight
+//! engine, the app actor and the spaces actor are handed a port, this module goes.
 
 use std::collections::HashMap;
 use std::ffi::c_int;
@@ -18,8 +18,7 @@ use super::FakeWindowServer;
 use super::LiveWindowServer;
 use super::{Listed, WindowServer};
 use crate::windows::domain::info::WindowServerInfo;
-use crate::windows::domain::manageable::Facts;
-use crate::windows::domain::stack::{StackPlace, WindowLevel};
+use crate::windows::domain::stack::WindowLevel;
 
 #[cfg(test)]
 thread_local! {
@@ -73,16 +72,10 @@ pub fn window_parent(id: WindowServerId) -> Option<WindowServerId> {
     with_port(|ws| ws.window_parent(id))
 }
 
-pub fn window_spaces(id: WindowServerId) -> Vec<SpaceId> { with_port(|ws| ws.window_spaces(id)) }
-
 pub fn window_space(id: WindowServerId) -> Option<SpaceId> { with_port(|ws| ws.window_space(id)) }
 
 pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
     with_port(|ws| ws.window_ordered_in(id))
-}
-
-pub fn app_window_suitability(id: WindowServerId) -> Option<bool> {
-    with_port(|ws| ws.app_window_suitability(id))
 }
 
 pub fn space_window_list_for_connection(spaces: &[u64]) -> Vec<u32> {
@@ -121,23 +114,6 @@ pub fn stack_level(id: WindowServerId) -> (Option<WindowLevel>, Option<c_int>) {
     with_port(|ws| ws.stack_level(id))
 }
 
-pub fn stack_place(id: WindowServerId, frame: CGRect) -> StackPlace {
-    with_port(|ws| ws.stack_place(id, frame))
-}
-
-/// `facts` with the window server's answers about `id` in, `known` the catalogue's record of a
-/// window; none asked for a window with no window-server id.
-pub fn with_server_facts(
-    facts: Facts,
-    id: Option<WindowServerId>,
-    known: impl FnOnce(WindowServerId) -> Option<WindowServerInfo>,
-) -> Facts {
-    match id {
-        Some(id) => with_port(|ws| ws.with_server_facts(facts, id, known(id).as_ref())),
-        None => facts,
-    }
-}
-
 pub fn make_key_window(pid: pid_t, id: WindowServerId) -> Result<(), CGError> {
     with_port(|ws| ws.make_key_window(pid, id))
 }
@@ -148,13 +124,6 @@ pub fn take_stack_place(own: WindowServerId, level: Option<WindowLevel>, sub_lev
 
 #[cfg(test)]
 fn stating(state: impl FnOnce(&FakeWindowServer)) { FAKE.with(state) }
-
-#[cfg(test)]
-pub fn set_space_window_list_for_connection_override(ids: Option<Vec<u32>>) {
-    stating(|fake| {
-        fake.set_any_space_window_list(ids);
-    });
-}
 
 #[cfg(test)]
 pub fn set_space_window_list_for_space_override(space: u64, ids: Option<Vec<u32>>) {
@@ -168,40 +137,6 @@ pub fn set_window_spaces_override(id: WindowServerId, spaces: Option<Vec<u64>>) 
     let spaces = spaces.unwrap_or_default().into_iter().map(SpaceId::new).collect();
     stating(|fake| {
         fake.set_window_spaces(id, spaces);
-    });
-}
-
-#[cfg(test)]
-pub fn set_window_ordered_in_override(id: WindowServerId, ordered: Option<bool>) {
-    stating(|fake| {
-        fake.set_window_ordered_in(id, ordered);
-    });
-}
-
-/// The on-screen order, frontmost first, each window at the normal level. `None` clears it.
-#[cfg(test)]
-pub fn set_front_to_back_override(order: Option<Vec<u32>>) {
-    let listed = order
-        .unwrap_or_default()
-        .into_iter()
-        .map(|id| Listed {
-            id: WindowServerId::new(id),
-            level: 0,
-            pid: 1234,
-            bounds: CGRect::default(),
-            title: None,
-        })
-        .collect();
-    stating(|fake| {
-        fake.set_on_screen_windows(listed);
-    });
-}
-
-/// The window under the cursor, which is the window at every point.
-#[cfg(test)]
-pub fn set_window_under_cursor_override(window: Option<u32>) {
-    stating(|fake| {
-        fake.set_window_at_point(window.map(WindowServerId::new));
     });
 }
 
@@ -226,16 +161,13 @@ pub fn set_corner_radii_override(id: WindowServerId, corners: Option<Vec<f64>>) 
 mod tests {
     use super::super::Command;
     use super::*;
-    use crate::windows::domain::manageable::ServerFacts;
 
     /// A window-server id in a test can name a real window on the machine running it, so no read
     /// through the shim reaches the live window server and no command drives it.
     #[test]
     fn a_test_never_reads_or_drives_the_live_window_server() {
         let (id, space) = (WindowServerId::new(10001), SpaceId::new(1));
-        assert_eq!(app_window_suitability(id), None);
         assert_eq!(window_ordered_in(id), None);
-        assert!(window_spaces(id).is_empty());
         assert_eq!(window_space(id), None);
         assert!(space_window_list_for_connection(&[space.get()]).is_empty());
         assert_eq!(window_parent(id), None);
@@ -244,13 +176,6 @@ mod tests {
         assert_eq!(key_focus_pid(), None);
         assert_eq!(get_window_at_point(CGPoint::new(1.0, 1.0)), None);
         assert_eq!(stack_level(id), (None, None));
-        let asked = Facts {
-            minimized: false,
-            ax_standard: true,
-            ax_root: true,
-            server: ServerFacts::default(),
-        };
-        assert_eq!(with_server_facts(asked, Some(id), |_| None), asked);
         assert_eq!(make_key_window(std::process::id() as pid_t, id), Ok(()));
         take_stack_place(id, Some(3), Some(1));
         assert_eq!(FAKE.with(FakeWindowServer::commands), [
@@ -269,10 +194,10 @@ mod tests {
     #[test]
     fn an_override_is_an_answer_of_the_shim_s_fake() {
         let id = WindowServerId::new(10002);
-        set_window_ordered_in_override(id, Some(false));
-        assert_eq!(window_ordered_in(id), Some(false));
-        set_window_ordered_in_override(id, None);
-        assert_eq!(window_ordered_in(id), None);
+        set_window_spaces_override(id, Some(vec![4]));
+        assert_eq!(window_space(id), Some(SpaceId::new(4)));
+        set_window_spaces_override(id, None);
+        assert_eq!(window_space(id), None);
         set_corner_radii_override(id, Some(vec![12.0; 4]));
         assert_eq!(corner_radius(id), Some(12.0));
     }

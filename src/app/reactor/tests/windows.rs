@@ -260,7 +260,7 @@ fn switching_away_and_back_returns_to_the_same_window() {
     let first = WindowId::new(1, 1);
     let second = WindowId::new(1, 2);
 
-    set_space_membership(&[(space, &[901, 902])]);
+    set_space_membership(&reactor, &[(space, &[901, 902])]);
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     reactor.add_test_app(1);
     let workspaces = reactor.test_workspace_ids(space);
@@ -347,9 +347,8 @@ fn a_window_server_promoted_close_is_forgotten_once() {
     let wid = WindowId::new(1, 1);
     let wsid = reactor.test_window_server_id(wid);
 
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
+    reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.handle_event(Event::WindowServerDestroyed(wsid, space, SpaceEventKind::User));
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
     assert!(
         reactor.state.windows.window(wid).is_none(),
         "the promotion removes the window"
@@ -487,9 +486,8 @@ fn a_window_stale_cleanup_retires_is_forgotten_once() {
     let (gone, kept) = (WindowId::new(1, 1), WindowId::new(1, 2));
     let wsid = reactor.test_window_server_id(gone);
 
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
+    reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.discover_test_windows(1, Vec::new(), vec![kept]);
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
     assert!(
         reactor.state.windows.window(gone).is_none(),
         "the cleanup retires it"
@@ -512,9 +510,8 @@ fn a_minimised_window_the_window_server_closes_is_forgotten_once() {
     let mut pictures = reactor.connect_test_pictures();
     let wsid = reactor.test_window_server_id(wid);
 
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
+    reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.handle_event(Event::WindowServerDestroyed(wsid, space, SpaceEventKind::User));
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
     assert!(
         reactor.state.windows.window(wid).is_none(),
         "the promotion removes the window"

@@ -138,9 +138,8 @@ fn user_space_window_server_events_preserve_hidden_window_state() {
     reactor.handle_event(space_state_event(vec![frame], vec![Some(space1)]));
     reactor.insert_test_window(wid, wsid, Some(space1), frame, true);
 
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(true));
+    reactor.window_server().set_window_ordered_in(wsid, Some(true));
     window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(reactor.state.windows.contains_window(wid));
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space1));
@@ -159,9 +158,8 @@ fn user_space_window_server_destroyed_removes_window_when_window_server_is_gone(
     reactor.insert_test_window(wid, wsid, Some(space1), frame, true);
     reactor.state.windows.mark_window_visible(wsid);
 
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, Some(false));
+    reactor.window_server().set_window_ordered_in(wsid, Some(false));
     window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
-    crate::windows::platform::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(!reactor.state.windows.contains_window(wid));
     assert_eq!(reactor.state.windows.tracked_window_id(wsid), None);
@@ -196,14 +194,9 @@ fn stale_user_space_appearance_is_ignored_when_server_state_already_matches_pend
 #[test]
 fn stale_user_space_appearance_is_ignored_when_authoritative_window_space_differs() {
     let (mut reactor, wid, wsid, space1, space2, _frame) = reactor_with_window_moved_to_space2();
-    crate::windows::platform::window_server::set_window_spaces_override(
-        wsid,
-        Some(vec![space2.get()]),
-    );
+    reactor.window_server().set_window_spaces(wsid, vec![space2]);
 
     window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
-
-    crate::windows::platform::window_server::set_window_spaces_override(wsid, None);
 
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
     assert_eq!(
@@ -292,17 +285,12 @@ fn authoritative_active_window_snapshot_reassigns_missing_window_to_inactive_spa
 
     reactor.mark_test_window_visible_in_space(moved_wsid, active_space);
     reactor.mark_test_window_visible_in_space(retained_wsid, active_space);
-    crate::windows::platform::window_server::set_window_spaces_override(
-        moved_wsid,
-        Some(vec![inactive_space.get()]),
-    );
+    reactor.window_server().set_window_spaces(moved_wsid, vec![inactive_space]);
 
     reactor.reconcile_authoritative_active_window_snapshot(
         vec![(retained_wsid, Some(active_space))],
         false,
     );
-
-    crate::windows::platform::window_server::set_window_spaces_override(moved_wsid, None);
 
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(moved),
@@ -337,14 +325,12 @@ fn authoritative_active_space_membership_comes_from_space_window_ids_directly() 
     let wsid_a = WindowServerId::new(41);
     let wsid_b = WindowServerId::new(42);
 
-    crate::windows::platform::window_server::set_space_window_list_for_connection_override(Some(
-        vec![wsid_a.as_u32(), wsid_b.as_u32()],
-    ));
+    reactor
+        .window_server()
+        .set_any_space_window_list(Some(vec![wsid_a.as_u32(), wsid_b.as_u32()]));
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     let snapshot = reactor.authoritative_active_space_windows();
-
-    crate::windows::platform::window_server::set_space_window_list_for_connection_override(None);
 
     let ids: Vec<_> = snapshot.into_iter().map(|(wsid, _)| wsid).collect();
     assert_eq!(
@@ -364,39 +350,20 @@ fn authoritative_active_space_membership_queries_each_active_space_independently
     let wsid_left = WindowServerId::new(41);
     let wsid_right = WindowServerId::new(42);
 
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space1.get(),
-        Some(vec![wsid_left.as_u32()]),
-    );
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space2.get(),
-        Some(vec![wsid_right.as_u32()]),
-    );
-    crate::windows::platform::window_server::set_window_spaces_override(
-        wsid_left,
-        Some(vec![space1.get()]),
-    );
-    crate::windows::platform::window_server::set_window_spaces_override(
-        wsid_right,
-        Some(vec![space2.get()]),
-    );
+    reactor
+        .window_server()
+        .set_space_window_list(space1.get(), Some(vec![wsid_left.as_u32()]));
+    reactor
+        .window_server()
+        .set_space_window_list(space2.get(), Some(vec![wsid_right.as_u32()]));
+    reactor.window_server().set_window_spaces(wsid_left, vec![space1]);
+    reactor.window_server().set_window_spaces(wsid_right, vec![space2]);
 
     reactor.handle_event(space_state_event(vec![left, right], vec![
         Some(space1),
         Some(space2),
     ]));
     let mut snapshot = reactor.authoritative_active_space_windows();
-
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space1.get(),
-        None,
-    );
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space2.get(),
-        None,
-    );
-    crate::windows::platform::window_server::set_window_spaces_override(wsid_left, None);
-    crate::windows::platform::window_server::set_window_spaces_override(wsid_right, None);
 
     snapshot.sort_unstable_by_key(|(wsid, _)| wsid.as_u32());
     assert_eq!(
@@ -432,12 +399,8 @@ fn native_space_resolution_policy_table() {
     // With no pending Rini move, a live WindowServer observation is an external move.
     {
         let (reactor, _wid, wsid, _space1, space2, _) = reactor_with_window_on_space1();
-        crate::windows::platform::window_server::set_window_spaces_override(
-            wsid,
-            Some(vec![space2.get()]),
-        );
+        reactor.window_server().set_window_spaces(wsid, vec![space2]);
         let resolved = reactor.affinity().resolve_native_space(wsid, Some(space2));
-        crate::windows::platform::window_server::set_window_spaces_override(wsid, None);
         cases.push(("newer external move", resolved, Some(space2)));
     }
 
@@ -495,7 +458,7 @@ fn classifier_with_a_non_user_space() -> SpaceKinds {
 #[test]
 fn a_window_is_not_followed_onto_a_non_user_space() {
     let (mut reactor, wid, wsid, active_space, _other, _frame) = reactor_with_window_on_space1();
-    reactor.space_kinds = classifier_with_a_non_user_space();
+    reactor.reads.space_kinds = classifier_with_a_non_user_space();
     let login_space = SpaceId::new(NON_USER_SPACE);
 
     // macOS now reports the window on a login space, and it is gone from the active snapshot.
@@ -520,7 +483,7 @@ fn a_window_is_not_followed_onto_a_non_user_space() {
 fn a_window_is_followed_onto_an_inactive_user_space() {
     let (mut reactor, wid, wsid, active_space, other_space, _frame) =
         reactor_with_window_on_space1();
-    reactor.space_kinds = classifier_with_a_non_user_space();
+    reactor.reads.space_kinds = classifier_with_a_non_user_space();
     assert_ne!(other_space, SpaceId::new(NON_USER_SPACE));
 
     reactor.state.windows.set_window_server_space(wsid, Some(other_space));
