@@ -233,8 +233,9 @@ No method of `LayoutEngine` is past the function limit; `tests/architecture.rs` 
 
 `src/app/reactor/` splits `Reactor` by concern: `mod.rs` holds the struct, its `Event`, the
 loop and `apply_event_outcome`, `dispatch.rs` holds `dispatch_workflow`, and each other file
-beside it is one concern's `impl Reactor` (`src/app/docs/README.md`, "What it owns"). No in-file
-tests. Direct field reaches, as counted when this was found: `state` 112, the layout engine 61,
+beside it is one concern's `impl Reactor` (`src/app/docs/README.md`, "What it owns"). `mod.rs`
+has no in-file tests; the rules split out of it carry theirs (`events/outcome.rs`, `layout_pass.rs`,
+`dispatch.rs`, ...), and the integration cases are `reactor/tests/`. Direct field reaches, as counted when this was found: `state` 112, the layout engine 61,
 `space_state` 43, `drag_manager` 18, `communication_manager` 17, `refresh_quarantine_manager` 14,
 `transactions` 11. The one-field wrappers are gone: the layout engine, the applications, the menu
 state, the notification ids, the pending space change and the transaction store (`WindowTxStore`)
@@ -245,10 +246,12 @@ Largest methods, and what each one turned out to be:
 
 | method | lines | verdict |
 |---|---|---|
-| `handle_layout_response` | 303 → 75 | four rules extracted, one of them a bug fix; the phases split off |
-| `dispatch_workflow` | 288 → 57 | a dispatch table, split by event family |
-| `apply_event_outcome` | 271 → 9 | three rules extracted; the drain split at the arrange, with no re-entry |
-| `handle_authoritative_space_snapshot` | 251 → 76 | the display-set comparison extracted; the settling split off |
+| `handle_layout_response` | 303 → under the limit | four rules extracted, one of them a bug fix; the phases split off |
+| `dispatch_workflow` | 288 → under the limit | a dispatch table, split by event family |
+| `apply_event_outcome` | 271 → under the limit | three rules extracted; the drain split at the arrange, with no re-entry |
+| `handle_authoritative_space_snapshot` | 251 → under the limit | the display-set comparison extracted; the settling split off |
+
+Each is held under the function limit by `no_function_or_file_grows_past_its_limit`.
 
 `handle_layout_response` gave up three rules to `windows::domain::raise_order`
 (`drop_parked`, `lead_with_regroup`, `group_by_app_and_space`) and one to
@@ -369,10 +372,10 @@ The recent batches moved the opposite way deliberately — pure decisions to
 | file | code | why it resists |
 |---|---|---|
 | `src/windows/platform/app_actor.rs` | — | the AX driver, its size held to the file limit by `tests/architecture.rs`. DONE: its admission rules are now `windows::domain::admissible` with 11 tests (`4dac5df`), and the fake `AXUIElement` seam it needed (`FakeAx`, `9ea1079`) carries the actor's own tests, `handle_notification` and `handle_raise_request` among them, beside each job's code in `src/windows/platform/app_actor/` |
-| `src/displays/platform/spaces.rs` | 1,087 | has `spaces/tests.rs` (44 tests) beside it, but two of its rules were untestable until `SpaceKinds` — see 4.4 |
+| `src/displays/platform/spaces.rs` | — | has `spaces/tests.rs` (44 tests) beside it, but two of its rules were untestable until `SpaceKinds` — see 4.4 |
 | `gesture_tap.rs`, the HID gesture tap | 657 | DONE, then deleted: the phase machine became `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`); the tap, the rules and their tests went with the trackpad swipes (2026-10-10) |
-| `src/app/reactor/observations.rs` | 572 | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
-| `src/main.rs` | 525 | the composition root: `main` builds the actors in order, each built by a function of its own, and joins them |
+| `src/app/reactor/observations.rs` | — | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
+| `src/main.rs` | — | the composition root: `main` builds the actors in order, each built by a function of its own, and joins them |
 | `src/app/hotkeys/mod.rs` | 404 | DONE: the alias lowering is `hotkeys/lower.rs` with 7 tests |
 
 ### 4.3 Worst code-to-test ratios among tested files
@@ -446,7 +449,7 @@ the assignment. The guard was then provably redundant and is deleted.
 
 ### 4.5 The 317-line `main`
 
-**DONE — `main` is 94 code lines.** The flags, the AX permission and the "separate Spaces" check
+**DONE — `main` is under the function limit.** The flags, the AX permission and the "separate Spaces" check
 are `start`, the config read with its fallback `read_config`, the layout restore
 `restored_layout`, and each actor is built by a function of its own, in the order `main` built
 them. The main thread's actors are joined by `run_main_thread`, as the seven that draw nothing
