@@ -113,8 +113,7 @@ pub fn reactor_with_window_moved_to_space2() -> OneWindow {
 
     assert!(reactor.assign_test_window_to_workspace(space1, wid, space1_workspace));
     assert!(reactor.assign_test_window_to_workspace(space2, wid, space2_workspace));
-    let txid = reactor.transactions.next_txid(wsid);
-    reactor.transactions.insert(wsid, txid, moved_frame);
+    reactor.pend_test_frame(wsid, moved_frame);
     assert_eq!(
         reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2)
@@ -178,15 +177,15 @@ pub fn reactor_with_floating_window() -> Floating {
     reactor.send_layout_event(LayoutEvent::WindowAdded(space1, wid));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space1, wid));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
-    assert!(reactor.layout_engine.is_window_floating(wid));
+    assert!(reactor.layout().is_window_floating(wid));
 
-    let workspace = reactor.layout_engine.active_workspace(space1).expect("workspace");
+    let workspace = reactor.layout().active_workspace(space1).expect("workspace");
     let floating_frame = CGRect::new(CGPoint::new(100., 100.), CGSize::new(400., 300.));
-    if let Some(w) = reactor.state.windows.window_mut(wid) {
+    if let Some(w) = reactor.windows_mut().window_mut(wid) {
         w.frame_monotonic = floating_frame;
     }
     reactor
-        .layout_engine
+        .layout_mut()
         .store_floating_position(space1, workspace, wid, floating_frame);
 
     Floating {
@@ -265,7 +264,7 @@ pub fn fullscreen_startup_fixture(
     }
 
     reactor.track_test_window_server_info(wsid, pid, screen);
-    reactor.state.windows.set_window_server_space(wsid, Some(user_space));
+    reactor.windows_mut().set_window_server_space(wsid, Some(user_space));
     reactor.discover_test_windows(
         pid,
         vec![(
@@ -286,8 +285,7 @@ pub fn fullscreen_startup_fixture(
 
 pub fn rekey_window(reactor: &mut Reactor, old_wid: WindowId, new_wid: WindowId) {
     let old_info = reactor
-        .state
-        .windows
+        .windows()
         .window(old_wid)
         .expect("old window should exist before rekey")
         .info
@@ -309,9 +307,9 @@ pub fn has_window_in_layout(
     screen: CGRect,
     wid: WindowId,
 ) -> bool {
-    let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
+    let gaps = reactor.settings().layout.gaps.effective_for_display(None);
     reactor
-        .layout_engine
+        .layout_mut()
         .calculate_layout(space, screen, &gaps)
         .iter()
         .any(|(layout_wid, _)| *layout_wid == wid)
@@ -322,8 +320,8 @@ pub fn test_layout(
     space: SpaceId,
     screen: CGRect,
 ) -> Vec<(WindowId, CGRect)> {
-    let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
-    reactor.layout_engine.calculate_layout(space, screen, &gaps)
+    let gaps = reactor.settings().layout.gaps.effective_for_display(None);
+    reactor.layout_mut().calculate_layout(space, screen, &gaps)
 }
 
 pub fn make_active_app(
@@ -368,17 +366,8 @@ pub fn laid_out_frame(
     screen: CGRect,
     wid: WindowId,
 ) -> Option<CGRect> {
-    let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
     reactor
-        .layout_engine
-        .calculate_layout_with_virtual_workspaces(
-            &reactor.state.windows,
-            space,
-            screen,
-            &gaps,
-            |q| reactor.state.windows.window(q).map(|w| w.frame_monotonic),
-            &[screen],
-        )
+        .test_layout_with_virtual_workspaces(space, screen)
         .into_iter()
         .find(|(w, _)| *w == wid)
         .map(|(_, f)| f)

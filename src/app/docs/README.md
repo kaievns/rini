@@ -47,7 +47,7 @@ knows the features and converts what they emit.
 | `reactor/animation.rs` | `animate_layout`: whether each layout pass flies on the overlay, and placing the real windows when it does not, from `transitions::domain::pass`'s plan |
 | `reactor/decorations.rs` | The decorations' half here: what each managed window wears as its window rules have it, who wears the ring, each tiled window's border, and what the rest windows are told after a batch |
 | `reactor/diagnostics.rs` | What a query answers about when it was not told (`default_query_space`), and what the diagnostics dump counts as wrong (`orphaned_windows`, `stale_display_homes`) |
-| `reactor/testing.rs` | Built only for tests: the reactors, screens and space-state events the reactor's tests start from |
+| `reactor/testing.rs` | Built only for tests: the reactors, screens and space-state events the reactor's tests start from, and the accessors they read and arrange the reactor through |
 | `reactor/tests/` | The integration tests, one file per subject, over `reactor/tests/fixtures.rs` |
 | `config/` | `config.kdl`: `config/kdl/` decodes each section into a part type and `kdl/apply.rs` lays the parts over each feature's settings, with the checks that span sections; then watching and reload. The format's decisions are [`docs/config.md`](../../../docs/config.md) |
 | `api/` | The Mach IPC backend bound to the reactor, and the shapes a query answers in |
@@ -142,6 +142,11 @@ file you open to change one is the size of that subject rather than of the react
 | `reads.rs` | what the reactor asks of the machine: only its `SystemReads`, every read unknown in a test until stated |
 | `decorations.rs` | what the rest windows are sent after a batch: each window's ring and border, whether it holds focus or asks for attention, and the rules that dress it |
 | `fixtures.rs` | the reactors, apps and windows the cases are built on, each handed back as a struct naming its parts (`OneWindow`, `Floating`, ...) |
+
+A case reads and arranges the reactor through the accessors in `reactor/testing.rs`
+(`windows()`, `layout()`, `settings_mut()`, `connect_test_transitions()` and the rest), never
+through its fields, so a store can move without touching the cases:
+`a_reactor_test_reaches_no_field_of_the_reactor` in `tests/architecture.rs` holds it.
 
 `tiling.rs` is not `layout.rs` because a module named `layout` inside `tests` shadows the
 `layout` alias the siblings use for `crate::workspaces`.

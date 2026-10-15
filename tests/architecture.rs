@@ -1790,3 +1790,103 @@ fn a_long_snake_name_is_read_whole_from_its_span() {
         "a_b_c_d", "e_f_g_h", "i_j_k_l", "q_r_s_t", "u_v_w_x"
     ]);
 }
+
+/// The fields `pub struct Reactor` declares, by name.
+fn reactor_fields(source: &str) -> Vec<String> {
+    let lines = code_lines_in(source);
+    let start = lines
+        .iter()
+        .position(|(_, line)| line == "pub struct Reactor {")
+        .expect("src/app/reactor/mod.rs declares `pub struct Reactor`");
+    lines[start + 1..]
+        .iter()
+        .take_while(|(_, line)| line != "}")
+        .filter_map(|(_, line)| {
+            let line =
+                line.strip_prefix("pub(crate) ").or(line.strip_prefix("pub ")).unwrap_or(line);
+            let (name, _) = line.split_once(':')?;
+            name.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                .then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// Each `reactor.<field>` in `code` that reads the field rather than calling a method of that name,
+/// a chain broken across lines included.
+fn reactor_field_reaches(code: &str, fields: &[String]) -> Vec<String> {
+    let mut joined = String::with_capacity(code.len());
+    let mut chars = code.chars().peekable();
+    while let Some(c) = chars.next() {
+        if !c.is_whitespace() {
+            joined.push(c);
+            continue;
+        }
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if !joined.ends_with('.') && chars.peek() != Some(&'.') {
+            joined.push(' ');
+        }
+    }
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    joined
+        .match_indices("reactor.")
+        .filter(|(at, _)| !joined[..*at].ends_with(ident))
+        .filter_map(|(at, matched)| {
+            let rest = &joined[at + matched.len()..];
+            let name = &rest[..rest.find(|c: char| !ident(c)).unwrap_or(rest.len())];
+            let called = rest[name.len()..].starts_with('(');
+            (fields.iter().any(|field| field == name) && !called).then(|| format!("reactor.{name}"))
+        })
+        .collect()
+}
+
+/// A reactor test reads and arranges the reactor through the accessors in `reactor/testing.rs`, so a
+/// store can move without touching the cases.
+#[test]
+fn a_reactor_test_reaches_no_field_of_the_reactor() {
+    let mod_rs = Path::new("src/app/reactor/mod.rs");
+    let fields = reactor_fields(&fs::read_to_string(mod_rs).expect("readable source"));
+    assert!(fields.len() > 30, "read the fields: {fields:?}");
+    let files = rust_files(Path::new("src/app/reactor"));
+    let mut reaches = Vec::new();
+    for path in test_files(&files) {
+        if path.ends_with("testing.rs") {
+            continue;
+        }
+        let code: Vec<String> = code_lines(&path).into_iter().map(|(_, line)| line).collect();
+        for reach in reactor_field_reaches(&code.join("\n"), &fields) {
+            reaches.push(format!("{}: {reach}", slash(&path)));
+        }
+    }
+    for path in &files {
+        let source = fs::read_to_string(path).expect("readable source");
+        let inline = inline_test_ranges(&source);
+        let code: Vec<String> = code_lines_in(&source)
+            .into_iter()
+            .filter(|(line, _)| inline.iter().any(|lines| lines.contains(line)))
+            .map(|(_, line)| line)
+            .collect();
+        for reach in reactor_field_reaches(&code.join("\n"), &fields) {
+            reaches.push(format!("{}: {reach}", slash(path)));
+        }
+    }
+    assert!(
+        reaches.is_empty(),
+        "read these through an accessor in src/app/reactor/testing.rs:\n{}",
+        reaches.join("\n")
+    );
+}
+
+#[test]
+fn a_field_reach_is_found_across_lines_and_a_call_of_the_same_name_is_not() {
+    let source = "pub struct Reactor {\n    pub config: Config,\n    pub(crate) state: RiniState,\n    last_strip_layout:\n        HashMap<(SpaceId, crate::a::B), Vec<u8>>,\n    rest: RestFeed,\n}\n";
+    let fields = reactor_fields(source);
+    assert_eq!(fields, ["config", "state", "last_strip_layout", "rest"]);
+    let code = "reactor.state.windows; strip\n    .reactor\n    .config\n    .settings;\nreactor.rest(); \
+                desk.reactor.rest.on(); my_reactor.state; reactor.restless;";
+    assert_eq!(reactor_field_reaches(code, &fields), [
+        "reactor.state",
+        "reactor.config",
+        "reactor.rest"
+    ]);
+}

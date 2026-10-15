@@ -174,11 +174,10 @@ fn stale_cleanup_uses_ordered_state_instead_of_cached_visibility() {
     apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(1));
     let wsid = reactor.test_window_server_id(wid);
     let info = reactor
-        .state
-        .windows
+        .windows()
         .get_window_server_info(wsid)
         .expect("test window should have native metadata");
-    assert!(reactor.state.windows.is_window_visible(wsid));
+    assert!(reactor.windows().is_window_visible(wsid));
 
     let snapshot = |suitable, ordered_in| window_discovery::StaleCleanupSnapshot {
         pending_refresh: false,
@@ -196,7 +195,7 @@ fn stale_cleanup_uses_ordered_state_instead_of_cached_visibility() {
     };
 
     let (ordered_stale, _) = window_discovery::identify_stale_windows(
-        &reactor.state,
+        reactor.rini_state(),
         wid.pid,
         &[],
         &snapshot(Some(true), Some(true)),
@@ -207,7 +206,7 @@ fn stale_cleanup_uses_ordered_state_instead_of_cached_visibility() {
     );
 
     let (closed_stale, _) = window_discovery::identify_stale_windows(
-        &reactor.state,
+        reactor.rini_state(),
         wid.pid,
         &[],
         &snapshot(Some(true), Some(false)),
@@ -219,7 +218,7 @@ fn stale_cleanup_uses_ordered_state_instead_of_cached_visibility() {
     );
 
     let (unknown_stale, _) = window_discovery::identify_stale_windows(
-        &reactor.state,
+        reactor.rini_state(),
         wid.pid,
         &[],
         &snapshot(Some(true), None),
@@ -230,7 +229,7 @@ fn stale_cleanup_uses_ordered_state_instead_of_cached_visibility() {
     );
 
     let (unknown_suitability_stale, _) = window_discovery::identify_stale_windows(
-        &reactor.state,
+        reactor.rini_state(),
         wid.pid,
         &[],
         &snapshot(None, Some(true)),
@@ -282,7 +281,7 @@ fn switching_away_and_back_returns_to_the_same_window() {
 
     assert_eq!(
         reactor
-            .layout_engine
+            .layout()
             .virtual_workspace_manager()
             .last_focused_window(space, workspaces[0]),
         Some(second),
@@ -298,14 +297,13 @@ fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.animate = true;
+    reactor.settings_mut().animate = true;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     apps.requests();
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
     let mut pictures = reactor.connect_test_pictures();
 
     let wid = WindowId::new(1, 1);
@@ -322,7 +320,7 @@ fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     }
     assert_eq!(forgotten, vec![wid], "exactly one forget");
     assert!(
-        reactor.state.windows.window(wid).is_none(),
+        reactor.windows().window(wid).is_none(),
         "the window state is still removed"
     );
 }
@@ -334,14 +332,13 @@ fn a_window_server_promoted_close_is_forgotten_once() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.animate = true;
+    reactor.settings_mut().animate = true;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     apps.requests();
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
     let mut pictures = reactor.connect_test_pictures();
 
     let wid = WindowId::new(1, 1);
@@ -350,7 +347,7 @@ fn a_window_server_promoted_close_is_forgotten_once() {
     reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.handle_event(Event::WindowServerDestroyed(wsid, space, SpaceEventKind::User));
     assert!(
-        reactor.state.windows.window(wid).is_none(),
+        reactor.windows().window(wid).is_none(),
         "the promotion removes the window"
     );
 
@@ -405,11 +402,11 @@ fn an_application_that_quits_forgets_each_of_its_windows_once() {
         "each window of the application once, and none of another's"
     );
     assert_eq!(
-        reactor.state.windows.window_ids_for_pid(1).count(),
+        reactor.windows().window_ids_for_pid(1).count(),
         0,
         "its records go"
     );
-    assert!(reactor.state.windows.window(WindowId::new(2, 1)).is_some());
+    assert!(reactor.windows().window(WindowId::new(2, 1)).is_some());
 }
 
 /// An application that quits with a window in native fullscreen, or one macOS has put there before
@@ -426,13 +423,13 @@ fn an_application_that_quits_takes_its_native_fullscreen_records() {
     let wid = WindowId::new(1, 1);
     let wsid = reactor.test_window_server_id(wid);
     let unbound = WindowServerId::new(4242);
-    let _ = reactor.state.windows.suspend_window_to_native_fullscreen(
+    let _ = reactor.windows_mut().suspend_window_to_native_fullscreen(
         wid,
         Some(wsid),
         Some(space),
         fullscreen_space,
     );
-    let _ = reactor.state.windows.suspend_window_server_to_native_fullscreen(
+    let _ = reactor.windows_mut().suspend_window_server_to_native_fullscreen(
         1,
         unbound,
         Some(space),
@@ -441,7 +438,7 @@ fn an_application_that_quits_takes_its_native_fullscreen_records() {
 
     reactor.handle_event(Event::ApplicationThreadTerminated(1));
 
-    let windows = &reactor.state.windows;
+    let windows = reactor.windows();
     assert!(windows.native_fullscreen_record_for_window(wid).is_none());
     assert!(!windows.is_window_server_id_native_fullscreen_suspended(wsid));
     assert_eq!(
@@ -456,7 +453,7 @@ fn an_application_that_quits_takes_its_native_fullscreen_records() {
 fn an_unwatched_application_that_quits_takes_its_native_fullscreen_records() {
     let (_apps, mut reactor) = test_context();
     let unbound = WindowServerId::new(4242);
-    let _ = reactor.state.windows.suspend_window_server_to_native_fullscreen(
+    let _ = reactor.windows_mut().suspend_window_server_to_native_fullscreen(
         7,
         unbound,
         Some(SpaceId::new(1)),
@@ -466,10 +463,7 @@ fn an_unwatched_application_that_quits_takes_its_native_fullscreen_records() {
     reactor.handle_event(Event::ApplicationTerminated(7));
 
     assert_eq!(
-        reactor
-            .state
-            .windows
-            .pending_native_fullscreen_pid_for_window_server_id(unbound),
+        reactor.windows().pending_native_fullscreen_pid_for_window_server_id(unbound),
         None
     );
 }
@@ -489,7 +483,7 @@ fn a_window_stale_cleanup_retires_is_forgotten_once() {
     reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.discover_test_windows(1, Vec::new(), vec![kept]);
     assert!(
-        reactor.state.windows.window(gone).is_none(),
+        reactor.windows().window(gone).is_none(),
         "the cleanup retires it"
     );
     reactor.handle_event(Event::WindowDestroyed(gone));
@@ -513,7 +507,7 @@ fn a_minimised_window_the_window_server_closes_is_forgotten_once() {
     reactor.window_server().set_window_ordered_in(wsid, Some(false));
     reactor.handle_event(Event::WindowServerDestroyed(wsid, space, SpaceEventKind::User));
     assert!(
-        reactor.state.windows.window(wid).is_none(),
+        reactor.windows().window(wid).is_none(),
         "the promotion removes the window"
     );
     reactor.handle_event(Event::WindowDestroyed(wid));
@@ -533,8 +527,8 @@ fn a_rekeyed_window_forgets_its_old_id_once() {
     let (old, new) = (WindowId::new(1, 1), WindowId::new(1, 99));
 
     rekey_window(&mut reactor, old, new);
-    assert!(reactor.state.windows.window(old).is_none());
-    assert!(reactor.state.windows.window(new).is_some());
+    assert!(reactor.windows().window(old).is_none());
+    assert!(reactor.windows().window(new).is_some());
     reactor.handle_event(Event::WindowDestroyed(old));
 
     assert_eq!(forgotten(&mut pictures), vec![old]);
@@ -556,7 +550,7 @@ fn a_rekeyed_window_keeps_its_place_in_the_focus_order() {
 
     rekey_window(&mut reactor, old, new);
 
-    let order = reactor.main_window_tracker.focus_order();
+    let order = reactor.focus_tracker().focus_order();
     assert_eq!(order.position(new), Some(1), "second, where the old id was");
     assert_eq!(order.position(old), None);
 }
@@ -576,7 +570,7 @@ fn an_activation_after_a_rekey_targets_the_new_id() {
     rekey_window(&mut reactor, old, new);
     reactor.handle_event(Event::ApplicationGloballyActivated(1));
 
-    assert_eq!(reactor.main_window_tracker.peek_activation_target(1), Some(new));
+    assert_eq!(reactor.focus_tracker().peek_activation_target(1), Some(new));
 }
 
 /// An Accessibility destruction during a refresh quarantine can be an element replaced while the
@@ -590,10 +584,10 @@ fn a_window_destroyed_during_refresh_quarantine_is_not_forgotten() {
     let mut pictures = reactor.connect_test_pictures();
     let wid = WindowId::new(1, 1);
 
-    reactor.refresh_quarantine_manager.sleeping = true;
+    reactor.quarantine_mut().sleeping = true;
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    assert!(reactor.state.windows.window(wid).is_some(), "the window stays");
+    assert!(reactor.windows().window(wid).is_some(), "the window stays");
     assert_eq!(forgotten(&mut pictures), Vec::<WindowId>::new());
 }
 

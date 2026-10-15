@@ -12,7 +12,6 @@ use test_log::test;
 
 use super::fixtures::*;
 use crate::animation::domain::motion::surface::SurfaceGeometry;
-use crate::app::reactor::events::window as window_workflow;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::input::event::LeftPress;
@@ -91,8 +90,7 @@ fn matching_rini_frame_clears_pending_target() {
         CGPoint::new(frame.origin.x + 40.0, frame.origin.y + 25.0),
         frame.size,
     );
-    let txid = reactor.transactions.next_txid(wsid);
-    reactor.transactions.insert(wsid, txid, target_frame);
+    let txid = reactor.pend_test_frame(wsid, target_frame);
 
     reactor.handle_event(Event::WindowFrameChanged(
         wid,
@@ -103,25 +101,16 @@ fn matching_rini_frame_clears_pending_target() {
     ));
 
     assert_eq!(
-        reactor.transactions.target(&wsid),
+        reactor.transactions().target(&wsid),
         None,
         "a confirmed Rini frame must clear the pending target"
     );
-    assert!(
-        reactor
-            .state
-            .windows
-            .window(wid)
-            .expect("window should still exist")
-            .frame_monotonic
-            .same_as(target_frame)
-    );
+    assert!(reactor.test_frame(wid).same_as(target_frame));
 
     // AX may adjust a requested frame; cache the accepted geometry but keep the target pending.
     let adjusted_target = CGRect::new(CGPoint::new(80.0, 40.0), frame.size);
     let accepted = CGRect::new(CGPoint::new(81.0, 40.0), frame.size);
-    let txid = reactor.transactions.next_txid(wsid);
-    reactor.transactions.insert(wsid, txid, adjusted_target);
+    let txid = reactor.pend_test_frame(wsid, adjusted_target);
     let outcome = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
             wid,
@@ -131,8 +120,8 @@ fn matching_rini_frame_clears_pending_target() {
             Some(MouseState::Up),
         ))
         .unwrap();
-    assert!(reactor.state.windows.window(wid).unwrap().frame_monotonic.same_as(accepted));
-    assert_eq!(reactor.transactions.target(&wsid), Some(adjusted_target));
+    assert!(reactor.test_frame(wid).same_as(accepted));
+    assert_eq!(reactor.transactions().target(&wsid), Some(adjusted_target));
     assert!(!outcome.arrange.requested);
 
     // A user drag beginning during the transaction clears it instead of accepting it blindly.
@@ -143,7 +132,7 @@ fn matching_rini_frame_clears_pending_target() {
         Requested(true),
         Some(MouseState::Down),
     ));
-    assert_eq!(reactor.transactions.target(&wsid), None);
+    assert_eq!(reactor.transactions().target(&wsid), None);
 }
 
 #[test]
@@ -159,8 +148,7 @@ fn frame_acknowledgements_and_unchanged_frames_do_not_invalidate_layout() {
         CGPoint::new(frame.origin.x + 40.0, frame.origin.y + 25.0),
         frame.size,
     );
-    let txid = reactor.transactions.next_txid(wsid);
-    reactor.transactions.insert(wsid, txid, target_frame);
+    let txid = reactor.pend_test_frame(wsid, target_frame);
 
     let acknowledgement = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
@@ -240,8 +228,7 @@ fn stale_and_inactive_frame_events_request_no_arrange_passes() {
         CGPoint::new(frame.origin.x + 40.0, frame.origin.y + 25.0),
         frame.size,
     );
-    let txid = reactor.transactions.next_txid(wsid);
-    reactor.transactions.insert(wsid, txid, target_frame);
+    let txid = reactor.pend_test_frame(wsid, target_frame);
     let acknowledgement = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
             wid,
@@ -265,8 +252,7 @@ fn stale_and_inactive_frame_events_request_no_arrange_passes() {
     assert!(!duplicate.arrange.requested);
 
     // Stale transaction notification while a newer target is pending.
-    let current_txid = reactor.transactions.next_txid(wsid);
-    reactor.transactions.insert(wsid, current_txid, target_frame);
+    let current_txid = reactor.pend_test_frame(wsid, target_frame);
     let stale = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
             wid,
@@ -282,7 +268,7 @@ fn stale_and_inactive_frame_events_request_no_arrange_passes() {
     assert!(!stale.arrange.requested);
 
     // Geometry on an inactive native space.
-    reactor.transactions.clear_target(&wsid);
+    reactor.transactions_mut().clear_target(&wsid);
     reactor.set_active_spaces(&[]);
     let inactive = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
@@ -330,7 +316,7 @@ fn external_resize_requests_one_arrange_pass() {
 #[test]
 fn title_change_reapply_does_not_rebalance_unchanged_layout() {
     let (mut apps, mut reactor) = test_context();
-    reactor.config.virtual_workspaces.reapply_app_rules_on_title_change = true;
+    reactor.config_mut().virtual_workspaces.reapply_app_rules_on_title_change = true;
 
     let space = SpaceId::new(1);
     let full_screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
@@ -338,7 +324,7 @@ fn title_change_reapply_does_not_rebalance_unchanged_layout() {
 
     make_active_app_with_count(&mut apps, &mut reactor, 1, 3, Some(WindowId::new(1, 1)));
 
-    assert!(reactor.layout_engine.selected_window(space).is_some());
+    assert!(reactor.layout_mut().selected_window(space).is_some());
     reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Up));
     apps.simulate_until_quiet(&mut reactor);
 
@@ -355,7 +341,7 @@ fn title_change_reapply_does_not_rebalance_unchanged_layout() {
 #[test]
 fn title_change_reapply_does_not_rebalance_when_window_stays_floating() {
     let (mut apps, mut reactor) = test_context();
-    reactor.config.virtual_workspaces.reapply_app_rules_on_title_change = true;
+    reactor.config_mut().virtual_workspaces.reapply_app_rules_on_title_change = true;
 
     let space = SpaceId::new(1);
     let full_screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
@@ -363,13 +349,13 @@ fn title_change_reapply_does_not_rebalance_when_window_stays_floating() {
 
     make_active_app_with_count(&mut apps, &mut reactor, 1, 3, Some(WindowId::new(1, 1)));
 
-    assert!(reactor.layout_engine.selected_window(space).is_some());
+    assert!(reactor.layout_mut().selected_window(space).is_some());
     reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Up));
     apps.simulate_until_quiet(&mut reactor);
 
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     apps.simulate_until_quiet(&mut reactor);
-    assert!(reactor.layout_engine.is_window_floating(WindowId::new(1, 1)));
+    assert!(reactor.layout().is_window_floating(WindowId::new(1, 1)));
 
     let modified = test_layout(&mut reactor, space, full_screen);
 
@@ -378,7 +364,7 @@ fn title_change_reapply_does_not_rebalance_when_window_stays_floating() {
         "Renamed floating window".to_string(),
     ));
 
-    assert!(reactor.layout_engine.is_window_floating(WindowId::new(1, 1)));
+    assert!(reactor.layout().is_window_floating(WindowId::new(1, 1)));
     assert_eq!(test_layout(&mut reactor, space, full_screen), modified);
 }
 
@@ -443,7 +429,7 @@ fn authoritative_active_window_snapshot_removes_missing_window_from_active_layou
         "active-space window missing from the authoritative snapshot must be removed immediately"
     );
     assert!(
-        !reactor.state.windows.is_window_visible(moved_wsid),
+        !reactor.windows().is_window_visible(moved_wsid),
         "authoritative snapshot reconcile should clear visible state for missing windows"
     );
     assert!(has_window_in_layout(&mut reactor, space, frame, retained));
@@ -474,7 +460,7 @@ fn discovery_minimize_transition_removes_window_from_layout() {
         "minimized window must be removed from layout when discovery reports it minimized"
     );
     assert!(
-        reactor.state.windows.window(wid).is_some_and(|window| window.info.is_minimized),
+        reactor.windows().window(wid).is_some_and(|window| window.info.is_minimized),
         "reactor state must keep the window marked minimized"
     );
 }
@@ -505,8 +491,7 @@ fn discovery_manageability_loss_removes_window_from_layout() {
     );
     assert!(
         reactor
-            .state
-            .windows
+            .windows()
             .window(wid)
             .is_some_and(|window| !window.matches_filter(WindowFilter::Manageable)),
         "reactor state must keep the window marked unmanageable"
@@ -522,7 +507,7 @@ fn repeated_ordered_out_ax_replacement_does_not_accumulate_layout_ghosts() {
     let middle = WindowId::new(pid, 2);
 
     apps.make_app_and_settle_on_screen(&mut reactor, screen, space, pid, make_windows(3));
-    let middle_info = reactor.state.windows.window(middle).unwrap().info.clone();
+    let middle_info = reactor.windows().window(middle).unwrap().info.clone();
     let wsid = reactor.test_window_server_id(middle);
     assert_eq!(test_layout(&mut reactor, space, screen).len(), 3);
 
@@ -530,7 +515,7 @@ fn repeated_ordered_out_ax_replacement_does_not_accumulate_layout_ghosts() {
         reactor.window_server().set_window_ordered_in(wsid, Some(false));
         reactor.handle_event(Event::WindowDestroyed(middle));
 
-        assert!(reactor.state.windows.record(middle).is_none());
+        assert!(reactor.windows().record(middle).is_none());
         assert_eq!(
             test_layout(&mut reactor, space, screen).len(),
             2,
@@ -562,18 +547,14 @@ fn authoritative_destruction_removes_window_server_backed_state() {
     apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(1));
     let wsid = reactor.test_window_server_id(wid);
 
-    let outcome = window_workflow::handle_window_destroyed(
-        &mut reactor.state,
-        &reactor.transactions,
-        &mut reactor.drag_manager,
-        window_workflow::WindowDestroyedPayload { window: wid },
-    )
-    .expect("authoritative destruction should be handled");
+    let outcome = reactor
+        .reduce_test_window_destroyed(wid)
+        .expect("authoritative destruction should be handled");
     reactor.apply_event_outcome(outcome);
 
-    assert!(reactor.state.windows.record(wid).is_none());
-    assert_eq!(reactor.state.windows.tracked_window_id(wsid), None);
-    assert_eq!(reactor.state.windows.workspace_info_for_window(wid), None);
+    assert!(reactor.windows().record(wid).is_none());
+    assert_eq!(reactor.windows().tracked_window_id(wsid), None);
+    assert_eq!(reactor.windows().workspace_info_for_window(wid), None);
 }
 
 #[test]
@@ -590,26 +571,23 @@ fn wsid_rekey_preserves_floating_membership_and_position() {
 
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     apps.simulate_until_quiet(&mut reactor);
-    assert!(reactor.layout_engine.is_window_floating(old_wid));
+    assert!(reactor.layout().is_window_floating(old_wid));
 
-    let active_workspace = reactor.layout_engine.active_workspace(space).expect("active workspace");
-    reactor.layout_engine.store_floating_position(
-        space,
-        active_workspace,
-        old_wid,
-        stored_position,
-    );
+    let active_workspace = reactor.layout().active_workspace(space).expect("active workspace");
+    reactor
+        .layout_mut()
+        .store_floating_position(space, active_workspace, old_wid, stored_position);
 
     rekey_window(&mut reactor, old_wid, new_wid);
 
-    assert!(!reactor.layout_engine.is_window_floating(old_wid));
-    assert!(reactor.layout_engine.is_window_floating(new_wid));
+    assert!(!reactor.layout().is_window_floating(old_wid));
+    assert!(reactor.layout().is_window_floating(new_wid));
     assert_eq!(
-        reactor.layout_engine.get_floating_position(space, active_workspace, old_wid),
+        reactor.layout().get_floating_position(space, active_workspace, old_wid),
         None
     );
     assert_eq!(
-        reactor.layout_engine.get_floating_position(space, active_workspace, new_wid),
+        reactor.layout().get_floating_position(space, active_workspace, new_wid),
         Some(stored_position)
     );
 }
@@ -647,7 +625,7 @@ fn dragging_a_floating_window_keeps_the_layout_skip_for_the_whole_gesture() {
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, floating));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     assert!(
-        reactor.layout_engine.is_window_floating(floating),
+        reactor.layout().is_window_floating(floating),
         "test setup must make the window floating"
     );
 
@@ -655,12 +633,12 @@ fn dragging_a_floating_window_keeps_the_layout_skip_for_the_whole_gesture() {
     reactor.ensure_active_drag(floating, &start);
     for x in [300., 500., 700.] {
         let frame = CGRect::new(CGPoint::new(x, 100.), start.size);
-        if let Some(state) = reactor.state.windows.window_mut(floating) {
+        if let Some(state) = reactor.windows_mut().window_mut(floating) {
             state.frame_monotonic = frame;
         }
         reactor.maybe_swap_on_drag_for_test(floating, frame);
         assert_eq!(
-            reactor.drag_manager.skip_layout_for_window,
+            reactor.drag().skip_layout_for_window,
             Some(floating),
             "the layout skip must survive the whole gesture; clearing it mid-drag lets the \
              next layout pass write the stored frame back underneath the user"
@@ -689,13 +667,13 @@ fn a_drag_over_a_column_holds_a_swap_until_the_overlap_ends() {
     let start = CGRect::new(CGPoint::new(0., 0.), CGSize::new(500., 1000.));
     let over = CGRect::new(CGPoint::new(500., 0.), CGSize::new(500., 1000.));
     for (window, frame) in [(dragged, start), (target, over)] {
-        reactor.state.windows.window_mut(window).unwrap().frame_monotonic = frame;
+        reactor.set_test_frame(window, frame);
     }
 
     reactor.ensure_active_drag(dragged, &start);
     reactor.maybe_swap_on_drag_for_test(dragged, over);
     assert_eq!(reactor.get_pending_drag_swap(), Some((dragged, target)));
-    assert_eq!(reactor.drag_manager.skip_layout_for_window, Some(dragged));
+    assert_eq!(reactor.drag().skip_layout_for_window, Some(dragged));
 
     reactor.maybe_swap_on_drag_for_test(dragged, start);
     assert_eq!(reactor.get_pending_drag_swap(), None, "the overlap ended");
@@ -761,7 +739,7 @@ fn strip_navigation_skips_floating_windows_and_resumes_where_it_was() {
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, floater));
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     assert!(
-        reactor.layout_engine.is_window_floating(floater),
+        reactor.layout().is_window_floating(floater),
         "test setup must make the third window floating"
     );
 
@@ -769,7 +747,7 @@ fn strip_navigation_skips_floating_windows_and_resumes_where_it_was() {
     // not on the first column and not on another floating window.
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
 
-    let focused = reactor.layout_engine.focused_window();
+    let focused = reactor.layout().focused_window();
     assert_ne!(
         focused,
         Some(floater),
@@ -810,8 +788,7 @@ mod strip_regroup {
     ) -> (Reactor, channels::Receiver<raise_manager::Event>, SpaceId) {
         let window = |idx: u32| WindowId::new(pids[idx as usize - 1], idx);
         let mut reactor = test_reactor();
-        let (raise_tx, mut raise_rx) = channels::channel();
-        reactor.communication_manager.raise_manager_tx = raise_tx;
+        let mut raise_rx = reactor.connect_test_raises();
         let space = SpaceId::new(1);
         set_space_membership(&reactor, &[(space, &[901, 902, 903, 904])]);
         reactor.handle_event(space_state_event(vec![SCREEN], vec![Some(space)]));
@@ -842,11 +819,11 @@ mod strip_regroup {
         reactor.send_layout_event(LayoutEvent::WindowFocused(space, window(1)));
         reactor.send_layout_event(LayoutEvent::WindowFocused(space, window(4)));
         reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
-        assert!(reactor.layout_engine.is_window_floating(window(4)));
+        assert!(reactor.layout().is_window_floating(window(4)));
         // The frames the strip has on screen right now: two columns visible, the third parked off
         // the right edge. Set directly; the engine's scroll position is not what these tests are about.
         for (idx, frame) in [(1, left), (2, right), (3, parked), (4, settings)] {
-            if let Some(w) = reactor.state.windows.window_mut(window(idx)) {
+            if let Some(w) = reactor.windows_mut().window_mut(window(idx)) {
                 w.frame_monotonic = frame;
             }
         }
@@ -1100,7 +1077,7 @@ mod strip_regroup {
 
         reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
 
-        assert_eq!(reactor.layout_engine.focused_window(), Some(WindowId::new(1, 2)));
+        assert_eq!(reactor.layout().focused_window(), Some(WindowId::new(1, 2)));
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(
             request.raise_windows,
@@ -1128,7 +1105,7 @@ mod strip_regroup {
         let right = CGRect::new(CGPoint::new(867., 32.), CGSize::new(859., 1081.));
         let parked = CGRect::new(CGPoint::new(1727., 32.), CGSize::new(859., 1081.));
         for (idx, frame) in [(1, left), (2, right), (3, parked)] {
-            if let Some(w) = reactor.state.windows.window_mut(WindowId::new(1, idx)) {
+            if let Some(w) = reactor.windows_mut().window_mut(WindowId::new(1, idx)) {
                 w.frame_monotonic = frame;
             }
         }
@@ -1139,11 +1116,11 @@ mod strip_regroup {
 
         reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
 
-        assert_eq!(reactor.layout_engine.focused_window(), Some(WindowId::new(1, 3)));
+        assert_eq!(reactor.layout().focused_window(), Some(WindowId::new(1, 3)));
         assert!(
             !reactor.affinity().is_window_parked_offscreen(WindowId::new(1, 3)),
             "the layout pass brought the target on screen: {:?}",
-            reactor.state.windows.window(WindowId::new(1, 3)).map(|w| w.frame_monotonic)
+            reactor.windows().window(WindowId::new(1, 3)).map(|w| w.frame_monotonic)
         );
         let first = raise_request(&mut raise_rx).expect("the focus move's own raise");
         assert_eq!(
@@ -1223,7 +1200,7 @@ mod strip_regroup {
             Some(toolbar),
             "setup: the toolbar has focus"
         );
-        assert_eq!(reactor.layout_engine.focused_window(), Some(WindowId::new(1, 1)));
+        assert_eq!(reactor.layout().focused_window(), Some(WindowId::new(1, 1)));
         assert!(
             raise_request(&mut raise_rx).is_none(),
             "the strip must not be lifted over the call"
@@ -1239,14 +1216,13 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.animate = true;
+    reactor.settings_mut().animate = true;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
     apps.requests();
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
 
     // Two windows moving by opposite vectors, so this is not a strip pan and goes to the per-window
     // path. The third keeps the frame it already has.
@@ -1254,7 +1230,7 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     let mut layout = Vec::new();
     for idx in 1..=3u32 {
         let wid = WindowId::new(1, idx);
-        let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+        let frame = reactor.test_frame(wid);
         let target = match idx {
             1 => CGRect::new(CGPoint::new(frame.origin.x + 120., frame.origin.y), frame.size),
             2 => CGRect::new(CGPoint::new(frame.origin.x - 120., frame.origin.y), frame.size),
@@ -1317,7 +1293,7 @@ fn a_pass_s_requests_carry_each_tiled_window_s_place_on_the_strip() {
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
     apps.simulate_until_quiet(&mut reactor);
-    assert!(reactor.layout_engine.is_window_floating(floating));
+    assert!(reactor.layout().is_window_floating(floating));
     while rx.try_recv().is_ok() {}
     apps.requests();
     let before = reactor.test_strip_layout(space);
@@ -1380,7 +1356,7 @@ fn a_request_carries_the_ring_and_focus_its_window_ends_with() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.animate = true;
+    reactor.settings_mut().animate = true;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
@@ -1390,12 +1366,11 @@ fn a_request_carries_the_ring_and_focus_its_window_ends_with() {
     reactor.handle_test_batch(Vec::new());
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, second));
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
     let layout: Vec<(WindowId, CGRect)> = [first, second, third]
         .into_iter()
         .map(|wid| {
-            let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+            let frame = reactor.test_frame(wid);
             let shift = if wid == first { 120. } else { -120. };
             (
                 wid,
@@ -1413,7 +1388,7 @@ fn a_request_carries_the_ring_and_focus_its_window_ends_with() {
     }
     let worn = |wid| animated.iter().find(|request| request.window == wid).expect("requested").worn;
     let decoration = crate::decorations::domain::style::Decoration {
-        ring: Some(reactor.config.settings.decorations.focus_ring.band),
+        ring: Some(reactor.settings().decorations.focus_ring.band),
         ..Default::default()
     };
     use crate::decorations::domain::style::Ring;
@@ -1435,19 +1410,18 @@ fn a_one_point_move_is_placed_rather_than_animated() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.animate = true;
+    reactor.settings_mut().animate = true;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     apps.requests();
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
 
     let mut layout = Vec::new();
     for idx in 1..=2u32 {
         let wid = WindowId::new(1, idx);
-        let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+        let frame = reactor.test_frame(wid);
         let target = if idx == 1 {
             CGRect::new(CGPoint::new(frame.origin.x + 1., frame.origin.y), frame.size)
         } else {
@@ -1484,14 +1458,13 @@ fn a_destroyed_window_does_not_exit_when_animations_are_off() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.animate = false;
+    reactor.settings_mut().animate = false;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     apps.requests();
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
 
     let wid = WindowId::new(1, 1);
     reactor.handle_event(Event::WindowDestroyed(wid));
@@ -1507,7 +1480,7 @@ fn a_destroyed_window_does_not_exit_when_animations_are_off() {
         );
     }
     assert!(
-        reactor.state.windows.window(wid).is_none(),
+        reactor.windows().window(wid).is_none(),
         "the window state is still removed"
     );
 }
@@ -1519,19 +1492,18 @@ fn a_layout_pass_does_not_fly_when_animations_are_off() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.animate = false;
+    reactor.settings_mut().animate = false;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
     apps.requests();
 
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    let mut animation_rx = reactor.connect_test_transitions();
 
     let mut layout = Vec::new();
     for idx in 1..=3u32 {
         let wid = WindowId::new(1, idx);
-        let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+        let frame = reactor.test_frame(wid);
         let target = match idx {
             1 => CGRect::new(CGPoint::new(frame.origin.x + 120., frame.origin.y), frame.size),
             2 => CGRect::new(CGPoint::new(frame.origin.x - 120., frame.origin.y), frame.size),
@@ -1606,13 +1578,14 @@ impl Strip {
     /// `count` columns of one window each, `window` the first and `other` the second.
     fn with_columns(count: usize) -> Self {
         let (mut apps, mut reactor) = test_context();
-        reactor.config.settings.layout.gaps.struts = Edges {
-            top: 8.,
-            left: 8.,
-            bottom: 8.,
-            right: 8.,
-        };
-        reactor.layout_engine.set_layout_settings(&reactor.config.settings.layout);
+        reactor.set_test_layout_settings(|layout| {
+            layout.gaps.struts = Edges {
+                top: 8.,
+                left: 8.,
+                bottom: 8.,
+                right: 8.,
+            };
+        });
         let space = SpaceId::new(1);
         let members: Vec<u32> = (1..=count as u32).collect();
         set_space_membership(&reactor, &[(space, members.as_slice())]);
@@ -1647,13 +1620,11 @@ impl Strip {
     fn tiling(&self) -> CGRect {
         compute_tiling_area(
             VISIBLE,
-            &self.reactor.config.settings.layout.gaps.effective_for_display(None),
+            &self.reactor.settings().layout.gaps.effective_for_display(None),
         )
     }
 
-    fn frame_of(&self, window: WindowId) -> CGRect {
-        self.reactor.state.windows.window(window).expect("tracked").frame_monotonic
-    }
+    fn frame_of(&self, window: WindowId) -> CGRect { self.reactor.test_frame(window) }
 
     fn press(&mut self, location: CGPoint, double_click: bool) {
         self.reactor.handle_event(Event::LeftMouseDown(LeftPress {
@@ -1703,7 +1674,7 @@ impl Strip {
 }
 
 fn reload_with_border(reactor: &mut Reactor, width: f64) {
-    let mut config = reactor.config.clone();
+    let mut config = reactor.config().clone();
     config.settings.decorations.border.on = true;
     config.settings.decorations.border.band.width = width;
     reactor.handle_event(Event::ConfigUpdated(Box::new(config)));
@@ -1772,7 +1743,7 @@ fn a_floating_window_keeps_its_frame_under_a_border() {
     reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
     apps.simulate_until_quiet(&mut reactor);
     let floating = WindowId::new(1, 1);
-    assert!(reactor.layout_engine.is_window_floating(floating));
+    assert!(reactor.layout().is_window_floating(floating));
     let before = test_layout(&mut reactor, space, screen);
 
     reload_with_border(&mut reactor, 4.);
@@ -1813,10 +1784,10 @@ fn the_drag_session_keeps_the_frame_its_window_started_from() {
 }
 
 fn active_session(strip: &Strip) -> &DragSession {
-    let DragState::Active { session } = &strip.reactor.drag_manager.drag_state else {
+    let DragState::Active { session } = &strip.reactor.drag().drag_state else {
         panic!(
             "a drag under the held button: {:?}",
-            strip.reactor.drag_manager.drag_state
+            strip.reactor.drag().drag_state
         );
     };
     session
@@ -1862,12 +1833,10 @@ fn the_drag_session_keeps_the_end_its_reports_moved_last_until_the_release() {
 #[test]
 fn every_report_of_a_drag_measures_from_where_the_drag_started() {
     let mut strip = Strip::with_columns(3);
-    strip.reactor.config.settings.layout.scrolling.center_focused_column =
-        crate::layout::settings::CenterFocusedColumn::Always;
-    strip
-        .reactor
-        .layout_engine
-        .set_layout_settings(&strip.reactor.config.settings.layout);
+    strip.reactor.set_test_layout_settings(|layout| {
+        layout.scrolling.center_focused_column =
+            crate::layout::settings::CenterFocusedColumn::Always;
+    });
     strip
         .reactor
         .send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
@@ -1905,11 +1874,9 @@ fn left_edge_drag_released_over(under_cursor: Option<fn(&Strip) -> WindowId>) ->
     let mut strip = Strip::new();
     // Narrow enough that column 1 stands clear of the screen's right edge, where the reveal alone
     // would put its right edge back.
-    strip.reactor.config.settings.layout.scrolling.column_width_ratio = 0.4;
-    strip
-        .reactor
-        .layout_engine
-        .set_layout_settings(&strip.reactor.config.settings.layout);
+    strip.reactor.set_test_layout_settings(|layout| {
+        layout.scrolling.column_width_ratio = 0.4;
+    });
     strip
         .reactor
         .send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
@@ -1964,7 +1931,7 @@ fn a_left_edge_drag_let_go_over_its_own_window_keeps_its_right_edge() {
 #[test]
 fn a_left_edge_drag_let_go_over_the_window_behind_its_edge_keeps_its_focus_and_right_edge() {
     let strip = left_edge_drag_released_over(Some(|strip| strip.window));
-    assert_eq!(strip.reactor.layout_engine.focused_window(), Some(strip.other));
+    assert_eq!(strip.reactor.layout().focused_window(), Some(strip.other));
 }
 
 /// Kai, 2026-10-06, after the left edge first grew to the left: "it makes a weird back and fourth
@@ -1975,20 +1942,17 @@ fn a_left_edge_drag_let_go_over_the_window_behind_its_edge_keeps_its_focus_and_r
 #[test]
 fn a_left_edge_drags_release_draws_the_dragged_window_from_where_it_was_let_go() {
     let mut strip = Strip::new();
-    strip.reactor.config.settings.layout.scrolling.column_width_ratio = 0.4;
-    strip
-        .reactor
-        .layout_engine
-        .set_layout_settings(&strip.reactor.config.settings.layout);
+    strip.reactor.set_test_layout_settings(|layout| {
+        layout.scrolling.column_width_ratio = 0.4;
+    });
     strip
         .reactor
         .send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.other));
     strip.settle(strip.other);
     let start = strip.on_screen(strip.other);
     let before = strip.on_screen(strip.window);
-    strip.reactor.config.settings.animate = true;
-    let (animation_tx, mut rx) = crate::app::channels::channel();
-    strip.reactor.communication_manager.transitions_tx = Some(animation_tx);
+    strip.reactor.settings_mut().animate = true;
+    let mut rx = strip.reactor.connect_test_transitions();
 
     strip.press(CGPoint::new(start.origin.x, start.mid().y), false);
     let mut dropped = start;
@@ -2044,14 +2008,12 @@ fn a_left_edge_drags_release_draws_the_dragged_window_from_where_it_was_let_go()
 fn a_left_edge_drags_release_leaves_the_dragged_window_exactly_where_it_was_let_go() {
     let mut strip = Strip::with_columns(3);
     let last = WindowId::new(1, 3);
-    strip.reactor.config.settings.layout.gaps.gaps = 3.;
-    strip.reactor.config.settings.layout.scrolling.column_width_ratio = 0.5;
-    strip.reactor.config.settings.layout.scrolling.center_focused_column =
-        crate::layout::settings::CenterFocusedColumn::Never;
-    strip
-        .reactor
-        .layout_engine
-        .set_layout_settings(&strip.reactor.config.settings.layout);
+    strip.reactor.set_test_layout_settings(|layout| {
+        layout.gaps.gaps = 3.;
+        layout.scrolling.column_width_ratio = 0.5;
+        layout.scrolling.center_focused_column =
+            crate::layout::settings::CenterFocusedColumn::Never;
+    });
     for _ in 0..2 {
         strip
             .reactor
@@ -2063,9 +2025,8 @@ fn a_left_edge_drags_release_leaves_the_dragged_window_exactly_where_it_was_let_
         (start.max().x - strip.tiling().max().x).abs() <= 1.,
         "flush with the right edge: {start:?}"
     );
-    strip.reactor.config.settings.animate = true;
-    let (animation_tx, mut rx) = crate::app::channels::channel();
-    strip.reactor.communication_manager.transitions_tx = Some(animation_tx);
+    strip.reactor.settings_mut().animate = true;
+    let mut rx = strip.reactor.connect_test_transitions();
 
     strip.press(CGPoint::new(start.origin.x, start.mid().y), false);
     let mut dropped = start;
@@ -2110,21 +2071,18 @@ fn a_left_edge_drags_release_leaves_the_dragged_window_exactly_where_it_was_let_
 #[test]
 fn a_left_edge_shrink_flush_right_leaves_the_column_beyond_the_right_edge_where_it_was() {
     let mut strip = Strip::with_columns(3);
-    let settings = &mut strip.reactor.config.settings.layout;
-    settings.scrolling.column_width_ratio = 0.6;
-    // The live display's gaps: the column after the flush one starts on the screen's edge and is
-    // parked in the corner.
-    settings.gaps.gaps = 3.;
-    settings.gaps.struts = Edges {
-        top: 0.,
-        left: 0.,
-        bottom: 0.,
-        right: 0.,
-    };
-    strip
-        .reactor
-        .layout_engine
-        .set_layout_settings(&strip.reactor.config.settings.layout);
+    strip.reactor.set_test_layout_settings(|settings| {
+        settings.scrolling.column_width_ratio = 0.6;
+        // The live display's gaps: the column after the flush one starts on the screen's edge and is
+        // parked in the corner.
+        settings.gaps.gaps = 3.;
+        settings.gaps.struts = Edges {
+            top: 0.,
+            left: 0.,
+            bottom: 0.,
+            right: 0.,
+        };
+    });
     strip
         .reactor
         .send_layout_event(LayoutEvent::WindowFocused(strip.space, strip.window));
@@ -2145,9 +2103,8 @@ fn a_left_edge_shrink_flush_right_leaves_the_column_beyond_the_right_edge_where_
         "parked in the corner: {parked:?}"
     );
     let window_before = strip.on_screen(strip.window);
-    strip.reactor.config.settings.animate = true;
-    let (animation_tx, mut rx) = crate::app::channels::channel();
-    strip.reactor.communication_manager.transitions_tx = Some(animation_tx);
+    strip.reactor.settings_mut().animate = true;
+    let mut rx = strip.reactor.connect_test_transitions();
 
     strip.press(CGPoint::new(start.origin.x, start.mid().y), false);
     for shrunk in [30., 60., 90.] {
@@ -2213,12 +2170,12 @@ mod title_bar_zoom {
 
     impl Strip {
         fn clamped_width(&self) -> f64 {
-            let max = self.reactor.config.settings.layout.scrolling.max_column_width_ratio;
+            let max = self.reactor.settings().layout.scrolling.max_column_width_ratio;
             (self.tiling().size.width * max).round()
         }
 
         fn full_width(&self) -> Option<bool> {
-            self.reactor.layout_engine.full_width_of_column(self.space, self.window)
+            self.reactor.layout().full_width_of_column(self.space, self.window)
         }
 
         fn title_bar_of(&self, window: WindowId) -> CGPoint {
@@ -2315,7 +2272,7 @@ mod title_bar_zoom {
         let mut strip = Strip::new();
         strip.zoom(DISPLAY);
         assert_eq!(strip.full_width(), Some(false));
-        assert_eq!(strip.reactor.drag_manager.title_bar_click, None, "spent");
+        assert_eq!(strip.reactor.drag().title_bar_click, None, "spent");
     }
 
     #[test]
@@ -2324,7 +2281,7 @@ mod title_bar_zoom {
             let mut strip = Strip::new();
             if stale {
                 let long_ago = Instant::now() - Duration::from_secs(2);
-                strip.reactor.drag_manager.title_bar_click =
+                strip.reactor.drag_mut().title_bar_click =
                     Some(Evidence::new(strip.window, long_ago));
             }
             strip.app_reports(strip.window, VISIBLE, MouseState::Up);
@@ -2341,10 +2298,10 @@ mod title_bar_zoom {
         ] {
             let mut strip = Strip::new();
             strip.double_click_title_bar();
-            assert!(strip.reactor.drag_manager.title_bar_click.is_some());
+            assert!(strip.reactor.drag().title_bar_click.is_some());
 
             strip.reactor.handle_test_layout_command(command.clone());
-            assert_eq!(strip.reactor.drag_manager.title_bar_click, None, "{command:?}");
+            assert_eq!(strip.reactor.drag().title_bar_click, None, "{command:?}");
             strip.settle(strip.window);
             assert_eq!(strip.full_width(), Some(maximised), "{command:?}");
             let tiling = strip.tiling();
@@ -2377,10 +2334,7 @@ mod title_bar_zoom {
 
         // The app putting its own zoom frame back after rini's write.
         strip.app_reports(strip.window, VISIBLE, MouseState::Up);
-        assert_ne!(
-            strip.reactor.drag_manager.skip_layout_for_window,
-            Some(strip.window)
-        );
+        assert_ne!(strip.reactor.drag().skip_layout_for_window, Some(strip.window));
         assert_eq!(
             strip.settle(strip.window).last(),
             Some(&full),
@@ -2462,7 +2416,7 @@ mod title_bar_zoom {
             before.origin,
             CGSize::new(before.size.width - 3.0, before.size.height),
         );
-        strip.reactor.transactions.insert(wsid, txid, pending);
+        strip.reactor.transactions_mut().insert(wsid, txid, pending);
 
         strip.zoom(VISIBLE);
         strip.assert_ends_at_full_width("over a pending write");
@@ -2532,7 +2486,7 @@ mod title_bar_zoom {
             at: Instant::now(),
             double_click: true,
         }));
-        assert_eq!(reactor.drag_manager.title_bar_click, None);
+        assert_eq!(reactor.drag().title_bar_click, None);
         reactor.handle_event(Event::WindowFrameChanged(
             wid,
             screen,
@@ -2541,8 +2495,8 @@ mod title_bar_zoom {
             Some(MouseState::Up),
         ));
 
-        assert!(reactor.layout_engine.is_window_floating(wid));
-        assert_eq!(reactor.layout_engine.full_width_of_column(space, wid), None);
+        assert!(reactor.layout().is_window_floating(wid));
+        assert_eq!(reactor.layout().full_width_of_column(space, wid), None);
         assert_eq!(laid_out_frame(&mut reactor, space, screen, wid), before);
         assert_eq!(before, Some(floating_frame));
     }
@@ -2586,9 +2540,8 @@ fn moving_strip_with(
     apps.make_app_and_settle(&mut reactor, 1, make_windows(count));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 1)));
     apps.simulate_until_quiet(&mut reactor);
-    reactor.config.settings.animate = true;
-    let (animation_tx, animation_rx) = crate::app::channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    reactor.settings_mut().animate = true;
+    let animation_rx = reactor.connect_test_transitions();
     (apps, reactor, animation_rx)
 }
 
@@ -2659,7 +2612,7 @@ fn every_mod_r_on_the_last_column_flies() {
                 _ => {}
             }
             land_layout_passes(&mut apps, &mut reactor, &mut rx);
-            let full = reactor.layout_engine.full_width_of_column(space, last);
+            let full = reactor.layout().full_width_of_column(space, last);
             assert_eq!(full, Some(start == "Mod+F"), "{case}");
 
             for press in 0..5 {
@@ -2738,10 +2691,7 @@ fn a_resize_key_and_the_full_width_toggle_on_the_last_column_fly() {
                 &format!("{columns} columns, {press}"),
             );
         }
-        assert_eq!(
-            reactor.layout_engine.full_width_of_column(space, last),
-            Some(false)
-        );
+        assert_eq!(reactor.layout().full_width_of_column(space, last), Some(false));
     }
 }
 
@@ -2781,7 +2731,7 @@ fn a_strip_movement_names_the_key_window_as_it_went_out() {
     let (first, second, third) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     strip_movements(&mut rx);
-    reactor.main_window_tracker.set_focus_for_test(second);
+    reactor.set_test_focus(second);
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     let flight = strip_movements(&mut rx).pop().expect("the press scrolls the strip");
     assert_eq!((flight.focused_before, flight.key), (Some(second), Some(second)));
@@ -2868,11 +2818,10 @@ fn a_drag_released_inside_a_frame_report_is_the_reports_press() {
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
-    reactor.config.settings.animate = true;
-    let (animation_tx, mut rx) = crate::app::channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    reactor.settings_mut().animate = true;
+    let mut rx = reactor.connect_test_transitions();
     let window = WindowId::new(1, 1);
-    let frame = reactor.state.windows.window(window).expect("window").frame_monotonic;
+    let frame = reactor.test_frame(window);
     let dragged = |dx, mouse| {
         let to = CGRect::new(
             CGPoint::new(frame.origin.x + dx, frame.origin.y + 50.),
@@ -2887,7 +2836,7 @@ fn a_drag_released_inside_a_frame_report_is_the_reports_press() {
         at: Instant::now(),
         what: "window_frame_changed",
     };
-    reactor.cause = report;
+    reactor.set_test_cause(report);
     let outcome = reactor.dispatch_workflow(dragged(210., MouseState::Up)).unwrap();
     assert!(
         outcome.dispatch_mouse_up,
@@ -2898,7 +2847,7 @@ fn a_drag_released_inside_a_frame_report_is_the_reports_press() {
     let sent = causes(&mut rx);
     assert!(!sent.is_empty(), "the mouse up lays the strip out again");
     assert!(sent.iter().all(|(_, cause)| *cause == report), "{sent:?}");
-    assert_eq!(reactor.cause, report);
+    assert_eq!(*reactor.cause(), report);
 }
 
 /// Reported 2026-09-30: only the 50/50 pair at the start of a strip showed a move; everywhere else
@@ -3024,7 +2973,7 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
             "{direction:?}: {nudge:?}"
         );
         assert_eq!(nudge.y, 0.0);
-        let plain = reactor.config.settings.animation_duration;
+        let plain = reactor.settings().animation_duration;
         assert!(
             (flight.duration.as_secs_f64() - plain).abs() < 1e-6,
             "{:?}",
@@ -3068,9 +3017,7 @@ fn a_move_the_camera_does_not_follow_is_not_nudged() {
     assert_eq!(flight.from_offset.x, 0.0, "the pair was already in view");
     assert_eq!(flight.windows.iter().filter(|w| w.from.is_some()).count(), 2);
     assert_eq!(flight.accent, None);
-    assert!(
-        (flight.duration.as_secs_f64() - reactor.config.settings.animation_duration).abs() < 1e-6
-    );
+    assert!((flight.duration.as_secs_f64() - reactor.settings().animation_duration).abs() < 1e-6);
 }
 
 /// A move that scrolls nothing places only the two windows that changed places: a column on screen
@@ -3079,7 +3026,7 @@ fn a_move_the_camera_does_not_follow_is_not_nudged() {
 fn a_move_that_scrolls_nothing_places_only_the_pair() {
     let (_apps, mut reactor, mut rx) = moving_strip(0.33, 4);
     let unmoved = WindowId::new(1, 3);
-    let on_screen = reactor.state.windows.window(unmoved).unwrap().frame_monotonic;
+    let on_screen = reactor.test_frame(unmoved);
     assert!(on_screen.max().x <= 1728.0, "{on_screen:?}");
 
     reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
@@ -3107,10 +3054,7 @@ fn a_move_that_drops_the_centring_starts_every_window_where_it_was() {
     let was: Vec<(WindowId, CGRect)> = (1..=5)
         .map(|idx| {
             let window = WindowId::new(1, idx);
-            (
-                window,
-                reactor.state.windows.window(window).unwrap().frame_monotonic,
-            )
+            (window, reactor.test_frame(window))
         })
         .collect();
 
