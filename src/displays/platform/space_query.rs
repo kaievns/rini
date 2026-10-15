@@ -13,7 +13,7 @@ pub fn space_is_fullscreen(sid: u64) -> bool {
     unsafe { SLSSpaceGetType(*G_CONNECTION, sid) == 4 }
 }
 /// The space on the display currently holding WindowServer focus. With two displays this needs
-/// checking (`roadmap.md`, "Known bugs").
+/// checking (`specs/focus.md`, "Which window is focused").
 pub fn active_space() -> SpaceId {
     SpaceId::new(unsafe { CGSGetActiveSpace(*G_CONNECTION) })
 }

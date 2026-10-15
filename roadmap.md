@@ -33,11 +33,9 @@ requirement itself; this list only collects them.
 - **Urgency that changes mid-flight turns at the lift.** A tile keeps the urgency its pass gave it
   (`specs/decorations.md`, "Urgent").
 - **Which space `CGSGetActiveSpace` answers with two displays needs checking.** The focus
-  resolver looks for the key window on that space (`src/displays/platform/window_notify.rs`). With
-  one display it answered that display's current space (probed 2026-10-15). A comment inherited
-  from rift said it "does not work", with no case recorded. If it answers another display's space,
-  focus changes on the focused display are lost or misreported. One read with focus on the second
-  display settles it.
+  resolver looks for the key window on that space, probed only with one display. A comment
+  inherited from rift said it "does not work", with no case recorded (`specs/focus.md`, "Which
+  window is focused").
 - **A restart once restored a layout mirrored.** After a deploy restart on 2026-10-10 the columns
   came back in reverse order, with one window stacked that had stood alone. Seen once, not
   reproduced; the cause is not known.

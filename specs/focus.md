@@ -39,6 +39,12 @@ more than a "correct" choice by the layout.
 > **Found 2026-10-15, not reported.** The identity change carried the window's place in the focus
 > order and nothing else: the window-server focus and the app's main window kept the old id.
 
+- A focus change MUST be resolved on the space of the display it happened on. Needs checking with
+  two displays: the resolver looks for the key window on the space `CGSGetActiveSpace` answers
+  (`src/displays/platform/window_notify.rs`). With one display it answered that display's current
+  space (probed 2026-10-15). If with two it answers the other display's space, focus changes on the
+  focused display are lost or misreported. One read with focus on the second display settles it.
+
 ## Rapid presses
 
 - A press MUST move focus from where the previous press put it, and a burst MUST NOT carry the strip

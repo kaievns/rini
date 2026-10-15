@@ -16,7 +16,8 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 ## Showing it
 
 - There MUST be one bar per display, 32pt tall, across the top. `bar { off; }` in the config turns
-  every bar off.
+  every bar off. A bar another application draws in its place learns what rini shows by polling
+  `rini-cli query`: rini pushes it no events (`specs/README.md`, "What rini is").
 - With every bar off, a flight MUST keep visible the bar another application draws under the
   overlay, such as sketchybar's: it pictures that bar and draws the picture over itself. With rini's
   bar on it MUST NOT picture one: rini's bar sits above the overlay, and nothing is under it.

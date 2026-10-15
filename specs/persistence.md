@@ -58,16 +58,17 @@ the strip fresh.
   space is one nothing reaches again. A Desktop macOS still lists MUST stay though no screen shows
   it, because switching back to it shows the workspace it showed, and a save MUST forget nothing
   while the window server has not listed the spaces, since the screens alone leave every Desktop off
-  screen out. A space a display is remembered on
-  MUST stay, windows or none, because the next start moves
-  its layouts and the workspace it showed onto the display's new id; a space a window is on MUST stay,
-  because that window can come back to it. Nothing is forgotten before the startup restore has moved
-  the saved spaces onto this session's ids, since until then every one of them looks dead.
+  screen out. A space a display is remembered on MUST stay, windows or none, because the next start
+  moves its layouts and the workspace it showed onto the display's new id; a space a window is on
+  MUST stay, because that window can come back to it. Nothing is forgotten before the startup
+  restore has moved the saved spaces onto this session's ids, since until then every one of them
+  looks dead.
 
 > **Reported 2026-10-15.** The dead-code sweep found Kai's `~/.rini/layout.ron` holding 68 workspace
 > layouts over 17 native space ids, only 3 of them mapped to a display. Kai's decision: fix it. On
-> the copy taken that day, the rule forgets 14 of 18 space ids, all of them empty, and keeps the 4
-> displays' spaces; the file goes from 56069 to 38532 bytes.
+> the copy taken that day, with the built-in display alone attached and macOS listing its 1 Desktop,
+> the rule forgets 14 of 18 space ids, all of them empty, and keeps the 4 spaces a display is
+> remembered on, the built-in's Desktop among them; the file goes from 56069 to 38532 bytes.
 
 ## Where it lives
 
