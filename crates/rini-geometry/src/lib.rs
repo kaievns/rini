@@ -222,17 +222,17 @@ pub fn park_entry_frame<U>(park: Rect<U>, destination: Rect<U>, display: Rect<U>
 
 /// `frame` moved to the middle of `container`, then pulled back so no edge sits outside it.
 ///
-/// A frame larger than the container keeps its size — the caller asked to move it, not resize it —
-/// and the clamp order leaves its far edge on the container's far edge, so it overflows past the
-/// origin. Callers that cannot accept an overflow must resize before calling.
+/// A frame larger than the container keeps its size, since the caller asked to move it, not resize
+/// it, and keeps its top-left corner on the container's, so a window's title bar stays on the
+/// display and the frame overflows past the far edges.
 pub fn centered_in(frame: ic::CGRect, container: ic::CGRect) -> ic::CGRect {
     let mut origin = container.mid();
     origin.x -= frame.size.width / 2.0;
     origin.y -= frame.size.height / 2.0;
     let min = container.min();
     let max = container.max();
-    origin.x = origin.x.max(min.x).min(max.x - frame.size.width);
-    origin.y = origin.y.max(min.y).min(max.y - frame.size.height);
+    origin.x = origin.x.min(max.x - frame.size.width).max(min.x);
+    origin.y = origin.y.min(max.y - frame.size.height).max(min.y);
     ic::CGRect::new(origin, frame.size)
 }
 
@@ -446,14 +446,15 @@ mod tests {
         }
     }
 
-    // An oversized frame keeps its size, so one pair of edges has to leave the container. The clamp
-    // order decides which: the far edge lands on the container's far edge and the origin overflows.
     #[test]
-    fn an_oversized_frame_keeps_its_size_and_overflows_past_the_origin() {
-        let centered = centered_in(rect(0.0, 0.0, 900.0, 700.0), rect(0.0, 0.0, 500.0, 400.0));
+    fn an_oversized_frame_keeps_its_size_and_its_top_left_on_the_container() {
+        let container = rect(1728.0, -300.0, 500.0, 400.0);
+        let centered = centered_in(rect(0.0, 0.0, 900.0, 700.0), container);
         assert_eq!(centered.size, ic::CGSize::new(900.0, 700.0));
-        assert_eq!(centered.origin, ic::CGPoint::new(-400.0, -300.0));
-        assert_eq!(centered.max(), ic::CGPoint::new(500.0, 400.0));
+        assert_eq!(centered.origin, container.origin);
+
+        let only_wider = centered_in(rect(0.0, 0.0, 900.0, 100.0), container);
+        assert_eq!(only_wider.origin, ic::CGPoint::new(1728.0, -150.0));
     }
 
     /// The display's own origin, not its usable frame's: the overlay spans the menu bar band, so a

@@ -63,6 +63,9 @@ context is arranged differently depending on what is plugged in, and rini rememb
   only thing that brings the window back.
 - Moving a window to another display MUST be an intent, so the window stays there across a later
   unplug and replug.
+- A window moved to another display, by the user or by its return on replug, MUST land centred on
+  that display and wholly on it. One larger than the display MUST keep its size and put its top-left
+  corner on the display's, so its title bar stays on screen rather than above or left of it.
 - `next` MUST cycle and wrap, so a single key moves a window back and forth between two displays. A
   direction MUST NOT wrap: right from the rightmost display names nothing.
 
@@ -80,6 +83,11 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > Records moved from one key per display to one per arrangement. The case that could not be expressed
 > before — a window on the SAME display in two arrangements wanting a different width in each — is the
 > one this answers.
+
+> **Found 2026-10-15, not reported.** The explicit move and the return on replug placed a window with
+> two copies of one rule that disagreed on a window larger than the display: the move kept its
+> bottom-right corner on the display, which put its title bar above and left of it, and the return kept
+> its top-left. Both now keep the top-left.
 
 ## Pinning an app to a display
 

@@ -3197,23 +3197,17 @@ impl Reactor {
             // Reassignment alone is not enough. WindowServer decides which space a window
             // belongs to from where it physically is, so a window still sitting on the old
             // display's coordinates gets reported back on the old space at the next
-            // snapshot and the repatriation is silently undone. This mirrors what an
-            // explicit move-to-display does; tiling supplies the final frame on the
-            // following arrange pass.
-            let mut target_frame = self
-                .state
-                .windows
-                .window(window)
-                .map(|window| window.frame_monotonic)
-                .unwrap_or(target_screen.frame);
-            let mut origin = target_screen.frame.mid();
-            origin.x -= target_frame.size.width / 2.0;
-            origin.y -= target_frame.size.height / 2.0;
-            let min = target_screen.frame.min();
-            let max = target_screen.frame.max();
-            origin.x = origin.x.max(min.x).min((max.x - target_frame.size.width).max(min.x));
-            origin.y = origin.y.max(min.y).min((max.y - target_frame.size.height).max(min.y));
-            target_frame.origin = origin;
+            // snapshot and the repatriation is silently undone. It is placed as an explicit
+            // move-to-display places it; tiling supplies the final frame on the following
+            // arrange pass.
+            let target_frame = rini_geometry::centered_in(
+                self.state
+                    .windows
+                    .window(window)
+                    .map(|window| window.frame_monotonic)
+                    .unwrap_or(target_screen.frame),
+                target_screen.frame,
+            );
 
             let window_server_id =
                 self.state.windows.window(window).and_then(|window| window.info.sys_id);
