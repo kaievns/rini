@@ -16,7 +16,7 @@ use crate::layout::domain::strip::{
     Reveal, anchor_x, centres, column_starts, offset_keeping_right_edge, place_offset, place_share,
     reveal_offset,
 };
-use crate::layout::settings::{Gaps, ScrollingLayoutSettings, WindowInsertionPoint};
+use crate::layout::settings::{Gaps, ScrollingLayoutSettings};
 use crate::layout::{Direction, LayoutId, ResizeOrientation};
 use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -920,14 +920,8 @@ impl ScrollingLayoutSystem {
         }
     }
 
-    fn insert_new_column(
-        state: &mut LayoutState,
-        wid: WindowId,
-        insertion_point: WindowInsertionPoint,
-    ) {
-        if insertion_point == WindowInsertionPoint::EndOfTree {
-            state.insert_column_at_end(wid);
-        } else if let Some((col_idx, _)) = state.selected_location() {
+    fn insert_new_column(state: &mut LayoutState, wid: WindowId) {
+        if let Some((col_idx, _)) = state.selected_location() {
             state.insert_column_after(col_idx, wid);
         } else if !state.columns.is_empty() {
             state.insert_column_after(0, wid);
@@ -1603,11 +1597,10 @@ impl ScrollingLayoutSystem {
 
     pub fn add_window_after_selection(&mut self, layout: LayoutId, wid: WindowId) {
         let reveals_only = self.settings.reveals_only();
-        let insertion_point = self.settings.window_insertion_point;
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
-        Self::insert_new_column(state, wid, insertion_point);
+        Self::insert_new_column(state, wid);
         if reveals_only {
             state.reveal_selected_without_direction();
         }
@@ -1769,7 +1762,6 @@ impl ScrollingLayoutSystem {
 
     pub fn set_windows_for_app(&mut self, layout: LayoutId, pid: pid_t, desired: Vec<WindowId>) {
         let reveals_only = self.settings.reveals_only();
-        let insertion_point = self.settings.window_insertion_point;
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
@@ -1792,11 +1784,11 @@ impl ScrollingLayoutSystem {
                     current_iter.next();
                 }
                 (Some(des), None) => {
-                    Self::insert_new_column(state, **des, insertion_point);
+                    Self::insert_new_column(state, **des);
                     desired_iter.next();
                 }
                 (Some(des), Some(cur)) if des < cur => {
-                    Self::insert_new_column(state, **des, insertion_point);
+                    Self::insert_new_column(state, **des);
                     desired_iter.next();
                 }
                 (_, Some(cur)) => {
@@ -2313,9 +2305,7 @@ mod tests {
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::domain::edge_drag::Drag;
     use crate::layout::domain::tile;
-    use crate::layout::settings::{
-        CenterFocusedColumn, Gaps, ScrollingLayoutSettings, WindowInsertionPoint,
-    };
+    use crate::layout::settings::{CenterFocusedColumn, Gaps, ScrollingLayoutSettings};
     use crate::layout::{Direction, LayoutId, ResizeOrientation};
     use rini_core::ids::{WindowId, pid_t};
     use rustc_hash::FxHashMap as HashMap;
@@ -3215,10 +3205,8 @@ mod tests {
     }
 
     #[test]
-    fn app_reconciliation_honors_updated_next_to_selection_policy() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.window_insertion_point = WindowInsertionPoint::EndOfTree;
-        let mut system = ScrollingLayoutSystem::new(&settings);
+    fn app_reconciliation_inserts_next_to_the_selection() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
         let layout = system.create_layout();
         let w1 = wid(1, 1);
         let w2 = wid(1, 2);
@@ -3227,30 +3215,9 @@ mod tests {
         system.add_window_after_selection(layout, w2);
         assert!(system.select_window(layout, w1));
 
-        settings.window_insertion_point = WindowInsertionPoint::NextToSelection;
-        system.update_settings(&settings);
         system.set_windows_for_app(layout, 1, vec![w1, w2, w3]);
 
         assert_eq!(system.all_windows_in_layout(layout), vec![w1, w3, w2]);
-    }
-
-    #[test]
-    fn app_reconciliation_honors_updated_end_of_tree_policy() {
-        let mut settings = ScrollingLayoutSettings::default();
-        let mut system = ScrollingLayoutSystem::new(&settings);
-        let layout = system.create_layout();
-        let w1 = wid(1, 1);
-        let w2 = wid(1, 2);
-        let w3 = wid(1, 3);
-        system.add_window_after_selection(layout, w1);
-        system.add_window_after_selection(layout, w2);
-        assert!(system.select_window(layout, w1));
-
-        settings.window_insertion_point = WindowInsertionPoint::EndOfTree;
-        system.update_settings(&settings);
-        system.set_windows_for_app(layout, 1, vec![w1, w2, w3]);
-
-        assert_eq!(system.all_windows_in_layout(layout), vec![w1, w2, w3]);
     }
 
     // ── full-width columns participate in the strip ─────────────────────────

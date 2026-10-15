@@ -8,7 +8,7 @@ use crate::app::config::kdl::suggest::{NIRI, NIRI_ACTIONS, SCHEMA};
 use crate::decorations::domain::paint::{Colour, ColourSpace, Gradient, Hue, Paint};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::{Action, SwitcherFilter, SwitcherScope, WorkspaceReference};
-use crate::layout::settings::{CenterFocusedColumn, Gaps, WindowInsertionPoint};
+use crate::layout::settings::{CenterFocusedColumn, Gaps};
 use crate::windows::domain::rules::{
     AppRuleDecision, AppRuleEngine, FloatingPosition, RelativeTo, WindowRuleContext,
 };
@@ -205,7 +205,6 @@ fn layout_maps_onto_the_strip() {
         "    max-column-width { proportion 0.66667; }\n",
         "    preset-column-widths { proportion 0.5; proportion 1.0; }\n",
         "    center-focused-column \"always\"\n",
-        "    window-insertion-point \"end-of-tree\"\n",
         "}\n",
     ));
     let layout = &config.settings.layout;
@@ -222,7 +221,15 @@ fn layout_maps_onto_the_strip() {
     );
     assert_eq!(s.preset_column_widths, [0.5, 1.0]);
     assert_eq!(s.center_focused_column, CenterFocusedColumn::Always);
-    assert_eq!(s.window_insertion_point, WindowInsertionPoint::EndOfTree);
+}
+
+#[test]
+fn where_a_new_window_opens_is_not_configurable() {
+    let report = refused("layout {\n    window-insertion-point \"end-of-tree\"\n}\n");
+    assert!(
+        report.contains("unknown node `window-insertion-point` in `layout`"),
+        "{report}"
+    );
 }
 
 #[test]

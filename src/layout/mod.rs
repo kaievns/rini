@@ -111,29 +111,10 @@ impl WindowLayoutConstraints {
 #[cfg(test)]
 mod tests {
     use super::{ScrollingLayoutSystem, WindowLayoutConstraints};
-    use crate::layout::settings::{ScrollingLayoutSettings, WindowInsertionPoint};
     use rini_core::ids::WindowId;
 
     fn w(idx: u32) -> WindowId {
         WindowId::new(1, idx)
-    }
-
-    #[test]
-    fn insertion_point_is_honoured_by_the_scrolling_layout() {
-        let mut scrolling_settings = ScrollingLayoutSettings::default();
-        scrolling_settings.window_insertion_point = WindowInsertionPoint::EndOfTree;
-        let mut scrolling = ScrollingLayoutSystem::new(&scrolling_settings);
-        let scrolling_layout = scrolling.create_layout();
-        scrolling.add_window_after_selection(scrolling_layout, w(1));
-        scrolling.add_window_after_selection(scrolling_layout, w(2));
-        scrolling.select_window(scrolling_layout, w(1));
-        // EndOfTree ignores the selection and appends, so w(3) lands last rather than
-        // directly after w(1).
-        scrolling.add_window_after_selection(scrolling_layout, w(3));
-        assert_eq!(
-            scrolling.all_windows_in_layout(scrolling_layout),
-            vec![w(1), w(2), w(3)]
-        );
     }
 
     #[test]

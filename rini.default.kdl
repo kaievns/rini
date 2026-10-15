@@ -117,10 +117,6 @@ layout {
     // - "always": the focused column sits in the middle, except the first and last columns, which
     //   sit flush with the display edge (niri centres those too).
     center-focused-column "never"
-
-    // Where a new window goes: "next-to-selection" (right after the focused window) or
-    // "end-of-tree" (the end of the strip).
-    window-insertion-point "next-to-selection"
 }
 
 // Per-display overrides of `layout`, by display UUID (`rini-cli query displays`). `gaps` and

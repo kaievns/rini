@@ -10,6 +10,13 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > **Reported 2026-10-15.** Kai's decision: `scroll-strip N` goes. Neither Kai's config nor the
 > default bound it, niri has no counterpart, and the trackpad swipe that drove it went on 2026-10-10.
 
+- A new window MUST open as a column right after the focused one, as in niri, and this is not
+  configurable: `layout › window-insertion-point` MUST be refused as an unknown node.
+
+> **Reported 2026-10-15.** Kai's decision: `window-insertion-point` goes, and its `"end-of-tree"`
+> with it. It was rift's, niri always inserts beside the focused column, and neither Kai's config nor
+> the default asked for the end of the strip.
+
 ## Columns and widths
 
 - A column MUST be at least 1pt wide and MUST NOT be wider than the viewport. Wider than the viewport

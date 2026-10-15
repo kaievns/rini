@@ -315,9 +315,6 @@ fn apply_layout(
     if let Some(center) = layout.center_focused_column {
         scrolling.center_focused_column = center;
     }
-    if let Some(point) = layout.window_insertion_point {
-        scrolling.window_insertion_point = point;
-    }
 }
 
 fn apply_workspaces(

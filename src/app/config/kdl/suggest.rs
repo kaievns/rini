@@ -47,7 +47,6 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
         "max-column-width",
         "preset-column-widths",
         "center-focused-column",
-        "window-insertion-point",
         "focus-ring",
         "border",
     ]),
