@@ -19,6 +19,7 @@
 //! `src/animation/docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rini_core::ids::{WindowId, WindowServerId};
@@ -52,7 +53,6 @@ use crate::pictures::domain::watch::{
 };
 use crate::pictures::platform::picture::Picture;
 use crate::pictures::platform::service::Pictures;
-use crate::pictures::platform::skylight::capture_via_framed;
 use crate::transitions::domain::admission::*;
 use crate::transitions::domain::drawn::{Drawn, Owed};
 use crate::transitions::domain::flight::*;
@@ -69,6 +69,7 @@ use crate::transitions::domain::timing::*;
 use crate::transitions::domain::travel::{TilePath, is_moving, tile_path};
 use crate::transitions::platform::journal::Writer;
 use crate::transitions::settings::JournalSettings;
+use crate::windows::platform::window_server::WindowServer;
 
 /// What the engine is told.
 #[derive(Debug)]
@@ -188,6 +189,10 @@ pub type OnFlight = Box<dyn Fn(bool) + Send>;
 /// The instant now.
 pub type Clock = Box<dyn Fn() -> Instant + Send>;
 
+/// One framed capture of a window where it is, at a display's scale: what a window that just opened
+/// flies from (`skylight::capture_via_framed`).
+pub type Capture = Box<dyn Fn(WindowServerId, f64) -> Option<Picture> + Send>;
+
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
 
@@ -207,6 +212,9 @@ pub struct Parts {
     /// The renderer's media clock, which every track begins on.
     pub media: MediaClock,
     pub clock: Clock,
+    /// Every frame, depth and corner radius the engine reads.
+    pub window_server: Arc<dyn WindowServer>,
+    pub capture: Capture,
 }
 
 /// What a flight composed: its tiles and the pictures they draw, its plan, the entrances still
@@ -974,6 +982,8 @@ pub struct FlightEngine {
     on_flight: OnFlight,
     media: MediaClock,
     clock: Clock,
+    window_server: Arc<dyn WindowServer>,
+    capture: Capture,
 }
 
 impl FlightEngine {
@@ -988,6 +998,8 @@ impl FlightEngine {
             on_flight,
             media,
             clock,
+            window_server,
+            capture,
         } = parts;
         Self {
             rx,
@@ -1019,6 +1031,8 @@ impl FlightEngine {
             on_flight,
             media,
             clock,
+            window_server,
+            capture,
         }
     }
 
@@ -1462,7 +1476,7 @@ impl FlightEngine {
         let clipped = picture.source.clips();
         let at = self.media.at(now);
         let Some(running) = self.running.as_mut() else { return };
-        let radius = || crate::windows::platform::window_server::corner_radius(server_id);
+        let radius = || self.window_server.corner_radius(server_id);
         let took = running.take_picture(window, &picture, clipped, radius, at);
         let flown = running.flown;
         let worn = vec![(window, picture.source, picture.carries_blur, picture.taken)];
@@ -1726,10 +1740,9 @@ impl FlightEngine {
         }
         let (drawing_focus, losing) = self.drawing_focus((focus, focused_before));
 
-        let depths = crate::windows::platform::window_server::front_to_back_depths();
-        let radii = crate::windows::platform::window_server::corner_radii(
-            &windows.iter().map(|r| r.server_id).collect::<Vec<_>>(),
-        );
+        let ws = &*self.window_server;
+        let depths = ws.front_to_back_depths();
+        let radii = ws.corner_radii(&windows.iter().map(|r| r.server_id).collect::<Vec<_>>());
 
         let mut tiles = Vec::with_capacity(windows.len());
         let mut skipped = 0usize;
@@ -1743,25 +1756,14 @@ impl FlightEngine {
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         let mut resolved: Vec<(WindowId, ScreenRect, ScreenRect, bool)> = Vec::new();
         for (index, request) in windows.iter().enumerate() {
-            let path = tile_path(live_frame(request.server_id), &windows, index, display_frame);
+            let live = live_frame(ws, request.server_id);
+            let path = tile_path(live, &windows, index, display_frame);
             let Some(TilePath { start, end }) = path else {
                 offscreen += 1;
                 debug!(
                     wsid = request.server_id.as_u32(),
-                    from = format!(
-                        "{:.0},{:.0} {:.0}x{:.0}",
-                        request.from.origin.x,
-                        request.from.origin.y,
-                        request.from.size.width,
-                        request.from.size.height
-                    ),
-                    to = format!(
-                        "{:.0},{:.0} {:.0}x{:.0}",
-                        request.to.origin.x,
-                        request.to.origin.y,
-                        request.to.size.width,
-                        request.to.size.height
-                    ),
+                    from = logged(request.from),
+                    to = logged(request.to),
                     "skipped as off screen"
                 );
                 continue;
@@ -1787,10 +1789,7 @@ impl FlightEngine {
             // stand-in once it has repainted where it ends.
             let snapshot = picture_or_stand_in(
                 snapshot,
-                || {
-                    crate::windows::platform::window_server::get_window(request.server_id)
-                        .map(|info| ScreenRect::from_cg(info.frame))
-                },
+                || ws.get_window(request.server_id).map(|info| ScreenRect::from_cg(info.frame)),
                 display_frame,
                 || self.pictures.stand_in(request.to.size),
             );
@@ -1823,34 +1822,28 @@ impl FlightEngine {
                 // in `src/transitions/docs/coordination.md`.
                 None => {
                     // Only a frame on this display counts as a spawn; capturing off screen is slow.
-                    let spawn =
-                        crate::windows::platform::window_server::get_window(request.server_id)
-                            .map(|info| ScreenRect::from_cg(info.frame))
-                            .filter(|f| !rini_geometry::is_off_screen(display_frame, *f));
+                    let spawn = ws
+                        .get_window(request.server_id)
+                        .map(|info| ScreenRect::from_cg(info.frame))
+                        .filter(|f| !rini_geometry::is_off_screen(display_frame, *f));
                     let budget_left = sync_captures < MAX_SYNC_ENTRANCE_CAPTURES;
                     let captured_at = Instant::now();
                     let picture = spawn
                         .filter(|f| f.size.width > 0.0 && f.size.height > 0.0 && budget_left)
                         .and_then(|_| {
                             sync_captures += 1;
-                            capture_via_framed(request.server_id, scale)
+                            (self.capture)(request.server_id, scale)
                         });
-                    let usable = picture.as_ref().is_some_and(|p| p.is_usable());
+                    let usable = picture.filter(Picture::is_usable);
                     let entrance = entrance_plan(spawn, request.to, usable, budget_left);
+                    let decided = entrance.decided();
                     match entrance {
-                        EntranceDecision::Travel { from, to } => {
-                            let snapshot = picture.expect("usable implies a picture");
+                        EntranceDecision::Travel { from, to, picture: snapshot } => {
                             debug!(
                                 pid = request.window.pid,
                                 idx = request.window.idx.get(),
-                                spawn = format!(
-                                    "{:.0},{:.0} {:.0}x{:.0}",
-                                    from.origin.x, from.origin.y, from.size.width, from.size.height
-                                ),
-                                slot = format!(
-                                    "{:.0},{:.0} {:.0}x{:.0}",
-                                    to.origin.x, to.origin.y, to.size.width, to.size.height
-                                ),
+                                spawn = logged(from),
+                                slot = logged(to),
                                 capture_ms = captured_at.elapsed().as_millis() as u64,
                                 "entrance from spawn"
                             );
@@ -1903,7 +1896,7 @@ impl FlightEngine {
                             });
                         }
                     }
-                    FliesOn::Entrance(entrance)
+                    FliesOn::Entrance(decided)
                 }
             };
             let landing = flies.ends_at(end.size).and_then(|to| self.landing(request.window, to));
@@ -1916,13 +1909,7 @@ impl FlightEngine {
             tiles = tiles.len(),
             offscreen,
             no_snapshot = skipped,
-            display = format!(
-                "{:.0},{:.0} {:.0}x{:.0}",
-                display_frame.origin.x,
-                display_frame.origin.y,
-                display_frame.size.width,
-                display_frame.size.height
-            ),
+            display = logged(display_frame),
             "overlay animation composition"
         );
 
@@ -2183,12 +2170,7 @@ impl FlightEngine {
                         from = format!("{from_key:?}"),
                         to = format!("{to_key:?}"),
                         group_destination = format!("{:.0},{:.0}", from_to.x, from_to.y),
-                        member_destination = dest
-                            .map(|d| format!(
-                                "{:.0},{:.0} {:.0}x{:.0}",
-                                d.origin.x, d.origin.y, d.size.width, d.size.height
-                            ))
-                            .unwrap_or_default(),
+                        member_destination = dest.map(logged).unwrap_or_default(),
                         "member reparented"
                     );
                 }
@@ -2271,16 +2253,12 @@ impl FlightEngine {
         }
         let (drawing_focus, losing) = self.drawing_focus(focus);
 
-        let depths = crate::windows::platform::window_server::front_to_back_depths();
+        let depths = self.window_server.front_to_back_depths();
         // One query for every window, not one each: a round trip per window stalled this thread
         // for 100-200ms a press. See "Rapid presses" in `specs/focus.md`.
         let ids: Vec<WindowServerId> = windows.iter().map(|w| w.server_id).collect();
-        let radii = crate::windows::platform::window_server::corner_radii(&ids);
-        let real_frames: HashMap<WindowServerId, ScreenRect> =
-            crate::windows::platform::window_server::get_windows(&ids)
-                .into_iter()
-                .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
-                .collect();
+        let radii = self.window_server.corner_radii(&ids);
+        let real_frames = frames_of(&*self.window_server, &ids);
         let mut tiles = Vec::with_capacity(windows.len());
         let mut waits = Waits::default();
         let mut missing = 0usize;
@@ -2580,13 +2558,9 @@ impl FlightEngine {
             .map(|(window, _)| *window)
             .filter(|window| tiled.contains(window))
             .collect();
-        let by_server: HashMap<WindowServerId, ScreenRect> =
-            crate::windows::platform::window_server::get_windows(
-                &asked.iter().map(|w| WindowServerId::new(w.idx.get())).collect::<Vec<_>>(),
-            )
-            .into_iter()
-            .map(|info| (info.id, ScreenRect::from_cg(info.frame)))
-            .collect();
+        let ids: Vec<WindowServerId> =
+            asked.iter().map(|w| WindowServerId::new(w.idx.get())).collect();
+        let by_server = frames_of(&*self.window_server, &ids);
         let real: HashMap<WindowId, ScreenRect> = asked
             .into_iter()
             .filter_map(|w| Some((w, *by_server.get(&WindowServerId::new(w.idx.get()))?)))
@@ -2625,15 +2599,30 @@ impl FlightEngine {
     }
 }
 
+/// The frame the window server has for each of `ids` it knows, in one query.
+fn frames_of(ws: &dyn WindowServer, ids: &[WindowServerId]) -> HashMap<WindowServerId, ScreenRect> {
+    let windows = ws.get_windows(ids).into_iter();
+    windows.map(|info| (info.id, ScreenRect::from_cg(info.frame))).collect()
+}
+
 /// The frame the window server reports for a window, if it reports a real one: the reactor's
 /// `from` can be the previous pass's destination rather than where the window sits.
 ///
 /// A zero-sized frame is macOS saying it has not laid the window out yet, which is not a position to
 /// animate from. The geometry decision is `travel::tile_path`; this is the read it needs.
-fn live_frame(server_id: WindowServerId) -> Option<ScreenRect> {
-    crate::windows::platform::window_server::get_window(server_id)
+fn live_frame(ws: &dyn WindowServer, server_id: WindowServerId) -> Option<ScreenRect> {
+    ws.get_window(server_id)
         .map(|info| ScreenRect::from_cg(info.frame))
         .filter(|frame| frame.size.width > 0.0 && frame.size.height > 0.0)
+}
+
+/// `frame` as the log gives a frame: its origin, then its size, to the point.
+fn logged<U>(frame: rini_geometry::space::Rect<U>) -> String {
+    let (origin, size) = (frame.origin, frame.size);
+    format!(
+        "{:.0},{:.0} {:.0}x{:.0}",
+        origin.x, origin.y, size.width, size.height
+    )
 }
 
 /// Records what the overlay was dressed with; a black backdrop is only diagnosable after the fact.
@@ -2660,12 +2649,7 @@ fn log_dressing(
                 b.coverage.covered.width, b.coverage.covered.height
             ))
             .unwrap_or_else(|| "NONE".to_string()),
-        strip = strip
-            .map(|r| format!(
-                "{:.0},{:.0} {:.0}x{:.0}",
-                r.origin.x, r.origin.y, r.size.width, r.size.height
-            ))
-            .unwrap_or_else(|| "none".to_string()),
+        strip = strip.map(logged).unwrap_or_else(|| "none".to_string()),
         "overlay dressed"
     );
 }
@@ -2692,6 +2676,12 @@ mod tests {
     }
 
     fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
+
+    #[test]
+    fn a_frame_is_logged_as_its_origin_then_its_size_to_the_point() {
+        let frame: ScreenRect = rect(10.4, -3.6, 859.0, 1080.6);
+        assert_eq!(logged(frame), "10,-4 859x1081");
+    }
 
     /// A flight with nothing in it, composed and not yet moving.
     fn flight() -> RunningAnimation {
@@ -4523,6 +4513,8 @@ mod tests {
         use crate::animation::event::Event::{Committed, Unavailable};
         use crate::pictures::platform::service::Command as Asked;
         use crate::transitions::domain::journal::{Burst, Mark, Stamped};
+        use crate::windows::domain::info::WindowServerInfo;
+        use crate::windows::platform::window_server::FakeWindowServer;
 
         const CLIENT: Client = Client(1);
         /// The overlay's window, as the renderer reports the window server numbers it.
@@ -4533,8 +4525,8 @@ mod tests {
         /// Where the pan starts `wid(1)`'s tile, wholly on screen.
         fn start() -> ScreenRect { rect(867.0, 0.0, 859.0, 1081.0) }
 
-        /// Where it ends: at the display's top-left, where the window server's test answer has every
-        /// window, so the window reads as landed.
+        /// Where it ends: at the display's top-left. The window server knows no window a test does not
+        /// state, so nothing reads it as anywhere but where its tile ends, and it reads as landed.
         fn end() -> ScreenRect { rect(0.0, 0.0, 859.0, 1081.0) }
 
         /// One thing the engine sent.
@@ -4585,6 +4577,17 @@ mod tests {
             media: MediaClock,
             /// What `wid(1)` wears through a pan: nothing unless a test says.
             worn: Worn,
+            /// The window server the engine reads, which knows no window until a test states it.
+            ws: Arc<FakeWindowServer>,
+            /// What a framed capture takes of each window, and every window one was taken of.
+            captures: Arc<Mutex<Captures>>,
+        }
+
+        /// A framed capture of a window answers the picture a test gave for it, else none.
+        #[derive(Default)]
+        struct Captures {
+            of: HashMap<WindowServerId, Picture>,
+            taken: Vec<WindowServerId>,
         }
 
         impl Harness {
@@ -4599,6 +4602,8 @@ mod tests {
                 let per_read = Arc::new(Mutex::new(Duration::ZERO));
                 let media = MediaClock::anchored(begun, 5_000.0);
                 let (tx, rx) = channel::channel();
+                let ws = Arc::new(FakeWindowServer::default());
+                let captures = Arc::new(Mutex::new(Captures::default()));
                 let engine = FlightEngine::new(Parts {
                     rx,
                     tx,
@@ -4623,6 +4628,15 @@ mod tests {
                             *now
                         }
                     }),
+                    window_server: ws.clone(),
+                    capture: Box::new({
+                        let captures = captures.clone();
+                        move |window, _| {
+                            let mut captures = captures.lock().unwrap();
+                            captures.taken.push(window);
+                            captures.of.get(&window).cloned()
+                        }
+                    }),
                 });
                 let mut harness = Harness {
                     engine,
@@ -4632,6 +4646,8 @@ mod tests {
                     per_read,
                     media,
                     worn: Worn::default(),
+                    ws,
+                    captures,
                 };
                 let display = harness.step(Event::SetDisplay {
                     id: 1,
@@ -4677,6 +4693,25 @@ mod tests {
             }
 
             fn at(&self) -> Instant { *self.now.lock().unwrap() }
+
+            /// The window server has `wid(id)` at `frame`.
+            fn place(&self, id: u32, frame: ScreenRect) {
+                let (pid, id) = (wid(id).pid, WindowServerId::new(id));
+                self.ws.set_window(
+                    id,
+                    Some(WindowServerInfo {
+                        id,
+                        pid,
+                        layer: 0,
+                        frame: frame.to_cg(),
+                        min_frame: objc2_core_foundation::CGSize::ZERO,
+                        max_frame: objc2_core_foundation::CGSize::ZERO,
+                    }),
+                );
+            }
+
+            /// The window server knows no window `wid(id)` any more.
+            fn forget(&self, id: u32) { self.ws.set_window(WindowServerId::new(id), None); }
 
             fn advance(&mut self, by: Duration) { *self.now.lock().unwrap() += by }
 
@@ -5140,13 +5175,7 @@ mod tests {
         }
 
         /// `wid(id)` parked off the display, where a window with no picture flies as the stand-in.
-        fn park(id: u32) {
-            let parked: ScreenRect = rect(1727.0, 1085.0, 859.0, 1081.0);
-            crate::windows::platform::window_server::set_window_frame_override(
-                WindowServerId::new(id),
-                Some(parked.to_cg()),
-            );
-        }
+        fn park(h: &Harness, id: u32) { h.place(id, rect(1727.0, 1085.0, 859.0, 1081.0)); }
 
         /// The tiles every stage and play among `sent` handed the overlay, by window.
         fn handed(sent: &[Sent], window: WindowId) -> Vec<OverlayTile> {
@@ -5180,7 +5209,7 @@ mod tests {
         #[test]
         fn a_stand_in_tile_is_clipped_when_staged_and_drawn_whole_once_its_picture_swaps_in() {
             let mut h = Harness::new();
-            park(2);
+            park(&h, 2);
             let (from_offset, to_offset) = (SurfacePoint::origin(), SurfacePoint::new(867.0, 0.0));
             let press = strip_of(&h, &[1, 2], from_offset, to_offset);
             let staged = handed(&h.step(press), wid(2));
@@ -5209,10 +5238,6 @@ mod tests {
                 pictures: vec![(wid(2), test_picture(lands.size), lands)],
             });
             assert_eq!(swapped(&h.step(own), wid(2)), [false], "whole");
-            crate::windows::platform::window_server::set_window_frame_override(
-                WindowServerId::new(2),
-                None,
-            );
         }
 
         /// Frame zero's pictures are clipped or drawn whole by what each one is, not by what its tile
@@ -5221,7 +5246,7 @@ mod tests {
         #[test]
         fn frame_zeros_pictures_are_clipped_by_what_each_one_is() {
             let mut h = Harness::new();
-            park(2);
+            park(&h, 2);
             let press = strip_of(
                 &h,
                 &[1, 2],
@@ -5280,10 +5305,6 @@ mod tests {
                     .all(|tile| tile.snapshot.source == Route::ScreenCaptureKit && !tile.clipped),
                 "captured alone"
             );
-            crate::windows::platform::window_server::set_window_frame_override(
-                WindowServerId::new(2),
-                None,
-            );
         }
 
         /// A tile that joins a moving flight is dressed as it rides in, clipped as any other: a parked
@@ -5295,7 +5316,7 @@ mod tests {
             let (_, shown) = h.shown();
             h.commit(shown);
             h.advance(Duration::from_millis(50));
-            park(2);
+            park(&h, 2);
             let mut baked = test_picture(end().size);
             baked.source = Route::Baked;
             h.engine.pictures.insert(wid(3), baked);
@@ -5319,10 +5340,6 @@ mod tests {
             );
             assert!(joined(wid(3)).iter().all(|tile| tile.clipped), "baked");
             assert!(joined(wid(1)).iter().all(|tile| !tile.clipped), "captured alone");
-            crate::windows::platform::window_server::set_window_frame_override(
-                WindowServerId::new(2),
-                None,
-            );
         }
 
         /// A merge that moves focus onto a parked window flies its focused look, swapped onto its tile
@@ -5334,7 +5351,7 @@ mod tests {
                 let (_, shown) = h.shown();
                 h.commit(shown);
                 h.advance(Duration::from_millis(50));
-                park(2);
+                park(&h, 2);
                 let mut look = test_picture(end().size);
                 look.source = route;
                 h.engine.pictures.hold_focused(wid(2), look);
@@ -5354,10 +5371,6 @@ mod tests {
                     "flown"
                 );
                 assert_eq!(swapped(&sent, wid(2)), [clipped], "{route:?}");
-                crate::windows::platform::window_server::set_window_frame_override(
-                    WindowServerId::new(2),
-                    None,
-                );
             }
         }
 
@@ -5392,7 +5405,7 @@ mod tests {
             h.advance(Duration::from_millis(50));
             let unchanged = h.pan_on();
             assert!(worn_again(&h.step(unchanged)).is_empty(), "the same end");
-            park(2);
+            park(&h, 2);
             let leaving = Worn::default();
             let gaining = Worn {
                 wears_ring: Ring::Active,
@@ -5419,10 +5432,6 @@ mod tests {
             assert!(
                 handed(&sent, wid(2)).iter().all(|tile| tile.worn == gaining),
                 "dressed with its own"
-            );
-            crate::windows::platform::window_server::set_window_frame_override(
-                WindowServerId::new(2),
-                None,
             );
         }
 
@@ -5457,11 +5466,8 @@ mod tests {
             }
         }
 
-        fn report_corners(id: u32, corners: Option<Vec<f64>>) {
-            crate::windows::platform::window_server::set_corner_radii_override(
-                WindowServerId::new(id),
-                corners,
-            );
+        fn report_corners(h: &Harness, id: u32, corners: Option<Vec<f64>>) {
+            h.ws.set_corner_radii(WindowServerId::new(id), corners);
         }
 
         /// Every tile rounds to the radius the window server reports for its window, read as the flight
@@ -5469,8 +5475,6 @@ mod tests {
         /// reports none for takes the fallback.
         #[test]
         fn a_layout_pass_and_a_strip_movement_round_every_tile_to_the_radius_the_server_reports() {
-            report_corners(1, Some(vec![26.0; 4]));
-            report_corners(2, Some(vec![0.0; 4]));
             let parked = rect(1727.0, 1085.0, 859.0, 1081.0);
             let slot = rect(867.0, 0.0, 859.0, 1081.0);
             type Compose = fn(&Harness, ScreenRect, ScreenRect) -> Event;
@@ -5484,7 +5488,9 @@ mod tests {
             ];
             for (what, compose) in composes {
                 let mut h = Harness::new();
-                park(2);
+                report_corners(&h, 1, Some(vec![26.0; 4]));
+                report_corners(&h, 2, Some(vec![0.0; 4]));
+                park(&h, 2);
                 let press = compose(&h, parked, slot);
                 let sent = h.step(press);
                 let radii = |window| {
@@ -5504,13 +5510,7 @@ mod tests {
                     handed(&sent, wid(2)).iter().all(|tile| tile.snapshot.source == Route::StandIn),
                     "{what}"
                 );
-                crate::windows::platform::window_server::set_window_frame_override(
-                    WindowServerId::new(2),
-                    None,
-                );
             }
-            report_corners(1, None);
-            report_corners(2, None);
         }
 
         /// Each tile carries what its window wears as its request has it, unread, which its ring and
@@ -5519,7 +5519,7 @@ mod tests {
         #[test]
         fn each_tile_is_staged_with_the_decoration_and_ring_its_request_carries() {
             let mut h = Harness::new();
-            park(2);
+            park(&h, 2);
             let ring = crate::decorations::domain::style::Band {
                 width: 4.0,
                 active: crate::decorations::domain::paint::Paint::Solid(
@@ -5582,10 +5582,6 @@ mod tests {
             );
             let target = (worn(Ring::Active, true), false);
             assert!(staged(wid(2)).iter().all(|drawn| *drawn == target), "the target");
-            crate::windows::platform::window_server::set_window_frame_override(
-                WindowServerId::new(2),
-                None,
-            );
         }
 
         /// A window that opens has no radius to read until it has drawn: its entrance takes the one the
@@ -5595,11 +5591,8 @@ mod tests {
             let mut h = Harness::new();
             let slot = rect(867.0, 0.0, 859.0, 1081.0);
             let unlaid: ScreenRect = rect(867.0, 0.0, 0.0, 0.0);
-            crate::windows::platform::window_server::set_window_frame_override(
-                WindowServerId::new(2),
-                Some(unlaid.to_cg()),
-            );
-            report_corners(2, Some(vec![12.0; 4]));
+            h.place(2, unlaid);
+            report_corners(&h, 2, Some(vec![12.0; 4]));
             let pass = pass_of(&h, &[(2, slot, slot)]);
             h.step(pass);
             assert!(
@@ -5614,7 +5607,7 @@ mod tests {
             let shown = only_batch(&h.step(frame_zero)).seq;
             h.commit(shown);
             h.advance(Duration::from_millis(50));
-            report_corners(2, Some(vec![26.0; 4]));
+            report_corners(&h, 2, Some(vec![26.0; 4]));
             let landed = Event::Pictures(crate::pictures::event::Event::Delivered {
                 tag: Tag {
                     client: CLIENT,
@@ -5631,11 +5624,92 @@ mod tests {
                 "{:?}",
                 joined.iter().map(|t| t.radius).collect::<Vec<_>>()
             );
-            crate::windows::platform::window_server::set_window_frame_override(
-                WindowServerId::new(2),
-                None,
+        }
+
+        /// A flight whose clock has run out lifts only once the window server has each window where
+        /// its tile ends.
+        #[test]
+        fn the_lift_waits_for_the_window_server_to_have_each_window_where_its_tile_ends() {
+            let mut h = Harness::new();
+            h.place(1, start());
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            h.advance(Duration::from_millis(400));
+            assert!(lift_batch(&h.step(Event::Tick)).is_none(), "not where it ends");
+            h.place(1, end());
+            h.advance(FRAME_INTERVAL);
+            assert!(lift_batch(&h.step(Event::Tick)).is_some(), "landed");
+        }
+
+        /// A window that opens with no picture flies from the frame macOS shows it at to its slot, on
+        /// the one framed capture taken there, frontmost and focused, and the cache keeps that capture.
+        #[test]
+        fn an_opening_window_travels_from_where_it_opened_on_the_capture_taken_there() {
+            let mut h = Harness::new();
+            let (spawn, slot) = (rect(300.0, 200.0, 640.0, 480.0), rect(867.0, 0.0, 859.0, 1081.0));
+            h.place(2, spawn);
+            let taken = WindowServerId::new(2);
+            h.captures.lock().unwrap().of.insert(taken, test_picture(spawn.size));
+            let press = pass_of(&h, &[(2, slot, slot)]);
+            let tiles = handed(&h.step(press), wid(2));
+            assert!(!tiles.is_empty(), "it flies");
+            assert!(
+                tiles.iter().all(|tile| (tile.from, tile.to) == (on(spawn), on(slot))
+                    && tile.snapshot.coverage.covered == spawn.size
+                    && tile.server_order == Some(0)
+                    && tile.focused),
+                "{:?}",
+                tiles.iter().map(|tile| (tile.from, tile.to)).collect::<Vec<_>>()
             );
-            report_corners(2, None);
+            assert_eq!(h.captures.lock().unwrap().taken, [taken], "one capture");
+            let running = h.engine.running.as_ref().expect("flying");
+            assert!(
+                running.entrances.iter().all(|entrance| entrance.window != wid(2)),
+                "not reserved"
+            );
+            assert!(h.engine.pictures.usable(wid(2)).is_some(), "kept");
+        }
+
+        /// An opening window whose capture is unusable, or past the pass's budget of captures, is
+        /// reserved for its first picture, and the windows past the budget are not captured at all.
+        #[test]
+        fn an_opening_window_with_no_usable_capture_or_past_the_budget_is_reserved() {
+            let mut h = Harness::new();
+            let spawn = rect(300.0, 200.0, 640.0, 480.0);
+            let opening: Vec<u32> = (2..=7).collect();
+            for &id in &opening {
+                h.place(id, spawn);
+                let capture = if id == 2 {
+                    clipped(spawn.size)
+                } else {
+                    test_picture(spawn.size)
+                };
+                h.captures.lock().unwrap().of.insert(WindowServerId::new(id), capture);
+            }
+            let slot = rect(867.0, 0.0, 859.0, 1081.0);
+            let others: Vec<_> = opening.iter().map(|&id| (id, slot, slot)).collect();
+            let press = pass_of(&h, &others);
+            let sent = h.step(press);
+            let taken = h.captures.lock().unwrap().taken.clone();
+            assert_eq!(
+                taken,
+                opening[..MAX_SYNC_ENTRANCE_CAPTURES]
+                    .iter()
+                    .map(|&id| WindowServerId::new(id))
+                    .collect::<Vec<_>>(),
+                "captured within the budget only"
+            );
+            let reserved = |id| {
+                h.engine
+                    .running
+                    .as_ref()
+                    .is_some_and(|running| running.entrances.iter().any(|e| e.window == wid(id)))
+            };
+            for id in opening {
+                let travels = (3..=5).contains(&id);
+                assert_eq!(reserved(id), !travels, "wid({id})");
+                assert_eq!(handed(&sent, wid(id)).is_empty(), !travels, "wid({id})");
+            }
         }
 
         /// `windows`' repaints where they end, delivered under the flight's generation now.
@@ -5661,10 +5735,7 @@ mod tests {
             h.engine.pictures.insert(wid(2), test_picture(end().size));
             let beside = rect(867.0, 0.0, 859.0, 1081.0);
             for (id, frame) in [(1, start()), (2, beside)] {
-                crate::windows::platform::window_server::set_window_frame_override(
-                    WindowServerId::new(id),
-                    Some(frame.to_cg()),
-                );
+                h.place(id, frame);
             }
             let press = pass_of(&h, &[(
                 2,
@@ -5681,10 +5752,7 @@ mod tests {
             assert!(kinds(only_batch(&ticked)).contains(&"play"), "moving");
             h.advance(Duration::from_millis(60));
             for id in [1, 2] {
-                crate::windows::platform::window_server::set_window_frame_override(
-                    WindowServerId::new(id),
-                    None,
-                );
+                h.forget(id);
             }
             h
         }
@@ -5912,20 +5980,14 @@ mod tests {
             let mut h = Harness::new();
             let (grown, narrower) =
                 (rect(0.0, 0.0, 1300.0, 1081.0), rect(0.0, 0.0, 1000.0, 1081.0));
-            crate::windows::platform::window_server::set_window_frame_override(
-                WindowServerId::new(1),
-                Some(start().to_cg()),
-            );
+            h.place(1, start());
             let press = resize_of(&h, &[(1, start(), grown)]);
             h.step(press);
             h.advance(Duration::from_millis(5));
             let frame_zero = h.frame_zero();
             let shown = only_batch(&h.step(frame_zero)).seq;
             h.commit(shown);
-            crate::windows::platform::window_server::set_window_frame_override(
-                WindowServerId::new(1),
-                None,
-            );
+            h.forget(1);
             h.advance(Duration::from_millis(10));
             let press = resize_of(&h, &[(1, grown, narrower)]);
             assert!(!plays(&h.step(press)));
@@ -5944,18 +6006,14 @@ mod tests {
         /// server reporting it where the pass starts it until then.
         fn folding() -> Harness {
             let mut h = Harness::new();
-            let server = WindowServerId::new(1);
-            crate::windows::platform::window_server::set_window_frame_override(
-                server,
-                Some(start().to_cg()),
-            );
+            h.place(1, start());
             let press = resize_of(&h, &[(1, start(), folded())]);
             h.step(press);
             h.advance(Duration::from_millis(5));
             let frame_zero = h.frame_zero();
             let shown = only_batch(&h.step(frame_zero)).seq;
             assert!(!plays(&h.commit(shown)), "held for its repaint");
-            crate::windows::platform::window_server::set_window_frame_override(server, None);
+            h.forget(1);
             h
         }
 

@@ -55,14 +55,17 @@ thread's run-loop observer, wired there too, tells it each turn over a frame (`E
 the journal alone. The engine answers through
 what `src/main.rs` hands it in `Parts`: the frames to write (`PlaceFrames`, back to the reactor),
 whether a flight is up (`OnFlight`, to the bar), and each batch to draw (`Draw`, to the renderer,
-whose answer comes back as `Event::Rendered`). The reactor never learns more of a flight than the
+whose answer comes back as `Event::Rendered`); and it reads through `Parts` too, every frame, depth
+and corner radius from the `WindowServer` port, and the one capture of a window that just opened from
+`Capture`. The reactor never learns more of a flight than the
 frames.
 
 **The decisions are pure and the actor is not.** What `domain/` decides is tested over plain rects
 and instants; the engine reads the window server and the clock it is handed, and holds what each
 flight composed between events. Its messages are tested as sent (`protocol` in `platform/engine.rs`):
 over a pictures service with nothing behind it, a clock the test advances, by hand or at every read,
-and the renderer's answers given by the test.
+a `FakeWindowServer` that knows only the windows the test states, a capture answering only the
+pictures the test gives, and the renderer's answers given by the test.
 
 **The journal observes, and nothing reads it back.** Every command the coordinator gives and every
 event it takes is a mark pushed by `Journalled::drive`, but a picture and frame zero, which their
