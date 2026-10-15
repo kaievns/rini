@@ -987,7 +987,7 @@ const LONG_FNS: [(&str, &str, usize); 42] = [
 
 /// The files over `FILE_LIMIT`, each at its size now as its ceiling: file, ceiling.
 const LONG_FILES: [(&str, usize); 4] = [
-    ("src/app/reactor/mod.rs", 4548),
+    ("src/app/reactor/mod.rs", 4544),
     ("src/layout/domain/scrolling.rs", 1816),
     ("src/transitions/platform/engine.rs", 2212),
     ("src/workspaces/engine.rs", 2544),

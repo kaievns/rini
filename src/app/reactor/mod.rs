@@ -91,14 +91,15 @@ use crate::switcher::domain::selection::Selection;
 use crate::transitions::domain::request::Cause;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
+use crate::windows::domain::manageable::{Facts, ServerFacts, manageable};
 use crate::windows::domain::raise::{self as raise_manager, RaiseManager, RaiseRequest};
 use crate::windows::domain::raise_order::{self, StackGroup, regroup_tiled};
 use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use crate::windows::domain::rules::AppRuleDecision;
+use crate::windows::domain::stack::covered_by_peer_above;
 use crate::windows::domain::transaction::{TransactionId, TransactionManager, WindowTxStore};
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server;
-use crate::windows::platform::window_server::{StackPlace, covered_by_peer_above};
 use crate::workspaces::domain::app_rules::AfterRules;
 use crate::workspaces::domain::display_affinity::SetupChange;
 use crate::workspaces::domain::display_memory::DisplayMemory;
@@ -1807,29 +1808,23 @@ impl Reactor {
             self.state.windows.track_window_server_info(*info);
 
             if let Some(wid) = self.state.windows.tracked_window_id(info.id) {
-                let (server_id, is_minimized, is_ax_standard, is_ax_root, was_manageable) =
+                let (ax, server_id, was_manageable) =
                     if let Some(window) = self.state.windows.window_mut(wid) {
                         if info.layer == 0 {
                             window.frame_monotonic = info.frame;
                         }
                         (
+                            Facts::of(&window.info, ServerFacts::default()),
                             window.info.sys_id,
-                            window.info.is_minimized,
-                            window.info.is_standard,
-                            window.info.is_root,
                             window.matches_filter(WindowFilter::EffectivelyManageable),
                         )
                     } else {
                         continue;
                     };
-                let manageable =
-                    crate::windows::platform::window_server::compute_window_manageability(
-                        server_id,
-                        is_minimized,
-                        is_ax_standard,
-                        is_ax_root,
-                        |wsid| self.state.windows.get_window_server_info(wsid),
-                    );
+                let server = window_server::server_facts(server_id, |wsid| {
+                    self.state.windows.get_window_server_info(wsid)
+                });
+                let manageable = manageable(Facts { server, ..ax });
                 if let Some(window) = self.state.windows.window_mut(wid) {
                     window.is_manageable = manageable;
                 }
@@ -4345,9 +4340,7 @@ impl Reactor {
         };
 
         // The stack from the top down to the candidate; only floating windows rini tracks count.
-        let order = crate::windows::platform::window_server::space_window_list_for_connection(&[
-            space.get(),
-        ]);
+        let order = window_server::space_window_list_for_connection(&[space.get()]);
         let candidate_u32 = candidate_wsid.as_u32();
         let above = order.into_iter().take_while(|&id| id != candidate_u32).filter_map(|id| {
             let wsid = WindowServerId::new(id);
@@ -4356,9 +4349,12 @@ impl Reactor {
                 return None;
             }
             let frame = self.state.windows.window(wid)?.frame_monotonic;
-            Some(StackPlace::of(wsid, frame))
+            Some(window_server::stack_place(wsid, frame))
         });
-        !covered_by_peer_above(StackPlace::of(candidate_wsid, candidate_frame), above)
+        !covered_by_peer_above(
+            window_server::stack_place(candidate_wsid, candidate_frame),
+            above,
+        )
     }
 
     fn process_windows_for_app_rules(

@@ -8,11 +8,12 @@ use crate::app::reactor::managers::DragManager;
 use crate::app::reactor::{DragState, Quiet};
 use crate::layout::domain::edge_drag::Drag;
 use crate::windows::domain::info::{WindowInfo as Window, WindowServerInfo};
+use crate::windows::domain::manageable::{Facts, ServerFacts, manageable};
 use crate::windows::domain::state::{WindowFilter, WindowState};
 use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 use crate::windows::domain::zoom::Zoom;
 use crate::windows::platform::mouse::MouseState;
-use crate::windows::platform::window_server::compute_window_manageability;
+use crate::windows::platform::window_server;
 use crate::workspaces::LayoutEvent;
 
 #[derive(Debug)]
@@ -42,13 +43,12 @@ pub fn handle_window_created(
     }
 
     let mut window_state: WindowState = window.into();
-    let is_manageable = compute_window_manageability(
-        window_state.info.sys_id,
-        window_state.info.is_minimized,
-        window_state.info.is_standard,
-        window_state.info.is_root,
-        |wsid| state.windows.get_window_server_info(wsid),
-    );
+    let is_manageable = manageable(Facts::of(
+        &window_state.info,
+        window_server::server_facts(window_state.info.sys_id, |wsid| {
+            state.windows.get_window_server_info(wsid)
+        }),
+    ));
     window_state.is_manageable = is_manageable;
     if let Some(wsid) = window_state.info.sys_id {
         transactions.store_txid(
@@ -155,13 +155,16 @@ pub fn handle_window_deminiaturized(
     payload: WindowDeminiaturizedPayload,
 ) -> anyhow::Result<crate::app::reactor::events::EventOutcome> {
     let WindowDeminiaturizedPayload { window: wid, active_space } = payload;
-    let (server_id, is_ax_standard, is_ax_root) = match state.windows.window_mut(wid) {
+    let (server_id, ax) = match state.windows.window_mut(wid) {
         Some(window) => {
             if !window.info.is_minimized {
                 return Ok(crate::app::reactor::events::EventOutcome::no_change());
             }
             window.info.is_minimized = false;
-            (window.info.sys_id, window.info.is_standard, window.info.is_root)
+            (
+                window.info.sys_id,
+                Facts::of(&window.info, ServerFacts::default()),
+            )
         }
         None => {
             debug!(
@@ -171,10 +174,9 @@ pub fn handle_window_deminiaturized(
             return Ok(crate::app::reactor::events::EventOutcome::no_change());
         }
     };
-    let is_manageable =
-        compute_window_manageability(server_id, false, is_ax_standard, is_ax_root, |wsid| {
-            state.windows.get_window_server_info(wsid)
-        });
+    let server =
+        window_server::server_facts(server_id, |wsid| state.windows.get_window_server_info(wsid));
+    let is_manageable = manageable(Facts { server, ..ax });
     if let Some(window) = state.windows.window_mut(wid) {
         window.is_manageable = is_manageable;
     }

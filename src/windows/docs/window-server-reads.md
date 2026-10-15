@@ -66,7 +66,7 @@ to the read connection changes nothing.
 
 | call | the wait | rini's reads through it |
 |---|---|---|
-| `SLSWindowQueryWindows`, `SLSWindowQueryRun` | `run_query`: `CGSConnectionByID(cid)`, then the sync | `WindowIterator`: `get_windows`, `get_window`, `window_parent`, `window_level` (so `stack_level` and `StackPlace::of`), `corner_radii` (so `corner_radius`), `app_window_suitability`, `window_ordered_in`, `key_focused_window`, `space_window_list_for_connection`, and the listings' details |
+| `SLSWindowQueryWindows`, `SLSWindowQueryRun` | `run_query`: `CGSConnectionByID(cid)`, then the sync | `WindowIterator`: `get_windows`, `get_window`, `window_parent`, `window_level` (so `stack_level` and `stack_place`), `corner_radii` (so `corner_radius`), `app_window_suitability`, `window_ordered_in`, `key_focused_window`, `space_window_list_for_connection`, and the listings' details |
 | `SLSHWCaptureWindowList` | `hw_capture_window_list_common`: the main connection only for a cid of 0 | every SkyLight composite in `src/pictures/platform/skylight.rs` |
 | `SLSCaptureWindowsContentsToRectWithOptions` | the main connection only for a cid of 0 | `capture_rect`: the bar's menu-extras capture and its ground, the framed spawn capture and its composite with what is below, a handover check's picture of the screen |
 
