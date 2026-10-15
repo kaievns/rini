@@ -227,17 +227,14 @@ impl Default for AuthorityState {
 }
 
 impl AuthorityState {
-    /// Whether the actor must hold everything back rather than forward it.
+    /// Whether the actor drops what it hears rather than forward it, and samples the window server
+    /// again once the quarantine ends.
     ///
     /// Asleep, at the login window, or mid display reconfiguration. In all three the native picture
     /// is part-formed: screens appear without spaces, spaces are reported on the wrong display, and a
     /// window's space is whatever it was before the transition started. Forwarding any of that makes
     /// the reactor act on it.
-    ///
-    /// This was two methods with different names and identical bodies —
-    /// `should_buffer_topology_updates` and `should_quarantine_window_space_event` — which is how one
-    /// of them gets a fourth condition and the other does not.
-    pub(crate) fn must_buffer(&self) -> bool {
+    pub(crate) fn quarantined(&self) -> bool {
         self.sleeping || self.session_inactive || self.display_churn_active
     }
 
@@ -390,19 +387,19 @@ impl SpacesActor {
                 self.handle_space_inventory_changed();
             }
             Notification::SpaceCreated(space) => {
-                if !self.state.must_buffer() && self.state.space_kinds.classify(space).is_some() {
+                if !self.state.quarantined() && self.state.space_kinds.classify(space).is_some() {
                     self.events.send(OutEvent::SpaceCreated(space));
                 }
                 self.handle_space_inventory_changed();
             }
             Notification::SpaceDestroyed(space) => {
-                if !self.state.must_buffer() && self.state.space_kinds.classify(space).is_some() {
+                if !self.state.quarantined() && self.state.space_kinds.classify(space).is_some() {
                     self.events.send(OutEvent::SpaceDestroyed(space));
                 }
                 self.handle_space_inventory_changed();
             }
             Notification::WindowServerAppeared(wsid, sid) => {
-                if self.state.must_buffer() {
+                if self.state.quarantined() {
                     self.state.quarantine_stats.appeared_dropped += 1;
                 } else {
                     self.state.visible_window_spaces.insert(wsid, sid);
@@ -412,7 +409,7 @@ impl SpacesActor {
                 }
             }
             Notification::WindowServerDestroyed(wsid, sid) => {
-                if self.state.must_buffer() {
+                if self.state.quarantined() {
                     self.state.quarantine_stats.destroyed_dropped += 1;
                 } else {
                     self.state.visible_window_spaces.remove(&wsid);
@@ -461,7 +458,7 @@ impl SpacesActor {
             return;
         }
 
-        if self.state.must_buffer() {
+        if self.state.quarantined() {
             self.schedule_screen_refresh_after(0, 0);
             return;
         }
@@ -495,7 +492,7 @@ impl SpacesActor {
     fn handle_active_space_changed(&mut self) {
         self.state.awaiting_space_switch_confirmation = true;
 
-        if self.state.must_buffer() {
+        if self.state.quarantined() {
             self.schedule_screen_refresh_after(REFRESH_SPACE_SWITCH_DELAY_NS, 0);
             return;
         }
@@ -506,7 +503,7 @@ impl SpacesActor {
     }
 
     fn handle_space_inventory_changed(&mut self) {
-        if self.state.must_buffer() {
+        if self.state.quarantined() {
             self.schedule_screen_refresh_after(0, 0);
             return;
         }
@@ -1002,7 +999,7 @@ impl SpacesActor {
     }
 
     fn process_screen_refresh(&mut self, attempt: u8) {
-        if self.state.must_buffer() {
+        if self.state.quarantined() {
             self.state.refresh_pending = false;
             return;
         }
@@ -1129,8 +1126,8 @@ impl SpacesActor {
         // single physical display. Churn quarantine is only for unstable physical display
         // topology, not ordinary current-space changes which are handled separately.
         // External display setting changes like main-display promotion and desktop shape
-        // updates can temporarily destabilize active-space mappings, so they must be
-        // buffered like other topology-affecting display reconfigurations.
+        // updates can temporarily destabilize active-space mappings, so they start the churn
+        // quarantine like other topology-affecting display reconfigurations.
         flags.intersects(
             DisplayReconfigFlags::ADD
                 | DisplayReconfigFlags::REMOVE

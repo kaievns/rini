@@ -404,7 +404,7 @@ predicate. 9 tests.
 
 Also consolidated: `should_buffer_topology_updates` and
 `should_quarantine_window_space_event` had different names and byte-identical bodies. Now
-`AuthorityState::must_buffer`.
+`AuthorityState::quarantined`.
 
 ### 4.4.1 The same branch in the reactor hid a rule that was not enforced
 
