@@ -55,19 +55,24 @@ fails loudly if not.
 
 launchd runs `target/release/rini` with KeepAlive and relaunches it after any crash, so whatever a
 build leaves there runs next: a compile check in the main checkout is a deploy nobody ran. The
-wrapper reads rustc's `--out-dir` and, before rustc runs, refuses any compile that lands inside the
-checkout's `target/release`, symlinks resolved, unless `RINI_DEPLOY=1` is set. The refusal names
-`CARGO_TARGET_DIR=target-dev` and `RINI_DEPLOY=1`.
+wrapper reads rustc's `--out-dir` and, before rustc runs, refuses any compile into the checkout's
+`target/release` or `target/release/deps`, the two directories cargo puts the binary in, symlinks
+resolved, unless `RINI_DEPLOY=1` is set. The refusal names `CARGO_TARGET_DIR=target-dev` and
+`RINI_DEPLOY=1`. A bare `cargo build --release` stops at the first workspace library, before the
+rini binary compiles.
 
 - `bin/build.sh` sets `RINI_DEPLOY=1`; it is the one build that deploys.
 - Every other release build, `cargo test --release` and `cargo bench` included, goes to
-  `CARGO_TARGET_DIR=target-dev`. A `--target <triple>` build lands in `target/<triple>/release` and
-  is not refused, which is what CI's release workflow does.
+  `CARGO_TARGET_DIR=target-dev`.
+- A `--target <triple>` build, which CI's release workflow runs, is not refused. Its target units
+  land in `target/<triple>/release`, and its host units, the workspace build scripts among them, in
+  `target/release/build/`. Build-script output under `target/release/build/` never becomes
+  `target/release/rini`, so the wrapper lets it compile.
 - A deploy of another revision builds in its own target dir and moves the binary in, so it needs no
   `RINI_DEPLOY`.
 - The wrapper wraps workspace members only, so a refused build has already compiled third-party
-  crates into `target/release/deps`. None of them is the rini binary, and the binary keeps its
-  mtime.
+  crates into `target/release/deps` and the workspace build scripts into `target/release/build/`.
+  None of them is the rini binary, and the binary keeps its mtime.
 
 `tests/deploy_path.rs` runs the wrapper with a fake rustc and holds each case.
 

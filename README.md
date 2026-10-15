@@ -176,8 +176,8 @@ the signature, so a binary at a new path is a client macOS never granted. Both r
 unless given `--move` (`specs/service.md`).
 
 **A release build in the main checkout is a deploy.** launchd runs `target/release/rini` with
-KeepAlive, so the next crash or restart picks up whatever is there. `bin/sign-rustc.sh` refuses any
-compile into `target/release` unless `RINI_DEPLOY=1`, which `bin/build.sh` sets
+KeepAlive, so the next crash or restart picks up whatever is there. `bin/sign-rustc.sh` refuses a
+compile into `target/release` or its `deps` unless `RINI_DEPLOY=1`, which `bin/build.sh` sets
 (`docs/signing.md`). Builds for anything else go elsewhere:
 
 ```sh

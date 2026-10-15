@@ -1,6 +1,7 @@
-//! `bin/sign-rustc.sh` refuses a compile into this checkout's `target/release` unless
-//! `RINI_DEPLOY=1`, so a bare `cargo build --release` cannot replace the binary launchd runs. These
-//! hand it a fake rustc and the out-dir cargo would, and never build anything.
+//! `bin/sign-rustc.sh` refuses a compile into this checkout's `target/release` or
+//! `target/release/deps` unless `RINI_DEPLOY=1`, so a bare `cargo build --release` cannot replace the
+//! binary launchd runs. These hand it a fake rustc and the out-dir cargo would, and never build
+//! anything.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -64,13 +65,20 @@ fn assert_allowed(run: &Run, out_dir: &Path) {
 
 #[test]
 fn a_compile_into_the_checkouts_target_release_is_refused_before_rustc_runs() {
+    for relative in ["target/release/deps", "target/release", "target/release/deps/"] {
+        let out_dir = under_root(relative);
+        assert_refused(&wrap(&out_dir, None), &out_dir);
+    }
+}
+
+#[test]
+fn a_build_script_under_target_release_compiles_so_a_target_triple_release_build_does() {
     for relative in [
-        "target/release/deps",
-        "target/release",
+        "target/release/build/rini-skylight-sys-67c2e13aa20790fb",
         "target/release/build/rini-0123/out",
     ] {
         let out_dir = under_root(relative);
-        assert_refused(&wrap(&out_dir, None), &out_dir);
+        assert_allowed(&wrap(&out_dir, None), &out_dir);
     }
 }
 
