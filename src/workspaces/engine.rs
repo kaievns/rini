@@ -2136,7 +2136,6 @@ impl LayoutEngine {
             | LayoutCommand::PrevWorkspace(_)
             | LayoutCommand::SwitchToWorkspace(_)
             | LayoutCommand::MoveWindowToWorkspace { .. }
-            | LayoutCommand::CreateWorkspace
             | LayoutCommand::SwitchToLastWorkspace => EventResponse::default(),
         }
     }
@@ -2657,21 +2656,6 @@ impl LayoutEngine {
                 *follow,
                 maybe_id,
             ),
-            LayoutCommand::CreateWorkspace => {
-                match self.virtual_workspace_manager.create_workspace(space, None) {
-                    Ok(_workspace_id) => {
-                        self.broadcast_workspace_changed(space);
-                        EventResponse {
-                            changed: true,
-                            ..EventResponse::default()
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to create new workspace: {:?}", e);
-                        EventResponse::default()
-                    }
-                }
-            }
             LayoutCommand::SwitchToLastWorkspace => {
                 if let Some(last_workspace) = self.virtual_workspace_manager.last_workspace(space) {
                     return self.activate_workspace(window_store, space, last_workspace, None);
@@ -4715,12 +4699,6 @@ mod tests {
             LayoutEvent::WindowFocused(space, wid1),
         );
 
-        let _ = engine.handle_virtual_workspace_command(
-            &mut window_store,
-            &mut memory,
-            space,
-            &LayoutCommand::CreateWorkspace,
-        );
         let workspaces = engine.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
         let workspace_two = workspaces[1].0;
 
@@ -4791,12 +4769,6 @@ mod tests {
             ),
         );
 
-        let _ = engine.handle_virtual_workspace_command(
-            &mut window_store,
-            &mut memory,
-            space,
-            &LayoutCommand::CreateWorkspace,
-        );
         let workspaces = engine.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
         let ws1 = workspaces[0].0;
         let ws2 = workspaces[1].0;
@@ -4908,12 +4880,6 @@ mod tests {
             &mut window_store,
             &mut memory,
             space,
-            &LayoutCommand::CreateWorkspace,
-        );
-        let _ = engine.handle_virtual_workspace_command(
-            &mut window_store,
-            &mut memory,
-            space,
             &LayoutCommand::MoveWindowToWorkspace {
                 workspace: WorkspaceSelector::Name("next".into()),
                 follow: true,
@@ -4959,12 +4925,6 @@ mod tests {
                 )],
                 None,
             ),
-        );
-        let _ = engine.handle_virtual_workspace_command(
-            &mut window_store,
-            &mut memory,
-            space,
-            &LayoutCommand::CreateWorkspace,
         );
         let target_workspace = engine.virtual_workspace_manager_mut().list_workspaces(space)[1].0;
 

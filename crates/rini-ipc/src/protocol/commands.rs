@@ -58,7 +58,6 @@ pub enum LayoutCommand {
         follow: bool,
         window_id: Option<u32>,
     },
-    CreateWorkspace,
     SwitchToLastWorkspace,
     SwapWindows(WindowId, WindowId),
 }

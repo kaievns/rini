@@ -314,8 +314,6 @@ enum WorkspaceCommands {
         follow: bool,
         window_id: Option<u32>,
     },
-    /// Create a new workspace
-    Create,
     /// Switch to the last workspace
     Last,
 }
@@ -803,9 +801,6 @@ fn map_workspace_command(cmd: WorkspaceCommands) -> Result<CliCommand, String> {
                 follow,
                 window_id,
             },
-        ))),
-        WorkspaceCommands::Create => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::CreateWorkspace,
         ))),
         WorkspaceCommands::Last => Ok(CliCommand::Reactor(reactor::Command::Layout(
             LC::SwitchToLastWorkspace,

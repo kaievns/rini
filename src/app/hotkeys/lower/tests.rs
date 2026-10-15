@@ -129,7 +129,6 @@ fn table() -> Vec<(Action, Lowered)> {
             Action::MoveWindowToWorkspaceUp(false),
             moved(WorkspaceSelector::Name("prev".into()), false),
         ),
-        (Action::CreateWorkspace, layout(LayoutCommand::CreateWorkspace)),
         (Action::FocusMonitorLeft, reactor(R::FocusDisplay(d(Left)))),
         (Action::FocusMonitorRight, reactor(R::FocusDisplay(d(Right)))),
         (Action::FocusMonitorUp, reactor(R::FocusDisplay(d(Up)))),

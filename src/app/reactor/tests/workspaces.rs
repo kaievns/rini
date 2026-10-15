@@ -631,7 +631,6 @@ fn workspace_query_uses_authoritative_assignment_after_move() {
 
     apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(1));
 
-    reactor.handle_test_layout_command(LayoutCommand::CreateWorkspace);
     reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
         workspace: WorkspaceSelector::Index(1),
         follow: false,

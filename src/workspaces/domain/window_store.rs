@@ -196,10 +196,10 @@ mod tests {
         let space = SpaceId::new(10);
         let mut workspaces = WorkspaceStore::new();
         let source_workspace = workspaces
-            .create_workspace(space, Some("Source".to_string()))
+            .create_workspace(space, "Source".to_string())
             .expect("source workspace");
         let target_workspace = workspaces
-            .create_workspace(space, Some("Target".to_string()))
+            .create_workspace(space, "Target".to_string())
             .expect("target workspace");
         let from = WindowId::new(1, 1);
         let to = WindowId::new(1, 2);
@@ -239,7 +239,7 @@ mod tests {
         let fullscreen_space = SpaceId::new(0x400000000 + space.get());
         let mut workspaces = WorkspaceStore::new();
         let workspace_id =
-            workspaces.create_workspace(space, Some("Main".to_string())).expect("workspace");
+            workspaces.create_workspace(space, "Main".to_string()).expect("workspace");
         let from = WindowId::new(1, 1);
         let to = WindowId::new(1, 2);
         let wsid = WindowServerId::new(77);
@@ -281,7 +281,7 @@ mod tests {
         let wsid = WindowServerId::new(55);
         let mut workspaces = WorkspaceStore::new();
         let workspace_id = workspaces
-            .create_workspace(SpaceId::new(9), Some("Cleanup".to_string()))
+            .create_workspace(SpaceId::new(9), "Cleanup".to_string())
             .expect("workspace");
         store.track_window_server_id(wsid, wid);
         store.assign_window_to_workspace(

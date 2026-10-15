@@ -125,7 +125,6 @@ pub struct WorkspaceStore {
     workspace_order: Vec<VirtualWorkspaceId>,
     pub active_workspace_per_space:
         HashMap<SpaceId, (Option<VirtualWorkspaceId>, VirtualWorkspaceId)>,
-    workspace_counter: usize,
     #[cfg(test)]
     #[serde(skip)]
     test_app_rules: crate::windows::domain::rules::AppRuleEngine,
@@ -162,7 +161,6 @@ impl WorkspaceStore {
             workspaces: SlotMap::default(),
             workspace_order: Vec::new(),
             active_workspace_per_space: HashMap::default(),
-            workspace_counter: 1,
             #[cfg(test)]
             test_app_rules: crate::windows::domain::rules::AppRuleEngine::new(&config.app_rules),
             max_workspaces: MAX_WORKSPACES,
@@ -311,10 +309,11 @@ impl WorkspaceStore {
     ///
     /// `space` is still taken so the caller's display gets initialised, but the new
     /// workspace is not owned by it.
+    #[cfg(test)]
     pub fn create_workspace(
         &mut self,
         space: SpaceId,
-        name: Option<String>,
+        name: String,
     ) -> Result<VirtualWorkspaceId, WorkspaceError> {
         self.ensure_space_initialized(space);
         if self.workspace_order.len() >= self.max_workspaces {
@@ -323,12 +322,6 @@ impl WorkspaceStore {
                 self.max_workspaces
             )));
         }
-
-        let name = name.unwrap_or_else(|| {
-            let name = format!("Workspace {}", self.workspace_counter);
-            self.workspace_counter += 1;
-            name
-        });
 
         let workspace = VirtualWorkspace::new(name, &self.layout_settings);
         let workspace_id = self.workspaces.insert(workspace);
@@ -1068,7 +1061,7 @@ mod tests {
             manager.workspace_order.len()
         );
 
-        let ws_id = manager.create_workspace(space, Some("Test Workspace".to_string())).unwrap();
+        let ws_id = manager.create_workspace(space, "Test Workspace".to_string()).unwrap();
         assert!(
             manager
                 .list_workspaces(space)
@@ -1085,8 +1078,8 @@ mod tests {
         let mut window_store = WindowStore::default();
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
 
         let window1 = WindowId::new(1, 1);
         let window2 = WindowId::new(1, 2);
@@ -1118,8 +1111,8 @@ mod tests {
         let mut window_store = WindowStore::default();
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
         let window = WindowId::new(9, 1);
 
         assert!(manager.assign_window_to_workspace(&mut window_store, space, window, ws1_id));
@@ -1149,8 +1142,8 @@ mod tests {
         let mut window_store = WindowStore::default();
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
         let window = WindowId::new(9, 1);
 
         assert!(manager.assign_window_to_workspace(&mut window_store, space, window, ws1_id));
@@ -1515,8 +1508,8 @@ mod tests {
     fn test_active_workspace_switching() {
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
 
         assert!(manager.set_active_workspace(space, ws1_id));
         assert_eq!(manager.active_workspace(space), Some(ws1_id));
@@ -1544,8 +1537,8 @@ mod tests {
         }
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
         let window1 = WindowId::new(1, 1);
         let window2 = WindowId::new(1, 2);
 
@@ -1581,9 +1574,9 @@ mod tests {
         let window_store = WindowStore::default();
         let mut manager = WorkspaceStore::new();
         let space = SpaceId::new(1);
-        let ws1_id = manager.create_workspace(space, Some("WS1".to_string())).unwrap();
-        let ws2_id = manager.create_workspace(space, Some("WS2".to_string())).unwrap();
-        let ws3_id = manager.create_workspace(space, Some("WS3".to_string())).unwrap();
+        let ws1_id = manager.create_workspace(space, "WS1".to_string()).unwrap();
+        let ws2_id = manager.create_workspace(space, "WS2".to_string()).unwrap();
+        let ws3_id = manager.create_workspace(space, "WS3".to_string()).unwrap();
 
         assert_eq!(
             manager.next_workspace(&window_store, space, ws1_id, None),

@@ -167,8 +167,8 @@ mod tests {
 
     fn two_workspaces(space: SpaceId) -> (VirtualWorkspaceId, VirtualWorkspaceId) {
         let mut store = WorkspaceStore::new();
-        let a = store.create_workspace(space, Some("a".into())).unwrap();
-        let b = store.create_workspace(space, Some("b".into())).unwrap();
+        let a = store.create_workspace(space, "a".into()).unwrap();
+        let b = store.create_workspace(space, "b".into()).unwrap();
         (a, b)
     }
 
@@ -235,7 +235,7 @@ mod tests {
     fn remap_space_merges_into_windows_already_on_the_new_space() {
         let (old, new) = (SpaceId::new(1), SpaceId::new(2));
         let mut store = WorkspaceStore::new();
-        let a = store.create_workspace(old, Some("a".into())).unwrap();
+        let a = store.create_workspace(old, "a".into()).unwrap();
         let mut idx = WorkspaceAssignments::default();
         idx.assign(
             WindowId::new(1, 1),

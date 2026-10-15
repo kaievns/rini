@@ -10,6 +10,13 @@ moves along the strip within one workspace.
   of them active.
 - A workspace's configured name comes from the config's `workspace "name"` nodes and MUST survive a
   restore. A restore reads a saved layout, not a saved set of names.
+- The workspaces are the config's `workspace` nodes, in their order, and rini MUST NOT add one while
+  it runs. A workspace added at run time has no name the config knows and no place in its order,
+  and niri has no action that adds one.
+
+> **Reported 2026-10-15.** Kai's decision in the dead-code sweep: delete `create-workspace`. It
+> appended an unnamed "Workspace N" after the configured list, and neither Kai's config nor the
+> shipped binds used it.
 
 ## What belongs to a workspace
 

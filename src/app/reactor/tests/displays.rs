@@ -575,8 +575,6 @@ fn mission_control_refresh_known_visible_fallback_does_not_restore_window_moved_
 
     apps.make_app_and_settle_on_screen(&mut reactor, screen, space, pid, make_windows(2));
 
-    reactor.handle_test_workspace_command(space, &LayoutCommand::CreateWorkspace);
-
     reactor.refresh_windows_after_mission_control_with_active_windows(vec![(
         retained_wsid,
         Some(space),
