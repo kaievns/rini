@@ -5414,8 +5414,7 @@ impl Reactor {
 
     /// Resolves rather than caches. Three callers, each once per event, and resolving reads the
     /// window server — so this is a real cost but not a hot one, and a cache here would be a second
-    /// copy of the answer `space_resolution` exists to give. Left alone deliberately: the TODO that
-    /// used to be here asked for an optimisation with no measurement behind it.
+    /// copy of the answer `space_resolution` exists to give.
     fn main_window_space(&self) -> Option<SpaceId> {
         let wid = self.main_window()?;
         self.affinity().best_space_for_window_id(wid)

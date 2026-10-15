@@ -122,12 +122,10 @@ fn active_display_update_only_changes_command_context() {
 /// A tiled scrolling window that appears on another display's coordinates keeps its own
 /// space.
 ///
-/// This test used to assert the opposite, and passed only because the default layout mode
-/// was `traditional`. In a scrolling strip, columns scrolled off the edge are deliberately
-/// parked outside the display — on a multi-display desktop those coordinates land inside the
-/// neighbouring monitor — so inferring ownership from position would hand every parked
-/// column to the wrong display. `keep_assigned_for_scrolling` exists precisely to prevent
-/// that, and with the tree layouts removed it is now always in force for tiled windows.
+/// Columns scrolled off the edge are deliberately parked outside the display — on a
+/// multi-display desktop those coordinates land inside the neighbouring monitor — so inferring
+/// ownership from position would hand every parked column to the wrong display.
+/// `keep_assigned_for_scrolling` prevents that for every tiled window.
 #[test]
 fn a_tiled_scrolling_window_keeps_its_space_when_its_frame_lands_on_another_display() {
     let (mut reactor, wid, _wsid, space1, _space2, frame, screen2) =
@@ -1773,8 +1771,7 @@ fn replug_leaves_the_other_display_group_order_untouched() {
 /// A window parked on the built-in only because its own display was unplugged must not lose the
 /// record the replug depends on.
 ///
-/// Records are per ARRANGEMENT now, so this reads differently than it used to. The built-in-only
-/// arrangement genuinely holds the window on the built-in — that is where it is, and where it should
+/// Records are per ARRANGEMENT. The built-in-only arrangement genuinely holds the window on the built-in — that is where it is, and where it should
 /// be next time the laptop is alone — while the docked arrangement still says the external. The
 /// invariant is the same one and it is asserted where it counts: the window goes back on replug.
 #[test]

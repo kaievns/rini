@@ -8,8 +8,7 @@ use crate::workspaces::LayoutEvent;
 
 #[test]
 fn startup_validation_preserves_stale_ids_when_the_app_can_still_fuzzy_match() {
-    // Also the answer to a FIXME that sat in `Reactor::new` asking for restored state to drop apps
-    // that are no longer running: `closed` below is exactly that case, and it is discarded here.
+    // Restored state drops apps that are no longer running: `closed` below is that case.
     let mut engine = test_engine();
     let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
@@ -215,11 +214,9 @@ fn startup_restore_remaps_saved_space_by_display_identity_once() {
 
 /// Two displays swapping native space ids must keep each display's own strip.
 ///
-/// This test used to distinguish the two displays by giving each its own WORKSPACE and
-/// renaming them. That no longer expresses anything: workspaces are global, so both displays
-/// share one, and renaming it twice just overwrote the name. What actually needs to survive a
-/// swap is per-display state — which display shows which workspace, and which windows are on
-/// each display's strip.
+/// Workspaces are global, so both displays share one. What needs to survive a swap is
+/// per-display state: which display shows which workspace, and which windows are on each
+/// display's strip.
 #[test]
 fn startup_restore_handles_space_id_swaps_between_displays() {
     let space_a = SpaceId::new(620);

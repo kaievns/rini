@@ -204,13 +204,7 @@ mod tests {
         windows
     }
 
-    /// Upstream's container-tree test, reduced to the one layout system that still exists.
-    ///
-    /// It originally also covered Traditional, Bsp and MasterStack. Those systems were
-    /// removed in "refactor: remove the tree-based layout modes, leaving only scrolling", so
-    /// their sections are gone rather than the whole test: the scrolling assertions are
-    /// unaffected by that removal and still pin the container-tree contract the IPC layer
-    /// depends on.
+    /// The container-tree contract the IPC layer depends on.
     #[test]
     fn normalized_container_trees_expose_layout_topology() {
         let mut scrolling = ScrollingLayoutSystem::default();

@@ -31,14 +31,8 @@ fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
     );
     assert_eq!(state.container_tree.children.len(), 2);
 
-    // Windows hang off COLUMNS, one level down.
-    //
-    // This test was written when the default layout was Traditional, whose container tree
-    // puts windows directly under the root, so it asserted on `children[N].window_id`. The
-    // tree-based layouts are gone and scrolling is the only mode left: its top-level children
-    // are columns (`window_id: None`, `role: "column"`) and the windows sit inside them. The
-    // old assertions compared `selected_window` against a column's absent id and read
-    // `None`, which is the structure being correct rather than a defect.
+    // Windows hang off COLUMNS, one level down: the top-level children are columns
+    // (`window_id: None`, `role: "column"`) and the windows sit inside them.
     let windows: Vec<&rini_ipc::protocol::ContainerTreeNode> = state
         .container_tree
         .children

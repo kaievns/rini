@@ -1,11 +1,7 @@
-//! What a layout pass is allowed to touch when it sends frames to the applications.
-//!
-//! The layout side of animation used to take `&mut Reactor` — the whole thing — for two jobs:
-//! recording where a window is going, and minting the transaction id that lets the frame report
-//! coming back be matched to the write that caused it. `&mut Reactor` says nothing about which of
-//! those it does, and it means nothing here can be exercised without a reactor.
-//!
-//! Two borrows say it exactly. `src/transitions/docs/coordination.md` calls this the
+//! What a layout pass is allowed to touch when it sends frames to the applications: two borrows,
+//! one to record where a window is going, one to mint the transaction id that lets the frame report
+//! coming back be matched to the write that caused it, so nothing here needs a reactor to be
+//! exercised. `src/transitions/docs/coordination.md` calls this the
 //! `present(motion)` boundary under "Structural findings". `instant_requests` is what a pass that
 //! does not fly sends one application.
 
