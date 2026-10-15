@@ -1,13 +1,11 @@
-//! Everything the per-app thread asks of Accessibility, behind one trait.
+//! Everything the per-app thread asks of the platform, behind one trait: Accessibility, the window
+//! server through its port, the pointer state and the Command-W that closes a window.
 //!
-//! `app_actor.rs` is the largest file in the tree with no tests of its own, and the reason is that it
-//! cannot take a step without a live `AXUIElement`: it stores them, keys a map by them, and reads and
-//! writes windows through them. No amount of rearranging makes that testable — the dependency has to
-//! become a parameter.
-//!
-//! So `State` is generic over an `AxWorld`. Production installs [`MacAx`], which is the calls the
-//! actor used to make inline. A test installs a fake whose elements are plain numbers and whose
-//! answers it wrote itself, and the actor's own logic runs unchanged.
+//! The actor cannot take a step without a live `AXUIElement`: it stores them, keys a map by them,
+//! and reads and writes windows through them. So `State` in `app_actor.rs` is generic over an
+//! `AxWorld`, and makes no platform call but through it. Production installs [`MacAx`]; a test
+//! installs `FakeAx`, whose elements are plain numbers and whose answers it wrote itself, and the
+//! actor's own logic runs unchanged.
 //!
 //! Generics rather than `Box<dyn AxWorld>` on purpose: every frame write and every notification goes
 //! through here, so an allocation and a vtable hop per call is not free, and nothing needs two worlds
@@ -15,23 +13,25 @@
 
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::sync::Arc;
 
 use objc2::rc::Retained;
 use objc2_app_kit::NSRunningApplication;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use rini_core::ids::WindowServerId;
+use rini_core::ids::{WindowServerId, pid_t};
 
 use super::element::{AXUIElement, Error as AxError};
 use super::enhanced_ui::EnhancedUi;
 use super::observer::Observer;
 use crate::windows::domain::info::{WindowInfo, WindowServerInfo};
-use crate::windows::platform::window_server;
+use crate::windows::platform::mouse::{self, MouseState};
+use crate::windows::platform::window_server::{self, WindowServer};
 
 /// One window or application, as the world in use names it.
 pub trait AxElement: Clone + Eq + Hash + Debug {}
 impl<T: Clone + Eq + Hash + Debug> AxElement for T {}
 
-/// The Accessibility surface the per-app thread uses.
+/// The platform surface the per-app thread uses.
 ///
 /// Every method that can fail returns [`AxError`], which the actor classifies through
 /// `windows::domain::ax_events`. The trait deliberately answers in rini's types rather than handing
@@ -70,8 +70,9 @@ pub trait AxWorld {
 
     /// Everything rini records about a window, read in one go.
     ///
-    /// The reads above, plus whether the window is resizable or modal and a window-server lookup for
-    /// the owning bundle, kept on the world so a fake answers it the same way it answers the parts.
+    /// The reads above, plus whether the window is resizable or modal, and the window server's record
+    /// of it: `hint`, or else, for a standard window, what [`AxWorld::server`] has for its id. The
+    /// record is answered beside the info, and the owning bundle is read from it.
     fn window_info(
         &self,
         elem: &Self::Element,
@@ -84,11 +85,15 @@ pub trait AxWorld {
     /// ordinary case for a window that has just been created.
     fn window_server_id(&self, elem: &Self::Element) -> Option<WindowServerId>;
 
-    /// The frame the window server has for `id` now, read without asking the app.
-    ///
-    /// On the world so a fake answers it: a test asking the real window server would read whichever
-    /// window holds that id on the machine running it.
-    fn server_frame(&self, id: WindowServerId) -> Option<CGRect>;
+    /// The window server, through the port: every window-server read and command the thread makes.
+    fn server(&self) -> &dyn WindowServer;
+
+    /// The pointer state the event tap last saw, which a window's frame change is stamped with.
+    fn mouse_state(&self) -> Option<MouseState>;
+
+    /// Post Command-W to the application, so it closes its key window its own way. `false` when the
+    /// event could not be made.
+    fn post_command_w(&self) -> bool;
 
     /// Start delivering `notification` for `elem`, carrying `data` back to the callback.
     fn watch(
@@ -128,23 +133,28 @@ pub trait AxWorld {
 /// notification is registered against an element and delivered through an observer bound to the same
 /// process.
 pub struct MacAx {
+    pid: pid_t,
     app: AXUIElement,
     running_app: Retained<NSRunningApplication>,
     observer: Observer,
     enhanced_ui: EnhancedUi,
+    server: Arc<dyn WindowServer>,
 }
 
 impl MacAx {
     pub fn new(
+        pid: pid_t,
         app: AXUIElement,
         running_app: Retained<NSRunningApplication>,
         observer: Observer,
     ) -> Self {
         Self {
+            pid,
             app,
             running_app,
             observer,
             enhanced_ui: EnhancedUi::default(),
+            server: window_server::live(),
         }
     }
 }
@@ -187,14 +197,18 @@ impl AxWorld for MacAx {
         elem: &AXUIElement,
         hint: Option<WindowServerInfo>,
     ) -> Result<(WindowInfo, Option<WindowServerInfo>), AxError> {
-        WindowInfo::from_ax_element(elem, hint)
+        WindowInfo::from_ax_element(elem, hint, &*self.server)
     }
 
     fn window_server_id(&self, elem: &AXUIElement) -> Option<WindowServerId> {
         WindowServerId::try_from(elem).ok()
     }
 
-    fn server_frame(&self, id: WindowServerId) -> Option<CGRect> { window_server::server_frame(id) }
+    fn server(&self) -> &dyn WindowServer { &*self.server }
+
+    fn mouse_state(&self) -> Option<MouseState> { mouse::get_mouse_state() }
+
+    fn post_command_w(&self) -> bool { mouse::post_command_w(self.pid) }
 
     fn watch(
         &self,
@@ -237,7 +251,9 @@ impl AxWorld for MacAx {
 /// the default for "a window the test never set up" is the same as for one that died.
 ///
 /// Writes are recorded rather than performed. `positions` and `sizes` are what the actor asked for,
-/// which is the only thing a test can check: whether a frame write happened, and with what.
+/// which is the only thing a test can check: whether a frame write happened, and with what. The
+/// window server is a `FakeWindowServer`, which answers what a test states on it and records the
+/// commands it is given.
 #[cfg(test)]
 #[derive(Debug, Default)]
 pub struct FakeAx {
@@ -254,8 +270,10 @@ pub struct FakeAx {
     pub titles: std::collections::HashMap<u32, String>,
     pub minimized: std::collections::HashMap<u32, bool>,
     pub server_ids: std::collections::HashMap<u32, WindowServerId>,
-    /// What the window server has for each id; an id with nothing recorded cannot be read.
-    pub server_frames: std::collections::HashMap<WindowServerId, CGRect>,
+    pub server: window_server::FakeWindowServer,
+    pub mouse: Option<MouseState>,
+    /// How many times Command-W was posted.
+    pub command_w_posts: std::cell::Cell<u32>,
     pub main_window: Option<u32>,
     pub frontmost: bool,
     /// Elements whose `AXTitleUIElement` cannot be read.
@@ -288,6 +306,18 @@ impl FakeAx {
         };
         ax.describe_standard_window(window, frame);
         ax
+    }
+
+    /// The windows the window server was told to make key, in order, each with its process.
+    pub fn made_key(&self) -> Vec<(pid_t, WindowServerId)> {
+        self.server
+            .commands()
+            .into_iter()
+            .filter_map(|command| match command {
+                window_server::Command::MakeKeyWindow { pid, window } => Some((pid, window)),
+                window_server::Command::TakeStackPlace { .. } => None,
+            })
+            .collect()
     }
 
     /// Record the attributes that make `window` a standard, non-minimized window.
@@ -395,32 +425,43 @@ impl AxWorld for FakeAx {
     ) -> Result<(WindowInfo, Option<WindowServerInfo>), AxError> {
         let role = self.role(elem)?;
         let subrole = self.subrole(elem)?;
+        let is_standard = role == super::element::AX_WINDOW_ROLE
+            && subrole == super::element::AX_STANDARD_WINDOW_SUBROLE;
+        let sys_id = self.window_server_id(elem);
+        let server_info = match (hint, sys_id) {
+            (None, Some(id)) if is_standard => self.server.get_window(id),
+            _ => hint,
+        };
         let info = WindowInfo {
-            is_standard: role == super::element::AX_WINDOW_ROLE
-                && subrole == super::element::AX_STANDARD_WINDOW_SUBROLE,
+            is_standard,
             is_root: true,
             is_minimized: self.minimized(elem).unwrap_or(false),
             is_resizable: true,
-            min_size: None,
-            max_size: None,
+            min_size: server_info.map(|info| info.min_frame),
+            max_size: server_info.map(|info| info.max_frame),
             title: self.title(elem).unwrap_or_default(),
             frame: self.frame(elem)?,
-            sys_id: self.window_server_id(elem),
+            sys_id,
             bundle_id: None,
             path: None,
             ax_role: Some(role),
             ax_subrole: Some(subrole),
             is_modal: false,
         };
-        Ok((info, hint))
+        Ok((info, server_info))
     }
 
     fn window_server_id(&self, elem: &u32) -> Option<WindowServerId> {
         self.server_ids.get(elem).copied()
     }
 
-    fn server_frame(&self, id: WindowServerId) -> Option<CGRect> {
-        self.server_frames.get(&id).copied()
+    fn server(&self) -> &dyn WindowServer { &self.server }
+
+    fn mouse_state(&self) -> Option<MouseState> { self.mouse }
+
+    fn post_command_w(&self) -> bool {
+        self.command_w_posts.set(self.command_w_posts.get() + 1);
+        true
     }
 
     fn watch(&self, elem: &u32, notification: &'static str, _data: usize) -> Result<(), AxError> {

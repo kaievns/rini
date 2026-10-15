@@ -40,7 +40,6 @@ use crate::windows::platform::ax::element::{
 use crate::windows::platform::ax::observer::Observer;
 use crate::windows::platform::ax::world::{AxWorld, MacAx};
 use crate::windows::platform::process::ProcessInfo;
-use crate::windows::platform::{mouse, window_server};
 
 const kAXApplicationActivatedNotification: &str = "AXApplicationActivated";
 const kAXApplicationDeactivatedNotification: &str = "AXApplicationDeactivated";
@@ -447,12 +446,12 @@ impl<W: AxWorld> State<W> {
             }
             Request::CloseWindow(window_server_id) => {
                 if let Some(wsid) = window_server_id
-                    && let Err(err) = window_server::make_key_window(self.pid, wsid)
+                    && let Err(err) = self.ax.server().make_key_window(self.pid, wsid)
                 {
                     warn!(pid = self.pid, ?wsid, ?err, "Failed to focus close target");
                     return Ok(false);
                 }
-                if !mouse::post_command_w(self.pid) {
+                if !self.ax.post_command_w() {
                     warn!(pid = self.pid, ?window_server_id, "Failed to post Command-W");
                 }
             }
@@ -580,7 +579,9 @@ impl<W: AxWorld> State<W> {
         server_id: Option<WindowServerId>,
         desired: CGRect,
     ) -> Result<Option<CGRect>, AxError> {
-        let current = server_id.and_then(|id| self.ax.server_frame(id)).map(|frame| frame.size);
+        let current = server_id
+            .and_then(|id| self.ax.server().server_frame(id))
+            .map(|frame| frame.size);
         if frame_write(current, desired.size) == FrameWrite::PositionOnly {
             let _ = self.ax.set_position(elem, desired.origin);
             let Some(landed) =
@@ -628,12 +629,12 @@ impl<W: AxWorld> State<W> {
                     return;
                 };
                 let window_server_info = window_server_info
-                    .or_else(|| window.sys_id.and_then(window_server::get_window));
+                    .or_else(|| window.sys_id.and_then(|id| self.ax.server().get_window(id)));
                 self.send_event(Event::WindowCreated(
                     wid,
                     window,
                     window_server_info,
-                    mouse::get_mouse_state(),
+                    self.ax.mouse_state(),
                 ));
             }
             AxNotificationKind::MenuOpened => self.send_event(Event::MenuOpened(self.pid)),
@@ -666,7 +667,7 @@ impl<W: AxWorld> State<W> {
                     return;
                 }
 
-                let mouse_state = mouse::get_mouse_state();
+                let mouse_state = self.ax.mouse_state();
                 let txid = match self.window(wid) {
                     Ok(window) => self.txid_for_window_state(window),
                     Err(err) => {
@@ -853,7 +854,7 @@ impl<W: AxWorld> State<W> {
             );
         }
         let make_key_result =
-            window_server_id.map(|wsid| window_server::make_key_window(this.pid, wsid));
+            window_server_id.map(|wsid| this.ax.server().make_key_window(this.pid, wsid));
         if let Some(Err(err)) = &make_key_result {
             warn!(?this.pid, ?err, "Failed to activate app");
         }
@@ -960,13 +961,13 @@ impl<W: AxWorld> State<W> {
                     debug!(?self.pid, "Got MainWindowChanged on unknown window");
                     return None;
                 };
-                let window_server_info =
-                    window_server_info.or_else(|| info.sys_id.and_then(window_server::get_window));
+                let window_server_info = window_server_info
+                    .or_else(|| info.sys_id.and_then(|id| self.ax.server().get_window(id)));
                 self.send_event(Event::WindowCreated(
                     wid,
                     info,
                     window_server_info,
-                    mouse::get_mouse_state(),
+                    self.ax.mouse_state(),
                 ));
                 wid
             }
@@ -1178,7 +1179,7 @@ impl<W: AxWorld> State<W> {
         }
 
         if let Some(wsid) = info.sys_id {
-            info.is_root = window_server::window_parent(wsid).is_none();
+            info.is_root = self.ax.server().window_parent(wsid).is_none();
         } else {
             info.is_root = true;
         }
@@ -1289,7 +1290,7 @@ impl<W: AxWorld> State<W> {
             .filter_map(|elem| self.ax.window_server_id(elem))
             .collect();
         let mut info_by_id = HashMap::with_capacity_and_hasher(wsids.len(), Default::default());
-        for info in window_server::get_windows(&wsids) {
+        for info in self.ax.server().get_windows(&wsids) {
             info_by_id.insert(info.id, info);
         }
         info_by_id
@@ -1493,7 +1494,7 @@ fn app_thread_main(
     let mut state = State {
         pid,
         bundle_id: info.bundle_id.clone(),
-        ax: MacAx::new(app.clone(), running_app.clone(), observer),
+        ax: MacAx::new(pid, app.clone(), running_app.clone(), observer),
         events_tx,
         windows: HashMap::default(),
         elem_to_wid: HashMap::default(),
@@ -1564,9 +1565,11 @@ mod tests {
     use std::rc::Rc;
 
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use objc2_core_graphics::CGError;
 
     use super::*;
     use crate::windows::platform::ax::world::FakeAx;
+    use crate::windows::platform::mouse::MouseState;
 
     /// Collects what the actor told the reactor.
     #[derive(Clone, Default)]
@@ -1637,8 +1640,8 @@ mod tests {
             state_with(FakeAx::with_one_window(window, rect(0., 0., 100., 100.)));
         state
             .ax
-            .server_frames
-            .insert(WindowServerId::new(window), rect(0., 0., 100., 100.));
+            .server
+            .set_server_frame(WindowServerId::new(window), Some(rect(0., 0., 100., 100.)));
         let wid = state
             .register_window(window, peer(window, rect(0., 0., 100., 100.)))
             .expect("the window registers")
@@ -1677,8 +1680,8 @@ mod tests {
             state_with(FakeAx::with_one_window(window, rect(0., 0., 800., 600.)));
         state
             .ax
-            .server_frames
-            .insert(WindowServerId::new(window), rect(0., 0., 800., 600.));
+            .server
+            .set_server_frame(WindowServerId::new(window), Some(rect(0., 0., 800., 600.)));
         let wid = state
             .register_window(window, peer(window, rect(0., 0., 800., 600.)))
             .expect("the window registers")
@@ -1713,8 +1716,8 @@ mod tests {
             state_with(FakeAx::with_one_window(window, rect(0., 0., 800., 600.)));
         state
             .ax
-            .server_frames
-            .insert(WindowServerId::new(window), rect(0., 0., 800., 600.));
+            .server
+            .set_server_frame(WindowServerId::new(window), Some(rect(0., 0., 800., 600.)));
         let wid = state
             .register_window(window, peer(window, rect(0., 0., 800., 600.)))
             .expect("the window registers")
@@ -1763,7 +1766,8 @@ mod tests {
         let mut ax = FakeAx::with_one_window(kept, rect(0., 0., 800., 600.));
         ax.windows.push(unread);
         ax.describe_standard_window(unread, rect(800., 0., 400., 600.));
-        ax.server_frames.insert(WindowServerId::new(kept), rect(0., 0., 800., 600.));
+        ax.server
+            .set_server_frame(WindowServerId::new(kept), Some(rect(0., 0., 800., 600.)));
         let (mut state, _sink) = state_with(ax);
         let kept_wid = state
             .register_window(kept, peer(kept, rect(0., 0., 800., 600.)))
@@ -1874,6 +1878,125 @@ mod tests {
         assert!(!info.is_standard, "no readable title element means not standard");
     }
 
+    /// A close makes the window key through the window server, then posts Command-W, so the
+    /// application closes that window its own way.
+    #[test]
+    fn a_close_makes_the_window_key_then_posts_command_w() {
+        let (mut state, _sink, _) = raisable(7);
+
+        state
+            .handle_request(Request::CloseWindow(Some(WindowServerId::new(7))))
+            .expect("handled");
+
+        assert_eq!(state.ax.made_key(), [(PID, WindowServerId::new(7))]);
+        assert_eq!(state.ax.command_w_posts.get(), 1, "Command-W posted once");
+    }
+
+    /// Command-W closes whichever window is key, so a close whose window could not be made key
+    /// posts none.
+    #[test]
+    fn a_close_whose_window_cannot_be_made_key_posts_no_command_w() {
+        let (mut state, _sink, _) = raisable(7);
+        state.ax.server.fail_make_key_window(Some(CGError::Failure));
+
+        state
+            .handle_request(Request::CloseWindow(Some(WindowServerId::new(7))))
+            .expect("handled");
+
+        assert_eq!(state.ax.made_key(), [(PID, WindowServerId::new(7))], "asked");
+        assert_eq!(state.ax.command_w_posts.get(), 0, "and nothing posted");
+    }
+
+    #[test]
+    fn a_close_of_a_window_with_no_server_id_posts_command_w_alone() {
+        let (mut state, _sink, _) = raisable(7);
+
+        state.handle_request(Request::CloseWindow(None)).expect("handled");
+
+        assert!(state.ax.made_key().is_empty(), "nothing to make key");
+        assert_eq!(state.ax.command_w_posts.get(), 1);
+    }
+
+    /// A created window is announced with the window server's record of it and the pointer state,
+    /// so a window that opens mid-drag is not taken for a layout echo.
+    #[test]
+    fn a_created_window_is_announced_with_its_server_record_and_the_pointer_state() {
+        let window = 7;
+        let frame = rect(0., 0., 100., 100.);
+        let mut ax = FakeAx::with_one_window(window, frame);
+        ax.server.set_window(WindowServerId::new(window), peer(window, frame));
+        ax.mouse = Some(MouseState::Down);
+        let (mut state, sink) = state_with(ax);
+
+        state.handle_notification(window, AxNotificationKind::WindowCreated, None);
+
+        let announced = sink.0.borrow();
+        assert!(
+            matches!(
+                announced.as_slice(),
+                [Event::WindowCreated(_, _, Some(info), Some(MouseState::Down))]
+                    if info.id == WindowServerId::new(window)
+            ),
+            "{announced:?}"
+        );
+    }
+
+    /// A window with a server id the window server does not report is not on screen, and is not
+    /// taken on when the application says it was created.
+    #[test]
+    fn a_created_window_the_window_server_does_not_report_is_not_taken_on() {
+        let window = 7;
+        let (mut state, sink) =
+            state_with(FakeAx::with_one_window(window, rect(0., 0., 100., 100.)));
+
+        state.handle_notification(window, AxNotificationKind::WindowCreated, None);
+
+        assert!(state.windows.is_empty());
+        assert!(sink.0.borrow().is_empty(), "{:?}", sink.0.borrow());
+    }
+
+    /// A window the window server gives a parent is a child window, not a root one.
+    #[test]
+    fn a_window_the_window_server_gives_a_parent_is_not_a_root_window() {
+        let window = 7;
+        let frame = rect(0., 0., 100., 100.);
+        let ax = FakeAx::with_one_window(window, frame);
+        ax.server
+            .set_window_parent(WindowServerId::new(window), Some(WindowServerId::new(3)));
+        let (mut state, _sink) = state_with(ax);
+
+        let (info, _, _) = state.register_window(window, peer(window, frame)).expect("registers");
+
+        assert!(!info.is_root);
+    }
+
+    /// A refresh takes on the windows the window server reports, and leaves out one it does not,
+    /// which is not on screen.
+    #[test]
+    fn a_refresh_takes_on_only_the_windows_the_window_server_reports() {
+        let (reported, unreported) = (7, 8);
+        let frame = rect(0., 0., 100., 100.);
+        let mut ax = FakeAx::with_one_window(reported, frame);
+        ax.windows.push(unreported);
+        ax.describe_standard_window(unreported, frame);
+        ax.server.set_window(WindowServerId::new(reported), peer(reported, frame));
+        let (mut state, sink) = state_with(ax);
+
+        state.handle_request(Request::GetVisibleWindows).expect("refreshed");
+
+        let reported_wid = state.id(&reported).expect("taken on");
+        assert!(state.id(&unreported).is_err(), "left out");
+        assert!(
+            sink.0.borrow().iter().any(|event| matches!(
+                event,
+                Event::WindowsDiscovered { new, .. }
+                    if !new.is_empty() && new.iter().all(|(w, _)| *w == reported_wid)
+            )),
+            "{:?}",
+            sink.0.borrow()
+        );
+    }
+
     /// Runs the actor over `requests` with a raise of `raised` queued ahead of them, and answers
     /// whether its task finished. Every sender stays open, so only a request can end it, and one poll
     /// is all it takes when everything it needs is already queued: a task still pending after that is
@@ -1905,8 +2028,7 @@ mod tests {
         finished
     }
 
-    /// A window the fake can raise without the window server: with no server id, a raise asks
-    /// nothing of SkyLight and goes straight to Accessibility.
+    /// A registered window of a frontmost application, with nothing announced yet.
     fn raisable(window: u32) -> (State<FakeAx>, Sink, WindowId) {
         let (mut state, sink) =
             state_with(FakeAx::with_one_window(window, rect(0., 0., 100., 100.)));
@@ -1914,7 +2036,6 @@ mod tests {
             .register_window(window, peer(window, rect(0., 0., 100., 100.)))
             .expect("registers")
             .1;
-        state.ax.server_ids.remove(&window);
         sink.0.borrow_mut().clear();
         (state, sink, wid)
     }

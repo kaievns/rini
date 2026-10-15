@@ -53,7 +53,7 @@ thread's narrower `Reader`, until that thread moves onto the port; and the pictu
 | what the code asks | seam | production | a test passes |
 |---|---|---|---|
 | the window server: windows, frames, levels, spaces, order, the space lists, the key window, the listings; `make_key_window`, `take_stack_place` | `WindowServer`, an `Arc<dyn WindowServer>` (`src/windows/platform/window_server/port.rs`) | `window_server::live()` | a clone of an `Arc<FakeWindowServer>`, answers stated with its `set_` methods, commands read back with `commands()`, reads counted with `reads()`; every read unknown until stated |
-| Accessibility, from the per-app thread | `AxWorld`, a type parameter (`src/windows/platform/ax/world.rs`) | `MacAx` | `FakeAx`, whose elements are numbers; an element with nothing recorded answers as a window that has gone |
+| Accessibility, the window server, the pointer state and Command-W, from the per-app thread | `AxWorld`, a type parameter (`src/windows/platform/ax/world.rs`), whose `server()` is the `WindowServer` port; the thread asks nothing past it (`the_app_actor_reaches_the_platform_only_through_its_world`) | `MacAx`, its server `window_server::live()` | `FakeAx`, whose elements are numbers; an element with nothing recorded answers as a window that has gone; its server a `FakeWindowServer` (`made_key()` the windows made key), its pointer state `mouse`, its Command-W posts counted in `command_w_posts` |
 | the window server, from the frames thread that follows windows | `Reader`, a struct of fn pointers (`src/displays/platform/window_notify.rs`), a narrower view of the window server answered through the same free functions, which folds into `WindowServer` when `window_notify` moves onto the port | `LIVE` | a `Reader` of its own fns |
 | displays and spaces, from the spaces actor | `LiveDisplays` and `SpaceKinds`, structs of fn pointers (`src/displays/platform/spaces.rs`) | `from_window_server()` | `LiveDisplays::silent()`, which knows nothing, and `SpaceKinds::for_tests()`, or a struct of its own |
 | the window server and ScreenCaptureKit, from the pictures thread | `Capturer`, a type parameter (`src/pictures/platform/capturer.rs`) | `MacCapturer` | `FakeCapturer`, answering from the frames a test gives it and recording every call |
@@ -62,7 +62,7 @@ thread's narrower `Reader`, until that thread moves onto the port; and the pictu
 A caller not yet handed a `WindowServer` calls the free functions of the same names in
 `window_server`, answered in a test build by a thread-local `FakeWindowServer` the `set_*_override`
 setters state answers into. That shim is temporary, and nothing new is written against it: the
-reactor, the flight engine, the app actor and the spaces actor move onto a port and it goes.
+reactor, the flight engine and the spaces actor move onto a port and it goes.
 
 ## A unit test must not read the live window server
 
@@ -152,7 +152,7 @@ ways:
 |---|---|---|---|
 | `DISPLAY_CHURN_ACTIVE` (`src/displays/platform/display_churn.rs`) | spaces actor tests, through `begin` and `end` | `a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set`, under `hold_for_test`; every other reactor reads its own `display_churn` field, false under test | `hold_for_test` around every writer and that reader |
 | `LAST_WINDOWSERVER_ACTIVITY_US` (`src/windows/platform/window_server.rs`) | every reactor test that handles a window event | `the_production_reader_reports_a_window_server_that_just_moved_as_busy`, which only asks whether it is busy right after setting it; the spaces actor reads `LiveDisplays::window_server_quiet` | injection; the one reader holds because every writer moves the clock later |
-| `LOW_POWER_MODE` (`src/app/power.rs`), `MOUSE_STATE` (`src/windows/platform/mouse.rs`) | none: only the notification handler and the event tap write them | the reactor and the app actor read the initial value | nothing yet; a test that writes one injects it first |
+| `LOW_POWER_MODE` (`src/app/power.rs`), `MOUSE_STATE` (`src/windows/platform/mouse.rs`) | none: only the notification handler and the event tap write them | the reactor reads the initial value; the app actor reads `MOUSE_STATE` only through `AxWorld::mouse_state`, which `FakeAx` answers | injection at the app actor; nothing yet at the reactor, where a test that writes one injects it first |
 | `SAVE_TEMP_COUNTER` (`src/workspaces/engine/persistence/mod.rs`) | persistence tests | none read its value; it only makes temp names unique | nothing needed |
 
 The tests that hold this: `a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag` and

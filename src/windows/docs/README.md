@@ -98,8 +98,11 @@ must never guess one. The rules over the answers take them as values (`domain/ma
 Callers not yet handed a port call the free functions of the same names in `window_server`, which
 `platform/window_server/shim.rs` answers from `LiveWindowServer` in production and from a
 thread-local `FakeWindowServer` in a test build, stated through the old `set_*_override` setters.
-That shim is temporary: once the reactor, the flight engine, the app actor and the spaces actor are
-handed a port, it goes. Through the shim, a window no test stated
+That shim is temporary: once the reactor, the flight engine and the spaces actor are handed a port,
+it goes. The app actor is on the port already: its `AxWorld`'s `server()` is the port, `live()` in
+`MacAx` and a `FakeWindowServer` in `FakeAx`, and it asks the pointer state and posts Command-W
+through the world too, so it makes no platform call past it
+(`the_app_actor_reaches_the_platform_only_through_its_world`). Through the shim, a window no test stated
 is at the origin, 800x600, which the tests written against it expect; on the port it is unknown.
 
 **A raise list is a z-order.** Raising is last-wins, so the order of the list IS the
