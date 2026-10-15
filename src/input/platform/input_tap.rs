@@ -774,10 +774,6 @@ impl InputTap {
                 _ => None,
             };
             if let Some(kind) = kind {
-                let is_repeat = CGEvent::integer_value_field(
-                    Some(event),
-                    CGEventField::KeyboardEventAutorepeat,
-                ) != 0;
                 let verdict = state.switch.on_key(SwitchKeyEvent {
                     kind,
                     key: key_code,
@@ -785,7 +781,6 @@ impl InputTap {
                         state.current_flags,
                         state.held.pressed(),
                     ),
-                    is_repeat,
                     at: Instant::now(),
                 });
                 if let Some(signal) = verdict.signal {

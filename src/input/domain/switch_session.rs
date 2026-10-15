@@ -6,7 +6,7 @@
 //! whether this key belongs to it — and answer without doing any work, because an active event tap sits
 //! in the delivery path and the window server blocks each matching event until the callback returns.
 //!
-//! Which is why this holds nothing but a flag, a generation and a clock reading. The list of windows
+//! Which is why this holds nothing but a flag and a clock reading. The list of windows
 //! and the cursor over it live where the popup will: on the other side of the channel. This side
 //! decides only "swallow or pass" and "what to tell the reactor", which is a pure function of the key,
 //! the modifier state and the elapsed time.
@@ -87,7 +87,6 @@ pub struct KeyEvent {
     /// Which modifiers are held right now, from the event's own flags — the authoritative level rather
     /// than a cache of edges.
     pub modifiers: Modifiers,
-    pub is_repeat: bool,
     pub at: Instant,
 }
 
@@ -137,17 +136,11 @@ pub struct SwitchSession {
     /// One entry per switcher with a binding. At most one session is live, whichever opened it.
     keys: Vec<SwitchKeys>,
     live: Option<Live>,
-    /// Counts opens for the lifetime of the tap, not of a session. Derived from `live` it was always
-    /// 1, because `live` is `None` at the moment a session opens.
-    opens: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct Live {
     opened: Instant,
-    /// Bumped on every open, so a stale reveal or commit arriving late can be recognised and dropped
-    /// by the far side rather than acted on.
-    generation: u64,
     /// Which entry of `keys` opened this session: its key steps it and its modifiers hold it.
     trigger: usize,
 }
@@ -164,10 +157,6 @@ impl SwitchSession {
 
     pub fn is_live(&self) -> bool {
         self.live.is_some()
-    }
-
-    pub fn generation(&self) -> u64 {
-        self.live.map(|live| live.generation).unwrap_or(0)
     }
 
     /// End a live session because the tap can no longer be trusted about what is held.
@@ -242,10 +231,8 @@ impl SwitchSession {
         }
         let backward = modifiers_satisfy(keys.backward, event.modifiers);
         let scope = keys.scope;
-        self.opens = self.opens.wrapping_add(1);
         self.live = Some(Live {
             opened: event.at,
-            generation: self.opens,
             trigger,
         });
         Verdict::eat_with(Signal::Open { backward, scope })
@@ -337,7 +324,6 @@ mod tests {
             kind: KeyEventKind::Down,
             key,
             modifiers,
-            is_repeat: false,
             at: when,
         }
     }
@@ -347,7 +333,6 @@ mod tests {
             kind: KeyEventKind::FlagsChanged,
             key: KeyCode::ControlLeft,
             modifiers,
-            is_repeat: false,
             at: when,
         }
     }
@@ -421,16 +406,15 @@ mod tests {
         let mut session = session();
         session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, base));
 
-        let mut repeat = down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, at(base, 90));
-        repeat.is_repeat = true;
-
-        assert_eq!(
-            session.on_key(repeat),
-            Verdict {
-                swallow: true,
-                signal: Some(Signal::Step(1))
-            }
-        );
+        for millis in [500, 533, 566] {
+            assert_eq!(
+                session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, at(base, millis))),
+                Verdict {
+                    swallow: true,
+                    signal: Some(Signal::Step(1))
+                }
+            );
+        }
     }
 
     #[test]
@@ -650,7 +634,6 @@ mod tests {
             kind: KeyEventKind::Up,
             key: KeyCode::KeyQ,
             modifiers: Modifiers::CONTROL_LEFT,
-            is_repeat: false,
             at: at(base, 20),
         });
 
@@ -699,21 +682,6 @@ mod tests {
         let mut session = session();
 
         assert_eq!(session.on_key(flags(Modifiers::empty(), base)), Verdict::PASS);
-    }
-
-    /// Each open gets its own generation, so a reveal or commit that arrives late can be told from one
-    /// belonging to the switch that is open now.
-    #[test]
-    fn every_open_gets_a_fresh_generation() {
-        let base = Instant::now();
-        let mut session = session();
-
-        session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, base));
-        let first = session.generation();
-        session.on_key(flags(Modifiers::empty(), at(base, 20)));
-
-        session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, at(base, 40)));
-        assert_ne!(session.generation(), first);
     }
 
     fn three_switchers() -> SwitchSession {

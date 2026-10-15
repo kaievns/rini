@@ -26,6 +26,7 @@ pub struct HeldKeys {
 
 impl HeldKeys {
     /// The modifier mask last seen.
+    #[cfg(test)]
     pub fn flags(&self) -> u64 {
         self.flags
     }
