@@ -196,4 +196,5 @@ only while Kai is away. The recordings so far are listed there too.
 
 `cargo clippy --all-targets --workspace` completes with no errors, so its lints reach every crate.
 Its warnings, mostly style lints such as a collapsible `if`, are not held at zero. The checks a
-change passes are a build with no warnings, `cargo test` and `tests/architecture.rs`.
+change passes are `bin/check.sh`: the nightly format check, a build of every target with warnings
+as errors, and the suite, `tests/architecture.rs` with it.
