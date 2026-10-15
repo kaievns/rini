@@ -157,7 +157,7 @@ fn main() {
     let spaces = SpacesActor::new(
         spaces_rx,
         spaces_tx.clone(),
-        Box::new(wm_controller_sender.clone()),
+        Box::new(events_tx.clone()),
         config.settings.top_band(),
     );
     let window_notify =

@@ -31,8 +31,14 @@ default workspaces.
 
 **The application hears a churn only as events.** `DisplayChurnBegin` when one starts and
 `DisplayChurnEnd` when it settles or is given up on, a settled one's snapshot queued ahead of its
-end. No flag is shared across threads, so the reactor reads the churn in the order of what it
-handles.
+end. The spaces actor sends all of it straight to the reactor's queue, as Mission Control and the
+window notifications send theirs, so one churn's events cannot pass another's and its begin waits
+on no other actor. No flag is shared across threads, so the reactor reads the churn in the order
+of what it handles. The flags that start a churn come in macOS's callback after the
+reconfiguration (the one before carries only `BEGIN_CONFIGURATION`, which starts none), so windows
+can already have moved, and their Accessibility events, sent from each app's thread, can be on the
+reactor's queue ahead of the begin. Those are handled, not dropped; nothing on hardware has yet
+measured how many there are on an unplug.
 
 **macOS mints a new space id on every reconnect.** One monitor was observed as 479,
 484, 487, 516, 552, 1138 in a single session. Nothing durable may be keyed by space

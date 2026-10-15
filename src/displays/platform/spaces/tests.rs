@@ -56,8 +56,9 @@ impl SpacesActor {
     }
 }
 
-/// Splits the actor's one event stream the way the application does: topology snapshots one way,
-/// everything else the other, each in the order the actor sent them.
+/// Splits the actor's one event stream so a test reads each part on its own: topology snapshots one
+/// way, everything else the other, each in the order the actor sent them. The application sends
+/// the whole stream to the reactor's queue.
 struct Split {
     topology: channel::Sender<OutEvent>,
     rest: channel::Sender<OutEvent>,
@@ -1509,6 +1510,37 @@ fn a_churn_with_no_screens_is_checked_up_to_its_cap_too() {
     );
     assert!(!actor.state.display_churn_active);
     assert_no_wm_event(&mut wm_rx);
+}
+
+/// The reactor reads its churn in the order of this one stream: a settled churn's snapshot after
+/// its begin and ahead of its end, and the next churn's begin after that end.
+#[test]
+fn a_settled_churn_sends_its_begin_its_snapshot_and_its_end_in_that_order() {
+    let (events, mut stream) = channel::channel::<OutEvent>();
+    let mut actor = SpacesActor::new_for_tests(Box::new(events));
+    let scheduled = actor.hand_schedule();
+    actor.state.forwarded.screens = vec![make_screen(Some(SpaceId::new(741)))];
+    let moved = Notification::DisplayReconfigured {
+        flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
+    };
+
+    actor.handle_event(moved.clone());
+    run_checks(&mut actor, &scheduled);
+    actor.handle_event(moved);
+
+    let mut sent = Vec::new();
+    while let Ok((_, event)) = stream.try_recv() {
+        sent.push(event);
+    }
+    assert!(
+        matches!(sent.as_slice(), [
+            OutEvent::DisplayChurnBegin,
+            OutEvent::SpaceStateUpdated(..),
+            OutEvent::DisplayChurnEnd,
+            OutEvent::DisplayChurnBegin,
+        ]),
+        "{sent:?}"
+    );
 }
 
 /// A settled churn forwards on its second check, and schedules nothing after it.

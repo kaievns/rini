@@ -35,8 +35,6 @@ pub enum WmEvent {
     AppTerminated(pid_t),
     /// The application's thread ended without taking it on.
     AppThreadGaveUp(pid_t),
-    /// Everything the displays context reports; forwarded to the reactor as is.
-    Displays(crate::displays::event::Event),
     /// Everything the input context reports: a bound action is lowered here, pointer events go to
     /// the reactor.
     Input(crate::input::event::Event),
@@ -49,10 +47,6 @@ pub enum WmEvent {
 
 impl From<crate::input::event::Event> for WmEvent {
     fn from(event: crate::input::event::Event) -> Self { WmEvent::Input(event) }
-}
-
-impl From<crate::displays::event::Event> for WmEvent {
-    fn from(event: crate::displays::event::Event) -> Self { WmEvent::Displays(event) }
 }
 
 impl From<crate::windows::platform::lifecycle::AppLifecycle> for WmEvent {
@@ -120,7 +114,6 @@ impl WmController {
         use self::WmEvent::*;
 
         match event {
-            Displays(event) => self.events_tx.send(Event::from(event)),
             Input(crate::input::event::Event::Action(action)) => self.carry_out(action),
             Input(crate::input::event::Event::Switch(signal)) => {
                 self.events_tx.send(Event::Switch(signal))
