@@ -147,8 +147,8 @@ pub(super) enum QuarantineSignal {
     SessionResigned,
     SessionActivated,
     ChurnBegan,
-    /// The spaces actor's `DisplayChurnEnd`, or a snapshot arriving, which it forwards only once a
-    /// churn is over.
+    /// The spaces actor's `DisplayChurnEnd`, or a snapshot, which the spaces actor forwards during
+    /// a churn only as the settled one, ahead of its end.
     ChurnEnded,
     /// A refresh asked for while refreshes are blocked.
     RefreshDeferred(VisibleRefresh),

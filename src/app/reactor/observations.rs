@@ -27,8 +27,8 @@ use crate::windows::platform::mouse::MouseState;
 use crate::workspaces::LayoutEvent;
 
 /// The six events that move the refresh quarantine: sleep, wake, the session resigning and
-/// activating, and display churn beginning and ending. Wake also has the bars read the clock again. None of them is a focus edge, so focus
-/// tracking passes them by.
+/// activating, and display churn beginning and ending. Wake also has the bars read the clock
+/// again. None of them is a focus edge, so focus tracking passes them by.
 impl Reactor {
     pub(super) fn on_system_will_sleep(&mut self) -> EventOutcome {
         self.quarantine_on(QuarantineSignal::WillSleep);
