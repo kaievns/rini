@@ -531,31 +531,89 @@ mod tests {
         );
     }
 
-    /// The AppKit and Foundation names in `OBSERVED` are their constants' values, so observing them
-    /// by value observes the constants.
+    /// `OBSERVED` is every notification on its center, delivered to its receiver, in registration
+    /// order, with each AppKit name its constant's value, so observing it by value observes the
+    /// constant.
     #[test]
-    fn the_names_observed_are_the_frameworks_own() {
+    fn every_notification_is_observed_on_its_center_by_its_receiver() {
+        use Center::{Default, Distributed, Workspace};
         use objc2_app_kit::*;
+        let appkit = |name: &NSString| name.to_string();
         // SAFETY: each is an immutable `NSString` constant exported by AppKit.
-        let constants = unsafe {
-            [
-                NSWorkspaceActiveSpaceDidChangeNotification,
-                NSApplicationDidChangeScreenParametersNotification,
-                NSWorkspaceDidWakeNotification,
-                NSWorkspaceWillSleepNotification,
-                NSWorkspaceDidActivateApplicationNotification,
-                NSWorkspaceDidDeactivateApplicationNotification,
-                NSWorkspaceSessionDidResignActiveNotification,
-                NSWorkspaceSessionDidBecomeActiveNotification,
+        let expected: Vec<(Center, Receiver, String)> = unsafe {
+            vec![
+                (
+                    Workspace,
+                    Receiver::ScreenChanged,
+                    "NSWorkspaceActiveDisplayDidChangeNotification".into(),
+                ),
+                (
+                    Workspace,
+                    Receiver::ScreenChanged,
+                    appkit(NSWorkspaceActiveSpaceDidChangeNotification),
+                ),
+                (
+                    Default,
+                    Receiver::ScreenChanged,
+                    appkit(NSApplicationDidChangeScreenParametersNotification),
+                ),
+                (Workspace, Receiver::Wake, appkit(NSWorkspaceDidWakeNotification)),
+                (
+                    Workspace,
+                    Receiver::Sleep,
+                    appkit(NSWorkspaceWillSleepNotification),
+                ),
+                (
+                    Workspace,
+                    Receiver::App,
+                    appkit(NSWorkspaceDidActivateApplicationNotification),
+                ),
+                (
+                    Workspace,
+                    Receiver::App,
+                    appkit(NSWorkspaceDidDeactivateApplicationNotification),
+                ),
+                (
+                    Workspace,
+                    Receiver::Session,
+                    appkit(NSWorkspaceSessionDidResignActiveNotification),
+                ),
+                (
+                    Workspace,
+                    Receiver::Session,
+                    appkit(NSWorkspaceSessionDidBecomeActiveNotification),
+                ),
+                (Default, Receiver::DockPref, "com.apple.dock.prefchanged".into()),
+                (
+                    Default,
+                    Receiver::MenuBarPref,
+                    "AppleInterfaceMenuBarHidingChangedNotification".into(),
+                ),
+                (
+                    Default,
+                    Receiver::Power,
+                    "NSProcessInfoPowerStateDidChangeNotification".into(),
+                ),
+                (Default, Receiver::Clock, CLOCK_CHANGED[0].into()),
+                (Default, Receiver::Clock, CLOCK_CHANGED[1].into()),
+                (
+                    Distributed,
+                    Receiver::KeyboardLayout,
+                    "com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged".into(),
+                ),
+                (Distributed, Receiver::Session, "com.apple.screenIsLocked".into()),
+                (
+                    Distributed,
+                    Receiver::Session,
+                    "com.apple.screenIsUnlocked".into(),
+                ),
             ]
         };
-        for constant in constants {
-            let name = constant.to_string();
-            assert!(
-                OBSERVED.iter().any(|&(_, _, observed)| observed == name),
-                "{name}"
-            );
-        }
+        let observed: Vec<(Center, Receiver, String)> = OBSERVED
+            .iter()
+            .map(|&(center, receiver, name)| (center, receiver, name.to_string()))
+            .collect();
+        assert_eq!(observed, expected);
     }
 
     /// Each name is observed once on its center, and the session is followed both on the
