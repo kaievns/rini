@@ -144,9 +144,13 @@ Each of the five was checked by breaking what it guards:
 One trap for whoever writes the next test: `admissible::has_visible_peer` refuses a window that has
 a window-server id but no window-server RECORD, because an id the server will not report back means
 the window is not on screen. So `register_window` needs a `WindowServerInfo` hint, which is what the
-`peer()` helper in the test module is for.
+`peer()` helper in the test module is for, or the window stated on `FakeAx`'s `server`, which its
+`window_info` reads as `MacAx`'s does; `app_with` states both.
 
-Still untested in there: `handle_notification`, `handle_request`'s other arms, and
-`handle_raise_request`, which is async and drives activation waits. No `TODO` or `FIXME` is
+`handle_notification` and `handle_raise_request`, which is async and drives activation waits, are
+tested on the same fake: a replaced element's notifications, miniaturize, hide and show, the skip of
+the window already focused, batch order, `Quiet` on the last window, the wait for activation, its
+cancel and the frontmost polling that can end it. Still untested in there: `handle_request`'s
+`WindowMaybeDestroyed` and `SetWorkspaceSwitchPositions` arms. No `TODO` or `FIXME` is
 left in `app_actor.rs`; two of the questions they asked are answered on evidence in
 `src/windows/docs/admission-and-raise-findings.md`.

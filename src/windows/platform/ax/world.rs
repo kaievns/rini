@@ -276,6 +276,9 @@ pub struct FakeAx {
     pub command_w_posts: std::cell::Cell<u32>,
     pub main_window: Option<u32>,
     pub frontmost: bool,
+    /// Answers `frontmost` gives one read at a time before it answers `frontmost` again: an
+    /// application that comes to the front while a raise waits for it.
+    pub frontmost_reads: std::cell::RefCell<std::collections::VecDeque<bool>>,
     /// Elements whose `AXTitleUIElement` cannot be read.
     pub without_title_element: Vec<u32>,
     /// What the actor asked for, in order.
@@ -372,7 +375,9 @@ impl AxWorld for FakeAx {
         self.main_window.ok_or(AxError::NotFound)
     }
 
-    fn frontmost(&self, _app: &u32) -> Result<bool, AxError> { Ok(self.frontmost) }
+    fn frontmost(&self, _app: &u32) -> Result<bool, AxError> {
+        Ok(self.frontmost_reads.borrow_mut().pop_front().unwrap_or(self.frontmost))
+    }
 
     fn app_has_quit(&self) -> bool { self.has_quit }
 
