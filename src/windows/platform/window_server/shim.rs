@@ -175,18 +175,30 @@ pub fn set_window_ordered_in_override(id: WindowServerId, ordered: Option<bool>)
     });
 }
 
-/// The on-screen order, frontmost first. `None` clears it.
+/// The on-screen order, frontmost first, each window at the normal level. `None` clears it.
 #[cfg(test)]
 pub fn set_front_to_back_override(order: Option<Vec<u32>>) {
+    let listed = order
+        .unwrap_or_default()
+        .into_iter()
+        .map(|id| Listed {
+            id: WindowServerId::new(id),
+            level: 0,
+            pid: 1234,
+            bounds: CGRect::default(),
+            title: None,
+        })
+        .collect();
     stating(|fake| {
-        fake.set_front_to_back(order.unwrap_or_default());
+        fake.set_on_screen_windows(listed);
     });
 }
 
+/// The window under the cursor, which is the window at every point.
 #[cfg(test)]
 pub fn set_window_under_cursor_override(window: Option<u32>) {
     stating(|fake| {
-        fake.set_window_under_cursor(window.map(WindowServerId::new));
+        fake.set_window_at_point(window.map(WindowServerId::new));
     });
 }
 

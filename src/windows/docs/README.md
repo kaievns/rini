@@ -80,8 +80,13 @@ at a point, the key window and process, the listings, and the two commands, `mak
 `take_stack_place`. A consumer holds an `Arc<dyn WindowServer>`, cloned to each thread that asks:
 production passes `window_server::live()`, which is `LiveWindowServer`, the SkyLight calls; a test
 passes a clone of an `Arc<FakeWindowServer>` (`platform/window_server/fake.rs`) and keeps the other
-to state answers (`set_window_ordered_in(id, Some(false))`, one `set_` per read) and to read the
-commands it was given (`commands()`). A trait object rather than a struct of fn pointers like
+to state answers (`set_window_ordered_in(id, Some(false))`, one `set_` per fact) and to read the
+commands it was given (`commands()`). A read the live window server answers from another read's
+answer is answered from the same stated fact, so a test cannot state a pair production never
+produces: stickiness from the spaces (`a_window_is_sticky_exactly_when_it_is_stated_on_more_than_one_space`),
+the level from the window's layer (`a_window_s_level_is_the_layer_it_was_stated_with`), the depths
+from the on-screen list (`the_depths_are_the_stated_on_screen_list_without_the_desktop`), the window
+under the cursor from the window at a point (`the_window_under_the_cursor_is_the_window_at_a_point`). A trait object rather than a struct of fn pointers like
 `SpaceKinds`, because the fake keeps what a test stated and what it was told, which a fn pointer
 cannot capture. The fake answers "unknown", `None` or an empty list, to every read nothing was
 stated for, and only records a command (`every_read_answers_unknown_with_no_setup`,

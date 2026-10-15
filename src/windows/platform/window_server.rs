@@ -578,6 +578,9 @@ fn space_list_filter(spaces: &[u64]) -> WindowQueryFilter<'_> {
     }
 }
 
+/// Whether a window the window server places on `spaces` spaces is sticky: on every space.
+fn on_more_than_one_space(spaces: usize) -> bool { spaces > 1 }
+
 /// The spaces `SLSCopySpacesForWindows` places `id` on, none when it answers nothing.
 fn copy_spaces(id: WindowServerId) -> Option<CFRetained<CFArray<CFNumber>>> {
     let cf_windows = cf_array_from_ids(&[id]);
@@ -624,7 +627,7 @@ impl WindowServer for LiveWindowServer {
     }
 
     fn window_is_sticky(&self, id: WindowServerId) -> Option<bool> {
-        Some(copy_spaces(id)?.len() > 1)
+        Some(on_more_than_one_space(copy_spaces(id)?.len()))
     }
 
     fn window_level(&self, id: WindowServerId) -> Option<WindowLevel> {
@@ -682,10 +685,6 @@ impl WindowServer for LiveWindowServer {
             }
         }
         windows
-    }
-
-    fn front_to_back_depths(&self) -> std::collections::HashMap<u32, usize> {
-        depths(self.on_screen_windows(false))
     }
 
     fn window_under_cursor(&self) -> Option<WindowServerId> {

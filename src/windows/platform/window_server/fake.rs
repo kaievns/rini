@@ -9,13 +9,18 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::CGError;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 
-use super::{Command, Listed, WindowServer};
+use super::{Command, Listed, WindowServer, on_more_than_one_space};
 use crate::windows::domain::info::{WindowServerInfo, reported_radius};
 use crate::windows::domain::stack::WindowLevel;
 
 /// Every read answers "unknown", `None` or an empty list, until a test states its answer with the
 /// `set_` method named for it; stating `None` makes it unknown again. Commands are recorded, never
 /// carried out, and `make_key_window` succeeds unless `fail_make_key_window` says otherwise.
+///
+/// A read the live window server answers from another read's answer is answered here from the
+/// same stated fact, so no test states a pair production cannot produce: stickiness from the
+/// spaces, the level from the window's layer, the depths from the on-screen list, the window under
+/// the cursor from the window at a point.
 ///
 /// Answers are behind a lock, so a test keeps one `Arc` and hands clones of it, as
 /// `Arc<dyn WindowServer>`, to the threads under test, and states answers on its own while they run.
@@ -29,8 +34,6 @@ pub struct FakeWindowServer {
 struct Answers {
     windows: HashMap<WindowServerId, WindowServerInfo>,
     parents: HashMap<WindowServerId, WindowServerId>,
-    sticky: HashMap<WindowServerId, bool>,
-    levels: HashMap<WindowServerId, WindowLevel>,
     sub_levels: HashMap<WindowServerId, c_int>,
     spaces: HashMap<WindowServerId, Vec<SpaceId>>,
     user_spaces: HashMap<SpaceId, bool>,
@@ -38,8 +41,6 @@ struct Answers {
     suitable: HashMap<WindowServerId, bool>,
     space_lists: HashMap<u64, Vec<u32>>,
     any_space_list: Option<Vec<u32>>,
-    front_to_back: Vec<u32>,
-    under_cursor: Option<WindowServerId>,
     at_point: Option<WindowServerId>,
     server_frames: HashMap<WindowServerId, CGRect>,
     corners: HashMap<WindowServerId, Vec<f64>>,
@@ -72,6 +73,7 @@ impl FakeWindowServer {
     /// The commands given so far, in order.
     pub fn commands(&self) -> Vec<Command> { locked(&self.commands).clone() }
 
+    /// `id` as `get_window` answers it, its `layer` the level `window_level` answers.
     pub fn set_window(&self, id: WindowServerId, info: Option<WindowServerInfo>) -> &Self {
         self.stating(|a| state(&mut a.windows, id, info))
     }
@@ -80,19 +82,11 @@ impl FakeWindowServer {
         self.stating(|a| state(&mut a.parents, id, parent))
     }
 
-    pub fn set_window_is_sticky(&self, id: WindowServerId, sticky: Option<bool>) -> &Self {
-        self.stating(|a| state(&mut a.sticky, id, sticky))
-    }
-
-    pub fn set_window_level(&self, id: WindowServerId, level: Option<WindowLevel>) -> &Self {
-        self.stating(|a| state(&mut a.levels, id, level))
-    }
-
     pub fn set_window_sub_level(&self, id: WindowServerId, sub_level: Option<c_int>) -> &Self {
         self.stating(|a| state(&mut a.sub_levels, id, sub_level))
     }
 
-    /// The spaces `id` is on; none is unknown.
+    /// The spaces `id` is on, which `window_is_sticky` counts; none is unknown.
     pub fn set_window_spaces(&self, id: WindowServerId, spaces: Vec<SpaceId>) -> &Self {
         self.stating(|a| state(&mut a.spaces, id, (!spaces.is_empty()).then_some(spaces)))
     }
@@ -119,16 +113,7 @@ impl FakeWindowServer {
         self.stating(|a| a.any_space_list = ids)
     }
 
-    /// The windows on screen, frontmost first, which `front_to_back_depths` counts.
-    pub fn set_front_to_back(&self, ids: Vec<u32>) -> &Self {
-        self.stating(|a| a.front_to_back = ids)
-    }
-
-    pub fn set_window_under_cursor(&self, id: Option<WindowServerId>) -> &Self {
-        self.stating(|a| a.under_cursor = id)
-    }
-
-    /// The window `get_window_at_point` answers, at every point.
+    /// The window `get_window_at_point` answers, at every point, the cursor's included.
     pub fn set_window_at_point(&self, id: Option<WindowServerId>) -> &Self {
         self.stating(|a| a.at_point = id)
     }
@@ -150,6 +135,7 @@ impl FakeWindowServer {
         self.stating(|a| a.key_focus_pid = pid)
     }
 
+    /// The windows on screen, frontmost first, which `front_to_back_depths` counts.
     pub fn set_on_screen_windows(&self, listed: Vec<Listed>) -> &Self {
         self.stating(|a| a.on_screen = listed)
     }
@@ -178,11 +164,11 @@ impl WindowServer for FakeWindowServer {
     }
 
     fn window_is_sticky(&self, id: WindowServerId) -> Option<bool> {
-        self.answer(|a| a.sticky.get(&id).copied())
+        self.answer(|a| Some(on_more_than_one_space(a.spaces.get(&id)?.len())))
     }
 
     fn window_level(&self, id: WindowServerId) -> Option<WindowLevel> {
-        self.answer(|a| a.levels.get(&id).copied())
+        self.answer(|a| Some(a.windows.get(&id)?.layer as WindowLevel))
     }
 
     fn window_sub_level(&self, id: WindowServerId) -> Option<c_int> {
@@ -216,13 +202,7 @@ impl WindowServer for FakeWindowServer {
         })
     }
 
-    fn front_to_back_depths(&self) -> HashMap<u32, usize> {
-        self.answer(|a| {
-            a.front_to_back.iter().enumerate().map(|(depth, id)| (*id, depth)).collect()
-        })
-    }
-
-    fn window_under_cursor(&self) -> Option<WindowServerId> { self.answer(|a| a.under_cursor) }
+    fn window_under_cursor(&self) -> Option<WindowServerId> { self.answer(|a| a.at_point) }
 
     fn get_window_at_point(&self, _: CGPoint) -> Option<WindowServerId> {
         self.answer(|a| a.at_point)
@@ -339,10 +319,11 @@ mod tests {
     #[test]
     fn a_stated_answer_is_answered_until_it_is_stated_unknown_again() {
         let ws = FakeWindowServer::default();
-        ws.set_window_ordered_in(id(2), Some(false)).set_window_level(id(2), Some(3));
+        ws.set_window_ordered_in(id(2), Some(false))
+            .set_window_parent(id(2), Some(id(1)));
         assert_eq!(
-            (ws.window_ordered_in(id(2)), ws.window_level(id(2))),
-            (Some(false), Some(3))
+            (ws.window_ordered_in(id(2)), ws.window_parent(id(2))),
+            (Some(false), Some(id(1)))
         );
         assert_eq!(
             ws.window_ordered_in(id(3)),
@@ -389,30 +370,82 @@ mod tests {
         assert_eq!(ws.space_window_list_for_connection(&[1, 2]), [40]);
     }
 
+    fn window(n: u32, layer: i32) -> WindowServerInfo {
+        WindowServerInfo {
+            id: id(n),
+            pid: 1,
+            layer,
+            frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(10.0, 10.0)),
+            min_frame: CGSize::ZERO,
+            max_frame: CGSize::ZERO,
+        }
+    }
+
+    /// The live window server answers both from one `SLSCopySpacesForWindows`.
     #[test]
-    fn a_window_s_stack_place_and_manageability_facts_are_its_stated_answers() {
+    fn a_window_is_sticky_exactly_when_it_is_stated_on_more_than_one_space() {
         let ws = FakeWindowServer::default();
-        ws.set_window_level(id(5), Some(3)).set_window_sub_level(id(5), Some(1));
-        ws.set_window_is_sticky(id(5), Some(true));
-        let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(10.0, 10.0));
+        let (a, b) = (SpaceId::new(1), SpaceId::new(2));
+        ws.set_window_spaces(id(5), vec![a]).set_window_spaces(id(6), vec![a, b]);
+        assert_eq!(
+            (ws.window_is_sticky(id(5)), ws.window_is_sticky(id(6))),
+            (Some(false), Some(true))
+        );
+        assert_eq!(ws.window_is_sticky(id(7)), None, "no spaces stated is unknown");
+    }
+
+    /// The live window server answers both from one `SLSWindowIteratorGetLevel`.
+    #[test]
+    fn a_window_s_level_is_the_layer_it_was_stated_with() {
+        let ws = FakeWindowServer::default();
+        ws.set_window(id(5), Some(window(5, 3))).set_window_sub_level(id(5), Some(1));
+        let frame = CGRect::new(CGPoint::new(1.0, 2.0), CGSize::new(3.0, 4.0));
         let place = ws.stack_place(id(5), frame);
         assert_eq!(
             (place.frame, place.level, place.sub_level),
             (frame, Some(3), Some(1))
         );
-        let known = WindowServerInfo {
-            id: id(5),
+        ws.set_window(id(5), None);
+        assert_eq!(ws.window_level(id(5)), None);
+    }
+
+    /// The live window server counts the depths over its on-screen list, the desktop left out.
+    #[test]
+    fn the_depths_are_the_stated_on_screen_list_without_the_desktop() {
+        let ws = FakeWindowServer::default();
+        let listed = |n: u32, level: i32| Listed {
+            id: id(n),
+            level,
             pid: 1,
-            layer: 8,
-            frame,
-            min_frame: CGSize::ZERO,
-            max_frame: CGSize::ZERO,
+            bounds: CGRect::default(),
+            title: None,
         };
-        assert_eq!(ws.server_facts(id(5), Some(&known)), ServerFacts {
-            layer: Some(8),
-            sticky: Some(true),
-            level: Some(3),
-        });
+        ws.set_on_screen_windows(vec![listed(30, 0), listed(2, -2147483626), listed(31, 3)]);
+        assert_eq!(ws.front_to_back_depths(), HashMap::from([(30, 0), (31, 1)]));
+    }
+
+    /// The live window server answers the window at the cursor's point.
+    #[test]
+    fn the_window_under_the_cursor_is_the_window_at_a_point() {
+        let ws = FakeWindowServer::default();
+        ws.set_window_at_point(Some(id(9)));
+        assert_eq!(ws.window_under_cursor(), Some(id(9)));
+        assert_eq!(ws.window_under_cursor(), ws.get_window_at_point(CGPoint::ZERO));
+    }
+
+    #[test]
+    fn a_window_s_manageability_facts_are_its_stated_answers() {
+        let ws = FakeWindowServer::default();
+        ws.set_window(id(5), Some(window(5, 0)))
+            .set_window_spaces(id(5), vec![SpaceId::new(1), SpaceId::new(2)]);
+        assert_eq!(
+            ws.server_facts(id(5), ws.get_window(id(5)).as_ref()),
+            ServerFacts {
+                layer: Some(0),
+                sticky: Some(true),
+                level: Some(0),
+            }
+        );
     }
 
     #[test]

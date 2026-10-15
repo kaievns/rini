@@ -16,7 +16,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::CGError;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 
-use super::Listed;
+use super::{Listed, depths};
 use crate::windows::domain::home_space::home_space;
 use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::domain::manageable::ServerFacts;
@@ -48,8 +48,6 @@ pub trait WindowServer: Send + Sync {
     fn app_window_suitability(&self, id: WindowServerId) -> Option<bool>;
     /// The app windows on `spaces`, front to back: what callers take as a space's membership.
     fn space_window_list_for_connection(&self, spaces: &[u64]) -> Vec<u32>;
-    /// The depth of every window on screen but the desktop's, 0 being frontmost.
-    fn front_to_back_depths(&self) -> HashMap<u32, usize>;
     fn window_under_cursor(&self) -> Option<WindowServerId>;
     /// The topmost window at `point` that is none of rini's own.
     fn get_window_at_point(&self, point: CGPoint) -> Option<WindowServerId>;
@@ -85,6 +83,9 @@ pub trait WindowServer: Send + Sync {
                 .map(|space| (space, self.space_is_user(space))),
         )
     }
+
+    /// The depth of every window on screen but the desktop's, 0 being frontmost.
+    fn front_to_back_depths(&self) -> HashMap<u32, usize> { depths(self.on_screen_windows(false)) }
 
     fn corner_radius(&self, id: WindowServerId) -> Option<f64> {
         self.corner_radii(&[id]).get(&id).copied()
