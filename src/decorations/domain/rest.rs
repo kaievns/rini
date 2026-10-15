@@ -99,24 +99,19 @@ pub fn display_of(frame: ScreenRect, displays: &[RestDisplay]) -> Option<RestDis
         .copied()
 }
 
-/// Whether `window`'s bands show with its window at `frame`: it wears one, nothing holds it
-/// (`parked` as it has taken effect), the window server has it ordered in, and some of the band is on
-/// a display. Shown or not, a rest window stays ordered in: showing is its alpha alone.
-pub fn shown(
-    window: &RestWindow,
-    parked: bool,
-    ordered_out: bool,
-    frame: Option<ScreenRect>,
-    displays: &[RestDisplay],
-) -> bool {
+/// Whether `window`'s bands show as `tracked` has its window: it wears one, nothing holds it (its
+/// park as it has taken effect), the window server has it ordered in, and some of the band is on a
+/// display. Shown or not, a rest window stays ordered in: showing is its alpha alone.
+pub fn shown(window: &RestWindow, tracked: &Tracked, displays: &[RestDisplay]) -> bool {
     let Held {
         parked: _,
         mission_control,
         fullscreen,
     } = window.held;
-    let on_a_display = frame.and_then(|frame| display_of(frame, displays)).is_some();
+    let parked = tracked.parking.parked;
+    let on_a_display = tracked.frame.and_then(|frame| display_of(frame, displays)).is_some();
     window.wears_a_band()
-        && !(parked || mission_control || fullscreen || ordered_out)
+        && !(parked || mission_control || fullscreen || tracked.ordered_out)
         && on_a_display
 }
 
@@ -154,13 +149,17 @@ impl Parking {
         };
     }
 
-    /// Takes a waiting change once its window `moved`, its display `lifted`, or it is due at `now`.
-    pub fn settle(&mut self, moved: bool, lifted: bool, now: Instant) {
-        if let Some((wanted, since)) = self.waiting
-            && (moved || lifted || now >= since + PARK_PATIENCE)
-        {
+    /// Takes a waiting change once it is due at `now`.
+    pub fn settle(&mut self, now: Instant) {
+        if self.due().is_some_and(|due| now >= due) {
+            self.take();
+        }
+    }
+
+    /// Takes a waiting change now: its window moved, or its display lifted.
+    pub fn take(&mut self) {
+        if let Some((wanted, _)) = self.waiting.take() {
             self.parked = wanted;
-            self.waiting = None;
         }
     }
 
@@ -394,7 +393,7 @@ impl Rest {
             _ => Some(model.and_then(|model| self.take_model(model, now))),
         };
         self.introduce(intros);
-        self.take_frames(frames, now);
+        self.take_frames(frames);
         self.take_orders(&orders);
         focus.map(|focus| Draw { orders, focus })
     }
@@ -482,11 +481,11 @@ impl Rest {
 
     /// Where the window server has windows that moved, each latest last: a waiting park is taken
     /// with its window's move, and an introduction waiting for its model takes the frame.
-    pub fn take_frames(&mut self, frames: &[(WindowServerId, ScreenRect)], now: Instant) {
+    pub fn take_frames(&mut self, frames: &[(WindowServerId, ScreenRect)]) {
         for (window, frame) in frames {
             if let Some(tracked) = self.windows.get_mut(window) {
                 tracked.frame = Some(*frame);
-                tracked.parking.settle(true, false, now);
+                tracked.parking.take();
             } else if let Some(Some(intro)) = self.introducing.get_mut(window) {
                 intro.frame = Some(*frame);
             }
@@ -603,7 +602,11 @@ impl Rest {
                 tracked.frame.is_some_and(|frame| frame.intersects(&display))
             });
             let parked = tracked.parking.parked;
-            tracked.parking.settle(false, there, now);
+            if there {
+                tracked.parking.take();
+            } else {
+                tracked.parking.settle(now);
+            }
             let brought_back = parked && !tracked.parking.parked;
             if brought_back || there {
                 landed.push((*window, brought_back));
@@ -642,7 +645,7 @@ impl Rest {
         let mut seen = false;
         for tracked in self.windows.values_mut() {
             let before = tracked.parking;
-            tracked.parking.settle(false, false, now);
+            tracked.parking.settle(now);
             seen |= tracked.parking != before
                 && elsewhere(tracked.frame, &self.model.displays, over.flatten());
         }
@@ -703,8 +706,7 @@ impl Rest {
         let tracked = self.windows.get(&target)?;
         let frame = tracked.frame?;
         let displays = &self.model.displays;
-        let parked = tracked.parking.parked;
-        if !shown(window, parked, tracked.ordered_out, Some(frame), displays) {
+        if !shown(window, tracked, displays) {
             return None;
         }
         Look::of(window, frame, tracked.radius, display_of(frame, displays)?)
@@ -756,15 +758,9 @@ impl Rest {
             .windows
             .iter()
             .filter(|window| {
-                self.windows.get(&window.window).is_some_and(|tracked| {
-                    shown(
-                        window,
-                        tracked.parking.parked,
-                        tracked.ordered_out,
-                        tracked.frame,
-                        displays,
-                    )
-                })
+                self.windows
+                    .get(&window.window)
+                    .is_some_and(|tracked| shown(window, tracked, displays))
             })
             .map(|window| window.window)
             .collect()
@@ -1188,25 +1184,30 @@ mod tests {
 
     const SLOT: ScreenRect = ScreenRect::new(Point::new(3.0, 35.0), Size::new(859.0, 1079.0));
 
+    /// A window the window server has at `frame`, ordered in and not parked.
+    fn tracked(frame: Option<ScreenRect>) -> Tracked {
+        Tracked {
+            frame,
+            parking: Parking::new(false),
+            ordered_out: false,
+            radius: None,
+            level: LEVEL,
+        }
+    }
+
     #[test]
     fn a_ringed_window_on_its_display_shows_its_band() {
-        assert!(shown(
-            &ringed(Held::default()),
-            false,
-            false,
-            Some(SLOT),
-            &display()
-        ));
+        assert!(shown(&ringed(Held::default()), &tracked(Some(SLOT)), &display()));
         let unringed = RestWindow {
             ring: Ring::None,
             ..ringed(Held::default())
         };
         assert!(
-            !shown(&unringed, false, false, Some(SLOT), &display()),
+            !shown(&unringed, &tracked(Some(SLOT)), &display()),
             "it wears nothing"
         );
         assert!(
-            !shown(&ringed(Held::default()), false, false, None, &display()),
+            !shown(&ringed(Held::default()), &tracked(None), &display()),
             "no frame yet"
         );
     }
@@ -1224,7 +1225,7 @@ mod tests {
         };
         for ring in [Ring::Inactive, Ring::None] {
             assert!(
-                shown(&bordered(ring), false, false, Some(SLOT), &display()),
+                shown(&bordered(ring), &tracked(Some(SLOT)), &display()),
                 "{ring:?}"
             );
         }
@@ -1250,9 +1251,13 @@ mod tests {
             parked: true,
             ..Held::default()
         });
-        assert!(!shown(&window, true, false, Some(sliver), &display()));
+        let parked = Tracked {
+            parking: Parking::new(true),
+            ..tracked(Some(sliver))
+        };
+        assert!(!shown(&window, &parked, &display()));
         assert!(
-            shown(&window, false, false, Some(SLOT), &display()),
+            shown(&window, &tracked(Some(SLOT)), &display()),
             "until the park takes effect"
         );
     }
@@ -1263,7 +1268,7 @@ mod tests {
             mission_control: true,
             ..Held::default()
         });
-        assert!(!shown(&window, false, false, Some(SLOT), &display()));
+        assert!(!shown(&window, &tracked(Some(SLOT)), &display()));
     }
 
     #[test]
@@ -1272,7 +1277,7 @@ mod tests {
             fullscreen: true,
             ..Held::default()
         });
-        assert!(!shown(&window, false, false, Some(SLOT), &display()));
+        assert!(!shown(&window, &tracked(Some(SLOT)), &display()));
     }
 
     /// Minimised, its app hidden, Cmd-H: the window server orders it out, and the band goes with it
@@ -1295,13 +1300,11 @@ mod tests {
             other,
         ]);
         assert!(out);
-        assert!(!shown(
-            &ringed(Held::default()),
-            false,
-            out,
-            Some(SLOT),
-            &display()
-        ));
+        let hidden = Tracked {
+            ordered_out: out,
+            ..tracked(Some(SLOT))
+        };
+        assert!(!shown(&ringed(Held::default()), &hidden, &display()));
         assert!(
             ordered_out(true, ws(56), &[order(OrderChange::Reordered)]),
             "a reorder unhides nothing"
@@ -1314,16 +1317,16 @@ mod tests {
         let at = Instant::now();
         let mut parking = Parking::new(false);
         parking.want(true, at);
-        parking.settle(false, false, at + Duration::from_millis(10));
+        parking.settle(at + Duration::from_millis(10));
         assert!(!parking.parked, "the window has not moved yet");
         assert_eq!(parking.due(), Some(at + PARK_PATIENCE));
-        parking.settle(true, false, at + Duration::from_millis(10));
+        parking.take();
         assert!(parking.parked, "it moved");
         parking.want(false, at);
-        parking.settle(false, true, at);
+        parking.take();
         assert!(!parking.parked, "the lift");
         parking.want(true, at);
-        parking.settle(false, false, at + PARK_PATIENCE);
+        parking.settle(at + PARK_PATIENCE);
         assert!(parking.parked, "patience spent");
         parking.want(false, at);
         parking.want(true, at);
@@ -1333,13 +1336,20 @@ mod tests {
     fn model(windows: Vec<RestWindow>) -> RestModel { RestModel { displays: display(), windows } }
 
     /// Window `id`, ringed, the active window of a workspace of its own on the first display.
-    fn at(id: u32, focused: bool, parked: bool) -> RestWindow {
+    fn at(id: u32, focused: bool) -> RestWindow {
         RestWindow {
             window: ws(id),
             group: group(id.into()),
             focused,
-            held: Held { parked, ..Held::default() },
             ..ringed_window()
+        }
+    }
+
+    /// `window`, held `parked` by rini's word.
+    fn park(window: RestWindow, parked: bool) -> RestWindow {
+        RestWindow {
+            held: Held { parked, ..window.held },
+            ..window
         }
     }
 
@@ -1387,25 +1397,20 @@ mod tests {
         let now = Instant::now();
         let mut rest = Rest::default();
         assert_eq!(
-            take_known(
-                &mut rest,
-                model(vec![at(1, true, false), at(2, false, false)]),
-                now,
-                |_| SLOT
-            ),
+            take_known(&mut rest, model(vec![at(1, true), at(2, false)]), now, |_| SLOT),
             Some(ws(1))
         );
         assert_eq!(
-            rest.take_model(model(vec![at(1, true, false), at(2, false, true)]), now),
+            rest.take_model(model(vec![at(1, true), park(at(2, false), true)]), now),
             None,
             "focus unchanged"
         );
         assert_eq!(
-            rest.take_model(model(vec![at(1, false, false), at(2, true, false)]), now),
+            rest.take_model(model(vec![at(1, false), at(2, true)]), now),
             Some(ws(2))
         );
         assert_eq!(
-            rest.take_model(model(vec![at(1, false, false)]), now),
+            rest.take_model(model(vec![at(1, false)]), now),
             None,
             "no window focused"
         );
@@ -1422,7 +1427,7 @@ mod tests {
     fn a_window_new_to_the_model_is_drawn_once_introduced() {
         let now = Instant::now();
         let mut rest = Rest::default();
-        let first = model(vec![at(1, true, false), at(2, false, false)]);
+        let first = model(vec![at(1, true), at(2, false)]);
         assert_eq!(rest.ask(&first), vec![ws(1), ws(2)]);
         assert_eq!(rest.ask(&first), Vec::new(), "asked once");
         let drawn = rest.turn(Some(first.clone()), &[], &[(ws(1), SLOT)], Vec::new(), now);
@@ -1482,7 +1487,7 @@ mod tests {
             Some(16.0),
             "an introduction not asked again is dropped"
         );
-        rest.take_model(model(vec![at(1, true, false)]), now);
+        rest.take_model(model(vec![at(1, true)]), now);
         rest.introduce(&[(ws(2), intro(SLOT))]);
         assert!(
             !rest.windows.contains_key(&ws(2)),
@@ -1496,7 +1501,7 @@ mod tests {
     #[test]
     fn a_rest_window_takes_its_windows_level_only_when_it_changed() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true)], SLOT, now);
         assert_eq!(rest.windows[&ws(1)].level, LEVEL);
         let raised = StackLevel {
             level: Some(3),
@@ -1526,18 +1531,15 @@ mod tests {
     #[test]
     fn a_window_followed_through_a_drag_is_shown_throughout() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true)], SLOT, now);
         for x in [3.0, 120.0, 900.0, 1500.0, -600.0] {
-            rest.take_frames(&[(ws(1), rect(x, 35.0, 859.0, 1079.0))], now);
+            rest.take_frames(&[(ws(1), rect(x, 35.0, 859.0, 1079.0))]);
             assert_eq!(rest.wanted(), vec![ws(1)], "at {x}");
         }
-        rest.take_frames(
-            &[
-                (ws(1), rect(500.0, 35.0, 859.0, 1079.0)),
-                (ws(1), rect(1800.0, 35.0, 859.0, 1079.0)),
-            ],
-            now,
-        );
+        rest.take_frames(&[
+            (ws(1), rect(500.0, 35.0, 859.0, 1079.0)),
+            (ws(1), rect(1800.0, 35.0, 859.0, 1079.0)),
+        ]);
         assert_eq!(
             rest.windows[&ws(1)].frame,
             Some(rect(1800.0, 35.0, 859.0, 1079.0)),
@@ -1549,19 +1551,19 @@ mod tests {
     #[test]
     fn a_park_is_taken_with_its_windows_move() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
-        rest.take_model(model(vec![at(1, true, true)]), now);
+        let mut rest = rest_with(vec![at(1, true)], SLOT, now);
+        rest.take_model(model(vec![park(at(1, true), true)]), now);
         assert_eq!(rest.wanted(), vec![ws(1)], "until its window moves");
-        rest.take_frames(&[(ws(2), rect(1676.0, 35.0, 1148.0, 1079.0))], now);
+        rest.take_frames(&[(ws(2), rect(1676.0, 35.0, 1148.0, 1079.0))]);
         assert_eq!(rest.wanted(), vec![ws(1)], "another window's move");
-        rest.take_frames(&[(ws(1), rect(1676.0, 35.0, 1148.0, 1079.0))], now);
+        rest.take_frames(&[(ws(1), rect(1676.0, 35.0, 1148.0, 1079.0))]);
         assert!(rest.wanted().is_empty());
     }
 
     #[test]
     fn a_window_the_window_server_hides_is_wanted_again_once_it_is_unhidden() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true)], SLOT, now);
         rest.take_orders(&[ServerOrder {
             window: ws(1),
             change: OrderChange::Hidden,
@@ -1580,7 +1582,7 @@ mod tests {
     #[test]
     fn a_window_the_window_server_closes_shows_no_band_from_its_close() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true)], SLOT, now);
         rest.take_orders(&[ServerOrder {
             window: ws(1),
             change: OrderChange::Closed,
@@ -1614,12 +1616,16 @@ mod tests {
         };
         take_known(
             &mut rest,
-            model(vec![at(1, true, false), at(2, false, false), at(3, false, true)]),
+            model(vec![at(1, true), at(2, false), park(at(3, false), true)]),
             now,
             frames,
         );
         rest.take_model(
-            model(vec![at(1, true, true), at(2, false, true), at(3, false, false)]),
+            model(vec![
+                park(at(1, true), true),
+                park(at(2, false), true),
+                at(3, false),
+            ]),
             now,
         );
         let mut reread = rest
@@ -1654,14 +1660,14 @@ mod tests {
     fn a_lift_takes_the_parks_waiting_on_its_display() {
         let now = Instant::now();
         for placed in [false, true] {
-            let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+            let mut rest = rest_with(vec![at(1, true), at(2, false)], SLOT, now);
             rest.cover(Some(display()[0].bounds));
             if placed {
                 rest.place(Some(display()[0].bounds), Some(now), now, |_| true);
             }
             assert_eq!(
                 rest.turn(
-                    Some(model(vec![at(1, true, false), at(2, false, true)])),
+                    Some(model(vec![at(1, true), park(at(2, false), true)])),
                     &[],
                     &[],
                     Vec::new(),
@@ -1707,14 +1713,10 @@ mod tests {
     #[test]
     fn a_flight_under_the_overlay_draws_nothing_until_its_lift_draws_it_once() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true), at(2, false)], SLOT, now);
         rest.cover(Some(display()[0].bounds));
         let elsewhere = rect(868.0, 35.0, 859.0, 1079.0);
-        let opened = model(vec![
-            at(1, false, false),
-            at(2, true, false),
-            at(3, false, false),
-        ]);
+        let opened = model(vec![at(1, false), at(2, true), at(3, false)]);
         assert_eq!(
             rest.ask(&opened),
             vec![ws(3)],
@@ -1790,13 +1792,9 @@ mod tests {
                 true,
             ),
         ] {
-            let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+            let mut rest = rest_with(vec![at(1, true), at(2, false)], SLOT, now);
             rest.cover(Some(display()[0].bounds));
-            let opened = model(vec![
-                at(1, false, false),
-                at(2, false, false),
-                at(3, true, false),
-            ]);
+            let opened = model(vec![at(1, false), at(2, false), at(3, true)]);
             assert_eq!(rest.ask(&opened), vec![ws(3)]);
             assert_eq!(
                 rest.turn(Some(opened), &[(ws(3), intro(SLOT))], &[], Vec::new(), now),
@@ -1840,10 +1838,10 @@ mod tests {
     #[test]
     fn a_flight_handed_over_holds_the_press_model_until_its_lift() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true), at(2, false)], SLOT, now);
         rest.fly(display()[0].bounds, now, now);
         assert!(rest.covered());
-        let pressed = model(vec![at(1, false, false), at(2, true, false)]);
+        let pressed = model(vec![at(1, false), at(2, true)]);
         assert_eq!(
             rest.turn(Some(pressed), &[], &[], vec![reorder(2)], now + ms(1)),
             None,
@@ -1872,13 +1870,9 @@ mod tests {
     #[test]
     fn a_flight_that_never_shows_lets_go_after_its_patience() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true), at(2, false)], SLOT, now);
         rest.fly(display()[0].bounds, now, now);
-        let pressed = model(vec![
-            at(1, false, false),
-            at(2, true, false),
-            at(3, false, false),
-        ]);
+        let pressed = model(vec![at(1, false), at(2, true), at(3, false)]);
         rest.ask(&pressed);
         assert_eq!(
             rest.turn(Some(pressed), &[], &[], vec![reorder(2)], now + ms(1)),
@@ -1904,7 +1898,7 @@ mod tests {
         rest.fly(display()[0].bounds, now, now);
         rest.off();
         assert_eq!(
-            rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], Vec::new(), now),
+            rest.turn(Some(model(vec![at(1, true)])), &[], &[], Vec::new(), now),
             None,
             "turned on under the flight"
         );
@@ -1930,10 +1924,10 @@ mod tests {
     #[test]
     fn a_show_after_the_flight_began_keeps_it_covered_past_the_patience() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true), at(2, false)], SLOT, now);
         rest.fly(display()[0].bounds, now, now);
         rest.cover(Some(display()[0].bounds));
-        let pressed = model(vec![at(1, false, false), at(2, true, false)]);
+        let pressed = model(vec![at(1, false), at(2, true)]);
         assert_eq!(
             rest.turn(Some(pressed), &[], &[], Vec::new(), now + ms(100)),
             None
@@ -1951,10 +1945,10 @@ mod tests {
     #[test]
     fn a_place_ahead_of_the_lift_draws_what_waited_and_stays_covered() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true), at(2, false)], SLOT, now);
         rest.fly(display()[0].bounds, now, now);
         rest.cover(Some(display()[0].bounds));
-        let pressed = model(vec![at(1, false, false), at(2, true, false)]);
+        let pressed = model(vec![at(1, false), at(2, true)]);
         assert_eq!(
             rest.turn(Some(pressed), &[], &[], vec![reorder(2)], now + ms(1)),
             None
@@ -1993,9 +1987,9 @@ mod tests {
     fn a_lift_given_before_a_flight_began_hands_the_cover_to_that_flight() {
         let now = Instant::now();
         let bounds = display()[0].bounds;
-        let pressed = model(vec![at(1, false, false), at(2, true, false)]);
+        let pressed = model(vec![at(1, false), at(2, true)]);
         for placed_ahead in [true, false] {
-            let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+            let mut rest = rest_with(vec![at(1, true), at(2, false)], SLOT, now);
             rest.fly(bounds, now, now);
             rest.cover(Some(bounds));
             if placed_ahead {
@@ -2049,10 +2043,10 @@ mod tests {
     #[test]
     fn a_lift_after_a_place_reads_nothing_again() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true), at(2, false)], SLOT, now);
         rest.cover(Some(display()[0].bounds));
         rest.turn(
-            Some(model(vec![at(1, false, false), at(2, true, false)])),
+            Some(model(vec![at(1, false), at(2, true)])),
             &[],
             &[],
             vec![reorder(2)],
@@ -2060,7 +2054,7 @@ mod tests {
         );
         rest.place(Some(display()[0].bounds), Some(now), now, |_| true);
         let moved = rect(868.0, 35.0, 859.0, 1079.0);
-        let back = model(vec![at(1, true, false), at(2, false, false)]);
+        let back = model(vec![at(1, true), at(2, false)]);
         assert_eq!(
             rest.turn(
                 Some(back),
@@ -2093,8 +2087,8 @@ mod tests {
     #[test]
     fn under_the_overlay_a_park_is_taken_with_its_move_and_a_hide_with_its_order() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false), at(2, false, false)], SLOT, now);
-        rest.take_model(model(vec![at(1, true, true), at(2, false, false)]), now);
+        let mut rest = rest_with(vec![at(1, true), at(2, false)], SLOT, now);
+        rest.take_model(model(vec![park(at(1, true), true), at(2, false)]), now);
         rest.cover(Some(display()[0].bounds));
         let hidden = ServerOrder {
             window: ws(2),
@@ -2126,7 +2120,7 @@ mod tests {
             &mut rest,
             RestModel {
                 displays: displays.clone(),
-                windows: vec![at(1, true, false), at(2, false, false)],
+                windows: vec![at(1, true), at(2, false)],
             },
             now,
             frames,
@@ -2134,7 +2128,7 @@ mod tests {
         rest.take_model(
             RestModel {
                 displays,
-                windows: vec![at(1, true, held[0]), at(2, false, held[1])],
+                windows: vec![park(at(1, true), held[0]), park(at(2, false), held[1])],
             },
             now,
         );
@@ -2159,7 +2153,7 @@ mod tests {
             None
         );
         let refocused = RestModel {
-            windows: vec![at(1, false, false), at(2, true, false)],
+            windows: vec![at(1, false), at(2, true)],
             ..rest.model.clone()
         };
         assert_eq!(
@@ -2211,7 +2205,7 @@ mod tests {
         let now = Instant::now();
         let mut rest = two_displays(now, [false, false]);
         let parks = RestModel {
-            windows: vec![at(1, true, false), at(2, false, true)],
+            windows: vec![at(1, true), park(at(2, false), true)],
             ..rest.model.clone()
         };
         assert_eq!(rest.turn(Some(parks), &[], &[], Vec::new(), now), None);
@@ -2228,13 +2222,7 @@ mod tests {
     fn a_turn_draws_at_once_while_nothing_covers_it() {
         let now = Instant::now();
         let mut rest = Rest::default();
-        let drawn = rest.turn(
-            Some(model(vec![at(1, true, false)])),
-            &[],
-            &[],
-            vec![reorder(1)],
-            now,
-        );
+        let drawn = rest.turn(Some(model(vec![at(1, true)])), &[], &[], vec![reorder(1)], now);
         assert_eq!(
             drawn,
             Some(Draw {
@@ -2261,7 +2249,7 @@ mod tests {
             rest.turn(None, &[], &[(ws(1), SLOT)], vec![reorder(1)], now),
             None
         );
-        let mut rest = rest_with(vec![at(1, true, false), at(2, false, true)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true), park(at(2, false), true)], SLOT, now);
         assert!(rest.on() && rest.pool_size() == 2);
         rest.off();
         assert_eq!(
@@ -2286,7 +2274,7 @@ mod tests {
             Placed::default()
         );
         assert!(!rest.wants_turn(0), "a lift asks no turn");
-        let drawn = rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], Vec::new(), now);
+        let drawn = rest.turn(Some(model(vec![at(1, true)])), &[], &[], Vec::new(), now);
         assert_eq!(
             drawn,
             Some(Draw {
@@ -2302,13 +2290,13 @@ mod tests {
     #[test]
     fn a_model_turning_it_on_under_the_overlay_waits_for_the_lift() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true)], SLOT, now);
         rest.cover(Some(display()[0].bounds));
         rest.turn(None, &[], &[], vec![reorder(1)], now);
         rest.off();
         assert!(rest.covered(), "the overlay is still up");
         assert_eq!(
-            rest.turn(Some(model(vec![at(1, true, false)])), &[], &[], Vec::new(), now),
+            rest.turn(Some(model(vec![at(1, true)])), &[], &[], Vec::new(), now),
             None
         );
         assert!(
@@ -2342,10 +2330,10 @@ mod tests {
     #[test]
     fn a_workspace_switch_finds_a_rest_window_for_every_band_in_the_pool() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false), at(2, false, true)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true), park(at(2, false), true)], SLOT, now);
         assert_eq!(rest.pool_size(), 2);
-        rest.take_model(model(vec![at(1, false, true), at(2, true, false)]), now);
-        rest.take_frames(&[(ws(2), SLOT)], now);
+        rest.take_model(model(vec![park(at(1, false), true), at(2, true)]), now);
+        rest.take_frames(&[(ws(2), SLOT)]);
         assert_eq!(
             rest.wanted(),
             vec![ws(1), ws(2)],
@@ -2357,7 +2345,7 @@ mod tests {
             mission_control: true,
             ..Held::default()
         };
-        rest.take_model(model(vec![RestWindow { held, ..at(1, true, false) }]), now);
+        rest.take_model(model(vec![RestWindow { held, ..at(1, true) }]), now);
         assert_eq!(rest.pool_size(), 1, "the spare alone while nothing could show");
     }
 
@@ -2366,7 +2354,8 @@ mod tests {
     #[test]
     fn the_pool_holds_the_most_bands_one_workspace_shows_and_a_spare_per_display() {
         let now = Instant::now();
-        let ring_alone: Vec<RestWindow> = (1..=6).map(|id| at(id, id == 1, id != 1)).collect();
+        let ring_alone: Vec<RestWindow> =
+            (1..=6).map(|id| park(at(id, id == 1), id != 1)).collect();
         assert_eq!(
             rest_with(ring_alone.clone(), SLOT, now).pool_size(),
             2,
@@ -2380,7 +2369,7 @@ mod tests {
             },
             ring: Ring::None,
             group: group(workspace),
-            ..at(id, false, workspace != 1)
+            ..park(at(id, false), workspace != 1)
         };
         let fullscreen = RestWindow {
             held: Held {
@@ -2405,7 +2394,7 @@ mod tests {
                 space: SpaceId::new(2),
                 workspace,
             },
-            ..at(id, false, workspace != 7)
+            ..park(at(id, false), workspace != 7)
         };
         let windows = ring_alone.into_iter().chain([elsewhere(7, 7), elsewhere(8, 8)]).collect();
         let displays = vec![display()[0], RestDisplay { bounds: OTHER, scale: 1.0 }];
@@ -2702,7 +2691,7 @@ mod tests {
     #[test]
     fn a_rest_window_given_a_window_is_hidden_first_and_shown_and_ordered_only_after_its_layers_commit()
      {
-        let rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        let rest = rest_with(vec![at(1, true)], SLOT, Instant::now());
         let look = rest.look_of(ws(1)).expect("shown");
         assert_eq!(
             plan_draw(&rest, &[PanelState::default()], &Draw::default()),
@@ -2720,7 +2709,7 @@ mod tests {
 
     #[test]
     fn a_released_rest_window_is_hidden_inside_the_transaction_the_new_one_is_laid_in() {
-        let rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        let rest = rest_with(vec![at(1, true)], SLOT, Instant::now());
         let look = rest.look_of(ws(1)).expect("shown");
         let gone = PanelState {
             target: Some(ws(9)),
@@ -2746,7 +2735,7 @@ mod tests {
 
     #[test]
     fn a_turn_that_lays_nothing_opens_no_transaction() {
-        let rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        let rest = rest_with(vec![at(1, true)], SLOT, Instant::now());
         let look = rest.look_of(ws(1)).expect("shown");
         let gone = PanelState {
             target: Some(ws(9)),
@@ -2766,11 +2755,7 @@ mod tests {
     #[test]
     fn a_rest_window_whose_window_was_reordered_or_took_focus_is_ordered_once_before_anything_is_drawn()
      {
-        let rest = rest_with(
-            vec![at(1, true, false), at(2, false, false)],
-            SLOT,
-            Instant::now(),
-        );
+        let rest = rest_with(vec![at(1, true), at(2, false)], SLOT, Instant::now());
         let draw = Draw {
             orders: vec![reorder(1), reorder(2), reorder(1)],
             focus: Some(ws(1)),
@@ -2789,11 +2774,7 @@ mod tests {
 
     #[test]
     fn a_rest_window_focus_came_to_is_ordered_before_one_given_a_window_hides() {
-        let rest = rest_with(
-            vec![at(1, true, false), at(2, false, false)],
-            SLOT,
-            Instant::now(),
-        );
+        let rest = rest_with(vec![at(1, true), at(2, false)], SLOT, Instant::now());
         let draw = Draw {
             orders: Vec::new(),
             focus: Some(ws(1)),
@@ -2817,7 +2798,7 @@ mod tests {
 
     #[test]
     fn a_band_shown_again_where_it_hid_is_hidden_first_and_ordered_after_it_shows_laying_nothing() {
-        let rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        let rest = rest_with(vec![at(1, true)], SLOT, Instant::now());
         let look = rest.look_of(ws(1)).expect("shown");
         let hid = PanelState {
             look: Some(look.hidden()),
@@ -2832,10 +2813,10 @@ mod tests {
 
     #[test]
     fn a_resized_window_is_laid_and_shown_inside_one_transaction_ordering_nothing() {
-        let rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        let rest = rest_with(vec![at(1, true)], SLOT, Instant::now());
         let look = rest.look_of(ws(1)).expect("shown");
         let smaller = PanelState {
-            look: Some(look_at(&at(1, true, false), CLEAR)),
+            look: Some(look_at(&at(1, true), CLEAR)),
             ..drawing(&rest, 1)
         };
         assert_eq!(plan_draw(&rest, &[smaller], &Draw::default()), vec![
@@ -2848,7 +2829,7 @@ mod tests {
 
     #[test]
     fn a_window_that_shows_nothing_has_no_look_and_its_rest_window_is_released() {
-        let mut rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        let mut rest = rest_with(vec![at(1, true)], SLOT, Instant::now());
         rest.take_orders(&[ServerOrder {
             window: ws(1),
             change: OrderChange::Hidden,
@@ -2871,7 +2852,7 @@ mod tests {
         let now = Instant::now();
         let frames = |id: u32| Heard::Frames(vec![(ws(id), SLOT)]);
         let batch = Batch::of([
-            model_of(vec![at(1, true, false)]),
+            model_of(vec![at(1, true)]),
             frames(1),
             Heard::Flight {
                 display: display()[0].bounds,
@@ -2905,13 +2886,13 @@ mod tests {
     #[test]
     fn a_batch_ending_in_off_closes_every_rest_window_and_takes_nothing_else() {
         let now = Instant::now();
-        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        let mut rest = rest_with(vec![at(1, true)], SLOT, now);
         let batch = Batch::of([
             Heard::Flight {
                 display: display()[0].bounds,
                 pressed: now,
             },
-            model_of(vec![at(1, true, false), at(2, false, false)]),
+            model_of(vec![at(1, true), at(2, false)]),
             Heard::Word(Word::Off),
         ]);
         assert_eq!(rest.take(batch, now), Taken::Off);
@@ -2922,7 +2903,7 @@ mod tests {
     fn a_batch_asks_each_window_first_named_and_grows_the_pool_for_a_model_or_a_lift_it_draws() {
         let now = Instant::now();
         let mut rest = Rest::default();
-        let named = Batch::of([model_of(vec![at(1, true, false)])]);
+        let named = Batch::of([model_of(vec![at(1, true)])]);
         assert_eq!(rest.take(named, now), Taken::On {
             ask: vec![ws(1)],
             grow: true,
@@ -2949,7 +2930,7 @@ mod tests {
                 display: display()[0].bounds,
                 pressed: now,
             },
-            model_of(vec![at(1, true, false), at(2, false, false)]),
+            model_of(vec![at(1, true), at(2, false)]),
         ]);
         assert_eq!(
             rest.take(covered, now),
