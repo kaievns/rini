@@ -43,7 +43,7 @@ knows the features and converts what they emit.
 | `reactor/query.rs` | Answers from a borrowed `StateView` |
 | `reactor/present.rs` | The frame-writing capability: record a destination, number the write; and `instant_requests`, what a pass that does not fly sends one application |
 | `reactor/bar.rs` | The bar's half here: its model built from the stores after every batch and sent only when it changed, and what a click on it asks for |
-| `reactor/managers.rs` | The state the reactor keeps per concern in more than one field: the drag, Mission Control, the workspace switch, refocus, the refresh quarantine and the channels to the other actors; and `notification_ids_to_publish` |
+| `reactor/managers.rs` | The state the reactor keeps per concern in more than one field: the drag, Mission Control, the workspace switch, refocus, the refresh quarantine and the channels to the other actors; and `notification_ids_to_publish`. The quarantine is three machines, `Wake`, `Session` and `Churn`, and the one refresh owed, all moved only by `RefreshQuarantineManager::on` and its table tests |
 | `reactor/animation.rs` | `animate_layout`: whether each layout pass flies on the overlay, and placing the real windows when it does not, from `transitions::domain::pass`'s plan |
 | `reactor/decorations.rs` | The decorations' half here: what each managed window wears as its window rules have it, who wears the ring, each tiled window's border, and what the rest windows are told after a batch |
 | `reactor/diagnostics.rs` | What a query answers about when it was not told (`default_query_space`), and what the diagnostics dump counts as wrong (`orphaned_windows`, `stale_display_homes`) |

@@ -486,10 +486,6 @@ impl Reactor {
         &self.refresh_quarantine_manager
     }
 
-    pub(super) fn quarantine_mut(&mut self) -> &mut super::managers::RefreshQuarantineManager {
-        &mut self.refresh_quarantine_manager
-    }
-
     pub(super) fn drag(&self) -> &super::managers::DragManager { &self.drag_manager }
 
     pub(super) fn drag_mut(&mut self) -> &mut super::managers::DragManager {

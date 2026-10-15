@@ -8,6 +8,7 @@ use test_log::test;
 
 use super::fixtures::*;
 use crate::app::reactor::events::window as window_workflow;
+use crate::app::reactor::managers::QuarantineSignal;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
@@ -222,7 +223,7 @@ fn carbon_activation_is_forwarded_during_refresh_quarantine() {
 
     reactor.handle_events(apps.make_app(pid, make_windows(1)));
     let _ = apps.requests();
-    reactor.quarantine_mut().sleeping = true;
+    reactor.quarantine_on(QuarantineSignal::WillSleep);
 
     reactor.handle_event(Event::ApplicationGloballyActivated(pid));
     assert!(

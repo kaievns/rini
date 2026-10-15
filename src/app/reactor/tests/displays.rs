@@ -6,7 +6,7 @@ use rini_geometry::CGRectExt;
 use test_log::test;
 
 use super::fixtures::*;
-use crate::app::reactor::managers::RefreshQuarantineState;
+use crate::app::reactor::managers::{Churn, RefreshQuarantineState, Session, Wake};
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
@@ -1148,38 +1148,34 @@ fn each_quarantine_event_sets_its_quarantine_flag_and_moves_no_focus() {
     apps.requests();
 
     reactor.handle_event(Event::DisplayChurnBegin);
-    assert!(reactor.quarantine().display_churn_active);
+    assert_eq!(reactor.quarantine().churn(), Churn::Churning);
     assert_eq!(
         reactor.refresh_quarantine_state(),
         RefreshQuarantineState::DisplayChurn
     );
 
     reactor.handle_event(Event::SessionDidResignActive);
-    assert!(reactor.quarantine().session_inactive);
-    assert!(!reactor.quarantine().awaiting_post_session_snapshot);
+    assert_eq!(reactor.quarantine().session(), Session::Inactive);
     assert_eq!(
         reactor.refresh_quarantine_state(),
         RefreshQuarantineState::SessionInactive
     );
 
     reactor.handle_event(Event::SystemWillSleep);
-    assert!(reactor.quarantine().sleeping);
-    assert!(!reactor.quarantine().awaiting_post_wake_snapshot);
+    assert_eq!(reactor.quarantine().wake(), Wake::Asleep);
     assert_eq!(
         reactor.refresh_quarantine_state(),
         RefreshQuarantineState::Sleeping
     );
 
+    assert_eq!(reactor.quarantine().owed(), None);
     reactor.handle_event(Event::SystemWoke);
-    assert!(reactor.quarantine().sleeping);
-    assert!(reactor.quarantine().awaiting_post_wake_snapshot);
-    assert!(reactor.quarantine().pending_visible_refresh);
+    assert_eq!(reactor.quarantine().wake(), Wake::AwaitingSnapshot);
+    assert!(reactor.quarantine().owed().is_some());
 
-    reactor.quarantine_mut().pending_visible_refresh = false;
     reactor.handle_event(Event::SessionDidBecomeActive);
-    assert!(reactor.quarantine().session_inactive);
-    assert!(reactor.quarantine().awaiting_post_session_snapshot);
-    assert!(reactor.quarantine().pending_visible_refresh);
+    assert_eq!(reactor.quarantine().session(), Session::AwaitingSnapshot);
+    assert!(reactor.quarantine().owed().is_some());
 
     assert_eq!(reactor.focus_tracker().key_window(), Some(focused));
     assert_eq!(test_layout(&mut reactor, space, screen), layout);

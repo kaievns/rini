@@ -5,6 +5,7 @@ use test_log::test;
 
 use super::fixtures::*;
 use crate::app::reactor::events::window_discovery;
+use crate::app::reactor::managers::QuarantineSignal;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::request::Request;
@@ -584,7 +585,7 @@ fn a_window_destroyed_during_refresh_quarantine_is_not_forgotten() {
     let mut pictures = reactor.connect_test_pictures();
     let wid = WindowId::new(1, 1);
 
-    reactor.quarantine_mut().sleeping = true;
+    reactor.quarantine_on(QuarantineSignal::WillSleep);
     reactor.handle_event(Event::WindowDestroyed(wid));
 
     assert!(reactor.windows().window(wid).is_some(), "the window stays");

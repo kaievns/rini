@@ -16,6 +16,7 @@ use super::events::{
     EventOutcome, app as application_workflow, drag as interaction_workflow,
     space as topology_workflow, system as system_workflow, window as window_workflow,
 };
+use super::managers::QuarantineSignal;
 use super::{DragState, Event, Reactor};
 use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
 use crate::input::event::LeftPress;
@@ -30,9 +31,7 @@ use crate::workspaces::LayoutEvent;
 /// tracking passes them by.
 impl Reactor {
     pub(super) fn on_system_will_sleep(&mut self) -> EventOutcome {
-        let quarantine = &mut self.refresh_quarantine_manager;
-        quarantine.sleeping = true;
-        quarantine.awaiting_post_wake_snapshot = false;
+        self.quarantine_on(QuarantineSignal::WillSleep);
         // Sleep is the last chance to persist before a possible reboot, so write out any
         // debounced change rather than risk losing it.
         if self.autosave_pending {
@@ -42,32 +41,24 @@ impl Reactor {
     }
 
     pub(super) fn on_system_woke(&mut self) -> EventOutcome {
-        let quarantine = &mut self.refresh_quarantine_manager;
-        quarantine.sleeping = true;
-        quarantine.awaiting_post_wake_snapshot = true;
+        self.quarantine_on(QuarantineSignal::Woke);
         let outcome = system_workflow::handle_system_woke();
-        self.defer_visible_refresh(true);
         self.bar_clock_changed();
         outcome
     }
 
     pub(super) fn on_session_did_resign_active(&mut self) -> EventOutcome {
-        let quarantine = &mut self.refresh_quarantine_manager;
-        quarantine.session_inactive = true;
-        quarantine.awaiting_post_session_snapshot = false;
+        self.quarantine_on(QuarantineSignal::SessionResigned);
         EventOutcome::default()
     }
 
     pub(super) fn on_session_did_become_active(&mut self) -> EventOutcome {
-        let quarantine = &mut self.refresh_quarantine_manager;
-        quarantine.session_inactive = true;
-        quarantine.awaiting_post_session_snapshot = true;
-        self.defer_visible_refresh(true);
+        self.quarantine_on(QuarantineSignal::SessionActivated);
         EventOutcome::default()
     }
 
     pub(super) fn on_display_churn_begin(&mut self) -> EventOutcome {
-        self.refresh_quarantine_manager.display_churn_active = true;
+        self.quarantine_on(QuarantineSignal::ChurnBegan);
         EventOutcome::default()
     }
 }
@@ -541,15 +532,7 @@ impl Reactor {
     ) -> anyhow::Result<EventOutcome> {
         let releases_lifecycle = space_state.releases_lifecycle_refresh_quarantine;
         let outcome = self.handle_authoritative_space_snapshot(space_state)?;
-        // Every snapshot the spaces actor forwards is coherent, so each one, once incorporated,
-        // releases the display-churn quarantine and owes one visible-window refresh, made once
-        // every quarantine this snapshot releases is lifted.
-        self.refresh_quarantine_manager.display_churn_active = false;
-        self.defer_visible_refresh(true);
-        if releases_lifecycle {
-            self.release_post_instability_quarantine_after_authoritative_snapshot();
-        }
-        self.flush_deferred_visible_refresh();
+        self.quarantine_on(QuarantineSignal::Incorporated { releases_lifecycle });
         // Flush any debounced save now: after a display was plugged in or unplugged, the
         // arrangement about to be replaced is the one worth remembering, and it is also when the
         // layout file gets consulted to put windows back on the display they came from.
