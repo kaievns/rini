@@ -56,9 +56,12 @@ impl FocusOrder {
     /// An application relaunching into a new `WindowId` for the same window is the same window to the
     /// user, and dropping it to the back of the list would put it behind windows they have not touched
     /// since.
+    ///
+    /// When only the new id is listed, a focus report under it arrived first and its entry stays.
     pub fn rekey(&mut self, from: WindowId, to: WindowId) {
-        // Remove any existing entry for the new id first, or a rekey onto an id already in the list
-        // leaves the window twice.
+        if self.position(from).is_none() {
+            return;
+        }
         self.recent.retain(|candidate| *candidate != to);
         if let Some(slot) = self.recent.iter_mut().find(|candidate| **candidate == from) {
             *slot = to;
@@ -185,6 +188,23 @@ mod tests {
         order.rekey(win(1, 1), win(1, 2));
 
         assert_eq!(order.iter().collect::<Vec<_>>(), vec![win(1, 2)]);
+    }
+
+    /// A focus report under the new id can land before the rekey while the old id was never focused.
+    /// The window is listed once already and must stay where it is.
+    #[test]
+    fn a_rekey_from_an_unlisted_id_onto_a_listed_one_keeps_the_listed_entry() {
+        let mut order = FocusOrder::default();
+        order.touch(win(1, 1));
+        order.touch(win(1, 2));
+        order.touch(win(1, 3));
+
+        order.rekey(win(1, 9), win(1, 2));
+
+        assert_eq!(
+            order.iter().collect::<Vec<_>>(),
+            vec![win(1, 3), win(1, 2), win(1, 1)]
+        );
     }
 
     #[test]

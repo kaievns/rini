@@ -468,6 +468,34 @@ mod tests {
 
             assert_eq!(tracker.main_window(), Some(new));
         }
+
+        /// The window an activation returns to was snapshotted under the old id before the rekey.
+        #[test]
+        fn a_pending_activation_target_follows_a_rekey() {
+            let (old, new) = (WindowId::new(1, 1), WindowId::new(1, 99));
+            let mut tracker = launched_in_front(old);
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(old));
+            let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(2));
+            let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(1));
+
+            tracker.rekey_window(old, new);
+
+            assert_eq!(tracker.take_activation_target(1), Some(new));
+        }
+
+        /// The application's last focused window is what its next activation snapshots.
+        #[test]
+        fn the_applications_last_focused_window_follows_a_rekey() {
+            let (old, new) = (WindowId::new(1, 1), WindowId::new(1, 99));
+            let mut tracker = launched_in_front(old);
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(old));
+            let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(2));
+
+            tracker.rekey_window(old, new);
+            let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(1));
+
+            assert_eq!(tracker.take_activation_target(1), Some(new));
+        }
     }
 
     mod focus_order_wiring {

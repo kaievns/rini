@@ -65,7 +65,8 @@ switcher answers "every window I have, wherever it is".
 > with the others and it's  confusing as fuck."
 - A window found again under a new identity for the same window-server window MUST keep its place in
   the order. It is the same window to the user, and dropping it to the back puts it behind windows
-  they have not touched since.
+  they have not touched since. A window already listed under its new identity and not under its old
+  one MUST stay where it is: a focus report under the new id can land before the rekey.
 
 > **Found 2026-10-15, not reported.** The focus order could carry a window across an identity change,
 > and nothing asked it to: the new id was missing from the order until it was focused again.

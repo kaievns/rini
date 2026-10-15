@@ -551,6 +551,24 @@ fn a_rekeyed_window_keeps_its_place_in_the_focus_order() {
     assert_eq!(order.position(old), None);
 }
 
+/// An activation after a rekey returns to the window under its new id, the one the reactor knows.
+#[test]
+fn an_activation_after_a_rekey_targets_the_new_id() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(2));
+    apps.requests();
+    let (old, new) = (WindowId::new(1, 1), WindowId::new(1, 99));
+    reactor.handle_event(Event::WindowServerFocusChanged(old, space));
+    reactor.handle_event(Event::ApplicationGloballyActivated(2));
+
+    rekey_window(&mut reactor, old, new);
+    reactor.handle_event(Event::ApplicationGloballyActivated(1));
+
+    assert_eq!(reactor.main_window_tracker.peek_activation_target(1), Some(new));
+}
+
 /// An Accessibility destruction during a refresh quarantine can be an element replaced while the
 /// window lives on, so the window keeps its pictures.
 #[test]

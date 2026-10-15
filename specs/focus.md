@@ -32,8 +32,9 @@ more than a "correct" choice by the layout.
 > window to switch from.
 
 - A window found again under a new identity for the same window-server window MUST stay the focused
-  window, and its app's main window, under the new id. No destruction comes for the old id, so a
-  record left on it names a window that is gone until the next focus change.
+  window, its app's main window, its app's last focused window, and the window an activation of its
+  app returns to, under the new id. No destruction comes for the old id, so a record left on it names
+  a window that is gone until the next focus change.
 
 > **Found 2026-10-15, not reported.** The identity change carried the window's place in the focus
 > order and nothing else: the window-server focus and the app's main window kept the old id.
