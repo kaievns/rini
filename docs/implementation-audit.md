@@ -372,7 +372,7 @@ The recent batches moved the opposite way deliberately — pure decisions to
 | `src/windows/platform/app_actor.rs` | 1,376 | the AX driver. DONE: its admission rules are now `windows::domain::admissible` with 11 tests (`4dac5df`), and the fake `AXUIElement` seam it needed (`FakeAx`, `9ea1079`) carries the file's own tests, `handle_notification` and `handle_raise_request` among them |
 | `src/displays/platform/spaces.rs` | 1,087 | has `spaces/tests.rs` (44 tests) beside it, but two of its rules were untestable until `SpaceKinds` — see 4.4 |
 | `gesture_tap.rs`, the HID gesture tap | 657 | DONE, then deleted: the phase machine became `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`); the tap, the rules and their tests went with the trackpad swipes (2026-10-10) |
-| `src/app/reactor/observations.rs` | 574 | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
+| `src/app/reactor/observations.rs` | 572 | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
 | `src/main.rs` | 525 | the composition root: `main` builds the actors in order, each built by a function of its own, and joins them |
 | `src/app/hotkeys/mod.rs` | 404 | DONE: the alias lowering is `hotkeys/lower.rs` with 7 tests |
 
