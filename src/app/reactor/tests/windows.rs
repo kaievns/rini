@@ -447,6 +447,27 @@ fn an_application_that_quits_takes_its_native_fullscreen_records() {
     assert_eq!(windows.pending_native_fullscreen_pid_for_window_server_id(unbound), None);
 }
 
+/// An application rini never watched has no thread to answer its quit, and the native-fullscreen
+/// record the window server alone gave it still goes.
+#[test]
+fn an_unwatched_application_that_quits_takes_its_native_fullscreen_records() {
+    let (_apps, mut reactor) = test_context();
+    let unbound = WindowServerId::new(4242);
+    let _ = reactor.state.windows.suspend_window_server_to_native_fullscreen(
+        7,
+        unbound,
+        Some(SpaceId::new(1)),
+        SpaceId::new(0x400000001),
+    );
+
+    reactor.handle_event(Event::ApplicationTerminated(7));
+
+    assert_eq!(
+        reactor.state.windows.pending_native_fullscreen_pid_for_window_server_id(unbound),
+        None
+    );
+}
+
 /// A window the application no longer lists and the window server has ordered out is retired by
 /// discovery, and forgotten once.
 #[test]

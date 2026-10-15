@@ -43,7 +43,17 @@ pub fn handle_application_launched(
         }))
 }
 
-pub fn handle_application_terminated(pid: i32) -> anyhow::Result<EventOutcome> {
+/// An application rini holds a thread for answers through that thread. One it never watched has no
+/// thread to answer, so the native-fullscreen records the window server alone gave it go here.
+pub fn handle_application_terminated(
+    apps: &AppManager,
+    state: &mut RiniState,
+    pid: i32,
+) -> anyhow::Result<EventOutcome> {
+    if !apps.apps.contains_key(&pid) {
+        state.windows.remove_windows_for_app(pid);
+        return Ok(EventOutcome::no_change());
+    }
     Ok(EventOutcome::no_change()
         .with_app_request(pid, crate::windows::domain::request::Request::Terminate))
 }

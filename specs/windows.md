@@ -88,9 +88,10 @@ as visible rather than absent. The reverse — an id the server does not report 
   while minimised or unmanaged, found gone when its application's windows are looked at again, left
   behind by its application quitting, or found again under a new identity for the same window-server
   window. An application that quits MUST take its windows' records too, native-fullscreen ones
-  included, whether bound to a window or still waiting on one: macOS hands the window-server ids they
-  are keyed by to other windows. A window whose Accessibility destruction is reported during a refresh
-  quarantine MUST keep its pictures: its element can be replaced while the window lives.
+  included, whether bound to a window or still waiting on one, and whether or not rini ever watched
+  it: macOS hands the window-server ids they are keyed by to other windows. A window whose
+  Accessibility destruction is reported during a refresh quarantine MUST keep its pictures: its
+  element can be replaced while the window lives.
 
 > **Found 2026-09-23, not reported.** The prune check tested four of a record's nine fields. A record
 > holding only one of the other five was pruned and what it held forgotten.

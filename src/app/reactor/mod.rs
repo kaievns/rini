@@ -1407,7 +1407,11 @@ impl Reactor {
                 );
             }
             Event::ApplicationTerminated(pid) => {
-                return application_workflow::handle_application_terminated(pid);
+                return application_workflow::handle_application_terminated(
+                    &self.app_manager,
+                    &mut self.state,
+                    pid,
+                );
             }
             Event::ApplicationThreadTerminated(pid) => {
                 self.clear_menu_state_for_pid(pid);
