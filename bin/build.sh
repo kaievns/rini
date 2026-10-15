@@ -24,7 +24,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 IDENTITY="${RINI_SIGNING_IDENTITY:-rini-dev}"
 BUNDLE_ID="git.kaievns.rini"
 
-cargo build --release "$@"
+RINI_DEPLOY=1 cargo build --release "$@"
 
 if ! security find-certificate -c "$IDENTITY" >/dev/null 2>&1; then
     echo "signing identity '$IDENTITY' not found in the keychain; see docs/signing.md" >&2
