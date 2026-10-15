@@ -220,8 +220,7 @@ application lands in a default slot. Two tests pin it, and both fail if the refu
 the memory again.
 
 Schema 5 nests the memory under its own key and `LoadedLayout` reads it BEFORE anything is
-validated. The migration was checked against a real 19-window schema-4 file: every home
-came across, so the bump cost nothing.
+validated. A file older than schema 6 is refused, its memory read only in the current shape.
 
 Its largest methods: `handle_command` (261), `calculate_layout_with_virtual_workspaces`
 (203), `move_window_to_workspace` (175), `on_windows_on_screen_updated` (168).

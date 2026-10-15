@@ -10,7 +10,6 @@ pub mod settings;
 
 pub use crate::layout::{LayoutId, ScrollingLayoutSystem};
 pub use domain::app_rules::{AppRuleEffects, AppRuleResult};
-pub use domain::display_affinity::DisplayAffinity;
 pub use domain::floating::FloatingManager;
 pub use domain::floating_position_store::FloatingPositionStore;
 pub use domain::hidden_window_placement::{HiddenWindowPlacement, HideCorner};

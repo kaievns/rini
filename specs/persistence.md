@@ -18,6 +18,13 @@ the strip fresh.
 ## Refusing a file
 
 - A file written by a NEWER schema version MUST be refused rather than half-read.
+- A file written by an OLDER schema version MUST be refused too, layout and all, and the refusal MUST
+  say which version it is. rini reads only the current shape, so an older file read as one would
+  come back without the window records its own shape held.
+
+> **Reported 2026-10-15.** Kai's decision in the dead-code sweep: delete every reader of files older
+> than schema 6. Kai's `~/.rini/layout.ron` was already at 6, and the readers for 0 to 3 could not
+> run on any real file, which the layout-system tag check or RON refused first.
 - A file whose workspace topology, layouts, floating positions or window records are invalid MUST be
   refused at the load boundary. Admitting one creates windows no later cleanup can identify.
 - A refusal MUST say what is wrong and what follows from it, because the user's only other signal is

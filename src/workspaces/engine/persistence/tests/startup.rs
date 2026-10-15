@@ -358,10 +358,9 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
         "the saved file must contain a slot for the window on the external"
     );
 
-    // Forget every recorded home first. A file written by schema v2 has no per-window
-    // affinity at all, only the display maps, so the release path itself has to establish
-    // the home from the saved space's display. Without this the assertion below would pass
-    // on affinity that had merely been carried over from the save.
+    // Forget every recorded home first, so the release path itself has to establish the home
+    // from the saved space's display. Without this the assertion below would pass on affinity
+    // that had merely been carried over from the save.
     for window in [on_builtin, on_external] {
         memory.affinity.forget_window(window);
     }

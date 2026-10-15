@@ -98,6 +98,13 @@ impl LayoutEngine {
                 CURRENT_SCHEMA_VERSION,
             )));
         }
+        if schema_version < CURRENT_SCHEMA_VERSION {
+            return Ok(refuse(anyhow::anyhow!(
+                "layout schema version {schema_version} is older than {CURRENT_SCHEMA_VERSION}, the \
+                 oldest this rini reads: it predates window records kept per display arrangement, \
+                 so the saved strip is ignored and laid out fresh"
+            )));
+        }
         if let Err(error) = persisted.virtual_workspace_manager.validate_persisted_topology() {
             return Ok(refuse(anyhow::anyhow!("invalid workspace topology: {error}")));
         }

@@ -13,9 +13,7 @@ use super::{FloatingManager, LayoutEngine, WorkspaceLayouts};
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleEngine;
 use crate::workspaces::settings::VirtualWorkspaceSettings;
-use crate::workspaces::{
-    DisplayAffinity, FloatingPositionStore, VirtualWorkspaceId, WindowStore, WorkspaceStore,
-};
+use crate::workspaces::{FloatingPositionStore, VirtualWorkspaceId, WindowStore, WorkspaceStore};
 use rini_core::ids::SpaceId;
 use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};

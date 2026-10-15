@@ -45,15 +45,6 @@ pub struct DisplayAffinity {
     /// starting from nothing and re-homing everything.
     #[serde(default)]
     current: SetupId,
-    /// Window records from a file written before arrangements existed, under the names that file
-    /// used. Read, never written: the first arrangement to be named adopts them, so an upgrade keeps
-    /// the homes it had instead of re-deriving every one of them.
-    #[serde(default, skip_serializing, rename = "window_home")]
-    legacy_window_home: HashMap<WindowId, String>,
-    #[serde(default, skip_serializing, rename = "display_strip")]
-    legacy_display_strip: HashMap<String, Vec<WindowId>>,
-    #[serde(default, skip_serializing, rename = "window_width")]
-    legacy_window_width: StoredWidths,
 }
 
 /// The width a window occupied, as the layout means it rather than in points.
@@ -163,7 +154,7 @@ pub enum SetupChange {
     /// Never seen. It remembers nothing, so NOTHING may be moved — the windows stay where they are
     /// and this arrangement learns from where they end up.
     New,
-    /// New, and it adopted the records of a file written before arrangements existed.
+    /// New, and it adopted the records written before any arrangement was named.
     Adopted,
     /// No displays named. macOS reports that mid-reconfiguration and it is never a real arrangement.
     Refused,
@@ -178,16 +169,6 @@ impl SetupChange {
 }
 
 impl DisplayAffinity {
-    /// Nothing has been recorded. Used to tell a schema-5 file's nested section from a schema-4
-    /// file's top-level one: a file has one shape or the other, never both.
-    pub fn is_empty(&self) -> bool {
-        self.display_space.is_empty()
-            && self.setups.is_empty()
-            && self.legacy_window_home.is_empty()
-            && self.legacy_display_strip.is_empty()
-            && self.legacy_window_width.is_empty()
-    }
-
     /// Put the arrangement `displays` form in force, and say whether it is one nobody has seen.
     ///
     /// A new arrangement starts EMPTY and the caller must move nothing: a display nobody has used
@@ -208,13 +189,13 @@ impl DisplayAffinity {
             return SetupChange::Unchanged;
         }
 
-        let legacy = self.take_legacy();
+        let unnamed = self.take_unnamed();
         let entry = self.setups.entry(id.clone());
         let known = matches!(entry, std::collections::hash_map::Entry::Occupied(_));
         let setup = entry.or_default();
         let mut adopted = false;
-        if !known && setup.is_empty() && !legacy.is_empty() {
-            *setup = legacy;
+        if !known && setup.is_empty() && !unnamed.is_empty() {
+            *setup = unnamed;
             adopted = true;
         }
         self.current = id;
@@ -232,34 +213,10 @@ impl DisplayAffinity {
 
     /// Records written before any arrangement was named, ready to be adopted by the first one.
     ///
-    /// Two sources, both meaning "we did not know the arrangement yet": the field names a schema-5
-    /// file used, and the unnamed arrangement that writes land in before the first settled topology.
-    /// Windows are seen before the screens settle, so without this their homes were recorded under a
-    /// nameless arrangement and then never read again.
-    fn take_legacy(&mut self) -> Setup {
-        let mut legacy = Setup {
-            window_home: std::mem::take(&mut self.legacy_window_home),
-            display_strip: std::mem::take(&mut self.legacy_display_strip),
-            window_width: read_widths(
-                std::mem::take(&mut self.legacy_window_width),
-                &UnboundedWidths::default(),
-            ),
-            // A file written before arrangements existed recorded no distinction between a home the
-            // user chose and one rini inferred. Treating them all as CHOSEN would make every display
-            // pin inert until the window was closed, so they come across as inferred and a pin may
-            // correct them.
-            home_by_intent: Default::default(),
-        };
-        if let Some(unnamed) = self.setups.remove(&SetupId::default()) {
-            // The file's records lose to what this session has actually observed.
-            legacy.window_home.extend(unnamed.window_home);
-            legacy.home_by_intent.extend(unnamed.home_by_intent);
-            legacy.display_strip.extend(unnamed.display_strip);
-            for (display, widths) in unnamed.window_width {
-                legacy.window_width.entry(display).or_default().extend(widths);
-            }
-        }
-        legacy
+    /// Windows are seen before the screens settle, so their homes land in the unnamed arrangement;
+    /// without this they were recorded there and then never read again.
+    fn take_unnamed(&mut self) -> Setup {
+        self.setups.remove(&SetupId::default()).unwrap_or_default()
     }
 
     /// The records of the arrangement in force. Empty when none has been named yet, which answers
@@ -423,14 +380,12 @@ impl DisplayAffinity {
         for setup in self.setups.values_mut() {
             setup.forget_window(window);
         }
-        self.legacy_window_home.remove(&window);
     }
 
     pub fn forget_app(&mut self, pid: pid_t) {
         for setup in self.setups.values_mut() {
             setup.forget_app(pid);
         }
-        self.legacy_window_home.retain(|window, _| window.pid != pid);
     }
 
     /// Carry a window's records across an identity change (an app relaunching into a new
@@ -439,27 +394,6 @@ impl DisplayAffinity {
     pub fn rekey_window(&mut self, from: WindowId, to: WindowId) {
         for setup in self.setups.values_mut() {
             setup.rekey_window(from, to);
-        }
-        if let Some(home) = self.legacy_window_home.remove(&from) {
-            self.legacy_window_home.insert(to, home);
-        }
-    }
-
-    /// Adopt legacy persisted state from before this type existed.
-    pub fn absorb_legacy(
-        &mut self,
-        space_display_map: HashMap<SpaceId, Option<String>>,
-        display_last_space: HashMap<String, SpaceId>,
-    ) {
-        for (space, display) in space_display_map {
-            if let Some(display) = display {
-                self.set_display_space(&display, space);
-            }
-        }
-        for (display, space) in display_last_space {
-            // A legacy file carried both maps and they could disagree. The per-display
-            // map was the one the reconnect path read, so let it win.
-            self.set_display_space(&display, space);
         }
     }
 }
@@ -909,20 +843,6 @@ mod tests {
 
         assert_eq!(affinity.setup().display_strip["external"], vec![win(2)]);
         assert_eq!(affinity.window_home(win(1)), None);
-    }
-
-    #[test]
-    fn legacy_state_is_adopted_from_both_maps() {
-        let mut space_display_map = HashMap::default();
-        space_display_map.insert(SpaceId::new(7), Some("external".to_string()));
-        let mut display_last_space = HashMap::default();
-        display_last_space.insert("built-in".to_string(), SpaceId::new(1));
-
-        let mut affinity = DisplayAffinity::default();
-        affinity.absorb_legacy(space_display_map, display_last_space);
-
-        assert_eq!(affinity.space_for_display("external"), Some(SpaceId::new(7)));
-        assert_eq!(affinity.space_for_display("built-in"), Some(SpaceId::new(1)));
     }
 }
 
