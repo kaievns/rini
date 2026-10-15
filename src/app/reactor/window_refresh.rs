@@ -139,6 +139,48 @@ impl Reactor {
     ) -> EventOutcome {
         let app_info = app_info.or_else(|| self.apps.get(&pid).map(|app| app.info.clone()));
         let ws = self.reads.window_server.clone();
+        let stale_snapshot = self.stale_cleanup_snapshot(pid);
+        let (stale_windows, pending_refresh) = window_discovery::identify_stale_windows(
+            &self.state,
+            pid,
+            &known_visible,
+            &stale_snapshot,
+        );
+        let mut outcome = match window_discovery::cleanup_stale_windows(
+            &mut self.state,
+            &self.transactions,
+            &mut self.drag_manager,
+            &mut self.mission_control_manager,
+            pid,
+            stale_windows,
+            pending_refresh,
+        ) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                warn!(%error, pid, "window discovery cleanup failed");
+                return EventOutcome::default();
+            }
+        };
+        let observed_windows = self.observe_windows(new);
+        let (new_windows, process_outcome) = window_discovery::process_window_list(
+            &mut self.state,
+            &*ws,
+            &mut self.layout_engine,
+            &mut self.main_window_tracker,
+            observed_windows,
+            &app_info,
+        );
+        outcome.absorb(process_outcome);
+        window_discovery::update_window_states(&mut self.state, &*ws, new_windows);
+
+        outcome.absorb(self.discovery_layout_events(pid, &known_visible, &app_info));
+        outcome
+    }
+
+    /// What the stale-window cleanup judges an app's windows by: the windows on a known inactive
+    /// space, what the window server says of each, and whether the world is mid-change.
+    fn stale_cleanup_snapshot(&self, pid: pid_t) -> window_discovery::StaleCleanupSnapshot {
+        let ws = self.reads.window_server.clone();
         let inactive_windows = self
             .state
             .windows
@@ -162,7 +204,7 @@ impl Reactor {
                 })
             })
             .collect();
-        let stale_snapshot = window_discovery::StaleCleanupSnapshot {
+        window_discovery::StaleCleanupSnapshot {
             pending_refresh: self
                 .mission_control_manager
                 .pending_mission_control_refresh
@@ -175,30 +217,16 @@ impl Reactor {
             drag_active: self.is_in_drag(),
             inactive_windows,
             server_observations,
-        };
-        let (stale_windows, pending_refresh) = window_discovery::identify_stale_windows(
-            &self.state,
-            pid,
-            &known_visible,
-            &stale_snapshot,
-        );
-        let mut outcome = match window_discovery::cleanup_stale_windows(
-            &mut self.state,
-            &self.transactions,
-            &mut self.drag_manager,
-            &mut self.mission_control_manager,
-            pid,
-            stale_windows,
-            pending_refresh,
-        ) {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                warn!(%error, pid, "window discovery cleanup failed");
-                return EventOutcome::default();
-            }
-        };
-        let observed_windows = new
-            .into_iter()
+        }
+    }
+
+    /// Each newly reported window with the native space it is on and the active space it belongs
+    /// to; a window with no window-server id takes the command space.
+    fn observe_windows(
+        &self,
+        new: Vec<(WindowId, WindowInfo)>,
+    ) -> Vec<window_discovery::ObservedWindow> {
+        new.into_iter()
             .map(|(wid, info)| {
                 let current_native_space =
                     info.sys_id.and_then(|wsid| self.affinity().resolve_native_space(wsid, None));
@@ -216,18 +244,16 @@ impl Reactor {
                     active_space,
                 }
             })
-            .collect();
-        let (new_windows, process_outcome) = window_discovery::process_window_list(
-            &mut self.state,
-            &*ws,
-            &mut self.layout_engine,
-            &mut self.main_window_tracker,
-            observed_windows,
-            &app_info,
-        );
-        outcome.absorb(process_outcome);
-        window_discovery::update_window_states(&mut self.state, &*ws, new_windows);
+            .collect()
+    }
 
+    /// The layout events an app's discovery makes, over the spaces its windows were discovered on.
+    fn discovery_layout_events(
+        &mut self,
+        pid: pid_t,
+        known_visible: &[WindowId],
+        app_info: &Option<AppInfo>,
+    ) -> EventOutcome {
         let candidate_windows: HashSet<WindowId> = self
             .state
             .windows
@@ -257,19 +283,18 @@ impl Reactor {
             .filter(|space| self.is_space_active(*space))
             .collect();
         let focused_window = self.focused_window_for_discovery(pid);
-        outcome.absorb(window_discovery::emit_layout_events(
+        window_discovery::emit_layout_events(
             &mut self.state,
             &mut self.layout_engine,
             window_discovery::EmitLayoutPayload {
                 pid,
-                known_visible: &known_visible,
-                app_info: &app_info,
+                known_visible,
+                app_info,
                 discovery_spaces,
                 authoritative_spaces,
                 active_spaces,
                 focused_window,
             },
-        ));
-        outcome
+        )
     }
 }
