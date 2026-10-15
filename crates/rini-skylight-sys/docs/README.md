@@ -39,6 +39,60 @@ the main connection whatever they are given, so they are not declared: which cal
 connection, what rini reads instead, and why each other call stays on `SLSMainConnectionID`, is
 [`src/windows/docs/window-server-reads.md`](../../../src/windows/docs/window-server-reads.md).
 
+## Notify-proc event numbers
+
+`SLSRegisterConnectionNotifyProc` takes an event number. `KnownCGSEvent` declares the ones
+rini registers (`src/main.rs`) or matches on; this is every number known, with what is known of
+its payload. The notes come from reading where the window server posts each one: "seen" marks a
+payload observed in rini's callback, "likely" a guess.
+
+| Number | Name | Note |
+|---|---|---|
+| 102 | `DisplayWillSleep` | |
+| 103 | `DisplayDidWake` | |
+| 723 | `WindowUpdated` | |
+| 724 | `kCGSEventNotificationSystemDefined` | possibly loginwindow becoming active |
+| 804 | `WindowClosed` | |
+| 805 | `WindowDisplayChanged` | |
+| 806 | `WindowMoved` | |
+| 807 | `WindowResized` | |
+| 808 | `WindowReordered` | |
+| 811 | `WindowLevelChanged` | |
+| 815 | `WindowUnhidden` | |
+| 816 | `WindowHidden` | |
+| 1204 | `MissionControlEntered` | |
+| 1308 | `PackagesStatusBarSpaceChanged` | named in `_WSLogStringForNotifyType`; seen when the active display or status-bar space changes, including current-space and capability updates |
+| 1322 | `WindowTitleChanged` | |
+| 1325 | `SpaceWindowCreated` | |
+| 1326 | `SpaceWindowDestroyed` | |
+| 1327 | `SpaceCreated` | |
+| 1328 | `SpaceDestroyed` | |
+| 1329 | `SpaceCurrentChanged` | posted by `managed_display_set_current_space` through `post_space_lifecycle_notification`; likely carries the display's new current space id |
+| 1333 | `WindowManagerActivatingClickOrdering` | posted during activating-click ordering; the payload looks like window and order metadata, layout unknown |
+| 1334 | `WindowManagerSpaceFrontConnectionChanged` | the current space's front connection changed |
+| 1335 | `WindowManagerGlobalFrontConnectionChanged` | the global front connection changed |
+| 1336 | `WindowOrderingGroupChanged` | posted from `finish_order_windows`; payload seen as 3 × u32 |
+| 1338 | `SpaceWindowTransactionCommitted` | posted by `-[PKGSpaceWindowManager_commitTransaction]`; a transaction boundary even when per-window membership notifications race |
+| 1339 | `SpaceWindowBatchReassociated` | posted from `finishBatchReassociateWindows`; payload starts with a u64 key or space, then a u32 count and that many window ids |
+| 1340 | `SpaceWindowManagementCapabilitiesChanged` | posted through `__XSetSpaceWindowManagementCapabilities`; likely a display's or space's window-management mode changing |
+| 1341 | `WindowParentChanged` | posted from `_WSWindowSetParent` and related reassociation paths |
+| 1342 | `ManagedSpaceMembershipUpdated` | posted from `managed_space_update_membership`; likely marks a finished space-membership change, possibly with space and window ids |
+| 1400 | `WorkspaceWillChange` | |
+| 1401 | `WorkspaceDidChange` | |
+| 1402 | `WorkspaceWindowIsViewable` | |
+| 1403 | `WorkspaceWindowIsNotViewable` | |
+| 1404 | `WorkspaceWindowDidMove` | |
+| 1405 | `WorkspacePrefsDidChange` | |
+| 1411 | `WorkspacesWindowDragDidStart` | |
+| 1412 | `WorkspacesWindowDragDidEnd` | |
+| 1413 | `WorkspacesWindowDragWillEnd` | |
+| 1414 | `WorkspacesShowSpaceForProcess` | |
+| 1415 | `WorkspacesWindowDidOrderInOnNonCurrentManagedSpacesOnly` | |
+| 1416 | `WorkspacesWindowDidOrderOutOnNonCurrentManagedSpaces` | |
+| 1508 | `FrontmostApplicationChanged` | |
+| 1700 | `TransitionDidFinish` | |
+| `0xFFFF_FFFF` | `All` | |
+
 ## Measured behaviour
 
 Capture options and the desktop's levels are recorded in
