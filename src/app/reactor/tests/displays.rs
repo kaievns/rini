@@ -1011,6 +1011,23 @@ fn a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag() {
     assert!(!reactor.should_quarantine_during_display_churn(&Event::SpaceCreated(SpaceId::new(7))));
 }
 
+/// The reactor production builds reads the process-wide churn flag.
+#[test]
+fn a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set() {
+    let reactor = Reactor::new(
+        crate::app::config::Config::default(),
+        LayoutEngine::new(
+            &crate::app::config::VirtualWorkspaceSettings::default(),
+            &crate::app::config::LayoutSettings::default(),
+        ),
+        DisplayMemory::default(),
+        WindowTxStore::new(),
+    );
+    let _held = crate::displays::platform::display_churn::hold_for_test();
+    crate::displays::platform::display_churn::begin();
+    assert!(reactor.should_quarantine_during_display_churn(&Event::SpaceCreated(SpaceId::new(7))));
+}
+
 #[test]
 fn normal_macos_space_switch_does_not_arm_topology_relayout() {
     let mut reactor = test_reactor();

@@ -1074,6 +1074,13 @@ fn display_churn_waits_for_a_quiet_window_server_as_its_reader_reports_it() {
     assert!(!actor.state.display_churn_active);
 }
 
+/// Safe beside every other test: they only move the clock later, which keeps it busy too.
+#[test]
+fn the_production_reader_reports_a_window_server_that_just_moved_as_busy() {
+    crate::windows::platform::window_server::note_windowserver_activity(1);
+    assert!(!(LiveDisplays::from_window_server().window_server_quiet)());
+}
+
 #[test]
 fn duplicate_visible_spaces_disable_remaps_and_layout_forcing() {
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor();

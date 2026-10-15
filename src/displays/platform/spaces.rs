@@ -126,10 +126,8 @@ impl SpaceKinds {
 
 /// What the window server says about displays and spaces right now.
 ///
-/// Four reads, injected rather than called, for the same reason as [`SpaceKinds`]: the first three
-/// used to sit behind a `#[cfg(test)]` branch inside the function that consumed it, so those rules
-/// ran a different body under test than the one that ships. A test names its own reader; the
-/// production reader is the only one `AuthorityState::runtime` installs.
+/// Injected rather than called, as with [`SpaceKinds`]: a rule reads what the test names;
+/// `AuthorityState::runtime` installs the production reader.
 #[derive(Clone, Copy)]
 pub struct LiveDisplays {
     /// The display whose menu bar macOS considers active.

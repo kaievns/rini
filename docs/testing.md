@@ -107,13 +107,16 @@ ways:
 
 | static | tests that write it | tests that read it | held by |
 |---|---|---|---|
-| `DISPLAY_CHURN_ACTIVE` (`src/displays/platform/display_churn.rs`) | spaces actor tests, through `begin` and `end` | none: the reactor reads its own `display_churn` field, false under test | `hold_for_test` around every writer |
-| `LAST_WINDOWSERVER_ACTIVITY_US` (`src/windows/platform/window_server.rs`) | every reactor test that handles a window event | none: the spaces actor reads `LiveDisplays::window_server_quiet` | injection |
+| `DISPLAY_CHURN_ACTIVE` (`src/displays/platform/display_churn.rs`) | spaces actor tests, through `begin` and `end` | `a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set`, under `hold_for_test`; every other reactor reads its own `display_churn` field, false under test | `hold_for_test` around every writer and that reader |
+| `LAST_WINDOWSERVER_ACTIVITY_US` (`src/windows/platform/window_server.rs`) | every reactor test that handles a window event | `the_production_reader_reports_a_window_server_that_just_moved_as_busy`, which only asks whether it is busy right after setting it; the spaces actor reads `LiveDisplays::window_server_quiet` | injection; the one reader holds because every writer moves the clock later |
 | `LOW_POWER_MODE` (`src/app/power.rs`), `MOUSE_STATE` (`src/windows/platform/mouse.rs`) | none: only the notification handler and the event tap write them | the reactor and the app actor read the initial value | nothing yet; a test that writes one injects it first |
 | `SAVE_TEMP_COUNTER` (`src/workspaces/engine/persistence/mod.rs`) | persistence tests | none read its value; it only makes temp names unique | nothing needed |
 
 The tests that hold this: `a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag` and
-`display_churn_waits_for_a_quiet_window_server_as_its_reader_reports_it`.
+`display_churn_waits_for_a_quiet_window_server_as_its_reader_reports_it`. The production readers
+behind both injections are held by
+`a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set` and
+`the_production_reader_reports_a_window_server_that_just_moved_as_busy`.
 
 ## The suite runs in parallel, and a Core Animation read-back holds its lock
 
