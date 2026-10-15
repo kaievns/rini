@@ -334,14 +334,18 @@ impl EventOutcome {
     }
 
     /// A window entered, left, or changed its membership in the managed set.
-    pub(crate) fn window_membership_changed(
-        window_was_destroyed: bool,
-        refresh_window_notifications: bool,
-    ) -> Self {
-        let mut outcome = Self::layout_changed(false);
-        outcome.arrange.window_was_destroyed = window_was_destroyed;
-        outcome.refresh_window_notifications = refresh_window_notifications;
-        outcome
+    pub(crate) fn window_membership_changed() -> Self { Self::layout_changed(false) }
+
+    /// The arrange closes a destroyed window's gap, even mid-drag.
+    pub(crate) fn with_window_destroyed(mut self) -> Self {
+        self.arrange.window_was_destroyed = true;
+        self
+    }
+
+    /// The windows with notifications changed, so they are subscribed again.
+    pub(crate) fn with_window_notification_refresh(mut self) -> Self {
+        self.refresh_window_notifications = true;
+        self
     }
 
     /// Focus changed without changing window membership.
@@ -542,7 +546,14 @@ mod tests {
         assert!(!outcome.refresh_window_notifications);
         assert!(!outcome.refresh_focus_follows_mouse);
 
-        let outcome = EventOutcome::window_membership_changed(true, true);
+        let outcome = EventOutcome::window_membership_changed();
+        assert!(outcome.arrange.requested);
+        assert!(!outcome.arrange.window_was_destroyed);
+        assert!(!outcome.refresh_window_notifications);
+
+        let outcome = EventOutcome::window_membership_changed()
+            .with_window_destroyed()
+            .with_window_notification_refresh();
         assert!(outcome.arrange.requested);
         assert!(outcome.arrange.window_was_destroyed);
         assert!(outcome.refresh_window_notifications);
@@ -571,43 +582,56 @@ mod tests {
         assert_eq!(outcome.arrange.space_scope, None);
     }
 
-    fn arrange(requested: bool, passes: u8, window_was_destroyed: bool) -> ArrangeRequest {
+    fn requested(passes: u8) -> ArrangeRequest {
         ArrangeRequest {
-            requested,
+            requested: true,
             passes,
-            window_was_destroyed,
             ..ArrangeRequest::default()
         }
     }
 
     #[test]
     fn an_arrange_that_was_not_asked_for_runs_no_passes() {
-        assert_eq!(arrange(false, 3, false).passes_to_run(false), None);
+        assert_eq!(
+            ArrangeRequest {
+                passes: 3,
+                ..ArrangeRequest::default()
+            }
+            .passes_to_run(false),
+            None
+        );
     }
 
     /// A requested arrange always runs at least once. Several constructors set `requested` without
     /// setting `passes`, and taking that literally would ask for an arrange and then not do one.
     #[test]
     fn a_requested_arrange_with_no_pass_count_still_runs_once() {
-        assert_eq!(arrange(true, 0, false).passes_to_run(false), Some(1));
+        assert_eq!(requested(0).passes_to_run(false), Some(1));
     }
 
     #[test]
     fn a_pass_count_is_taken_as_given() {
-        assert_eq!(arrange(true, 3, false).passes_to_run(false), Some(3));
+        assert_eq!(requested(3).passes_to_run(false), Some(3));
     }
 
     /// A drag suppresses arranging: the user is holding the window and a pass would fight them.
     #[test]
     fn a_drag_suppresses_the_arrange() {
-        assert_eq!(arrange(true, 2, false).passes_to_run(true), None);
+        assert_eq!(requested(2).passes_to_run(true), None);
     }
 
     /// Unless the window was destroyed mid-drag. The drag is over as far as the strip is concerned
     /// and the gap it left has to close.
     #[test]
     fn a_window_destroyed_mid_drag_arranges_anyway() {
-        assert_eq!(arrange(true, 2, true).passes_to_run(true), Some(2));
+        assert_eq!(
+            ArrangeRequest {
+                window_was_destroyed: true,
+                ..requested(2)
+            }
+            .passes_to_run(true),
+            Some(2)
+        );
     }
 
     #[test]

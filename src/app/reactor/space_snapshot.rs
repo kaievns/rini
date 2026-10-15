@@ -36,7 +36,8 @@ impl Reactor {
         &mut self,
         space_state: ForwardedSpaceState,
     ) -> anyhow::Result<EventOutcome> {
-        let mut outcome = EventOutcome::window_membership_changed(false, true);
+        let mut outcome =
+            EventOutcome::window_membership_changed().with_window_notification_refresh();
         let analysis = crate::displays::domain::topology::analyze_space_snapshot(
             &self.space_state,
             &self.active_spaces,

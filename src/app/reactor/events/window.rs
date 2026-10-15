@@ -58,7 +58,7 @@ pub fn handle_window_created(
 
     state.windows.insert_window(wid, window_state);
 
-    let outcome = EventOutcome::window_membership_changed(false, true);
+    let outcome = EventOutcome::window_membership_changed().with_window_notification_refresh();
     Ok(if is_manageable {
         outcome.with_created_window_finalization(wid)
     } else {
@@ -113,7 +113,8 @@ pub fn handle_window_destroyed(
     if drag.skip_layout_for_window == Some(wid) {
         drag.skip_layout_for_window = None;
     }
-    Ok(EventOutcome::window_membership_changed(true, false)
+    Ok(EventOutcome::window_membership_changed()
+        .with_window_destroyed()
         .with_forgotten_window(wid)
         .with_layout_event(LayoutEvent::WindowRemoved(wid)))
 }
@@ -137,7 +138,7 @@ pub fn handle_window_minimized(
         state.windows.mark_window_hidden(ws_id);
     }
     Ok(
-        crate::app::reactor::events::EventOutcome::window_membership_changed(false, false)
+        crate::app::reactor::events::EventOutcome::window_membership_changed()
             .with_layout_event(LayoutEvent::WindowRemoved(wid)),
     )
 }
@@ -179,9 +180,8 @@ pub fn handle_window_deminiaturized(
 
     let mut outcome = crate::app::reactor::events::EventOutcome::no_change();
     if is_manageable && let Some(space) = active_space {
-        outcome =
-            crate::app::reactor::events::EventOutcome::window_membership_changed(false, false)
-                .with_layout_event(LayoutEvent::WindowAdded(space, wid));
+        outcome = crate::app::reactor::events::EventOutcome::window_membership_changed()
+            .with_layout_event(LayoutEvent::WindowAdded(space, wid));
     }
     Ok(outcome)
 }
