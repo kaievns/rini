@@ -39,8 +39,6 @@ impl std::fmt::Display for VirtualWorkspaceId {
 pub enum WorkspaceError {
     NoWorkspacesAvailable,
     AssignmentFailed,
-    InvalidWorkspaceId(VirtualWorkspaceId),
-    InvalidWorkspaceIndex(usize),
     InconsistentState(String),
 }
 
@@ -72,14 +70,6 @@ impl VirtualWorkspace {
         }
     }
 
-    pub fn tree(&self) -> &ScrollingLayoutSystem {
-        &self.layout_system
-    }
-
-    pub fn tree_mut(&mut self) -> &mut ScrollingLayoutSystem {
-        &mut self.layout_system
-    }
-
     pub fn create_layout_system(settings: &LayoutSettings) -> ScrollingLayoutSystem {
         crate::layout::ScrollingLayoutSystem::new(&settings.scrolling)
     }
@@ -102,11 +92,6 @@ impl VirtualWorkspace {
     /// Forget a window wherever it was focused, on any display.
     pub fn forget_focused_window(&mut self, window_id: WindowId) {
         self.last_focused.retain(|_, focused| *focused != window_id);
-    }
-
-    /// Drop per-display focus for a display that is gone.
-    pub fn forget_display(&mut self, space: SpaceId) {
-        self.last_focused.remove(&space);
     }
 
     /// Every (display, focused window) pair this workspace remembers.
@@ -619,20 +604,6 @@ impl WorkspaceStore {
         window_store
             .iter_workspace_assignments()
             .find_map(|(wid, info)| (info.space == space && wid.idx.get() == idx).then_some(wid))
-    }
-
-    pub fn find_window_in_workspace_by_idx(
-        &self,
-        window_store: &WindowStore,
-        space: SpaceId,
-        workspace_id: VirtualWorkspaceId,
-        idx: u32,
-    ) -> Option<WindowId> {
-        self.workspaces.get(workspace_id).and_then(|_| {
-            self.workspace_windows(window_store, space, workspace_id)
-                .into_iter()
-                .find(|wid| wid.idx.get() == idx)
-        })
     }
 
     pub fn calculate_hidden_position(

@@ -51,10 +51,6 @@ impl SetupId {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
 impl fmt::Display for SetupId {

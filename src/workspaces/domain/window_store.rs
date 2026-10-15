@@ -11,10 +11,7 @@ use crate::windows::domain::state::WindowState;
 use rini_core::ids::SpaceId;
 use rini_core::ids::{WindowId, WindowServerId, pid_t};
 
-pub use crate::windows::domain::catalogue::{
-    PendingNativeFullscreenRecord, PendingWindowOperation, WindowPlacement, WindowRecord,
-    WindowVisibility,
-};
+pub use crate::windows::domain::catalogue::WindowVisibility;
 
 use crate::workspaces::VirtualWorkspaceId;
 pub use crate::workspaces::domain::assignment::{WindowWorkspaceInfo, WorkspaceAssignments};
@@ -39,10 +36,6 @@ impl DerefMut for WindowStore {
 }
 
 impl WindowStore {
-    pub fn assignments(&self) -> &WorkspaceAssignments {
-        &self.assignments
-    }
-
     // ---- assignment, and the catalogue facts that follow from it
 
     pub fn assign_window_to_workspace(
@@ -95,10 +88,6 @@ impl WindowStore {
         workspace_id: VirtualWorkspaceId,
     ) -> usize {
         self.assignments.window_count(space, workspace_id)
-    }
-
-    pub fn has_workspace_assignments_in_space(&self, space: SpaceId) -> bool {
-        self.assignments.has_assignments_in_space(space)
     }
 
     pub fn iter_workspace_assignments(

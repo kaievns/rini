@@ -91,10 +91,6 @@ impl WorkspaceAssignments {
         self.by_workspace.get(&key).map_or(0, HashSet::len)
     }
 
-    pub fn has_assignments_in_space(&self, space: SpaceId) -> bool {
-        self.by_workspace.keys().any(|key| key.space == space)
-    }
-
     pub fn iter(&self) -> impl Iterator<Item = (WindowId, WindowWorkspaceInfo)> + '_ {
         self.by_window.iter().map(|(&w, &a)| (w, a))
     }
@@ -274,9 +270,7 @@ mod tests {
         );
         idx.remove_all_for_pid(1);
         assert_eq!(idx.windows(space, a), vec![WindowId::new(2, 1)]);
-        assert!(idx.has_assignments_in_space(space));
         idx.remove(WindowId::new(2, 1));
         assert!(idx.is_empty());
-        assert!(!idx.has_assignments_in_space(space));
     }
 }

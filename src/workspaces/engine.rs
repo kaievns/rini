@@ -2424,29 +2424,6 @@ impl LayoutEngine {
         None
     }
 
-    pub fn layout(&mut self, space: SpaceId) -> LayoutId {
-        let workspace_id = self
-            .virtual_workspace_manager
-            .active_workspace(space)
-            .expect("No active workspace for space");
-
-        if let Some(layout) = self.workspace_layouts.active(space, workspace_id) {
-            layout
-        } else {
-            let workspaces = self.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
-            let default_size = CGSize::new(1000.0, 1000.0);
-            for (id, _) in workspaces {
-                let tree = &mut self.virtual_workspace_manager.workspaces[id].layout_system;
-                self.workspace_layouts
-                    .ensure_active_for_workspace(space, default_size, id, tree);
-            }
-
-            self.workspace_layouts
-                .active(space, workspace_id)
-                .expect("Failed to create an active layout for the workspace")
-        }
-    }
-
     #[cfg(test)]
     pub fn selected_window(&mut self, space: SpaceId) -> Option<WindowId> {
         let (ws_id, layout) = self.workspace_and_layout(space)?;

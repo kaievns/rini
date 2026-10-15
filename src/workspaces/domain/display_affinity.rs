@@ -470,11 +470,6 @@ impl DisplayAffinity {
             self.set_display_space(&display, space);
         }
     }
-
-    #[cfg(test)]
-    pub fn homed_window_count(&self) -> usize {
-        self.setup().window_home.len()
-    }
 }
 
 #[cfg(test)]
