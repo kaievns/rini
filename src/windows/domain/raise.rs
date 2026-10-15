@@ -13,6 +13,7 @@ use rini_runloop::channel;
 use rini_runloop::timer::Timer;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
+use crate::windows::domain::raise_order::AppBatch;
 use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use crate::windows::event::{Event as WindowsEvent, EventSink};
 use rini_core::ids::{WindowId, pid_t};
@@ -33,9 +34,8 @@ pub enum Event {
 /// A queued layout response waiting to be processed.
 #[derive(Debug)]
 pub struct RaiseRequest {
-    /// A set of windows to raise concurrently. Each inner vec should contain a
-    /// set of windows from the same app and on the same screen.
-    pub raise_windows: Vec<Vec<WindowId>>,
+    /// Batches raised concurrently, each one application's windows on one space.
+    pub raise_windows: Vec<AppBatch>,
     /// The window to raise and focus last.
     pub focus_window: Option<(WindowId, Option<CGPoint>)>,
     pub app_handles: HashMap<i32, AppThreadHandle>,
@@ -46,8 +46,7 @@ impl RaiseRequest {
     fn windows(&self) -> impl Iterator<Item = WindowId> + '_ {
         self.raise_windows
             .iter()
-            .flatten()
-            .copied()
+            .flat_map(|batch| batch.windows().iter().copied())
             .chain(self.focus_window.map(|(w, _)| w))
     }
 
@@ -263,10 +262,9 @@ impl RaiseManager {
         let raise_token = CancellationToken::new();
 
         let mut focus_batch = None;
-        for mut wids in raise_windows {
-            let Some(&WindowId { pid, .. }) = wids.first() else {
-                continue;
-            };
+        for batch in raise_windows {
+            let pid = batch.pid();
+            let mut wids = batch.into_windows();
             if let Some(focus_idx) =
                 wids.iter().position(|wid| matches!(focus_window, Some((w, _)) if w == *wid))
             {
@@ -393,7 +391,7 @@ mod tests {
         focus_quiet: Quiet,
     ) -> Event {
         Event::RaiseRequest(RaiseRequest {
-            raise_windows: raise_windows.into_iter().map(|w| vec![w]).collect(),
+            raise_windows: raise_windows.into_iter().map(AppBatch::new).collect(),
             focus_window,
             app_handles,
             focus_quiet,
@@ -903,15 +901,15 @@ mod tests {
             let batched_windows = vec![
                 // First batch: Contains the focus window, so it should be
                 // processed last.
-                vec![
+                AppBatch::of(&[
                     WindowId::new(1, 1),
                     WindowId::new(1, 7), // focus window
                     WindowId::new(1, 2),
-                ],
+                ]),
                 // Second batch
-                vec![WindowId::new(1, 3), WindowId::new(1, 4)],
+                AppBatch::of(&[WindowId::new(1, 3), WindowId::new(1, 4)]),
                 // Third batch
-                vec![WindowId::new(1, 5), WindowId::new(1, 6)],
+                AppBatch::of(&[WindowId::new(1, 5), WindowId::new(1, 6)]),
             ];
             let raise_request = Event::RaiseRequest(RaiseRequest {
                 raise_windows: batched_windows,

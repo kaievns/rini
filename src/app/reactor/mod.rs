@@ -4517,7 +4517,7 @@ impl Reactor {
         let space = self.affinity().best_space_for_window_id(target);
         let mut outcome = EventOutcome::default().with_raise_request(
             raise_manager::Event::RaiseRequest(raise_manager::RaiseRequest {
-                raise_windows: vec![vec![target]],
+                raise_windows: vec![raise_order::AppBatch::new(target)],
                 focus_window: Some((target, None)),
                 app_handles,
                 focus_quiet: Quiet::No,
@@ -4931,21 +4931,19 @@ impl Reactor {
         focused: WindowId,
     ) -> Option<raise_manager::Event> {
         let mut app_handles = HashMap::default();
-        let mut by_app: HashMap<(pid_t, Option<SpaceId>), Vec<WindowId>> = HashMap::default();
         for wid in to_raise {
             self.insert_app_handle_for_window(&mut app_handles, *wid);
-            by_app
-                .entry((wid.pid, self.affinity().best_space_for_window_id(*wid)))
-                .or_default()
-                .push(*wid);
         }
-        if by_app.is_empty() {
+        let batches = raise_order::group_by_app_and_space(to_raise, |wid| {
+            self.affinity().best_space_for_window_id(wid)
+        });
+        if batches.is_empty() {
             return None;
         }
         self.insert_app_handle_for_window(&mut app_handles, focused);
         self.regroup_raised = to_raise.to_vec();
         Some(raise_manager::Event::RaiseRequest(RaiseRequest {
-            raise_windows: by_app.into_values().collect(),
+            raise_windows: batches,
             focus_window: Some((focused, None)),
             app_handles,
             // rini's own doing, so the activation it provokes must not be read as the user moving.
@@ -4959,7 +4957,11 @@ impl Reactor {
     /// See [`crate::windows::domain::focus::RaiseEcho`].
     fn dispatch_raise(&mut self, request: raise_manager::Event) {
         if let raise_manager::Event::RaiseRequest(details) = &request {
-            let touched: Vec<WindowId> = details.raise_windows.iter().flatten().copied().collect();
+            let touched: Vec<WindowId> = details
+                .raise_windows
+                .iter()
+                .flat_map(|batch| batch.windows().iter().copied())
+                .collect();
             self.raise_echo.expect(
                 touched.into_iter(),
                 details.focus_window.map(|(wid, _)| wid),

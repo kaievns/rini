@@ -45,6 +45,44 @@ pub fn lead_with_regroup(raise: Vec<WindowId>, regroup: &[WindowId]) -> Vec<Wind
     ordered
 }
 
+/// Windows of one application, raised in order by its own Accessibility thread. A window of another
+/// application never joins one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppBatch {
+    pid: pid_t,
+    windows: Vec<WindowId>,
+}
+
+impl AppBatch {
+    pub fn new(first: WindowId) -> Self { Self { pid: first.pid, windows: vec![first] } }
+
+    /// Adds `window` last, or answers false and leaves the batch as it was when another application
+    /// owns it.
+    pub fn push(&mut self, window: WindowId) -> bool {
+        let joins = window.pid == self.pid;
+        if joins {
+            self.windows.push(window);
+        }
+        joins
+    }
+
+    pub fn pid(&self) -> pid_t { self.pid }
+
+    pub fn windows(&self) -> &[WindowId] { &self.windows }
+
+    pub fn into_windows(self) -> Vec<WindowId> { self.windows }
+
+    #[cfg(test)]
+    pub fn of(windows: &[WindowId]) -> Self {
+        let (&first, rest) = windows.split_first().expect("a batch has a window");
+        let mut batch = Self::new(first);
+        for &window in rest {
+            assert!(batch.push(window), "{window:?} is another application's");
+        }
+        batch
+    }
+}
+
 /// Batch the raise list by application and space, keeping the order the list arrived in.
 ///
 /// One batch per `(pid, space)` because each application raises its own windows through its own
@@ -57,16 +95,18 @@ pub fn lead_with_regroup(raise: Vec<WindowId>, regroup: &[WindowId]) -> Vec<Wind
 pub fn group_by_app_and_space<S: Eq + Hash + Copy>(
     windows: &[WindowId],
     space_of: impl Fn(WindowId) -> Option<S>,
-) -> Vec<Vec<WindowId>> {
-    let mut batches: Vec<Vec<WindowId>> = Vec::new();
+) -> Vec<AppBatch> {
+    let mut batches: Vec<AppBatch> = Vec::new();
     let mut seen: HashMap<(pid_t, Option<S>), usize> = HashMap::default();
     for &window in windows {
         let key = (window.pid, space_of(window));
         match seen.get(&key) {
-            Some(&index) => batches[index].push(window),
+            Some(&index) => {
+                batches[index].push(window);
+            }
             None => {
                 seen.insert(key, batches.len());
-                batches.push(vec![window]);
+                batches.push(AppBatch::new(window));
             }
         }
     }
@@ -188,14 +228,14 @@ mod tests {
     fn windows_of_one_app_on_one_space_are_one_batch() {
         let windows = [window(1, 1), window(1, 2)];
         let batches = group_by_app_and_space(&windows, |_| Some(7));
-        assert_eq!(batches, [vec![window(1, 1), window(1, 2)]]);
+        assert_eq!(batches, [AppBatch::of(&[window(1, 1), window(1, 2)])]);
     }
 
     #[test]
     fn one_app_on_two_spaces_is_two_batches() {
         let windows = [window(1, 1), window(1, 2)];
         let batches = group_by_app_and_space(&windows, |w| Some(w.idx.get()));
-        assert_eq!(batches, vec![vec![window(1, 1)], vec![window(1, 2)]]);
+        assert_eq!(batches, [AppBatch::new(window(1, 1)), AppBatch::new(window(1, 2))]);
     }
 
     /// A window whose space is unknown batches with the other unknowns rather than with everything.
@@ -203,8 +243,8 @@ mod tests {
     fn an_unknown_space_is_its_own_key() {
         let windows = [window(1, 1), window(1, 2), window(1, 3)];
         let batches = group_by_app_and_space(&windows, |w| (w.idx.get() != 2).then_some(7));
-        let known = vec![window(1, 1), window(1, 3)];
-        assert_eq!(batches, [known, vec![window(1, 2)]]);
+        let known = AppBatch::of(&[window(1, 1), window(1, 3)]);
+        assert_eq!(batches, [known, AppBatch::new(window(1, 2))]);
     }
 
     /// The reason this is a function. Raising is last-wins, so the caller's order IS the z-order it
@@ -214,8 +254,31 @@ mod tests {
     fn the_batches_come_back_in_the_order_their_first_window_appeared() {
         let windows: Vec<WindowId> = (1..=8).map(|pid| window(pid, 1)).collect();
         let batches = group_by_app_and_space(&windows, |_| Some(7));
-        let leaders: Vec<pid_t> = batches.iter().map(|batch| batch[0].pid).collect();
+        let leaders: Vec<pid_t> = batches.iter().map(|batch| batch.windows()[0].pid).collect();
         assert_eq!(leaders, (1..=8).collect::<Vec<pid_t>>());
+    }
+
+    #[test]
+    fn windows_of_two_apps_on_one_space_are_a_batch_each() {
+        let windows = [window(1, 1), window(2, 1), window(1, 2), window(2, 2)];
+        let batches = group_by_app_and_space(&windows, |_| Some(7));
+        assert_eq!(
+            batches,
+            [
+                AppBatch::of(&[window(1, 1), window(1, 2)]),
+                AppBatch::of(&[window(2, 1), window(2, 2)])
+            ]
+        );
+        assert!(batches.iter().all(|batch| batch.windows().iter().all(|w| w.pid == batch.pid())));
+    }
+
+    #[test]
+    fn another_apps_window_does_not_join_a_batch() {
+        let mut batch = AppBatch::new(window(1, 1));
+        assert!(!batch.push(window(2, 1)));
+        assert!(batch.push(window(1, 2)));
+        assert_eq!(batch.pid(), 1);
+        assert_eq!(batch.into_windows(), [window(1, 1), window(1, 2)]);
     }
 
     #[test]

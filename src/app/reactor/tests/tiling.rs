@@ -745,6 +745,7 @@ mod strip_regroup {
     use crate::windows::domain::raise_order::StackGroup::{Floating, Tiled};
     use crate::app::reactor::{StackedWindow, strip_group_to_lift_for};
     use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
+    use crate::windows::domain::raise_order::AppBatch;
 
     const SCREEN: CGRect = CGRect {
         origin: CGPoint { x: 0., y: 0. },
@@ -887,7 +888,7 @@ mod strip_regroup {
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(
             request.raise_windows,
-            vec![vec![WindowId::new(1, 2), WindowId::new(1, 1)]],
+            vec![AppBatch::of(&[WindowId::new(1, 2), WindowId::new(1, 1)])],
             "back to front, focused last; never the floating window, never the parked column"
         );
         assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 1)));
@@ -937,7 +938,11 @@ mod strip_regroup {
 
         let request = raise_request(&mut raise_rx).expect("the sandwich is still put right");
         assert!(
-            !request.raise_windows.iter().flatten().any(|w| *w == WindowId::new(1, 4)),
+            !request
+                .raise_windows
+                .iter()
+                .flat_map(AppBatch::windows)
+                .any(|w| *w == WindowId::new(1, 4)),
             "and the floating window is never raised with the strip"
         );
     }
@@ -961,7 +966,7 @@ mod strip_regroup {
         );
         crate::windows::platform::window_server::set_front_to_back_override(None);
         let request = raise_request(&mut raise_rx).expect("a raise request");
-        assert_eq!(request.raise_windows, vec![vec![WindowId::new(1, 4)]]);
+        assert_eq!(request.raise_windows, vec![AppBatch::of(&[WindowId::new(1, 4)])]);
     }
 
     /// An order that already obeys the rule costs nothing: the raise is what the layout asked for.
@@ -983,7 +988,7 @@ mod strip_regroup {
         );
         crate::windows::platform::window_server::set_front_to_back_override(None);
         let request = raise_request(&mut raise_rx).expect("a raise request");
-        assert_eq!(request.raise_windows, vec![vec![WindowId::new(1, 1)]]);
+        assert_eq!(request.raise_windows, vec![AppBatch::of(&[WindowId::new(1, 1)])]);
     }
 
     /// Keyboard navigation between two windows of the same app: the layout's own raise names only
@@ -1008,7 +1013,7 @@ mod strip_regroup {
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(
             request.raise_windows,
-            vec![vec![WindowId::new(1, 1), WindowId::new(1, 2)]],
+            vec![AppBatch::of(&[WindowId::new(1, 1), WindowId::new(1, 2)])],
             "the strip goes up as one group, the new focus last"
         );
         assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 2)));
@@ -1058,7 +1063,7 @@ mod strip_regroup {
         let first = raise_request(&mut raise_rx).expect("the focus move's own raise");
         assert_eq!(
             first.raise_windows,
-            vec![vec![WindowId::new(1, 3)]],
+            vec![AppBatch::of(&[WindowId::new(1, 3)])],
             "judged before the scroll"
         );
 
@@ -1072,7 +1077,7 @@ mod strip_regroup {
             .collect();
         expected.push(WindowId::new(1, 3));
         let second = raise_request(&mut raise_rx).expect("the post-layout regroup");
-        assert_eq!(second.raise_windows, vec![expected]);
+        assert_eq!(second.raise_windows, vec![AppBatch::of(&expected)]);
         assert_eq!(second.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 3)));
         assert_eq!(second.focus_quiet, Quiet::Yes);
         assert!(raise_request(&mut raise_rx).is_none(), "one regroup, not a loop");
@@ -1096,7 +1101,7 @@ mod strip_regroup {
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(
             request.raise_windows,
-            vec![vec![WindowId::new(1, 2), WindowId::new(1, 1)]]
+            vec![AppBatch::of(&[WindowId::new(1, 2), WindowId::new(1, 1)])]
         );
         assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 1)));
         assert_eq!(

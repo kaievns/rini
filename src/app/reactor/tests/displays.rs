@@ -8,6 +8,7 @@ use test_log::test;
 use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
+use crate::windows::domain::raise_order::AppBatch;
 use crate::windows::domain::request::Request;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
@@ -691,7 +692,8 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
         raise_manager::Event::RaiseRequest(RaiseRequest {
             raise_windows, focus_window, ..
         }) => {
-            let raise_windows: HashSet<Vec<WindowId>> = raise_windows.into_iter().collect();
+            let raise_windows: HashSet<Vec<WindowId>> =
+                raise_windows.into_iter().map(AppBatch::into_windows).collect();
             let expected = [
                 vec![WindowId::new(1, 1)],
                 vec![WindowId::new(2, 1)],
