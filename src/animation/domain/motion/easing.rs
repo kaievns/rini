@@ -45,6 +45,7 @@ impl CubicBezier {
     }
 
     /// `(x, y)` at parameter `s`.
+    #[cfg(test)]
     pub fn at(&self, s: f64) -> (f64, f64) {
         (
             Self::coordinate(s, self.x1, self.x2),
@@ -166,6 +167,7 @@ pub fn nudge_displacement(t: f64) -> f64 {
 }
 
 /// How fast `nudge_displacement` changes, per unit of progress.
+#[cfg(test)]
 pub fn nudge_rate(t: f64) -> f64 {
     if !(0.0..=1.0).contains(&t) {
         return 0.0;
