@@ -164,7 +164,8 @@ context is arranged differently depending on what is plugged in, and rini rememb
 
 ## Where it lives
 
-`src/displays/platform/spaces.rs` is the authority, `src/displays/domain/topology.rs`,
+`src/displays/platform/spaces.rs` is the authority, `src/displays/domain/authority.rs` the
+lifecycle holds, churn and refresh it keeps, `src/displays/domain/topology.rs`,
 `src/displays/domain/snapshot.rs` and `src/displays/domain/settling.rs` the snapshot rules,
 `src/workspaces/domain/display_memory.rs` the durable records. The two caps are
 `REFRESH_MAX_RETRIES` and `DISPLAY_STABILIZE_MAX_ATTEMPTS` in `settling.rs`, both 10

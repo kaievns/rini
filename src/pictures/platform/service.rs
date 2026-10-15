@@ -2213,8 +2213,9 @@ mod tests {
         service.apply(Command::Hint(Hint::Focused(wid(4))));
         assert_eq!(looked(next()), vec![wid(4)]);
         let settled = Instant::now() + crate::pictures::domain::knowledge::ACTIVE_SETTLED;
-        assert!(
-            shared.lock().unwrap().learned.active(wid(4), Some(1), settled),
+        assert_eq!(
+            shared.lock().unwrap().learned.drawn(wid(4), Some(1), settled),
+            crate::pictures::domain::knowledge::Drawn::Active,
             "what a material is measured by"
         );
     }

@@ -36,10 +36,7 @@ pub struct ForwardedSpaceState {
     pub display_space_ids_from_screens: bool,
     pub last_user_space_by_display: HashMap<String, SpaceId>,
     pub space_remaps: Vec<(SpaceId, SpaceId)>,
-    pub display_set_changed: bool,
-    pub topology_changed: bool,
-    pub allow_space_remap: bool,
-    pub should_force_refresh_layout: bool,
+    pub topology: Topology,
     pub releases_lifecycle_refresh_quarantine: bool,
     pub resized_spaces: Vec<(SpaceId, CGSize)>,
     pub topology_window_delta: Option<TopologyWindowDelta>,
@@ -184,14 +181,114 @@ impl ForwardedSpaceState {
         screens
     }
 }
+/// What a snapshot changed about the displays against the snapshot before. Each tier holds the
+/// one before it: a refreshed layout is a changed topology, and a remap is a refreshed layout.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Topology {
+    #[default]
+    Unchanged,
+    /// The first displays attached, with nothing laid out on any before: no display set has been
+    /// seen. Attaching them is a display set change.
+    Changed,
+    /// The displays changed under a layout, which is refreshed.
+    Relayout(DisplaySet),
+    /// As `Relayout`, and every screen shows a space no other screen shows, so a display now on
+    /// another space takes its layout there.
+    Remap(DisplaySet),
+}
+
+/// Whether a changed topology attached or detached a display, or only moved, reordered or resized
+/// the ones attached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplaySet {
+    Same,
+    Changed,
+}
+
+impl Topology {
+    /// The topology `screens` has against `previous`. A display set seen before, even one since
+    /// detached, means a layout exists to refresh.
+    pub fn between(
+        previous: &[ScreenInfo],
+        screens: &[ScreenInfo],
+        has_seen_display_set: bool,
+    ) -> Self {
+        let uuids = |screens: &[ScreenInfo]| -> HashSet<String> {
+            screens.iter().map(|screen| screen.display_uuid.clone()).collect()
+        };
+        let previous_displays = uuids(previous);
+        let display_set = if previous_displays == uuids(screens) {
+            DisplaySet::Same
+        } else {
+            DisplaySet::Changed
+        };
+        let order_changed = previous
+            .iter()
+            .map(|screen| screen.display_uuid.as_str())
+            .ne(screens.iter().map(|screen| screen.display_uuid.as_str()));
+        let previous_frames: HashMap<_, _> = previous
+            .iter()
+            .map(|screen| (screen.display_uuid.as_str(), screen.frame))
+            .collect();
+        let geometry_changed = screens.iter().any(|screen| {
+            previous_frames
+                .get(screen.display_uuid.as_str())
+                .is_some_and(|before| *before != screen.frame)
+        });
+        if display_set == DisplaySet::Same && !order_changed && !geometry_changed {
+            Self::Unchanged
+        } else if !has_seen_display_set && previous_displays.is_empty() {
+            Self::Changed
+        } else if every_space_once(screens) {
+            Self::Remap(display_set)
+        } else {
+            Self::Relayout(display_set)
+        }
+    }
+
+    pub fn is_changed(self) -> bool { self != Self::Unchanged }
+
+    pub fn display_set_changed(self) -> bool {
+        matches!(
+            self,
+            Self::Changed | Self::Relayout(DisplaySet::Changed) | Self::Remap(DisplaySet::Changed)
+        )
+    }
+
+    pub fn forces_refresh_layout(self) -> bool {
+        matches!(self, Self::Relayout(_) | Self::Remap(_))
+    }
+
+    pub fn allows_space_remap(self) -> bool { matches!(self, Self::Remap(_)) }
+}
+
+/// Every screen shows a space, and none shows one another screen shows.
+fn every_space_once(screens: &[ScreenInfo]) -> bool {
+    let mut seen: HashSet<SpaceId> = HashSet::default();
+    screens
+        .iter()
+        .all(|screen| screen.space.is_some_and(|space| seen.insert(space)))
+}
+
 /// What an incoming topology snapshot changes relative to the one in force. `spaces` and
-/// `authoritative_spaces` are per screen; a command-space-only update moves nothing on screen.
+/// `authoritative_spaces` are per screen.
 #[derive(Debug)]
 pub struct SpaceSnapshotAnalysis {
     pub spaces: Vec<Option<SpaceId>>,
     pub authoritative_spaces: Vec<Option<SpaceId>>,
-    pub command_space_only_update: bool,
-    pub invalidates_pending_targets: bool,
+    pub reach: SnapshotReach,
+}
+
+/// How far an incoming snapshot reaches past the one in force.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotReach {
+    /// Nothing on screen moves: only the menu-bar and command spaces are new.
+    CommandSpaceOnly,
+    /// Something on screen moves, and the pending hidden-window targets still hold.
+    OnScreen,
+    /// The displays changed, a layout refresh is forced, spaces were remapped or resized, or
+    /// windows moved between spaces, so no pending hidden-window target holds.
+    InvalidatesPendingTargets,
 }
 
 pub fn analyze_space_snapshot(
@@ -201,8 +298,6 @@ pub fn analyze_space_snapshot(
     activation_config: SpaceActivationConfig,
     incoming: &ForwardedSpaceState,
 ) -> SpaceSnapshotAnalysis {
-    let active_window_membership_changed =
-        current.active_window_spaces != incoming.active_window_spaces;
     let spaces = incoming.screens.iter().map(|screen| screen.space).collect();
     let display_uuids: Vec<Option<String>> =
         incoming.screens.iter().map(|screen| screen.display_uuid_owned()).collect();
@@ -216,28 +311,29 @@ pub fn analyze_space_snapshot(
         .into_iter()
         .flatten()
         .collect();
-    let command_space_only_update = !incoming.display_set_changed
-        && !incoming.should_force_refresh_layout
-        && incoming.space_remaps.is_empty()
-        && incoming.resized_spaces.is_empty()
-        && incoming.topology_window_delta.is_none()
-        && current.screens == incoming.screens
+    let invalidates_pending_targets = incoming.topology.display_set_changed()
+        || incoming.topology.forces_refresh_layout()
+        || !incoming.space_remaps.is_empty()
+        || !incoming.resized_spaces.is_empty()
+        || incoming.topology_window_delta.is_some();
+    let moves_nothing_on_screen = current.screens == incoming.screens
         && current.fullscreen_spaces == incoming.fullscreen_spaces
         && current_effective_active_spaces == &effective_active_spaces
         && current.display_space_ids == incoming.display_space_ids
         && current.display_space_ids_from_screens == incoming.display_space_ids_from_screens
         && current.last_user_space_by_display == incoming.last_user_space_by_display
-        && !active_window_membership_changed;
-    let invalidates_pending_targets = incoming.display_set_changed
-        || incoming.should_force_refresh_layout
-        || !incoming.space_remaps.is_empty()
-        || !incoming.resized_spaces.is_empty()
-        || incoming.topology_window_delta.is_some();
+        && current.active_window_spaces == incoming.active_window_spaces;
+    let reach = if invalidates_pending_targets {
+        SnapshotReach::InvalidatesPendingTargets
+    } else if moves_nothing_on_screen {
+        SnapshotReach::CommandSpaceOnly
+    } else {
+        SnapshotReach::OnScreen
+    };
     SpaceSnapshotAnalysis {
         spaces,
         authoritative_spaces,
-        command_space_only_update,
-        invalidates_pending_targets,
+        reach,
     }
 }
 /// Whether a snapshot's spaces are coherent enough to commit.
@@ -259,16 +355,14 @@ pub fn snapshot_spaces_are_coherent(
 /// Whether a snapshot can be forwarded as authoritative.
 ///
 /// An empty screen list is never authoritative — it is what macOS reports mid-reconfiguration, and
-/// treating it as the truth evacuates every window. `require_complete_spaces` additionally demands
-/// that every screen has a space: a screen whose space is still unknown means the sample was taken
-/// too early.
+/// treating it as the truth evacuates every window. Every screen must have a space: a screen whose
+/// space is still unknown means the sample was taken too early.
 pub fn snapshot_is_committable(
     spaces: &[Option<SpaceId>],
-    require_complete_spaces: bool,
     is_fullscreen: impl Fn(SpaceId) -> bool,
 ) -> bool {
     !spaces.is_empty()
-        && (!require_complete_spaces || spaces.iter().all(Option::is_some))
+        && spaces.iter().all(Option::is_some)
         && snapshot_spaces_are_coherent(spaces, is_fullscreen)
 }
 
@@ -500,40 +594,104 @@ mod tests {
         s
     }
 
+    fn analyze(
+        current: &ForwardedSpaceState,
+        incoming: &ForwardedSpaceState,
+    ) -> SpaceSnapshotAnalysis {
+        analyze_space_snapshot(
+            current,
+            &current.active_spaces,
+            &SpaceActivationPolicy::new(),
+            SpaceActivationConfig { default_disable: false },
+            incoming,
+        )
+    }
+
     #[test]
     fn an_identical_snapshot_is_a_command_space_only_update() {
         let current = snapshot(&[rect(0., 0.)]);
         let mut incoming = current.clone();
         incoming.command_space = Some(SpaceId::new(1));
-        let active: HashSet<SpaceId> = current.active_spaces.clone();
-        let a = analyze_space_snapshot(
-            &current,
-            &active,
-            &SpaceActivationPolicy::new(),
-            SpaceActivationConfig { default_disable: false },
-            &incoming,
-        );
-        assert!(a.command_space_only_update);
-        assert!(!a.invalidates_pending_targets);
+        let a = analyze(&current, &incoming);
+        assert_eq!(a.reach, SnapshotReach::CommandSpaceOnly);
         assert_eq!(a.spaces, vec![Some(SpaceId::new(1))]);
         assert_eq!(a.authoritative_spaces, vec![Some(SpaceId::new(1))]);
     }
 
+    /// Each row: what the incoming snapshot changes against the one in force, and how far that
+    /// reaches. Anything that invalidates the pending targets does so whatever else moved.
     #[test]
-    fn a_display_set_change_invalidates_pending_targets_and_is_not_command_only() {
+    fn a_snapshot_reaches_as_far_as_the_furthest_thing_it_changes() {
+        use SnapshotReach::{CommandSpaceOnly, InvalidatesPendingTargets, OnScreen};
+        type Change = fn(&mut ForwardedSpaceState);
+        let rows: [(&str, Change, SnapshotReach); 11] = [
+            (
+                "the command space alone",
+                |s| s.command_space = Some(SpaceId::new(1)),
+                CommandSpaceOnly,
+            ),
+            (
+                "the menu-bar space alone",
+                |s| s.menu_bar_space = Some(SpaceId::new(1)),
+                CommandSpaceOnly,
+            ),
+            ("a screen moved", |s| s.screens[0].frame.origin.x = 10., OnScreen),
+            (
+                "a fullscreen space",
+                |s| {
+                    s.fullscreen_spaces.insert(SpaceId::new(9));
+                },
+                OnScreen,
+            ),
+            (
+                "a window newly on an active space",
+                |s| {
+                    s.active_window_spaces.insert(WindowServerId::new(5), SpaceId::new(1));
+                },
+                OnScreen,
+            ),
+            (
+                "a display's last user space",
+                |s| {
+                    s.last_user_space_by_display.insert("uuid-0".into(), SpaceId::new(2));
+                },
+                OnScreen,
+            ),
+            (
+                "the display set",
+                |s| s.topology = Topology::Changed,
+                InvalidatesPendingTargets,
+            ),
+            (
+                "a forced refresh",
+                |s| s.topology = Topology::Relayout(DisplaySet::Same),
+                InvalidatesPendingTargets,
+            ),
+            (
+                "a remapped space",
+                |s| s.space_remaps.push((SpaceId::new(1), SpaceId::new(2))),
+                InvalidatesPendingTargets,
+            ),
+            (
+                "a resized space",
+                |s| s.resized_spaces.push((SpaceId::new(1), CGSize::new(1., 1.))),
+                InvalidatesPendingTargets,
+            ),
+            (
+                "a window delta and a screen moved",
+                |s| {
+                    s.topology_window_delta = Some(TopologyWindowDelta::default());
+                    s.screens[0].frame.origin.x = 10.;
+                },
+                InvalidatesPendingTargets,
+            ),
+        ];
         let current = snapshot(&[rect(0., 0.)]);
-        let mut incoming = current.clone();
-        incoming.display_set_changed = true;
-        let active: HashSet<SpaceId> = current.active_spaces.clone();
-        let a = analyze_space_snapshot(
-            &current,
-            &active,
-            &SpaceActivationPolicy::new(),
-            SpaceActivationConfig { default_disable: false },
-            &incoming,
-        );
-        assert!(!a.command_space_only_update);
-        assert!(a.invalidates_pending_targets);
+        for (case, change, expected) in rows {
+            let mut incoming = current.clone();
+            change(&mut incoming);
+            assert_eq!(analyze(&current, &incoming).reach, expected, "{case}");
+        }
     }
 
     #[test]
@@ -541,16 +699,138 @@ mod tests {
         let current = snapshot(&[rect(0., 0.), rect(1000., 0.)]);
         let mut incoming = current.clone();
         incoming.active_spaces.remove(&SpaceId::new(2));
-        let active: HashSet<SpaceId> = current.active_spaces.clone();
-        let a = analyze_space_snapshot(
-            &current,
-            &active,
-            &SpaceActivationPolicy::new(),
-            SpaceActivationConfig { default_disable: false },
-            &incoming,
-        );
+        let a = analyze(&current, &incoming);
         assert_eq!(a.authoritative_spaces, vec![Some(SpaceId::new(1)), None]);
-        assert!(!a.command_space_only_update, "the effective active set changed");
+        assert_eq!(
+            a.reach,
+            SnapshotReach::OnScreen,
+            "the effective active set changed"
+        );
+    }
+
+    fn shown(display: &str, x: f64, space: Option<u64>) -> ScreenInfo {
+        ScreenInfo {
+            is_builtin: false,
+            id: ScreenId::new(1),
+            frame: rect(x, 0.),
+            bounds: rect(x, 0.),
+            display_uuid: display.into(),
+            name: None,
+            space: space.map(SpaceId::new),
+            scale: 2.0,
+        }
+    }
+
+    /// Each row: the screens before, the screens now, whether a display set was seen before, and
+    /// the tier that holds.
+    #[test]
+    fn a_topology_takes_the_highest_tier_its_change_reaches() {
+        use DisplaySet::{Changed as Set, Same};
+        let a = |space| shown("a", 0., space);
+        let b = |space| shown("b", 1000., space);
+        let a_moved = shown("a", 500., Some(1));
+        let rows = [
+            (
+                "nothing moved",
+                vec![a(Some(1))],
+                vec![a(Some(1))],
+                true,
+                Topology::Unchanged,
+            ),
+            (
+                "a space switch alone",
+                vec![a(Some(1))],
+                vec![a(Some(2))],
+                true,
+                Topology::Unchanged,
+            ),
+            (
+                "no screens either side",
+                vec![],
+                vec![],
+                true,
+                Topology::Unchanged,
+            ),
+            (
+                "the first display set",
+                vec![],
+                vec![a(Some(1))],
+                false,
+                Topology::Changed,
+            ),
+            (
+                "back after every display left",
+                vec![],
+                vec![a(Some(1))],
+                true,
+                Topology::Remap(Set),
+            ),
+            (
+                "a display arrived",
+                vec![a(Some(1))],
+                vec![a(Some(1)), b(Some(2))],
+                false,
+                Topology::Remap(Set),
+            ),
+            (
+                "a display arrived with no space",
+                vec![a(Some(1))],
+                vec![a(Some(1)), b(None)],
+                true,
+                Topology::Relayout(Set),
+            ),
+            (
+                "one space on two screens",
+                vec![a(Some(1))],
+                vec![a(Some(1)), b(Some(1))],
+                true,
+                Topology::Relayout(Set),
+            ),
+            (
+                "every display left",
+                vec![a(Some(1))],
+                vec![],
+                true,
+                Topology::Remap(Set),
+            ),
+            (
+                "a display moved",
+                vec![a(Some(1))],
+                vec![a_moved],
+                true,
+                Topology::Remap(Same),
+            ),
+        ];
+        for (case, previous, screens, seen, expected) in rows {
+            assert_eq!(Topology::between(&previous, &screens, seen), expected, "{case}");
+        }
+        let reordered =
+            Topology::between(&[a(Some(1)), b(Some(2))], &[b(Some(2)), a(Some(1))], true);
+        assert_eq!(reordered, Topology::Remap(Same), "the displays reordered");
+    }
+
+    /// The implications the tiers hold: a remap refreshes the layout, a refresh is a change, and a
+    /// display attached or detached is a change.
+    #[test]
+    fn each_tier_answers_for_the_tiers_below_it() {
+        use DisplaySet::{Changed as Set, Same};
+        let rows = [
+            (Topology::Unchanged, [false, false, false, false]),
+            (Topology::Changed, [true, true, false, false]),
+            (Topology::Relayout(Set), [true, true, true, false]),
+            (Topology::Relayout(Same), [true, false, true, false]),
+            (Topology::Remap(Set), [true, true, true, true]),
+            (Topology::Remap(Same), [true, false, true, true]),
+        ];
+        for (topology, expected) in rows {
+            let answered = [
+                topology.is_changed(),
+                topology.display_set_changed(),
+                topology.forces_refresh_layout(),
+                topology.allows_space_remap(),
+            ];
+            assert_eq!(answered, expected, "{topology:?}");
+        }
     }
 
     fn uuids(list: &[&str]) -> Vec<String> { list.iter().map(|uuid| uuid.to_string()).collect() }
@@ -671,20 +951,24 @@ mod tests {
     /// evacuates every window.
     #[test]
     fn no_screens_is_never_committable() {
-        assert!(!snapshot_is_committable(&[], false, never_fullscreen));
-        assert!(!snapshot_is_committable(&[], true, never_fullscreen));
+        assert!(!snapshot_is_committable(&[], never_fullscreen));
     }
 
     #[test]
-    fn an_unknown_space_blocks_a_complete_commit_only() {
+    fn an_unknown_space_blocks_a_commit() {
         let spaces = [Some(SpaceId::new(1)), None];
-        assert!(!snapshot_is_committable(&spaces, true, never_fullscreen));
-        assert!(snapshot_is_committable(&spaces, false, never_fullscreen));
+        assert!(!snapshot_is_committable(&spaces, never_fullscreen));
+    }
+
+    #[test]
+    fn a_complete_coherent_snapshot_is_committable() {
+        let spaces = [Some(SpaceId::new(1)), Some(SpaceId::new(2))];
+        assert!(snapshot_is_committable(&spaces, never_fullscreen));
     }
 
     #[test]
     fn an_incoherent_snapshot_is_never_committable() {
         let spaces = [Some(SpaceId::new(1)), Some(SpaceId::new(1))];
-        assert!(!snapshot_is_committable(&spaces, false, never_fullscreen));
+        assert!(!snapshot_is_committable(&spaces, never_fullscreen));
     }
 }

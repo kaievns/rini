@@ -2,6 +2,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::ScreenId;
 
 use super::*;
+use crate::displays::domain::topology::DisplaySet;
 
 fn screen(id: u32, display: &str, x: f64, width: f64, space: Option<u64>) -> ScreenInfo {
     let frame = CGRect::new(CGPoint::new(x, 0.0), CGSize::new(width, 800.0));
@@ -200,8 +201,7 @@ fn a_second_display_is_a_topology_change_that_remaps_the_first_display_s_new_spa
         ]),
     );
 
-    assert!(state.display_set_changed && state.topology_changed);
-    assert!(state.allow_space_remap && state.should_force_refresh_layout);
+    assert_eq!(state.topology, Topology::Remap(DisplaySet::Changed));
     assert_eq!(state.space_remaps, vec![(space(31), space(41))]);
     assert_eq!(state.resized_spaces, vec![(
         space(51),
@@ -248,7 +248,7 @@ fn a_space_on_two_screens_allows_no_remap() {
         ]),
     );
 
-    assert!(state.topology_changed && !state.allow_space_remap);
+    assert_eq!(state.topology, Topology::Relayout(DisplaySet::Changed));
     assert!(state.space_remaps.is_empty());
 }
 

@@ -48,15 +48,32 @@ pub struct Band {
 }
 
 impl Band {
-    /// Its paint on a window drawn urgent, else holding focus, else neither, as niri picks it
-    /// (`niri:src/layout/focus_ring.rs:73-98`).
-    pub fn paint(&self, focused: bool, urgent: bool) -> Paint {
+    /// Its paint on a window drawn urgent, else the one `ring` names, the inactive one for a window
+    /// wearing none, as niri picks it (`niri:src/layout/focus_ring.rs:73-98`).
+    pub fn paint(&self, ring: Ring, urgency: Urgency) -> Paint {
+        match (urgency, ring) {
+            (Urgency::Urgent, _) => self.urgent,
+            (Urgency::Calm, Ring::Active) => self.active,
+            (Urgency::Calm, Ring::Inactive | Ring::None) => self.inactive,
+        }
+    }
+}
+
+/// Whether a window is drawn urgent: its application asks for attention and is not the one holding
+/// focus (`Rings::urgent`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Urgency {
+    #[default]
+    Calm,
+    Urgent,
+}
+
+impl Urgency {
+    pub fn of(urgent: bool) -> Urgency {
         if urgent {
-            self.urgent
-        } else if focused {
-            self.active
+            Urgency::Urgent
         } else {
-            self.inactive
+            Urgency::Calm
         }
     }
 }
@@ -69,8 +86,7 @@ pub struct Decoration {
     pub border: Option<Band>,
     /// `geometry-corner-radius`, in points.
     pub radius: Option<f64>,
-    /// Its application asks for attention and is not the one holding focus (`Rings::urgent`).
-    pub urgent: bool,
+    pub urgency: Urgency,
 }
 
 impl Decoration {
@@ -136,16 +152,19 @@ impl Style {
     /// decoration has one for, in the urgent paint, else the active one while the window is focused
     /// and the inactive one otherwise, as niri paints it.
     pub fn of(focused: bool, ring: Ring, decoration: &Decoration) -> Style {
-        let urgent = decoration.urgent;
-        let ring_paint = decoration
-            .ring
-            .filter(|_| ring.worn())
-            .map(|band| band.paint(ring == Ring::Active, urgent));
+        let urgency = decoration.urgency;
+        let ring_paint =
+            decoration.ring.filter(|_| ring.worn()).map(|band| band.paint(ring, urgency));
+        let lit = if focused {
+            Ring::Active
+        } else {
+            Ring::Inactive
+        };
         Style {
             light_alpha: light_alpha(focused),
             shadow: shadow(focused),
             ring: ring_paint,
-            border: decoration.border.map(|band| band.paint(focused, urgent)),
+            border: decoration.border.map(|band| band.paint(lit, urgency)),
         }
     }
 }
@@ -497,7 +516,7 @@ mod tests {
     fn urgent_beats_active_beats_inactive() {
         let urgent = Decoration {
             border: Some(BORDER),
-            urgent: true,
+            urgency: Urgency::Urgent,
             ..ringed()
         };
         for (focused, ring) in [
@@ -517,8 +536,22 @@ mod tests {
             None,
             "urgent wears the ring only where it wears it"
         );
-        assert_eq!(RING.paint(true, false), RING.active);
-        assert_eq!(RING.paint(false, false), RING.inactive);
+    }
+
+    #[test]
+    fn a_band_paints_urgent_over_the_paint_its_ring_names() {
+        use Urgency::{Calm, Urgent};
+        for (ring, urgency, paint) in [
+            (Ring::Active, Calm, RING.active),
+            (Ring::Inactive, Calm, RING.inactive),
+            (Ring::None, Calm, RING.inactive),
+            (Ring::Active, Urgent, RING.urgent),
+            (Ring::Inactive, Urgent, RING.urgent),
+            (Ring::None, Urgent, RING.urgent),
+        ] {
+            assert_eq!(RING.paint(ring, urgency), paint, "{ring:?}, {urgency:?}");
+        }
+        assert_eq!([Urgency::of(true), Urgency::of(false)], [Urgent, Calm]);
     }
 
     #[test]

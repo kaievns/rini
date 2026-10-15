@@ -15,7 +15,7 @@ use rini_geometry::space::{
     ContentsRect, PixelRect, PixelSize, PointSpace, ScreenSize, Size, ToCg,
 };
 
-use crate::pictures::domain::cache::{CarriesOver, HasCoverage, keeps_blur};
+use crate::pictures::domain::cache::{Blur, CarriesOver, HasCoverage, keeps_blur};
 use crate::pictures::domain::coverage::{Coverage, fits_frame};
 use crate::pictures::domain::ground::Ground;
 use crate::pictures::domain::region::{WHOLE, unit_rect};
@@ -185,12 +185,11 @@ impl CarriesOver for Picture {
     /// same size, which would be flat grey exactly where the blur is. A different size means the
     /// window was resized and the old picture no longer fits it, so the new one is taken after all.
     fn keeps_over(&self, incoming: &Self) -> bool {
-        keeps_blur(
-            self.carries_blur,
-            incoming.carries_blur,
-            self.coverage,
-            incoming.coverage,
-        )
+        let blur = |picture: &Picture| Blur {
+            carried: picture.carries_blur,
+            coverage: picture.coverage,
+        };
+        keeps_blur(blur(self), blur(incoming))
     }
 
     /// A stand-in is drawn and never kept: cached, the switcher would read it as a picture and the next

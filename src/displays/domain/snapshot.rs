@@ -7,7 +7,9 @@ use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::displays::domain::screen::ScreenInfo;
-use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind, TopologyWindowDelta};
+use crate::displays::domain::topology::{
+    ForwardedSpaceState, SpaceEventKind, Topology, TopologyWindowDelta,
+};
 
 /// How a space id is classified.
 ///
@@ -160,13 +162,12 @@ fn keep_user_spaces_through_fullscreen(
 pub fn forward(memory: &mut Forwarded, taken: Taken) -> ForwardedSpaceState {
     let Taken { screens, heard, .. } = &taken;
     let previous = &memory.screens;
-    let change = Change::between(previous, screens, memory.has_seen_display_set);
+    let topology = Topology::between(previous, screens, memory.has_seen_display_set);
     let resized_spaces = resized_spaces(previous, screens);
-    let allow_space_remap = change.should_force_refresh_layout && every_space_once(screens);
     let space_remaps = space_remaps(
         &mut memory.last_user_space_by_display,
         screens,
-        allow_space_remap,
+        topology.allows_space_remap(),
     );
     let menu_bar_space = menu_bar_space(screens, heard.active_space, previous);
     let command_space = command_space(
@@ -207,56 +208,11 @@ pub fn forward(memory: &mut Forwarded, taken: Taken) -> ForwardedSpaceState {
         display_space_ids_from_screens,
         last_user_space_by_display: memory.last_user_space_by_display.clone(),
         space_remaps,
-        display_set_changed: change.display_set_changed,
-        topology_changed: change.topology_changed,
-        allow_space_remap,
-        should_force_refresh_layout: change.should_force_refresh_layout,
+        topology,
         releases_lifecycle_refresh_quarantine: taken.releases_lifecycle_refresh_quarantine,
         resized_spaces,
         topology_window_delta: taken.topology_window_delta,
         active_window_spaces: memory.visible_window_spaces.clone(),
-    }
-}
-
-/// How the displays changed between two snapshots.
-struct Change {
-    display_set_changed: bool,
-    topology_changed: bool,
-    should_force_refresh_layout: bool,
-}
-
-impl Change {
-    fn between(
-        previous: &[ScreenInfo],
-        screens: &[ScreenInfo],
-        has_seen_display_set: bool,
-    ) -> Self {
-        let uuids = |screens: &[ScreenInfo]| -> HashSet<String> {
-            screens.iter().map(|screen| screen.display_uuid.clone()).collect()
-        };
-        let previous_displays = uuids(previous);
-        let display_set_changed = previous_displays != uuids(screens);
-        let display_order_changed = previous
-            .iter()
-            .map(|screen| screen.display_uuid.as_str())
-            .ne(screens.iter().map(|screen| screen.display_uuid.as_str()));
-        let previous_frames: HashMap<_, _> = previous
-            .iter()
-            .map(|screen| (screen.display_uuid.as_str(), screen.frame))
-            .collect();
-        let display_geometry_changed = screens.iter().any(|screen| {
-            previous_frames
-                .get(screen.display_uuid.as_str())
-                .is_some_and(|before| *before != screen.frame)
-        });
-        let topology_changed =
-            display_set_changed || display_order_changed || display_geometry_changed;
-        Self {
-            display_set_changed,
-            topology_changed,
-            should_force_refresh_layout: topology_changed
-                && (has_seen_display_set || !previous_displays.is_empty()),
-        }
     }
 }
 
@@ -274,14 +230,6 @@ fn resized_spaces(previous: &[ScreenInfo], screens: &[ScreenInfo]) -> Vec<(Space
         })
         .filter_map(|screen| screen.space.map(|space| (space, screen.frame.size)))
         .collect()
-}
-
-/// Every screen shows a space, and none shows one another screen shows.
-fn every_space_once(screens: &[ScreenInfo]) -> bool {
-    let mut seen: HashSet<SpaceId> = HashSet::default();
-    screens
-        .iter()
-        .all(|screen| screen.space.is_some_and(|space| seen.insert(space)))
 }
 
 /// Each display's move from the user space it last showed to the one it shows now, when remaps are

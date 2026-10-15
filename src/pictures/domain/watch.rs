@@ -25,7 +25,7 @@ use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{ScreenPoint, ScreenRect};
 use serde::Serialize;
 
-use self::change::{Change, Turning};
+use self::change::{Change, Turning, Visit};
 use self::landing::Landing;
 use self::live::Live;
 use crate::pictures::domain::print::print_changed;
@@ -567,7 +567,12 @@ impl Watches {
             if let Some((_, Watching::Change(change))) =
                 self.watches.iter_mut().find(|(held, _)| *held == id)
             {
-                change.reschedule(now, plan.rounds.contains(&id), captured);
+                let visit = if plan.rounds.contains(&id) {
+                    Visit::Round { captured }
+                } else {
+                    Visit::Poll
+                };
+                change.reschedule(now, visit);
             }
         }
         out

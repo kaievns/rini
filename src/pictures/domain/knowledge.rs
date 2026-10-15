@@ -44,17 +44,25 @@ impl Knowledge {
 
     /// After the alpha call, measured: whether the window keeps its picture from it, or joins the
     /// baked call, which a window opaque and not known to lack a material does, but for one seen
-    /// flat while inactive and still inactive: its picture alone is what the screen shows.
-    pub fn after_alpha(&self, active: bool) -> Call {
+    /// flat while inactive and still `drawn` inactive: its picture alone is what the screen shows.
+    pub fn after_alpha(&self, drawn: Drawn) -> Call {
         if self.translucent != Some(false)
             || self.material == Some(false)
-            || self.material.is_none() && self.flat_inactive && !active
+            || self.material.is_none() && self.flat_inactive && drawn == Drawn::Inactive
         {
             Call::Alpha
         } else {
             Call::Baked
         }
     }
+}
+
+/// Whether a window is drawn active in a capture, where macOS draws its material, or inactive, where
+/// it draws it flat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Drawn {
+    Active,
+    Inactive,
 }
 
 /// The two SkyLight calls a window can be pictured in.
@@ -90,30 +98,35 @@ impl Learned {
         self.windows.entry(window).or_default().translucent = Some(translucent);
     }
 
-    /// What comparing the window alone with it baked showed, `active` or not as it was captured. A
-    /// material found is found for good; none found counts only with the window active, since an
+    /// What comparing the window alone with it baked showed, `drawn` as it was captured. A material
+    /// found is found for good; none found counts only with the window drawn active, since an
     /// inactive window draws its material flat.
-    pub fn saw_material(&mut self, window: WindowServerId, material: bool, active: bool) {
+    pub fn saw_material(&mut self, window: WindowServerId, material: bool, drawn: Drawn) {
         let known = self.windows.entry(window).or_default();
-        match (material, active) {
+        match (material, drawn) {
             (true, _) => known.material = Some(true),
-            (false, true) => known.material = known.material.or(Some(false)),
-            (false, false) => known.flat_inactive = true,
+            (false, Drawn::Active) => known.material = known.material.or(Some(false)),
+            (false, Drawn::Inactive) => known.flat_inactive = true,
         }
     }
 
     /// The window server reported `window` focused at `at`.
     pub fn focused(&mut self, window: WindowId, at: Instant) { self.focused = Some((window, at)); }
 
-    /// Whether `window` is drawn active in a capture taken at `taken`: it is the window last reported
-    /// focused, `ACTIVE_SETTLED` before, and its application holds the keys, `key` the process that
-    /// does as the window server says. A panel of another application taking the keys reports no
-    /// window of its own.
-    pub fn active(&self, window: WindowId, key: Option<pid_t>, taken: Instant) -> bool {
-        key == Some(window.pid)
+    /// How `window` is drawn in a capture taken at `taken`: active while it is the window last
+    /// reported focused, `ACTIVE_SETTLED` before, and its application holds the keys, `key` the
+    /// process that does as the window server says. A panel of another application taking the keys
+    /// reports no window of its own.
+    pub fn drawn(&self, window: WindowId, key: Option<pid_t>, taken: Instant) -> Drawn {
+        let active = key == Some(window.pid)
             && self
                 .focused
-                .is_some_and(|(focused, at)| focused == window && taken >= at + ACTIVE_SETTLED)
+                .is_some_and(|(focused, at)| focused == window && taken >= at + ACTIVE_SETTLED);
+        if active {
+            Drawn::Active
+        } else {
+            Drawn::Inactive
+        }
     }
 
     /// A window that is gone: its id may be handed to another.
@@ -225,8 +238,8 @@ mod tests {
             (known(Some(true), None), Call::Alpha),
             (known(Some(true), Some(true)), Call::Alpha),
         ] {
-            assert_eq!(k.after_alpha(false), call, "{k:?}");
-            assert_eq!(k.after_alpha(true), call, "{k:?} active");
+            assert_eq!(k.after_alpha(Drawn::Inactive), call, "{k:?}");
+            assert_eq!(k.after_alpha(Drawn::Active), call, "{k:?} active");
         }
     }
 
@@ -235,8 +248,8 @@ mod tests {
     /// captured active, which is how its material is found.
     #[test]
     fn a_window_seen_flat_while_inactive_is_baked_again_once_active() {
-        assert_eq!(seen_flat().after_alpha(false), Call::Alpha);
-        assert_eq!(seen_flat().after_alpha(true), Call::Baked);
+        assert_eq!(seen_flat().after_alpha(Drawn::Inactive), Call::Alpha);
+        assert_eq!(seen_flat().after_alpha(Drawn::Active), Call::Baked);
         assert_eq!(seen_flat().first_call(), Call::Alpha);
         assert!(seen_flat().is_opaque(), "as it is drawn while inactive");
     }
@@ -248,26 +261,26 @@ mod tests {
     fn no_material_counts_only_when_the_window_was_active() {
         let mut learned = Learned::default();
         learned.saw_alpha(id(1), false);
-        learned.saw_material(id(1), false, false);
+        learned.saw_material(id(1), false, Drawn::Inactive);
         assert_eq!(learned.get(id(1)), seen_flat(), "still unknown");
-        assert_eq!(learned.get(id(1)).after_alpha(true), Call::Baked);
-        learned.saw_material(id(1), true, true);
+        assert_eq!(learned.get(id(1)).after_alpha(Drawn::Active), Call::Baked);
+        learned.saw_material(id(1), true, Drawn::Active);
         assert_eq!(learned.get(id(1)).material, Some(true));
         assert_eq!(learned.get(id(1)).first_call(), Call::Baked);
 
         learned.saw_alpha(id(2), false);
-        learned.saw_material(id(2), false, false);
-        learned.saw_material(id(2), false, true);
+        learned.saw_material(id(2), false, Drawn::Inactive);
+        learned.saw_material(id(2), false, Drawn::Active);
         assert_eq!(learned.get(id(2)).material, Some(false), "measured active");
-        assert_eq!(learned.get(id(2)).after_alpha(false), Call::Alpha);
+        assert_eq!(learned.get(id(2)).after_alpha(Drawn::Inactive), Call::Alpha);
         assert_eq!(
-            learned.get(id(2)).after_alpha(true),
+            learned.get(id(2)).after_alpha(Drawn::Active),
             Call::Alpha,
             "and never again"
         );
 
         learned.saw_alpha(id(3), false);
-        learned.saw_material(id(3), true, false);
+        learned.saw_material(id(3), true, Drawn::Inactive);
         assert_eq!(
             learned.get(id(3)).material,
             Some(true),
@@ -286,24 +299,35 @@ mod tests {
         let at = Instant::now();
         let mut learned = Learned::default();
         let settled = at + ACTIVE_SETTLED;
-        assert!(!learned.active(wid(1), Some(7), settled), "no report yet");
+        assert_eq!(
+            learned.drawn(wid(1), Some(7), settled),
+            Drawn::Inactive,
+            "no report yet"
+        );
         learned.focused(wid(1), at);
-        assert!(learned.active(wid(1), Some(7), settled));
-        assert!(
-            !learned.active(wid(1), Some(7), settled - Duration::from_millis(1)),
+        assert_eq!(learned.drawn(wid(1), Some(7), settled), Drawn::Active);
+        assert_eq!(
+            learned.drawn(wid(1), Some(7), settled - Duration::from_millis(1)),
+            Drawn::Inactive,
             "too soon"
         );
-        assert!(
-            !learned.active(wid(1), Some(8), settled),
+        assert_eq!(
+            learned.drawn(wid(1), Some(8), settled),
+            Drawn::Inactive,
             "another application holds the keys"
         );
-        assert!(!learned.active(wid(1), None, settled));
-        assert!(
-            !learned.active(wid(2), Some(7), settled),
+        assert_eq!(learned.drawn(wid(1), None, settled), Drawn::Inactive);
+        assert_eq!(
+            learned.drawn(wid(2), Some(7), settled),
+            Drawn::Inactive,
             "another window of the application"
         );
         learned.focused(wid(2), at);
-        assert!(!learned.active(wid(1), Some(7), settled), "focus moved on");
+        assert_eq!(
+            learned.drawn(wid(1), Some(7), settled),
+            Drawn::Inactive,
+            "focus moved on"
+        );
     }
 
     #[test]
@@ -320,7 +344,7 @@ mod tests {
         let mut learned = Learned::default();
         assert_eq!(learned.get(id(1)), Knowledge::default());
         learned.saw_alpha(id(1), false);
-        learned.saw_material(id(1), true, true);
+        learned.saw_material(id(1), true, Drawn::Active);
         assert_eq!(learned.get(id(1)), known(Some(false), Some(true)));
         learned.saw_alpha(id(2), true);
         learned.forget(id(1));

@@ -26,7 +26,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, refreshes, hints, holds, display changes and handover checks in, the next call out; the warm filter, and the capture budgets and cadences |
 | **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the types every watch shares, the focus hint, and the band prints each client was last delivered, which decide what is news; `Watches`, which hands each watch's looks, wake and what a round saw of it to its kind, and holds the windows behind the strip back while a landing or a change capture is due |
 | **A window landing** | `domain/watch/landing.rs` — the `Landing` watch: each window captured once it is where it ends, delivered at once or once its rendering settles, lost at the deadline, and a repainting one there but cut by the display's edge settled through ScreenCaptureKit (`Outcome::elsewhere`, `Watches::captured_elsewhere`) |
-| **A change of focus** | `domain/watch/change.rs` — the `Change` watch: armed by the focus report, the window gaining focus and the one losing it captured where each ends until its band print turns, each with its own baseline and tries; a target there but cut by the display's edge owed one ScreenCaptureKit capture (`Outcome::clipped`) |
+| **A change of focus** | `domain/watch/change.rs` — the `Change` watch: armed by the focus report, the window gaining focus and the one losing it captured where each ends until its band print turns, each with its own baseline and tries and an `EndState` (looking, missed, turned, or ended with no change, which loses the window losing focus); a target there but cut by the display's edge owed one ScreenCaptureKit capture (`Outcome::clipped`) |
 | **The windows behind the strip** | `domain/watch/live.rs` — the `Live` watch: the windows behind the strip refreshed at its pace once the watch it waits for is done, and once at `initial` regardless |
 | **Refreshes** | `domain/refresh.rs` — windows pictured afresh at rest once their look has turned: which are due a look, each one's captures held until its look settles and the one it settled on, and which are owed ScreenCaptureKit's capture instead |
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight and ScreenCaptureKit calls through its `Capturer`, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
@@ -275,14 +275,14 @@ until the window goes, and so is none found while the window is active. None fou
 inactive is no answer: macOS draws an inactive window's material flat, and Outlook inactive read 0.00
 baked against alone where active it read 1.96 with 9% of samples changed. Such a window keeps to the
 alpha call, whose picture is then what the screen shows, and is baked again, and measured, the first
-time it is captured active (`Learned::active`): the window last reported focused, `ACTIVE_SETTLED`
-(200ms) after the report, past the slowest focused look of 316 presses (158ms after the input,
-`docs/data/2026-10-03-focus`), while the process the window server has holding the keys
-(`SLPSGetKeyFocusProcess`) is its own. A panel of another application taking the keys reports no
-window, which the key process catches. A baked picture of a window with a material carries its blur
-(`carries_blur`), so the cache keeps it over a grey capture of the window alone. Each composite is
-checked against the shape of what it listed, the desktop windows included for the baked one, and a
-misshapen one yields no picture: a frame read is wrong, or a listed window has gone. The
+time it is captured active (`Learned::drawn`, `Drawn::Active`): the window last reported focused,
+`ACTIVE_SETTLED` (200ms) after the report, past the slowest focused look of 316 presses (158ms
+after the input, `docs/data/2026-10-03-focus`), while the process the window server has holding the
+keys (`SLPSGetKeyFocusProcess`) is its own. A panel of another application taking the keys reports
+no window, which the key process catches. A baked picture of a window with a material carries its
+blur (`carries_blur`), so the cache keeps it over a grey capture of the window alone. Each composite
+is checked against the shape of what it listed, the desktop windows included for the baked one, and
+a misshapen one yields no picture: a frame read is wrong, or a listed window has gone. The
 measurements are in "SLSHWCaptureWindowList captures only the visible portion" and "Translucency is
 three things" in [`capture-research.md`](capture-research.md).
 

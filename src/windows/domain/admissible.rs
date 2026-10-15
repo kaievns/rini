@@ -8,6 +8,10 @@
 //! ninety-line function against a live `AXUIElement` — so the strings below, which is what they
 //! mostly are, could not be exercised at all.
 
+use rini_core::ids::WindowServerId;
+
+use crate::windows::domain::info::WindowServerInfo;
+
 /// What is known about a candidate window before rini decides whether to take it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Candidate<'a> {
@@ -71,8 +75,11 @@ fn is_app_extension_path(path: &str) -> bool {
 /// against, and refusing every window whose id has not arrived yet would drop windows during the
 /// gap between Accessibility reporting one and the server catching up. With an id, the server's
 /// info is the answer.
-pub fn has_visible_peer(window_server_id_known: bool, server_reported: bool) -> bool {
-    !window_server_id_known || server_reported
+pub fn has_visible_peer(
+    window_server_id: Option<WindowServerId>,
+    reported: Option<&WindowServerInfo>,
+) -> bool {
+    window_server_id.is_none() || reported.is_some()
 }
 
 /// Applications whose AX tree lies about a window being standard unless it has a title element.
@@ -200,14 +207,24 @@ mod tests {
     /// have arrived yet. An id the server does not know about means the window is not on screen.
     #[test]
     fn a_window_with_no_server_id_yet_counts_as_visible() {
+        use objc2_core_foundation::{CGRect, CGSize};
+        let id = WindowServerId::new(56);
+        let on_screen = WindowServerInfo {
+            id,
+            pid: 1,
+            layer: 0,
+            frame: CGRect::ZERO,
+            min_frame: CGSize::ZERO,
+            max_frame: CGSize::ZERO,
+        };
         assert!(
-            has_visible_peer(false, false),
+            has_visible_peer(None, None),
             "no id yet, so nothing to contradict AX"
         );
-        assert!(has_visible_peer(false, true));
-        assert!(has_visible_peer(true, true));
+        assert!(has_visible_peer(None, Some(&on_screen)));
+        assert!(has_visible_peer(Some(id), Some(&on_screen)));
         assert!(
-            !has_visible_peer(true, false),
+            !has_visible_peer(Some(id), None),
             "an id the server does not report is not on screen"
         );
     }

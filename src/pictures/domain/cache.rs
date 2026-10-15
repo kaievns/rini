@@ -24,15 +24,17 @@ pub trait CarriesOver {
     fn cacheable(&self) -> bool { true }
 }
 
+/// What the blur rule reads of a picture: whether it carries its window's blur, and its coverage.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Blur {
+    pub carried: bool,
+    pub coverage: Coverage,
+}
+
 /// The rule behind a picture's `keeps_over`, on plain values: a picture carrying its window's blur is
 /// kept over a capture of the window on its own at the same size.
-pub fn keeps_blur(
-    held: bool,
-    incoming: bool,
-    held_coverage: Coverage,
-    incoming_coverage: Coverage,
-) -> bool {
-    held && !incoming && held_coverage.window == incoming_coverage.window
+pub fn keeps_blur(held: Blur, incoming: Blur) -> bool {
+    held.carried && !incoming.carried && held.coverage.window == incoming.coverage.window
 }
 
 impl HasCoverage for Coverage {
@@ -191,28 +193,32 @@ mod tests {
         }
     }
 
+    fn blurred(w: f64, h: f64) -> Blur {
+        Blur {
+            carried: true,
+            coverage: size(w, h),
+        }
+    }
+
+    fn flat(w: f64, h: f64) -> Blur {
+        Blur {
+            carried: false,
+            coverage: size(w, h),
+        }
+    }
+
     /// A resize means the old picture no longer fits the window, blur or not.
     #[test]
     fn a_resized_window_takes_the_new_picture_even_without_its_blur() {
-        assert!(!keeps_blur(
-            true,
-            false,
-            size(859.0, 1081.0),
-            size(1720.0, 1081.0)
-        ));
-        assert!(keeps_blur(true, false, size(859.0, 1081.0), size(859.0, 1081.0)));
+        assert!(!keeps_blur(blurred(859.0, 1081.0), flat(1720.0, 1081.0)));
+        assert!(keeps_blur(blurred(859.0, 1081.0), flat(859.0, 1081.0)));
     }
 
     /// A newer picture WITH its blur always replaces an older one, so an on-screen window refreshes.
     #[test]
     fn a_newer_blurred_picture_replaces_an_older_one() {
-        assert!(!keeps_blur(true, true, size(859.0, 1081.0), size(859.0, 1081.0)));
-        assert!(!keeps_blur(
-            false,
-            false,
-            size(859.0, 1081.0),
-            size(859.0, 1081.0)
-        ));
+        assert!(!keeps_blur(blurred(859.0, 1081.0), blurred(859.0, 1081.0)));
+        assert!(!keeps_blur(flat(859.0, 1081.0), flat(859.0, 1081.0)));
     }
 
     fn wid(idx: u32) -> WindowId {

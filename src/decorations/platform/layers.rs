@@ -675,7 +675,7 @@ mod tests {
     use objc2_quartz_core::{CABasicAnimation, kCACornerCurveCircular};
 
     use super::*;
-    use crate::decorations::domain::style::Ring;
+    use crate::decorations::domain::style::{Ring, Urgency};
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
@@ -1204,7 +1204,7 @@ mod tests {
                 ring: Some(RING),
                 border: Some(banded),
                 radius: Some(8.0),
-                urgent: false,
+                urgency: Urgency::Calm,
             },
             2.0,
         );
