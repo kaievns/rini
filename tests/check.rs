@@ -238,6 +238,67 @@ fn every_roadmap_id_an_allow_cites_has_a_row_in_docs_testing() {
     );
 }
 
+/// Whether `line` names a roadmap task by its id, a `P` that starts a word, a number, a dot and a
+/// number.
+fn cites_roadmap_id(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    (0..bytes.len()).any(|at| {
+        bytes[at] == b'P'
+            && (at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_'))
+            && bytes.get(at + 1).is_some_and(u8::is_ascii_digit)
+            && bytes.get(at + 2) == Some(&b'.')
+            && bytes.get(at + 3).is_some_and(u8::is_ascii_digit)
+    })
+}
+
+/// The roadmap is not in the repo, so its ids are cited only where docs/testing.md copies their
+/// rows: in an allow's reason and in docs/testing.md itself. Anywhere else the work is named in
+/// words.
+#[test]
+fn a_roadmap_id_is_cited_only_in_an_allow_s_reason_or_docs_testing() {
+    let id = format!("P{}.{}", 2, 2);
+    assert!(cites_roadmap_id(&format!("the roadmap's {id}-P2")));
+    assert!(!cites_roadmap_id(&format!("S{id}")) && !cites_roadmap_id("P2 and .4"));
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for path in entries.map(|entry| entry.unwrap().path()) {
+            if path.is_dir() {
+                walk(&path, out);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    let root = Path::new(ROOT);
+    let mut files: Vec<PathBuf> = ["README.md", "roadmap.md", "manifesto.md"]
+        .iter()
+        .map(|name| root.join(name))
+        .collect();
+    for dir in [
+        "src", "crates", "docs", "specs", "tests", "bin", "tools", ".github",
+    ] {
+        walk(&root.join(dir), &mut files);
+    }
+    let mut citing = Vec::new();
+    for path in files {
+        let relative = path.strip_prefix(root).unwrap().to_string_lossy().into_owned();
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if relative == "docs/testing.md" {
+            continue;
+        }
+        for (at, line) in text.lines().enumerate() {
+            if cites_roadmap_id(&line.replace("reason = \"P", "reason = \"")) {
+                citing.push(format!("{relative}:{}", at + 1));
+            }
+        }
+    }
+    assert!(citing.is_empty(), "name the work in words: {citing:#?}");
+}
+
 /// Every `#![allow]` over a whole crate or file has its row in docs/testing.md, and every row has
 /// its allow.
 #[test]

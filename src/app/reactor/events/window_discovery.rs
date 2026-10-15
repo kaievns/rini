@@ -8,9 +8,10 @@ use super::window;
 use crate::app::reactor::LayoutEvent;
 use crate::windows::domain::focus::MainWindowTracker;
 use crate::windows::domain::info::{AppInfo, WindowInfo};
+use crate::windows::domain::manageable::{Facts, looks_gone, manageable};
 use crate::windows::domain::state::{WindowFilter, WindowState};
 use crate::windows::domain::transaction::TransactionManager;
-use crate::windows::platform::window_server::{compute_window_manageability, looks_gone};
+use crate::windows::platform::window_server;
 use crate::workspaces::domain::app_rules::AfterRules;
 use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
 
@@ -56,13 +57,11 @@ fn sync_existing_window_state(
             })?
         }
         _ => {
-            let manageable = compute_window_manageability(
+            let manageable = manageable(window_server::with_server_facts(
+                Facts::of(info),
                 info.sys_id,
-                info.is_minimized,
-                info.is_standard,
-                info.is_root,
                 |wsid| state.windows.get_window_server_info(wsid),
-            );
+            ));
             if let Some(existing) = state.windows.window_mut(wid) {
                 existing.info.is_minimized = info.is_minimized;
                 existing.is_manageable = manageable;
@@ -324,13 +323,11 @@ pub(crate) fn process_window_list(
                 }
             } else {
                 let mut window_state: WindowState = WindowState::from((*info).clone());
-                let manageable = compute_window_manageability(
+                let manageable = manageable(window_server::with_server_facts(
+                    Facts::of(&window_state.info),
                     window_state.info.sys_id,
-                    window_state.info.is_minimized,
-                    window_state.info.is_standard,
-                    window_state.info.is_root,
                     |wsid| state.windows.get_window_server_info(wsid),
-                );
+                ));
                 window_state.is_manageable = manageable;
                 state.windows.insert_window(wid, window_state);
             }
@@ -396,13 +393,11 @@ pub(crate) fn update_window_states(
     // Update or insert window states
     for (wid, info) in new_windows {
         let mut state: WindowState = info.into();
-        let manageable = compute_window_manageability(
+        let manageable = manageable(window_server::with_server_facts(
+            Facts::of(&state.info),
             state.info.sys_id,
-            state.info.is_minimized,
-            state.info.is_standard,
-            state.info.is_root,
             |wsid| rini_state.windows.get_window_server_info(wsid),
-        );
+        ));
         state.is_manageable = manageable;
         rini_state.windows.insert_window(wid, state);
     }

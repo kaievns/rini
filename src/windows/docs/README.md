@@ -10,7 +10,10 @@ or layout: everything else depends on it and it depends on nothing.
 |---|---|
 | **Which apps have a thread** | `domain/app_threads.rs` — when a running application gets its Accessibility thread: launched, observed ready, seen ready when the window server reports a new window of it, or seen ready when it next becomes frontmost; and never a second one |
 | **The catalogue** | `domain/catalogue.rs` — every window rini has seen, keyed by `WindowId { pid, idx }`, with its window-server id and what that id is seen doing (visible, observed, on which space), the last rule decision, and the native-fullscreen records that let a window come back |
-| **What a window IS** | `domain/info.rs` (`WindowInfo`, `AppInfo`, `WindowServerInfo`, and `reported_radius`, the one corner radius a window rounds at from the four the window server reports) and `domain/state.rs` (`WindowState`, manageability) |
+| **What a window IS** | `domain/info.rs` (`WindowInfo`, `AppInfo`, `WindowServerInfo`, and `reported_radius`, the one corner radius a window rounds at from the four the window server reports) and `domain/state.rs` (`WindowState`, the reactor's record of a window and whether it is managed) |
+| **Whether rini manages a window** | `domain/manageable.rs` — `manageable(Facts)`, over what Accessibility says (minimized, standard, top-level) and what the window server says (layer, sticky, level), an unanswered window-server fact turning no window away, and the window server asked nothing more once `turned_away_before_accessibility` says the facts in hand turn a window away (`no_read_is_made_once_the_facts_in_hand_turn_the_window_away`); and `looks_gone`, whether a window the app no longer lists is gone, only on an explicit negative observation |
+| **A window's place in the stack** | `domain/stack.rs` — `StackPlace`, a window's frame, level and sub-level; `covered_by_peer_above`, whether raising a window would put it over a peer the user has on top inside it; and `stack_place_writes`, the level and sub-level writes that put a window of rini's own in another's place |
+| **A window's home space** | `domain/home_space.rs` — of the spaces the window server places a window on, the first user space, else the first: a window mid-fullscreen-transition is on its Desktop and a fullscreen space at once |
 | **The AX boundary's rules** | `domain/ax_events.rs` — whether a failed Accessibility request means the window is gone, and the codec for the one `usize` an observer callback carries |
 | **What rini takes on** | `domain/admissible.rs` — the four reasons an Accessibility window is turned away before anything else knows it exists |
 | **Window rules** | `domain/rules.rs` — every `window-rule` that applies to a window, folded in file order as niri does, and the one matcher (`applies`) that the rules for what a window wears (`decorations::domain::rules`) share, which reads whether a window holds focus, floats or is drawn urgent (`RuleState`) beside what it is. Resolving the result against workspaces is `workspaces::domain::app_rules` |
@@ -28,8 +31,8 @@ Two questions about raising and admission that were closed on evidence rather th
 `admission-and-raise-findings.md`.
 
 `platform/` is the macOS side: `app_actor.rs` is the per-app Accessibility actor (one thread per
-application, observing and writing), `window_server.rs` the window-server reads, and the level and
-sub-level a window of rini's own takes from another's (`take_stack_place`), `lifecycle.rs` the
+application, observing and writing), `window_server.rs` the window server through SkyLight, behind
+the `WindowServer` port (below), `lifecycle.rs` the
 launch, quit and front-app listener over `carbon.rs`'s Carbon events, `app.rs` the activation-policy
 and finished-launching observers, `process.rs` the process-type check, `sub_level.rs` the SkyLight
 sub-level port, `attention.rs` the thread that reads from LaunchServices once a second which
@@ -68,6 +71,36 @@ the same lock, was making: both stopped 500ms, until SkyLight timed the wait out
 on the main connection whatever it is given (`CGWindowList`, the on-screen list, a space's window
 list, whether a window is ordered in) is not made: the same answer is read another way. Writes to rini's own windows stay on the main connection, which owns
 them. Each call, which connection it takes and why, and the measurements: `window-server-reads.md`.
+
+**The window server is a port.** Every query and command a rule or an actor outside
+`window_server.rs` makes of the window server is a method of the `WindowServer` trait
+(`platform/window_server/port.rs`): the windows and their frames, parents, levels, sub-levels,
+spaces, order, suitability and corners, the space lists, the depths, the window under the cursor and
+at a point, the key window and process, the listings, and the two commands, `make_key_window` and
+`take_stack_place`. A consumer holds an `Arc<dyn WindowServer>`, cloned to each thread that asks:
+production passes `window_server::live()`, which is `LiveWindowServer`, the SkyLight calls, and
+which panics in a test build (`a_test_build_never_takes_the_live_window_server`); a test
+passes a clone of an `Arc<FakeWindowServer>` (`platform/window_server/fake.rs`) and keeps the other
+to state answers (`set_window_ordered_in(id, Some(false))`, one `set_` per fact) and to read the
+commands it was given (`commands()`). A read the live window server answers from another read's
+answer is answered from the same stated fact, so a test cannot state a pair production never
+produces: stickiness from the spaces (`a_window_is_sticky_exactly_when_it_is_stated_on_more_than_one_space`),
+the level from the window's layer (`a_window_s_level_is_the_layer_it_was_stated_with`), the depths
+from the on-screen list (`the_depths_are_the_stated_on_screen_list_without_the_desktop`), the window
+under the cursor from the window at a point (`the_window_under_the_cursor_is_the_window_at_a_point`). A trait object rather than a struct of fn pointers like
+`SpaceKinds`, because the fake keeps what a test stated and what it was told, which a fn pointer
+cannot capture. The fake answers "unknown", `None` or an empty list, to every read nothing was
+stated for, and only records a command (`every_read_answers_unknown_with_no_setup`,
+`make_key_window_and_take_stack_place_only_record`): a negative answer retires a window, so a fake
+must never guess one. The rules over the answers take them as values (`domain/manageable.rs`,
+`domain/stack.rs`, `domain/home_space.rs`), so a rule's test needs no port at all.
+
+Callers not yet handed a port call the free functions of the same names in `window_server`, which
+`platform/window_server/shim.rs` answers from `LiveWindowServer` in production and from a
+thread-local `FakeWindowServer` in a test build, stated through the old `set_*_override` setters.
+That shim is temporary: once the reactor, the flight engine, the app actor and the spaces actor are
+handed a port, it goes. Through the shim, a window no test stated
+is at the origin, 800x600, which the tests written against it expect; on the port it is unknown.
 
 **A raise list is a z-order.** Raising is last-wins, so the order of the list IS the
 stacking it produces. `domain/raise_order.rs` exists because that order kept being

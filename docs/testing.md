@@ -4,9 +4,9 @@
 
 Two things look alike and are not.
 
-**A fake at the boundary is right.** `window_server.rs` answers its queries from thread-local
-overrides under `cfg(test)`, because the alternative is a test that depends on the windows the
-developer happens to have open. The section below records the two tests that flapped that way.
+**A fake at the boundary is right.** The window server is a port, `WindowServer`, faked in memory
+by `FakeWindowServer`, because the alternative is a test that depends on the windows the developer
+happens to have open. The section below records the two tests that flapped that way.
 
 **A `#[cfg(test)]` branch inside a rule is wrong,** and it is not a style question. It makes the
 suite a test of a different program, and the divergence is invisible at every call site. Four were
@@ -26,18 +26,44 @@ without checking. Both are in `docs/implementation-audit.md` under 4.4 and 4.4.1
 
 The test for it: if the thing behind the `#[cfg]` is a QUERY — something the operating system
 answers — a fake is fine, and it belongs at the boundary with the other fakes. If it is a RULE —
-something rini decides — inject what the rule reads and let the test name it. `SpaceKinds` and
-`LiveDisplays` in `src/displays/platform/spaces.rs` are what that looks like.
+something rini decides — take what the rule reads as a value and let the test name it.
+`manageable(Facts)` in `src/windows/domain/manageable.rs` is what that looks like.
+
+## Which seam to use
+
+Reach for the seam where the read is made; a rule below it takes the answers as values and needs
+none. Each boundary has one seam but the window server, which has two until the frames thread moves
+onto the port: `WindowServer`, and the frames thread's narrower `Reader`.
+
+| what the code asks | seam | production | a test passes |
+|---|---|---|---|
+| the window server: windows, frames, levels, spaces, order, the space lists, the key window, the listings; `make_key_window`, `take_stack_place` | `WindowServer`, an `Arc<dyn WindowServer>` (`src/windows/platform/window_server/port.rs`) | `window_server::live()` | a clone of an `Arc<FakeWindowServer>`, answers stated with its `set_` methods, commands read back with `commands()`, reads counted with `reads()`; every read unknown until stated |
+| Accessibility, from the per-app thread | `AxWorld`, a type parameter (`src/windows/platform/ax/world.rs`) | `MacAx` | `FakeAx`, whose elements are numbers; an element with nothing recorded answers as a window that has gone |
+| the window server, from the frames thread that follows windows | `Reader`, a struct of fn pointers (`src/displays/platform/window_notify.rs`), a narrower view of the window server answered through the same free functions, which folds into `WindowServer` when `window_notify` moves onto the port | `LIVE` | a `Reader` of its own fns |
+| displays and spaces, from the spaces actor | `LiveDisplays` and `SpaceKinds`, structs of fn pointers (`src/displays/platform/spaces.rs`) | `from_window_server()` | `LiveDisplays::silent()`, which knows nothing, and `SpaceKinds::for_tests()`, or a struct of its own |
+| the screens, for `ScreenCache` | `System`, a type parameter (`src/displays/screen.rs`) | `Actual` | a `System` of its own, as the stubs in `screen.rs`'s tests are |
+
+A caller not yet handed a `WindowServer` calls the free functions of the same names in
+`window_server`, answered in a test build by a thread-local `FakeWindowServer` the `set_*_override`
+setters state answers into. That shim is temporary, and nothing new is written against it: the
+reactor, the flight engine, the app actor and the spaces actor move onto a port and it goes.
 
 ## A unit test must not read the live window server
 
-`src/windows/platform/window_server.rs` answers queries from fakes and thread-local
-overrides under `cfg(test)`. That is the whole mechanism now: one crate, so `cfg(test)`
-reaches every module. It used to need a `test-support` cargo feature in three crates,
-because `cfg(test)` never fires across a crate boundary, and the reactor's tests had to
-turn it on as a dev-dependency to see the fakes at all. Four of the fakes used to fall
-through to the real window server when no override was set, which made reactor tests
-depend on the windows the developer happened to have open.
+A test asks the window server through `FakeWindowServer`, handed to the code under test as its
+`WindowServer` port, or, for code not yet on the port, through the shim's thread-local one. Every
+read of the fake answers "unknown" until the test states an answer
+(`every_read_answers_unknown_with_no_setup`), and a command is recorded, never carried out
+(`make_key_window_and_take_stack_place_only_record`), so no test reads the live window server or
+makes a real window key (`a_test_never_reads_or_drives_the_live_window_server`). The live port is
+out of a test's reach too: `window_server::live()` panics in a test build and nothing outside
+`window_server` builds a `LiveWindowServer` (`a_test_build_never_takes_the_live_window_server`), so a
+test that builds a production reactor or actor through it fails rather than reading SkyLight. Before the port,
+`window_server.rs` answered from thread-local overrides under `cfg(test)`, and four of those fakes
+fell through to the real window server when no override was set, which made reactor tests depend
+on the windows the developer happened to have open; seven reads, `window_parent`, the stickiness
+check, the space type, `server_frame`, `key_focused_window`, `get_window_at_point` and the
+sub-level, had no test answer at all, and `make_key_window` was carried out.
 
 Two tests flapped on that, and which of the two failed changed through the day as
 windows opened and closed:
@@ -65,22 +91,23 @@ NEGATIVE answer is not neutral: it retires the window.
   are plenty of real ones, so a collision returns another window's spaces.
 
 An unanswerable query and a negative one mean different things to the reactor, so
-the test-build answers are the unanswerable ones: `None`, or an empty list. A test
+the fake's default answers are the unanswerable ones: `None`, or an empty list. A test
 that needs a specific answer says so:
 
 ```rust
-set_space_window_list_for_space_override(space.get(), Some(vec![wsid]));
-set_window_ordered_in_override(wsid, Some(false));
-set_window_spaces_override(wsid, Some(vec![space.get()]));
+let ws = Arc::new(FakeWindowServer::default());
+ws.set_space_window_list(space.get(), Some(vec![wsid]))
+    .set_window_ordered_in(WindowServerId::new(wsid), Some(false))
+    .set_window_spaces(WindowServerId::new(wsid), vec![space]);
 ```
 
-An override lasts as long as the thread that set it, and libtest runs every test on a
-thread of its own, at one test thread as at many. A probe of two tests at
-`RUST_TEST_THREADS=1`: `a` ran on `ThreadId(2)` and set a thread-local to 7, `b` ran on
-`ThreadId(3)` and read 0. So no override reaches another test, and the
-`*_override(.., None)` calls at the end of tests do nothing for isolation. They are left
-in place: a reset part-way through a test does change what its next step reads, and
-telling those apart from the trailing ones is site by site.
+The shim's `set_*_override` setters state the same answers into its thread-local fake, which
+lasts as long as the thread that set it, and libtest runs every test on a thread of its own,
+at one test thread as at many. A probe of two tests at `RUST_TEST_THREADS=1`: `a` ran on
+`ThreadId(2)` and set a thread-local to 7, `b` ran on `ThreadId(3)` and read 0. So no override
+reaches another test, and the `*_override(.., None)` calls at the end of tests do nothing for
+isolation. They are left in place: a reset part-way through a test does change what its next
+step reads, and telling those apart from the trailing ones is site by site.
 
 ### How this was found
 
@@ -232,7 +259,9 @@ An allow over a whole crate or file, `#![allow]`, is one of these, held by
 
 The quality roadmap the ids come from is a plan kept outside the repo, so the row of every id an
 allow cites is copied here. `every_roadmap_id_an_allow_cites_has_a_row_in_docs_testing` holds the
-table to the ids the allows cite, both ways, so a row goes with the last allow that cites it:
+table to the ids the allows cite, both ways, so a row goes with the last allow that cites it. Nothing
+else in the repo cites an id; a comment or a doc names the work in words
+(`a_roadmap_id_is_cited_only_in_an_allow_s_reason_or_docs_testing`):
 
 | Id | Task | Done when |
 |---|---|---|
