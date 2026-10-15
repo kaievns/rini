@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""What battery.sh and measure.sh set up: the windows the battery flies, found by app and workspace
-name in `rini-cli query workspaces`, and the ring turned on or off in rini's config.
+"""What battery.sh, measure.sh and screenrec.sh set up: the windows the battery flies, found by app
+and workspace name in `rini-cli query workspaces`, the ring turned on or off in rini's config, and
+whether the machine is quiet enough for a screen test.
 
     rini-cli query workspaces | battery.py window WORKSPACE APP   {"pid": .., "idx": ..}, or exit 1
     rini-cli query workspaces | battery.py pid WORKSPACE APP      the app's pid, or exit 1
@@ -10,6 +11,8 @@ name in `rini-cli query workspaces`, and the ring turned on or off in rini's con
                                                                   a segment pressed from APP would fly
                                                                   another
     battery.py ring on|off|state CONFIG
+    battery.py quiet IDLE_S                                       exit 0 if a screen test may start, else 1
+    battery.py mark                                               marks the machine quiet as of now
 
 `scene` reads the workspace named as its first press would fly it: APP's window must be its leftmost
 column, so the first Alt+J bounces, and with REFERENCE, a scene file or a run's meta.json, every
@@ -17,10 +20,19 @@ window must be where that scene had it, by app, within FRAME_SLACK points.
 
 `ring` edits only `layout { focus-ring { ... } }` written over several lines, adding or removing
 its `off` line, and exits 2, changing nothing, when there is not exactly one such block.
+
+`quiet` lets a screen test start after QUIET_IDLE_S of HID idle, or when no input came since the
+last session marked the machine quiet. The mark is QUIET_MARK for every tool, whatever `--out` says.
 """
 import json
+import os
 import re
 import sys
+import time
+
+QUIET_MARK = "/tmp/rini-focuslab/.quiet_since"
+QUIET_IDLE_S = 300
+QUIET_SLACK_S = 5
 
 
 class NoRing(Exception):
@@ -173,8 +185,33 @@ def set_ring(text, state):
     return "\n".join(lines[:start + 1] + body + lines[end:])
 
 
+def quiet_enough(idle_s, now_s, marked_s):
+    if idle_s >= QUIET_IDLE_S:
+        return True
+    return marked_s is not None and idle_s >= now_s - marked_s - QUIET_SLACK_S
+
+
+def marked_at(path=QUIET_MARK):
+    try:
+        with open(path) as file:
+            return int(file.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def mark(now_s, path=QUIET_MARK):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as file:
+        file.write(f"{now_s}\n")
+
+
 def main(argv):
     command = argv[0] if argv else ""
+    if command == "quiet" and len(argv) == 2 and argv[1].isdigit():
+        return 0 if quiet_enough(int(argv[1]), int(time.time()), marked_at()) else 1
+    if command == "mark" and len(argv) == 1:
+        mark(int(time.time()))
+        return 0
     if command == "ring" and len(argv) == 3 and argv[1] in ("on", "off", "state"):
         path = argv[2]
         with open(path) as file:

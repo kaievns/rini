@@ -31,7 +31,6 @@ BINARY=$1
 PREFIX=${2:-}
 [ $# -ge 2 ] && shift 2 || shift 1
 BATTERY_ARGS=("$@")
-QUIET=$ROOT/.quiet_since
 
 signed() { codesign -d -r- "$1" 2>&1 | grep -F 'designated => identifier "git.kaievns.rini"' | grep -qF 'certificate leaf'; }
 plist_runs_deployed() { [ "$(plutil -extract ProgramArguments.0 raw "$PLIST" 2>/dev/null)" = "$DEPLOYED" ]; }
@@ -78,7 +77,7 @@ cp "$CONFIG" "$KEPT" || die "could not keep $CONFIG"
 put_back() { cmp -s "$KEPT" "$CONFIG" || cp "$KEPT" "$CONFIG" || echo "measure: put $KEPT back at $CONFIG by hand" >&2; }
 trap put_back EXIT
 trap 'exit 3' INT TERM
-date +%s > "$QUIET"
+python3 "$HERE/battery.py" mark
 
 ring() {
   python3 "$HERE/battery.py" ring "$1" "$CONFIG" || die "could not turn the ring $1"

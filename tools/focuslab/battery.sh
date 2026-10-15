@@ -4,7 +4,7 @@
 #   switch:    from there, 4 workspace switches Alt+;/Alt+P alternating, 1500ms apart      -> rec-switch.jsonl
 #   spare_pan: focus <spare-app> on <spare>, 6 pans Alt+J/Alt+L alternating, 1500ms apart  -> rec-spare_pan.jsonl
 # A screen test: it posts keys and records rini's overlay. It refuses unless the machine has been idle 300s, or idle
-# since the last battery or measure.sh session ended; it aborts on any input it did not post, and puts focus back.
+# since the last screen test marked it quiet; it aborts on any input it did not post, and puts focus back.
 # Before each pan segment's first press it checks the scene (battery.py scene): the focused window is its workspace's
 # leftmost column, and with --scene every window is where the reference had it; else it refuses (exit 2).
 # battery.sh --check [options]: resolves the windows it would fly and prints them; posts nothing.
@@ -68,7 +68,6 @@ fi
 LABEL=$1
 OUT=$ROOT/$LABEL
 FLAG=$ROOT/.input.flag
-QUIET=$ROOT/.quiet_since
 JDIR=$HOME/Library/Logs/rini
 J=$JDIR/transitions.jsonl
 GAP=1500
@@ -77,14 +76,7 @@ GAP=1500
 [ -z "$SCENE" ] || [ -f "$SCENE" ] || die "no scene at $SCENE"
 [ -f "$J" ] || die "no journal at $J: turn on animations { journal } in rini's config"
 idle=$(ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {printf "%d", $NF/1e9; exit}')
-if [ "$idle" -lt 300 ]; then
-  ok=0
-  if [ -f "$QUIET" ]; then
-    since=$(( $(date +%s) - $(cat "$QUIET") ))
-    [ "$idle" -ge $(( since - 5 )) ] && ok=1
-  fi
-  [ $ok = 1 ] || die "HID idle ${idle}s < 300s and input came since the last battery: Kai may be here"
-fi
+python3 "$HERE/battery.py" quiet "$idle" || die "HID idle ${idle}s < 300s and input came since the last battery: Kai may be here"
 PID=$(pgrep -f "^$RINI\$")
 [ -n "$PID" ] && [ "$(echo "$PID" | wc -l | tr -d ' ')" = 1 ] || die "need exactly one $RINI running: '$PID'"
 
@@ -122,7 +114,7 @@ restore() {
   sleep 2
   kill $WATCH 2>/dev/null; wait $WATCH 2>/dev/null
   [ -e "$FLAG" ] && [ -z "$ABORT" ] && ABORT=$(cat "$FLAG")
-  [ -e "$FLAG" ] || date +%s > "$QUIET"
+  [ -e "$FLAG" ] || python3 "$HERE/battery.py" mark
 }
 trap 'ABORT=${ABORT:-signal}; restore; exit 3' INT TERM
 check() { if [ -e "$FLAG" ]; then ABORT=$(cat "$FLAG"); return 1; fi; kill -0 $WATCH 2>/dev/null || { ABORT="inputwatch died"; return 1; }; }

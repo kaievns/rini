@@ -22,21 +22,13 @@ export PYTHONDONTWRITEBYTECODE=1
 die() { echo "screenrec: $*" >&2; exit 2; }
 
 FLAG=$ROOT/.input.flag
-QUIET=$ROOT/.quiet_since
 JDIR=$HOME/Library/Logs/rini
 J=$JDIR/transitions.jsonl
 MOV=$OUT/$NAME.mov
 [ -e "$MOV" ] && die "$MOV exists; pick another name"
 [ -f "$J" ] || die "no journal at $J: turn on animations { journal } in rini's config"
 idle=$(ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {printf "%d", $NF/1e9; exit}')
-if [ "$idle" -lt 300 ]; then
-  ok=0
-  if [ -f "$QUIET" ]; then
-    since=$(( $(date +%s) - $(cat "$QUIET") ))
-    [ "$idle" -ge $(( since - 5 )) ] && ok=1
-  fi
-  [ $ok = 1 ] || die "HID idle ${idle}s < 300s and input came since the last session: Kai may be here"
-fi
+python3 "$HERE/battery.py" quiet "$idle" || die "HID idle ${idle}s < 300s and input came since the last session: Kai may be here"
 
 BIN=${XDG_CACHE_HOME:-$HOME/Library/Caches}/rini-focuslab
 mkdir -p "$BIN" "$ROOT" "$OUT"
@@ -60,7 +52,7 @@ restore() {
   [ -n "$FOCUS_ID" ] && { "$CLI" execute window focus --window-id "$FOCUS_ID" > /dev/null 2>&1 || echo "screenrec: restore focus failed" >&2; }
   sleep 1
   kill $WATCH 2>/dev/null; wait $WATCH 2>/dev/null
-  [ -e "$FLAG" ] || date +%s > "$QUIET"
+  [ -e "$FLAG" ] || python3 "$HERE/battery.py" mark
 }
 trap 'restore; exit 3' INT TERM
 "$BIN/screenrec" "$MOV" $TAIL "$FLAG" "$@"; rc=$?
