@@ -222,16 +222,54 @@ struct Begun {
 }
 
 /// What waits for the lift from a flight's begin over `display`: the reactor's latest word and the
-/// window server's orders. `until` is when a flight whose overlay has not shown lets go; none once
-/// it shows, when only its lift does. `begun` is the latest flight begun, so a lift that the engine
-/// gave before that flight's press came hands the cover on to it.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// window server's orders, under its `cover`. `begun` is the latest flight begun, so a lift that the
+/// engine gave before that flight's press came hands the cover on to it.
+#[derive(Clone, Debug, PartialEq)]
 struct Covered {
     display: Option<ScreenRect>,
-    until: Option<Instant>,
+    cover: Cover,
     model: Option<RestModel>,
     orders: Vec<ServerOrder>,
     begun: Option<Begun>,
+}
+
+impl Covered {
+    fn new(display: Option<ScreenRect>, cover: Cover) -> Covered {
+        Covered {
+            display,
+            cover,
+            model: None,
+            orders: Vec::new(),
+            begun: None,
+        }
+    }
+}
+
+/// What covers the rest windows: a flight begun whose overlay has not shown, which lets go at
+/// `until`, or the overlay up, which only its lift takes away.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cover {
+    Begun { until: Instant },
+    Up,
+}
+
+impl Cover {
+    /// A flight beginning under `cover`, letting go at `until` unless it shows: under the overlay
+    /// already up, the overlay's.
+    fn begin(cover: Option<Cover>, until: Instant) -> Cover {
+        match cover {
+            Some(Cover::Up) => Cover::Up,
+            Some(Cover::Begun { .. }) | None => Cover::Begun { until },
+        }
+    }
+
+    /// When it lets go of its own: a flight that has not shown, at its patience.
+    fn until(self) -> Option<Instant> {
+        match self {
+            Cover::Begun { until } => Some(until),
+            Cover::Up => None,
+        }
+    }
 }
 
 /// What the rest windows draw from: the reactor's latest model, and what is known of each window it
@@ -272,12 +310,8 @@ impl Rest {
         self.windows.clear();
         self.introducing.clear();
         if let Some(covered) = self.covered.as_mut() {
-            *covered = Covered {
-                display: covered.display,
-                until: covered.until,
-                begun: covered.begun,
-                ..Covered::default()
-            };
+            covered.model = None;
+            covered.orders.clear();
         }
     }
 
@@ -289,13 +323,16 @@ impl Rest {
         if !self.on {
             return;
         }
-        let up = self.covered.as_ref().is_some_and(|covered| covered.until.is_none());
-        let covered = self.covered.get_or_insert_with(Covered::default);
+        let cover = Cover::begin(
+            self.covered.as_ref().map(|covered| covered.cover),
+            now + FLIGHT_PATIENCE,
+        );
+        let covered = self.covered.get_or_insert_with(|| Covered::new(Some(display), cover));
         covered.begun = Some(Begun { display, pressed, at: now });
-        if !up {
+        if cover != Cover::Up {
             covered.display = Some(display);
-            covered.until = Some(now + FLIGHT_PATIENCE);
         }
+        covered.cover = cover;
     }
 
     /// The flight begun after the press a place or a lift the engine gave is `through`: the engine
@@ -307,9 +344,9 @@ impl Rest {
     /// The overlay is up over `display`, the one it was laid out on: until it lifts, a turn draws
     /// nothing unless a window on another display moved.
     pub fn cover(&mut self, display: Option<ScreenRect>) {
-        let covered = self.covered.get_or_insert_with(Covered::default);
+        let covered = self.covered.get_or_insert_with(|| Covered::new(display, Cover::Up));
         covered.display = display;
-        covered.until = None;
+        covered.cover = Cover::Up;
     }
 
     #[cfg(test)]
@@ -529,12 +566,17 @@ impl Rest {
         now: Instant,
     ) -> Draw {
         let next = self.begun_after(through);
-        let Covered { model, orders, .. } = self.covered.take().unwrap_or_default();
+        let (model, orders) = self
+            .covered
+            .take()
+            .map(|covered| (covered.model, covered.orders))
+            .unwrap_or_default();
         if let Some(begun) = next {
-            let until = Some(begun.at + FLIGHT_PATIENCE);
             self.covered = Some(Covered {
                 display: Some(begun.display),
-                until,
+                cover: Cover::Begun {
+                    until: begun.at + FLIGHT_PATIENCE,
+                },
                 model,
                 orders,
                 begun: next,
@@ -585,7 +627,7 @@ impl Rest {
         let spent = self
             .covered
             .as_ref()
-            .and_then(|covered| covered.until)
+            .and_then(|covered| covered.cover.until())
             .is_some_and(|until| now >= until);
         let let_go = spent.then(|| self.covered.take()).flatten().map(
             |Covered { model, orders, .. }| {
@@ -609,7 +651,7 @@ impl Rest {
 
     /// When the next waiting park takes effect, or a flight that has not shown lets go.
     pub fn due(&self) -> Option<Instant> {
-        let flight = self.covered.as_ref().and_then(|covered| covered.until);
+        let flight = self.covered.as_ref().and_then(|covered| covered.cover.until());
         self.windows
             .values()
             .filter_map(|tracked| tracked.parking.due())
@@ -1643,6 +1685,21 @@ mod tests {
             change: OrderChange::Reordered,
             level: Some(LEVEL),
         }
+    }
+
+    #[test]
+    fn a_flight_begins_its_own_cover_unless_the_overlay_is_up() {
+        let now = Instant::now();
+        let (earlier, until) = (now + ms(5), now + FLIGHT_PATIENCE);
+        for (cover, begun) in [
+            (None, Cover::Begun { until }),
+            (Some(Cover::Begun { until: earlier }), Cover::Begun { until }),
+            (Some(Cover::Up), Cover::Up),
+        ] {
+            assert_eq!(Cover::begin(cover, until), begun, "{cover:?}");
+        }
+        assert_eq!(Cover::Begun { until }.until(), Some(until));
+        assert_eq!(Cover::Up.until(), None, "only its lift takes the overlay away");
     }
 
     /// The frames rini's writes make, the 808s of a raise, the key window's turn and a new window's
