@@ -585,44 +585,6 @@ pub fn managed_display_space_ids() -> HashMap<String, Vec<SpaceId>> {
     out
 }
 
-/// Make a display's desktop window key, so the display holds focus with no app window on it.
-#[cfg(not(test))]
-pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
-    use std::ptr::NonNull;
-
-    use objc2_core_foundation::{CFArray, CFRetained};
-    use rini_core::ids::WindowServerId;
-    use rini_geometry::CGRectExt;
-    use rini_skylight_sys::{G_CONNECTION, SLSManagedDisplaysCopyRoleWindows};
-
-    use crate::windows::platform::window_server::{get_window, make_key_window};
-    let Some(display_uuid) = screen.display_uuid_opt() else {
-        return false;
-    };
-    let uuid = objc2_core_foundation::CFString::from_str(display_uuid);
-    let displays = CFArray::from_objects(&[&*uuid]);
-    let Some(windows) = NonNull::new(unsafe {
-        SLSManagedDisplaysCopyRoleWindows(*G_CONNECTION, CFRetained::as_ptr(&displays).as_ptr(), 1)
-    }) else {
-        return false;
-    };
-    let windows = unsafe { CFRetained::from_raw(windows) };
-    windows.iter().any(|number| {
-        let Some(id) = number.as_i64().and_then(|id| u32::try_from(id).ok()) else {
-            return false;
-        };
-        let wsid = WindowServerId::new(id);
-        let Some(info) = get_window(wsid) else {
-            return false;
-        };
-        info.layer < 0
-            && screen.frame.contains(info.frame.mid())
-            && make_key_window(info.pid, wsid).is_ok()
-    })
-}
-#[cfg(test)]
-pub fn focus_desktop_window(_screen: &ScreenInfo) -> bool { false }
-
 #[cfg(test)]
 mod test {
     use std::cell::{Cell, RefCell};

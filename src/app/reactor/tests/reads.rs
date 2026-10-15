@@ -11,6 +11,7 @@ use crate::app::hotkeys::WmEvent;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::info::{AppInfo, WindowServerInfo};
+use crate::windows::platform::window_server::Command as Told;
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 
 thread_local! {
@@ -32,6 +33,11 @@ fn a_test_reactor_reads_unknown_from_everything_it_was_not_told() {
     assert!((reactor.reads.running_app)(4242).is_none());
     assert!(!(reactor.reads.low_power)());
     assert!(!(reactor.reads.display_churn)());
+    assert_eq!(
+        (reactor.reads.display_bounds)(rini_core::ids::ScreenId::new(1)),
+        CGRect::ZERO
+    );
+    assert!(!port.focus_desktop("test-display-0", CGRect::new(CGPoint::ZERO, CGSize::new(1., 1.))));
 }
 
 /// The flight decision reads Low Power Mode from the reactor's reads, so no bounce flies in it.
@@ -125,4 +131,84 @@ fn the_tracked_windows_are_handed_to_the_reads_to_watch() {
     last.sort_unstable();
     let tracked = [1, 2].map(|idx| reactor.test_window_server_id(WindowId::new(1, idx)).as_u32());
     assert_eq!(last, tracked);
+}
+
+/// Closing the last window of the active workspace makes the display's desktop key, through the
+/// port, so the display keeps focus with no app window on it.
+#[test]
+fn closing_the_last_window_of_the_workspace_makes_the_display_s_desktop_key() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let space = SpaceId::new(1);
+    let wid = WindowId::new(1, 1);
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(1));
+    let desktop = WindowServerId::new(900);
+    reactor
+        .window_server()
+        .set_desktop_windows("test-display-0", vec![desktop])
+        .set_window(
+            desktop,
+            Some(WindowServerInfo {
+                id: desktop,
+                pid: 77,
+                layer: -2147483603,
+                frame: screen,
+                min_frame: CGSize::ZERO,
+                max_frame: CGSize::ZERO,
+            }),
+        );
+
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, wid));
+    assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(wid));
+    let wsid = reactor.test_window_server_id(wid);
+    reactor.window_server().set_window_ordered_in(wsid, Some(true));
+    reactor.handle_event(Event::WindowDestroyed(wid));
+
+    assert!(
+        reactor
+            .window_server()
+            .commands()
+            .contains(&Told::MakeKeyWindow { pid: 77, window: desktop }),
+        "the desktop was made key: {:?}",
+        reactor.window_server().commands()
+    );
+}
+
+/// The overlay spans the whole display the reads give, menu bar and Dock included, not the frame
+/// left for windows.
+#[test]
+fn the_animation_overlay_spans_the_display_bounds_its_reads_give() {
+    let (_apps, mut reactor) = test_context();
+    reactor.handle_event(space_state_event(
+        vec![
+            CGRect::new(CGPoint::new(0., 25.), CGSize::new(1728., 1092.)),
+            CGRect::new(CGPoint::new(1728., 25.), CGSize::new(1920., 1055.)),
+        ],
+        vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
+    ));
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
+    reactor.reads.display_bounds = |screen| {
+        if screen.as_u32() == 1 {
+            CGRect::new(CGPoint::new(1728., 0.), CGSize::new(1920., 1080.))
+        } else {
+            CGRect::ZERO
+        }
+    };
+
+    reactor.publish_animation_display_for(Some(SpaceId::new(2)));
+
+    match animation_rx.try_recv().expect("a display is published").1 {
+        crate::transitions::platform::engine::Event::SetDisplay { id, frame, .. } => {
+            assert_eq!(id, 1);
+            assert_eq!(
+                frame,
+                rini_geometry::space::ScreenRect::from_cg(CGRect::new(
+                    CGPoint::new(1728., 0.),
+                    CGSize::new(1920., 1080.)
+                ))
+            );
+        }
+        other => panic!("expected SetDisplay, got {other:?}"),
+    }
 }

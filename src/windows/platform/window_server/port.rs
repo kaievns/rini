@@ -16,6 +16,7 @@ use std::sync::Arc;
 use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::CGError;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
+use rini_geometry::CGRectExt;
 
 use super::{Listed, depths};
 use crate::windows::domain::home_space::home_space;
@@ -64,6 +65,8 @@ pub trait WindowServer: Any + Send + Sync {
     fn on_screen_windows(&self, titles: bool) -> Vec<Listed>;
     /// Every window the window server has, on screen or not, with titles.
     fn every_window(&self) -> Vec<Listed>;
+    /// The desktop windows the window server keeps for the display with `display_uuid`.
+    fn desktop_windows(&self, display_uuid: &str) -> Vec<WindowServerId>;
 
     /// Make `id`, a window of `pid`'s, the key window, as a click on it would.
     fn make_key_window(&self, pid: pid_t, id: WindowServerId) -> Result<(), CGError>;
@@ -87,6 +90,22 @@ pub trait WindowServer: Any + Send + Sync {
 
     /// The depth of every window on screen but the desktop's, 0 being frontmost.
     fn front_to_back_depths(&self) -> HashMap<u32, usize> { depths(self.on_screen_windows(false)) }
+
+    /// Make the desktop window of `display_uuid` that sits within `frame` the key window, so the
+    /// display holds focus with no app window on it. Whether one was made key; none is for a display
+    /// with no uuid.
+    fn focus_desktop(&self, display_uuid: &str, frame: CGRect) -> bool {
+        if display_uuid.is_empty() {
+            return false;
+        }
+        self.desktop_windows(display_uuid).into_iter().any(|id| {
+            self.get_window(id).is_some_and(|info| {
+                info.layer < 0
+                    && frame.contains(info.frame.mid())
+                    && self.make_key_window(info.pid, id).is_ok()
+            })
+        })
+    }
 
     fn corner_radius(&self, id: WindowServerId) -> Option<f64> {
         self.corner_radii(&[id]).get(&id).copied()

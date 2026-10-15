@@ -3521,7 +3521,7 @@ impl Reactor {
         );
 
         // Full-display coordinates, matching the overlay's own space.
-        let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
+        let display_bounds = (self.reads.display_bounds)(screen.id);
         // A floating window is not in the strip. Panning it with the strip dragged it sideways
         // and snapped it back at the handover.
         let mut windows = self.strip_windows_at(&full, display_bounds, true);
@@ -3679,7 +3679,7 @@ impl Reactor {
             screen.frame,
             &gaps,
         );
-        let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
+        let display_bounds = (self.reads.display_bounds)(screen.id);
         let vertical = matches!(direction, Direction::Up | Direction::Down);
         // A strip bounce leaves floating windows where they are, as a pan does; a stack bounce
         // carries them, as a switch does.
@@ -3752,7 +3752,7 @@ impl Reactor {
         //
         // The surface is still expressed in full-display coordinates (the overlay's own), so a
         // window keeps its position below the bar within its row; only the row-to-row step shrinks.
-        let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
+        let display_bounds = (self.reads.display_bounds)(screen.id);
         let row_pitch = screen.frame.size.height;
         let height = row_pitch;
 
@@ -4017,7 +4017,7 @@ impl Reactor {
             .iter()
             .find(|screen| screen.space == wanted)
             .or_else(|| self.space_state.screens.first())?;
-        let frame = ScreenRect::from_cg(objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()));
+        let frame = ScreenRect::from_cg((self.reads.display_bounds)(screen.id));
         if let Some(tx) = &self.communication_manager.transitions_tx {
             tx.send(crate::transitions::platform::engine::Event::SetDisplay {
                 id: screen.id.as_u32(),
@@ -5156,7 +5156,7 @@ impl Reactor {
         let Some(screen) = self.space_state.screen_by_space(space) else {
             return false;
         };
-        if !crate::displays::screen::focus_desktop_window(screen) {
+        if !self.reads.window_server.focus_desktop(&screen.display_uuid, screen.frame) {
             return false;
         }
 

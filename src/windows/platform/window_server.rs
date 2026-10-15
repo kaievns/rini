@@ -776,6 +776,27 @@ impl WindowServer for LiveWindowServer {
 
     fn every_window(&self) -> Vec<Listed> { describe(&window_list(false), true) }
 
+    fn desktop_windows(&self, display_uuid: &str) -> Vec<WindowServerId> {
+        let uuid = CFString::from_str(display_uuid);
+        let displays = CFArray::from_objects(&[&*uuid]);
+        // SAFETY: the copied array is ours, and `CFRetained` releases it.
+        let Some(windows) = NonNull::new(unsafe {
+            SLSManagedDisplaysCopyRoleWindows(
+                *G_CONNECTION,
+                CFRetained::as_ptr(&displays).as_ptr(),
+                1,
+            )
+        }) else {
+            return Vec::new();
+        };
+        let windows: CFRetained<CFArray<CFNumber>> = unsafe { CFRetained::from_raw(windows) };
+        windows
+            .iter()
+            .filter_map(|number| number.as_i64().and_then(|id| u32::try_from(id).ok()))
+            .map(WindowServerId::new)
+            .collect()
+    }
+
     // credit: https://github.com/Hammerspoon/hammerspoon/issues/370#issuecomment-545545468
     fn make_key_window(&self, pid: pid_t, wsid: WindowServerId) -> Result<(), CGError> {
         #[allow(non_upper_case_globals, reason = "SkyLight's constant name")]

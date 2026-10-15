@@ -70,7 +70,7 @@ touches nothing outside itself.
 | `api/` | the outward surface: the Mach IPC backend bound to the reactor (`api/backend.rs`) and the shapes a query answers in (`api/dto.rs`) |
 | `notifications.rs` | the NSWorkspace demultiplexer, feeding the two features that want it |
 | `power.rs` | Low Power Mode, read at start and kept current from its notification: the input tap and the reactor's flight decision read it |
-| `system_reads.rs` | `SystemReads`, everything the reactor asks of the machine as one value: the window-server port, the pointer, Low Power Mode, display churn, the space kinds, the running applications, and the activity clock and window notifications it hands back. `Reactor::new` builds the live one, a test reactor a fake that knows nothing |
+| `system_reads.rs` | `SystemReads`, everything the reactor asks of the machine as one value: the window-server port, through which it makes a display's desktop key, the pointer, Low Power Mode, the displays' bounds, display churn, the space kinds, the running applications, and the activity clock and window notifications it hands back. `Reactor::new` builds the live one, a test reactor a fake that knows nothing |
 | `hotkeys/` | the hotkey controller: lowers a bound `Action` to a `Command` |
 | `launch_agent.rs` | the launch agent plist and the service subcommands |
 | `startup.rs` | the configured startup commands |

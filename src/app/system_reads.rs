@@ -1,6 +1,7 @@
 //! What the reactor asks of the machine, handed to it as one value: the window server, the pointer,
-//! Low Power Mode, display churn, the space kinds and the running applications, with the two notes
-//! it hands back, the window-server activity clock and the windows it wants notifications for.
+//! Low Power Mode, the displays' bounds, display churn, the space kinds and the running
+//! applications, with the two notes it hands back, the window-server activity clock and the windows
+//! it wants notifications for.
 //!
 //! Production builds the live value in `Reactor::new`; a test reactor gets [`SystemReads::fake`],
 //! where every read answers "unknown" until the test states it on the `FakeWindowServer` or swaps
@@ -8,7 +9,8 @@
 
 use std::sync::Arc;
 
-use rini_core::ids::{WindowServerId, pid_t};
+use objc2_core_foundation::CGRect;
+use rini_core::ids::{ScreenId, WindowServerId, pid_t};
 
 use crate::displays::platform::spaces::SpaceKinds;
 use crate::windows::domain::info::{AppInfo, WindowServerInfo};
@@ -23,6 +25,8 @@ pub(crate) struct SystemReads {
     /// Whether the pointer's button is down, as the event tap last saw it.
     pub(crate) mouse: fn() -> Option<MouseState>,
     pub(crate) low_power: fn() -> bool,
+    /// A display's whole bounds, menu bar and Dock included, in the overlay's coordinates.
+    pub(crate) display_bounds: fn(ScreenId) -> CGRect,
     /// Whether the spaces actor is mid display reconfiguration. The production flag is
     /// process-wide, so a test that read it would be quarantined by a spaces test beside it.
     pub(crate) display_churn: fn() -> bool,
@@ -45,6 +49,7 @@ impl SystemReads {
             window_server,
             mouse: crate::windows::platform::mouse::get_mouse_state,
             low_power: crate::app::power::is_low_power_mode_enabled,
+            display_bounds: |screen| objc2_core_graphics::CGDisplayBounds(screen.as_u32()),
             display_churn: crate::displays::platform::display_churn::is_active,
             space_kinds: SpaceKinds::from_window_server(),
             running_app: |pid| {
@@ -57,14 +62,15 @@ impl SystemReads {
     }
 
     /// Reads that know nothing: the window server is `window_server`, the pointer's state is
-    /// unknown, no application is running, nothing is in Low Power Mode or churning, and the notes
-    /// go nowhere.
+    /// unknown, every display's bounds are empty, no application is running, nothing is in Low
+    /// Power Mode or churning, and the notes go nowhere.
     #[cfg(test)]
     pub(crate) fn fake(window_server: Arc<FakeWindowServer>) -> Self {
         SystemReads {
             window_server,
             mouse: || None,
             low_power: || false,
+            display_bounds: |_| CGRect::ZERO,
             display_churn: || false,
             space_kinds: SpaceKinds::for_tests(),
             running_app: |_| None,
