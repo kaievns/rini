@@ -11,7 +11,8 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | | |
 |---|---|
 | `domain/motion.rs` | The root of `motion`: how a transition moves, as pure functions over rects, its modules below |
-| `domain/motion/plan.rs` | `FlightPlan` and where it lands each window (`FlightPlan::destination`), rigid groups, `reflow_plan` and `surface_plan`, `merge_plans` for a pass arriving mid-flight, a frame in its container and back (`group_relative`, `overlay_of`, and `installed` for a fresh plan), the containers an edge bounce or a nudge carries, and an entrance's shape |
+| `domain/motion/plan.rs` | `FlightPlan` and where it lands each window (`FlightPlan::destination`), rigid groups, `reflow_plan` and `surface_plan`, a frame in its container and back (`group_relative`, `overlay_of`, and `installed` for a fresh plan), the containers an edge bounce or a nudge carries, and an entrance's shape |
+| `domain/motion/plan/merge.rs` | `merge_plans`, a pass arriving mid-flight folded into the plan: a pan carrying every group, the members' votes for where their containers go, the largest cluster keeping each and the rest reparented, a newcomer riding beside the windows it sits beside, and the loose and floating tiles retargeted |
 | `domain/motion/surface.rs` | How a strip movement carries a surface: what the viewport at an offset shows (`viewport`), `surface_travel`, `pan_travel`, and what a window on the surface has to say (`SurfaceGeometry`) |
 | `domain/motion/glide.rs` | `Leg`: a container's movement over time; `Leg::toward`, the spring a merge bends it on, from where the score has its movement (`Score::along`) and as fast as its leg is going |
 | `domain/motion/easing.rs` | `MOTION_CURVE`, and the ease-in-out a stepping move's strip crosses on; a curve cut where its progress reaches a share, its speed unbroken through the cut (`CubicBezier::split`) |
@@ -73,7 +74,7 @@ in [`animation-smoothness.md`](animation-smoothness.md)).
 
 ## Reading order
 
-`domain/motion/plan.rs` → `domain/motion/glide.rs` → `domain/motion/score.rs` →
+`domain/motion/plan.rs` → `domain/motion/plan/merge.rs` → `domain/motion/glide.rs` → `domain/motion/score.rs` →
 `domain/motion/accents.rs` → `domain/motion/z_group.rs` → `domain/choreography.rs` →
 `domain/choreography/slide.rs` → `platform/overlay.rs` → `platform/renderer.rs`. The flight's
 score is kept by `src/transitions/domain/flight_score.rs`, and the actor that hands the renderer its

@@ -20,8 +20,8 @@ use crate::animation::domain::motion::easing::MOTION_CURVE;
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
 use crate::animation::domain::motion::nudge::{NUDGE_SHARE, NUDGE_STRETCH, flight_curve};
 use crate::animation::domain::motion::plan::{
-    AnimationTarget, FlightPlan, GroupKey, Member, Presented, ReflowPlan, animation_targets,
-    group_relative, merge_plans, on_overlay, stale_overlay_layers,
+    AnimationTarget, FlightPlan, GroupKey, Member, PlanDelta, Presented, ReflowPlan,
+    animation_targets, group_relative, merge_plans, on_overlay, stale_overlay_layers,
 };
 use crate::animation::domain::motion::score::{Channel, Edit, Node, SAMPLE_STEP, Score, Value};
 use crate::animation::domain::motion::tile;
@@ -292,10 +292,14 @@ impl Choreography for Slide {
         );
         let step = step_of(pass.accent.as_ref()).filter(|_| steps(playing, now));
         let seconds = stepped(pass.seconds, step);
-        let omega = spring_omega(seconds);
-        let drawn = |window: WindowId| pass.drawn.contains(&window);
-        let position = |key: GroupKey| merged.positions.get(&key).copied();
-        let origin = OverlayPoint::origin();
+        let bend = Bend {
+            merged: &merged,
+            delta: &delta,
+            drawn: pass.drawn,
+            now,
+            seconds,
+            omega: spring_omega(seconds),
+        };
         let mut making = Making::from(playing);
 
         // Read before any leg is bent: a container opened for a member leaving another goes on as
@@ -305,137 +309,12 @@ impl Choreography for Slide {
             .iter()
             .filter_map(|group| Some((group.key, *self.legs.get(&group.leaving?)?)))
             .collect();
-        for new in &delta.new_groups {
-            making.push(Edit::Place(
-                Node::Container(new.key),
-                Value::Point(new.install.rounded()),
-            ));
-            self.legs.remove(&new.key);
-            let Some(group) = merged.groups.iter().find(|g| g.key == new.key) else {
-                continue;
-            };
-            for member in &group.members {
-                let moved_in =
-                    delta.reparented.iter().any(|(w, _, to)| *w == member.window && *to == new.key);
-                if moved_in || !drawn(member.window) {
-                    continue;
-                }
-                making.push(Edit::Ride(member.window, new.key));
-                making.push(Edit::Place(
-                    Node::Tile(member.window),
-                    Value::Rect(member.rel.rounded()),
-                ));
-            }
-        }
-
-        // A member moving container starts at its plan frame, which its tile sits a rounding from:
-        // it keeps the tile's, or it jumps by up to a point.
-        let mut placed: Vec<WindowId> = Vec::new();
-        for &(window, _, to_key) in &delta.reparented {
-            let Some(frame) = merged.member(window).map(|member| member.start_frame()) else {
-                continue;
-            };
-            let (Some(Member::Rigid { rel, .. }), Some(Value::Rect(drawn))) =
-                (plan.member(window), making.score.model(Node::Tile(window)))
-            else {
-                continue;
-            };
-            let frame = GroupRect::new(
-                Point::new(
-                    frame.origin.x + drawn.origin.x - rel.origin.x,
-                    frame.origin.y + drawn.origin.y - rel.origin.y,
-                ),
-                drawn.size,
-            );
-            making.open(to_key, position(to_key).unwrap_or(origin));
-            making.push(Edit::Ride(window, to_key));
-            making.push(Edit::Place(Node::Tile(window), Value::Rect(frame.rounded())));
-            if making.score.track(Node::Tile(window), Channel::Base).is_some() {
-                making.push(Edit::Cut(Node::Tile(window), Channel::Base));
-            }
-            placed.push(window);
-        }
-
-        for &(key, to) in &delta.retargeted_groups {
-            let Some(Value::Point(along)) = making.score.along(Node::Container(key), now) else {
-                continue;
-            };
-            let to = to.rounded();
-            let leg = Leg::toward(self.legs.get(&key), along, to, now, omega);
-            making.push(Edit::Place(Node::Container(key), Value::Point(to)));
-            if seconds <= 0.0 {
-                self.legs.remove(&key);
-                continue;
-            }
-            making.push(Edit::Add(leg.track(key, SAMPLE_STEP)));
-            self.legs.insert(key, leg);
-        }
-        for new in &delta.new_groups {
-            let key = new.key;
-            let to = position(key).unwrap_or(new.install).rounded();
-            let install = new.install.rounded();
-            making.push(Edit::Place(Node::Container(key), Value::Point(to)));
-            if seconds <= 0.0 || install.same_as(to) {
-                self.legs.remove(&key);
-                continue;
-            }
-            let leg = match new.leaving {
-                Some(_) => Leg::toward(carried.get(&key), install, to, now, omega),
-                None => Leg::Curve {
-                    from: install,
-                    to,
-                    begin: now,
-                    seconds,
-                    curve: MOTION_CURVE,
-                },
-            };
-            making.push(Edit::Add(leg.track(key, SAMPLE_STEP)));
-            self.record(key, leg);
-        }
-
-        for &(window, key) in &delta.joined_tiles {
-            if !drawn(window) {
-                continue;
-            }
-            let Some(member) = merged.member(window) else { continue };
-            making.open(key, position(key).unwrap_or(origin));
-            making.push(Edit::Ride(window, key));
-            match member {
-                Member::Rigid { rel, .. } => {
-                    making.push(Edit::Place(Node::Tile(window), Value::Rect(rel.rounded())))
-                }
-                Member::Changing { from, to }
-                | Member::Entrance { from, to }
-                | Member::Floating { from, to } => {
-                    making.move_tile(window, from.rounded(), to.rounded(), now, seconds)
-                }
-            }
-        }
-
-        for &(window, to) in &delta.retargeted_tiles {
-            if !drawn(window) {
-                continue;
-            }
-            let node = Node::Tile(window);
-            let from = if placed.contains(&window) {
-                making.score.model(node)
-            } else {
-                making.score.sample(node, now)
-            };
-            let Some(Value::Rect(from)) = from else { continue };
-            making.move_tile(window, from, to.rounded(), now, seconds);
-        }
-
-        let tiles: Vec<(WindowId, GroupKey)> = making.score.tiles().collect();
-        let containers: Vec<GroupKey> = making.score.containers().collect();
-        let (stale, empty) = stale_overlay_layers(&tiles, pass.drawn, &containers);
-        for window in stale {
-            making.push(Edit::Drop(Node::Tile(window)));
-        }
-        for key in empty {
-            making.push(Edit::Drop(Node::Container(key)));
-            self.legs.remove(&key);
-        }
+        self.open_groups(&mut making, &bend);
+        let placed = place_moved(&mut making, &bend, plan);
+        self.bend_groups(&mut making, &bend, &carried);
+        join_tiles(&mut making, &bend);
+        bend_tiles(&mut making, &bend, &placed);
+        self.drop_stale(&mut making, pass.drawn);
 
         if let Some((offset, plain)) = step {
             for track in step_tracks(&making.score, offset, plain * NUDGE_STRETCH, now) {
@@ -475,6 +354,183 @@ impl Slide {
         } else {
             self.legs.insert(key, leg);
         }
+    }
+
+    /// The containers a merge opens, at where they install, and a newcomer that opened one in it.
+    fn open_groups(&mut self, making: &mut Making, bend: &Bend) {
+        for new in &bend.delta.new_groups {
+            making.push(Edit::Place(
+                Node::Container(new.key),
+                Value::Point(new.install.rounded()),
+            ));
+            self.legs.remove(&new.key);
+            let Some(group) = bend.merged.groups.iter().find(|g| g.key == new.key) else {
+                continue;
+            };
+            for member in &group.members {
+                let moved_in = bend
+                    .delta
+                    .reparented
+                    .iter()
+                    .any(|(w, _, to)| *w == member.window && *to == new.key);
+                if moved_in || !bend.drawn(member.window) {
+                    continue;
+                }
+                making.push(Edit::Ride(member.window, new.key));
+                making.push(Edit::Place(
+                    Node::Tile(member.window),
+                    Value::Rect(member.rel.rounded()),
+                ));
+            }
+        }
+    }
+
+    /// Every retargeted container bent from where the score has its movement, on a spring as fast
+    /// as its leg is going; a container opened for a member leaving another carrying on that one's
+    /// leg (`carried`), and one opened for a newcomer on `MOTION_CURVE`.
+    fn bend_groups(&mut self, making: &mut Making, bend: &Bend, carried: &HashMap<GroupKey, Leg>) {
+        let (now, seconds, omega) = (bend.now, bend.seconds, bend.omega);
+        for &(key, to) in &bend.delta.retargeted_groups {
+            let Some(Value::Point(along)) = making.score.along(Node::Container(key), now) else {
+                continue;
+            };
+            let to = to.rounded();
+            let leg = Leg::toward(self.legs.get(&key), along, to, now, omega);
+            making.push(Edit::Place(Node::Container(key), Value::Point(to)));
+            if seconds <= 0.0 {
+                self.legs.remove(&key);
+                continue;
+            }
+            making.push(Edit::Add(leg.track(key, SAMPLE_STEP)));
+            self.legs.insert(key, leg);
+        }
+        for new in &bend.delta.new_groups {
+            let key = new.key;
+            let to = bend.position(key).unwrap_or(new.install).rounded();
+            let install = new.install.rounded();
+            making.push(Edit::Place(Node::Container(key), Value::Point(to)));
+            if seconds <= 0.0 || install.same_as(to) {
+                self.legs.remove(&key);
+                continue;
+            }
+            let leg = match new.leaving {
+                Some(_) => Leg::toward(carried.get(&key), install, to, now, omega),
+                None => Leg::Curve {
+                    from: install,
+                    to,
+                    begin: now,
+                    seconds,
+                    curve: MOTION_CURVE,
+                },
+            };
+            making.push(Edit::Add(leg.track(key, SAMPLE_STEP)));
+            self.record(key, leg);
+        }
+    }
+
+    /// What the flight no longer draws dropped, with the legs of the containers it emptied.
+    fn drop_stale(&mut self, making: &mut Making, drawn: &[WindowId]) {
+        let tiles: Vec<(WindowId, GroupKey)> = making.score.tiles().collect();
+        let containers: Vec<GroupKey> = making.score.containers().collect();
+        let (stale, empty) = stale_overlay_layers(&tiles, drawn, &containers);
+        for window in stale {
+            making.push(Edit::Drop(Node::Tile(window)));
+        }
+        for key in empty {
+            making.push(Edit::Drop(Node::Container(key)));
+            self.legs.remove(&key);
+        }
+    }
+}
+
+/// A pass merged into a moving flight: the plan and delta it left, the windows drawn, and the
+/// clock its legs run on.
+struct Bend<'a> {
+    merged: &'a FlightPlan,
+    delta: &'a PlanDelta,
+    drawn: &'a [WindowId],
+    now: f64,
+    seconds: f64,
+    omega: f64,
+}
+
+impl Bend<'_> {
+    fn drawn(&self, window: WindowId) -> bool { self.drawn.contains(&window) }
+
+    fn position(&self, key: GroupKey) -> Option<OverlayPoint> {
+        self.merged.positions.get(&key).copied()
+    }
+}
+
+/// A member moving container starts at its plan frame, which its tile sits a rounding from: it
+/// keeps the tile's, or it jumps by up to a point. Gives the windows it placed.
+fn place_moved(making: &mut Making, bend: &Bend, plan: &FlightPlan) -> Vec<WindowId> {
+    let mut placed: Vec<WindowId> = Vec::new();
+    for &(window, _, to_key) in &bend.delta.reparented {
+        let Some(frame) = bend.merged.member(window).map(|member| member.start_frame()) else {
+            continue;
+        };
+        let (Some(Member::Rigid { rel, .. }), Some(Value::Rect(drawn))) =
+            (plan.member(window), making.score.model(Node::Tile(window)))
+        else {
+            continue;
+        };
+        let frame = GroupRect::new(
+            Point::new(
+                frame.origin.x + drawn.origin.x - rel.origin.x,
+                frame.origin.y + drawn.origin.y - rel.origin.y,
+            ),
+            drawn.size,
+        );
+        making.open(to_key, bend.position(to_key).unwrap_or(OverlayPoint::origin()));
+        making.push(Edit::Ride(window, to_key));
+        making.push(Edit::Place(Node::Tile(window), Value::Rect(frame.rounded())));
+        if making.score.track(Node::Tile(window), Channel::Base).is_some() {
+            making.push(Edit::Cut(Node::Tile(window), Channel::Base));
+        }
+        placed.push(window);
+    }
+    placed
+}
+
+/// Tiles joining the flight, each riding its container from its frame in it.
+fn join_tiles(making: &mut Making, bend: &Bend) {
+    for &(window, key) in &bend.delta.joined_tiles {
+        if !bend.drawn(window) {
+            continue;
+        }
+        let Some(member) = bend.merged.member(window) else {
+            continue;
+        };
+        making.open(key, bend.position(key).unwrap_or(OverlayPoint::origin()));
+        making.push(Edit::Ride(window, key));
+        match member {
+            Member::Rigid { rel, .. } => {
+                making.push(Edit::Place(Node::Tile(window), Value::Rect(rel.rounded())))
+            }
+            Member::Changing { from, to }
+            | Member::Entrance { from, to }
+            | Member::Floating { from, to } => {
+                making.move_tile(window, from.rounded(), to.rounded(), bend.now, bend.seconds)
+            }
+        }
+    }
+}
+
+/// Loose tiles bent from where the score draws them; one `place_moved` just placed, from there.
+fn bend_tiles(making: &mut Making, bend: &Bend, placed: &[WindowId]) {
+    for &(window, to) in &bend.delta.retargeted_tiles {
+        if !bend.drawn(window) {
+            continue;
+        }
+        let node = Node::Tile(window);
+        let from = if placed.contains(&window) {
+            making.score.model(node)
+        } else {
+            making.score.sample(node, bend.now)
+        };
+        let Some(Value::Rect(from)) = from else { continue };
+        making.move_tile(window, from, to.rounded(), bend.now, bend.seconds);
     }
 }
 
