@@ -2539,3 +2539,30 @@ fn the_overlay_pictures_a_bar_only_when_rini_draws_none() {
     reactor.settings_mut().bar.enabled = false;
     assert!(picture_bar(&mut reactor));
 }
+
+/// A display CoreGraphics reports no UUID for goes by `DisplayUuid::fallback`, and that name reaches
+/// the layout file as a real UUID would: the space it owns and the arrangement it forms are kept
+/// under it. Its `ScreenId` is not stable across a reconnect, so neither is anything kept under it.
+#[test]
+fn a_display_with_no_uuid_is_written_to_the_layout_file_under_its_fallback_name() {
+    let mut reactor = test_reactor();
+    let space = SpaceId::new(1);
+    let frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let mut screens = make_screen_snapshots(vec![frame], vec![Some(space)]);
+    let fallback = DisplayUuid::fallback(screens[0].id);
+    screens[0].display_uuid = fallback.clone();
+
+    reactor.handle_event(space_state_event_from_screens(screens));
+
+    assert_eq!(
+        reactor.display_affinity().space_for_display(&fallback),
+        Some(space)
+    );
+    assert_eq!(
+        reactor.display_affinity().current_setup().to_string(),
+        "cgdisplay-0"
+    );
+    let file = reactor.layout().serialize_to_string(&reactor.rini_state().display_memory);
+    assert!(file.contains(r#"display_space:{"cgdisplay-0":(1)}"#), "{file}");
+    assert!(file.contains(r#"current:"cgdisplay-0""#), "{file}");
+}

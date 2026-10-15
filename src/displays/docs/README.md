@@ -79,3 +79,12 @@ it mixes a pure cache with the reads that fill it. It is the sole named exceptio
 [`tests/architecture.rs`](../../../tests/architecture.rs) and the reason that list
 exists. Every read the cache makes goes through the `System` port it is generic over; it still
 holds each display's uuid as a `CFRetained<CFString>`, and the free reads beside it have no port.
+
+A display CoreGraphics reports no UUID for is named `DisplayUuid::fallback`, `cgdisplay-{id}`
+from its `ScreenId`, and that name reaches `~/.rini/layout.ron` like a real UUID: the space it
+owns and the arrangement it forms are kept under it
+(`a_display_with_no_uuid_is_written_to_the_layout_file_under_its_fallback_name`), as is every
+other record keyed by display. A `ScreenId` can
+
+change across a reconnect, and a display's remembered space is never pruned, so each new id leaves
+the records under the old name behind.
