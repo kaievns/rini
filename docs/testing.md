@@ -46,9 +46,11 @@ the frames a bar draw puts, and `BarPanel::draw` still decides the order it puts
 ## Which seam to use
 
 Reach for the seam where the read is made; a rule below it takes the answers as values and needs
-none. Each boundary has one seam but the window server, which has three: `WindowServer`; the frames
-thread's narrower `Reader`, until that thread moves onto the port; and the pictures thread's
-`Capturer`, which makes its captures as well as its reads.
+none. Each boundary has one seam but the window server, which has more: `WindowServer`; the frames
+thread's narrower `Reader`, until that thread moves onto the port; the spaces actor's `LiveDisplays`
+(the active space, the menu-bar display, each display's spaces and the quiet clock) and
+`SpaceKinds` (each space's kind), beside the port; and the pictures thread's `Capturer`, which makes
+its captures as well as its reads.
 
 | what the code asks | seam | production | a test passes |
 |---|---|---|---|
