@@ -9,7 +9,7 @@ use test_log::test;
 use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
-use crate::displays::domain::topology::{DisplaySet, Topology};
+use crate::displays::domain::topology::Topology;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 use crate::windows::domain::request::Request;
 use crate::workspaces::{LayoutCommand, LayoutEvent};
@@ -415,7 +415,7 @@ fn topology_change_clears_stale_pending_hide_target_before_next_workspace_layout
         vec![Some(space)],
         |state| {
             state.has_seen_display_set = true;
-            state.topology = Topology::Changed(DisplaySet::Changed);
+            state.topology = Topology::Changed;
         },
     ));
     let requests = apps.requests();

@@ -187,8 +187,9 @@ impl ForwardedSpaceState {
 pub enum Topology {
     #[default]
     Unchanged,
-    /// The displays changed with nothing laid out on any before: no display set has been seen.
-    Changed(DisplaySet),
+    /// The first displays attached, with nothing laid out on any before: no display set has been
+    /// seen. Attaching them is a display set change.
+    Changed,
     /// The displays changed under a layout, which is refreshed.
     Relayout(DisplaySet),
     /// As `Relayout`, and every screen shows a space no other screen shows, so a display now on
@@ -237,7 +238,7 @@ impl Topology {
         if display_set == DisplaySet::Same && !order_changed && !geometry_changed {
             Self::Unchanged
         } else if !has_seen_display_set && previous_displays.is_empty() {
-            Self::Changed(display_set)
+            Self::Changed
         } else if every_space_once(screens) {
             Self::Remap(display_set)
         } else {
@@ -250,9 +251,7 @@ impl Topology {
     pub fn display_set_changed(self) -> bool {
         matches!(
             self,
-            Self::Changed(DisplaySet::Changed)
-                | Self::Relayout(DisplaySet::Changed)
-                | Self::Remap(DisplaySet::Changed)
+            Self::Changed | Self::Relayout(DisplaySet::Changed) | Self::Remap(DisplaySet::Changed)
         )
     }
 
@@ -610,7 +609,7 @@ mod tests {
     fn a_display_set_change_invalidates_pending_targets_and_is_not_command_only() {
         let current = snapshot(&[rect(0., 0.)]);
         let mut incoming = current.clone();
-        incoming.topology = Topology::Changed(DisplaySet::Changed);
+        incoming.topology = Topology::Changed;
         let active: HashSet<SpaceId> = current.active_spaces.clone();
         let a = analyze_space_snapshot(
             &current,
@@ -688,7 +687,7 @@ mod tests {
                 vec![],
                 vec![a(Some(1))],
                 false,
-                Topology::Changed(Set),
+                Topology::Changed,
             ),
             (
                 "back after every display left",
@@ -748,8 +747,7 @@ mod tests {
         use DisplaySet::{Changed as Set, Same};
         let rows = [
             (Topology::Unchanged, [false, false, false, false]),
-            (Topology::Changed(Set), [true, true, false, false]),
-            (Topology::Changed(Same), [true, false, false, false]),
+            (Topology::Changed, [true, true, false, false]),
             (Topology::Relayout(Set), [true, true, true, false]),
             (Topology::Relayout(Same), [true, false, true, false]),
             (Topology::Remap(Set), [true, true, true, true]),

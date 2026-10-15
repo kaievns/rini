@@ -1444,7 +1444,7 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
     reactor.handle_event(space_state_event_with(
         vec![builtin],
         vec![Some(builtin_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
 
     // The mapping must SURVIVE the unplug — this is what prune_display_state destroyed.
@@ -1458,7 +1458,7 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
     reactor.handle_event(space_state_event_with(
         vec![builtin, external],
         vec![Some(builtin_space), Some(replugged_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
 
     // The mapping is overwritten by update_space_display regardless, so asserting on
@@ -1541,7 +1541,7 @@ fn replug_returns_the_windows_that_were_on_that_display() {
     reactor.handle_event(space_state_event_with(
         vec![builtin],
         vec![Some(builtin_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
 
     // Replug under a new space id. macOS still reports all three on the built-in.
@@ -1552,7 +1552,7 @@ fn replug_returns_the_windows_that_were_on_that_display() {
     reactor.handle_event(space_state_event_with(
         vec![builtin, external],
         vec![Some(builtin_space), Some(replugged_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
 
     let space_of = |reactor: &Reactor, window: WindowId| {
@@ -1632,7 +1632,7 @@ fn arranging_one_setup_does_not_disturb_another() {
     set_space_membership(&reactor, &[(builtin_space, &[901]), (external_space, &[])]);
     reactor.handle_event(space_state_event_from_screens_with(
         vec![builtin(builtin_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
     reactor.handle_event(space_state_event_from_screens(vec![builtin(builtin_space)]));
     reactor.display_affinity_mut().set_window_home(terminal, "builtin");
@@ -1646,7 +1646,7 @@ fn arranging_one_setup_does_not_disturb_another() {
     set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[901])]);
     reactor.handle_event(space_state_event_from_screens_with(
         docked(builtin_space, external_space),
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
     assert_eq!(
         reactor.display_affinity().window_home(terminal),
@@ -1733,7 +1733,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
     set_space_membership(&reactor, &[(external_space, &[901])]);
     reactor.handle_event(space_state_event_from_screens_with(
         vec![studio(external_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
     reactor.handle_event(space_state_event_from_screens(vec![studio(external_space)]));
     assert_eq!(
@@ -1803,7 +1803,7 @@ fn a_display_never_seen_before_takes_no_windows() {
     set_space_membership(&reactor, &[(builtin_space, &[901, 902]), (external_space, &[])]);
     reactor.handle_event(space_state_event_from_screens_with(
         vec![builtin(builtin_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
     reactor.handle_event(space_state_event_from_screens(vec![builtin(builtin_space)]));
 
@@ -1811,7 +1811,7 @@ fn a_display_never_seen_before_takes_no_windows() {
     set_space_membership(&reactor, &[(builtin_space, &[901, 902]), (projector_space, &[])]);
     reactor.handle_event(space_state_event_from_screens_with(
         vec![builtin(builtin_space), projector(projector_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
     reactor.handle_event(space_state_event_from_screens(vec![
         builtin(builtin_space),
@@ -1890,7 +1890,7 @@ fn replug_leaves_the_other_display_group_order_untouched() {
     reactor.handle_event(space_state_event_with(
         vec![builtin],
         vec![Some(builtin_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
     set_space_membership(&reactor, &[
         (builtin_space, &[801, 802, 803, 909]),
@@ -1899,7 +1899,7 @@ fn replug_leaves_the_other_display_group_order_untouched() {
     reactor.handle_event(space_state_event_with(
         vec![builtin, external],
         vec![Some(builtin_space), Some(replugged_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
 
     assert_eq!(
@@ -1948,7 +1948,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
     reactor.handle_event(space_state_event_with(
         vec![builtin],
         vec![Some(builtin_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
     reactor.handle_event(space_state_event(vec![builtin], vec![Some(builtin_space)]));
     reactor.handle_event(space_state_event(vec![builtin], vec![Some(builtin_space)]));
@@ -1964,7 +1964,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
     reactor.handle_event(space_state_event_with(
         vec![builtin, external],
         vec![Some(builtin_space), Some(external_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
     reactor.handle_event(space_state_event(vec![builtin, external], vec![
         Some(builtin_space),
@@ -2050,7 +2050,7 @@ fn replug_rebuilds_strip_adjacency() {
     reactor.handle_event(space_state_event_with(
         vec![builtin],
         vec![Some(builtin_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
     set_space_membership(&reactor, &[
         (builtin_space, &[901, 902, 908, 909]),
@@ -2059,7 +2059,7 @@ fn replug_rebuilds_strip_adjacency() {
     reactor.handle_event(space_state_event_with(
         vec![builtin, external],
         vec![Some(builtin_space), Some(replugged_space)],
-        |state| state.topology = Topology::Changed(DisplaySet::Changed),
+        |state| state.topology = Topology::Changed,
     ));
 
     let strip_after = reactor.layout().ordered_windows_in_active_workspace(replugged_space);
