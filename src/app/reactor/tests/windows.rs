@@ -509,6 +509,27 @@ fn a_rekeyed_window_forgets_its_old_id_once() {
     assert_eq!(forgotten(&mut pictures), vec![old]);
 }
 
+/// A window found again under a new id keeps its place in the order the switchers go by, rather
+/// than dropping behind windows not touched since.
+#[test]
+fn a_rekeyed_window_keeps_its_place_in_the_focus_order() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(3));
+    apps.requests();
+    for idx in 1..=3 {
+        reactor.handle_event(Event::WindowServerFocusChanged(WindowId::new(1, idx), space));
+    }
+    let (old, new) = (WindowId::new(1, 2), WindowId::new(1, 99));
+
+    rekey_window(&mut reactor, old, new);
+
+    let order = reactor.main_window_tracker.focus_order();
+    assert_eq!(order.position(new), Some(1), "second, where the old id was");
+    assert_eq!(order.position(old), None);
+}
+
 /// An Accessibility destruction during a refresh quarantine can be an element replaced while the
 /// window lives on, so the window keeps its pictures.
 #[test]

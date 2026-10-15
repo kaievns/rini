@@ -2637,6 +2637,7 @@ impl Reactor {
         let (new_windows, process_outcome) = window_discovery::process_window_list(
             &mut self.state,
             &mut self.layout_manager,
+            &mut self.main_window_tracker,
             observed_windows,
             &app_info,
         );

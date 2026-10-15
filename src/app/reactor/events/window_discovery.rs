@@ -2,6 +2,7 @@ use tracing::{debug, trace};
 
 use super::window;
 use crate::app::reactor::LayoutEvent;
+use crate::windows::domain::focus::MainWindowTracker;
 use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::domain::state::{WindowFilter, WindowState};
 use crate::windows::domain::transaction::TransactionManager;
@@ -107,6 +108,7 @@ fn should_emit_window_for_space(
 fn sync_window_server_id_mapping(
     state: &mut crate::app::reactor::state::RiniState,
     layout: &mut crate::app::reactor::managers::LayoutManager,
+    focus: &mut MainWindowTracker,
     wid: WindowId,
     old_sys_id: Option<WindowServerId>,
     new_sys_id: Option<WindowServerId>,
@@ -130,6 +132,7 @@ fn sync_window_server_id_mapping(
                 previous_wid,
                 wid,
             );
+            focus.rekey_focus_order(previous_wid, wid);
             outcome = outcome
                 .with_forgotten_window(previous_wid)
                 .with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(previous_wid));
@@ -276,6 +279,7 @@ pub(crate) struct ObservedWindow {
 pub(crate) fn process_window_list(
     state: &mut crate::app::reactor::state::RiniState,
     layout: &mut crate::app::reactor::managers::LayoutManager,
+    focus: &mut MainWindowTracker,
     observed: Vec<ObservedWindow>,
     app_info: &Option<AppInfo>,
 ) -> (
@@ -307,6 +311,7 @@ pub(crate) fn process_window_list(
                 outcome.absorb(sync_window_server_id_mapping(
                     state,
                     layout,
+                    focus,
                     wid,
                     old_sys_id,
                     info.sys_id,
@@ -332,6 +337,7 @@ pub(crate) fn process_window_list(
             outcome.absorb(sync_window_server_id_mapping(
                 state,
                 layout,
+                focus,
                 wid,
                 None,
                 info.sys_id,
@@ -354,6 +360,7 @@ pub(crate) fn process_window_list(
             outcome.absorb(sync_window_server_id_mapping(
                 state,
                 layout,
+                focus,
                 wid,
                 old_sys_id,
                 info.sys_id,
@@ -368,6 +375,7 @@ pub(crate) fn process_window_list(
             outcome.absorb(sync_window_server_id_mapping(
                 state,
                 layout,
+                focus,
                 wid,
                 None,
                 info.sys_id,

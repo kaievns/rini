@@ -63,6 +63,12 @@ switcher answers "every window I have, wherever it is".
 > **Asked 2026-10-01.** "also while you're at it, switch the app windows switcher (cmd-tilda) from
 > cycling to recent windows as the rest of the app-switcher popups, because cycling is incosistent
 > with the others and it's  confusing as fuck."
+- A window found again under a new identity for the same window-server window MUST keep its place in
+  the order. It is the same window to the user, and dropping it to the back puts it behind windows
+  they have not touched since.
+
+> **Found 2026-10-15, not reported.** The focus order could carry a window across an identity change,
+> and nothing asked it to: the new id was missing from the order until it was focused again.
 - A window rini has never seen focused MUST still appear, after the ones it has, ordered by space, then
   workspace position, then window id. The enumeration arrives from a hash map whose order differs run
   to run, so the tail MUST be sorted explicitly or the list reshuffles between two presses of the same

@@ -66,6 +66,7 @@ impl FocusOrder {
     }
 
     /// Most recently focused first.
+    #[cfg(test)]
     pub fn iter(&self) -> impl Iterator<Item = WindowId> + '_ {
         self.recent.iter().copied()
     }
@@ -75,10 +76,12 @@ impl FocusOrder {
         self.recent.iter().position(|candidate| *candidate == window)
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.recent.len()
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.recent.is_empty()
     }
