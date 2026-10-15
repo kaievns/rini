@@ -231,6 +231,54 @@ impl LayoutEngine {
         result
     }
 
+    /// Forget every native space no display shows or remembers and no window is on, so the file
+    /// does not keep a strip per space id for every reconnect there ever was. `live` is the spaces
+    /// the attached displays show. Nothing is forgotten before the startup restore has run, since
+    /// until then the saved spaces have not been moved onto this session's ids.
+    pub fn forget_vacant_spaces(
+        &mut self,
+        window_store: &WindowStore,
+        memory: &DisplayMemory,
+        live: &[SpaceId],
+    ) -> Vec<SpaceId> {
+        if self.startup_restore_pending {
+            return Vec::new();
+        }
+        let mut saved = self.workspace_layouts.spaces();
+        saved.extend(self.virtual_workspace_manager.initialized_spaces());
+        saved.extend(
+            self.virtual_workspace_manager
+                .persisted_focus_locations()
+                .into_iter()
+                .map(|(space, _, _)| space),
+        );
+        let mut kept: HashSet<SpaceId> = live.iter().copied().collect();
+        kept.extend(
+            saved
+                .iter()
+                .copied()
+                .filter(|space| memory.affinity.display_for_space(*space).is_some()),
+        );
+        kept.extend(self.persistence.saved_active_space.map(SpaceId::new));
+        let mut occupied: HashSet<SpaceId> =
+            window_store.spaces_with_assignments().into_iter().collect();
+        occupied.extend(self.floating_positions.spaces());
+        for (space, workspace, layout) in self.workspace_layouts.all_layouts() {
+            if !self.workspace_tree(workspace).all_windows_in_layout(layout).is_empty() {
+                occupied.insert(space);
+            }
+        }
+
+        let vacant = crate::workspaces::domain::workspaces::vacant_spaces(&saved, &kept, &occupied);
+        for &space in &vacant {
+            for (workspace, layout) in self.workspace_layouts.forget_space(space) {
+                self.workspace_tree_mut(workspace).remove_layout(layout);
+            }
+            self.virtual_workspace_manager.forget_space(space);
+        }
+        vacant
+    }
+
     /// Save a snapshot repeatedly and cheaply, without reshaping live layout state.
     ///
     /// `save_current_layout` is the right call for an explicit, one-off "save my

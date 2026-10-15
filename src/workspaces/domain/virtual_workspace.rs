@@ -280,6 +280,14 @@ impl WorkspaceStore {
         Ok(())
     }
 
+    /// Forget a native space: which workspace it showed, and every focus remembered on it.
+    pub fn forget_space(&mut self, space: SpaceId) {
+        self.active_workspace_per_space.remove(&space);
+        for workspace in self.workspaces.values_mut() {
+            workspace.set_last_focused(space, None);
+        }
+    }
+
     /// Move a display's per-display state to the new native space id macOS mints on reconnect.
     /// Only the "showing" entry and per-display focus move; nothing is deleted.
     pub fn remap_space(

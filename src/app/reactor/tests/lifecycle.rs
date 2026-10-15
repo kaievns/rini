@@ -478,3 +478,40 @@ fn autosave_preserves_floating_restore_frame() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The autosave is where a space id macOS has stopped using leaves the file.
+#[test]
+fn an_autosave_forgets_a_space_the_display_moved_off_and_left_empty() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let (old, new) = (SpaceId::new(1), SpaceId::new(2));
+    let dir = std::env::temp_dir().join(format!("rini-vacant-autosave-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    reactor.autosave_path = Some(dir.join("layout.ron"));
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(old)]));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(new)]));
+    let spaces = || {
+        reactor
+            .layout_manager
+            .layout_engine
+            .virtual_workspace_manager()
+            .initialized_spaces()
+    };
+    assert!(
+        spaces().contains(&old),
+        "the fixture has the old space to forget"
+    );
+
+    reactor.save_layout_now();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(
+        reactor
+            .layout_manager
+            .layout_engine
+            .virtual_workspace_manager()
+            .initialized_spaces(),
+        vec![new]
+    );
+}

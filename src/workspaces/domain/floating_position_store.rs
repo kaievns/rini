@@ -66,6 +66,10 @@ impl FloatingPositionStore {
         locations
     }
 
+    pub fn spaces(&self) -> impl Iterator<Item = SpaceId> + '_ {
+        self.positions.keys().map(|(space, _, _)| *space)
+    }
+
     pub fn remap_space(&mut self, old_space: SpaceId, new_space: SpaceId) {
         if old_space == new_space {
             return;

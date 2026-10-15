@@ -223,7 +223,11 @@ pub fn handle_command_reactor_save_and_exit(
     state: &RiniState,
     layout: &mut LayoutManager,
     active_space: Option<SpaceId>,
+    live: &[SpaceId],
 ) -> anyhow::Result<EventOutcome> {
+    layout
+        .layout_engine
+        .forget_vacant_spaces(&state.windows, &state.display_memory, live);
     if let Err(e) = save_layout(state, layout, rini_core::paths::restore_file(), active_space) {
         error!("Could not save the layout file: {e}");
         // A quit request is conditional on a durable canonical save. Keep Rini running when the

@@ -1592,10 +1592,12 @@ impl Reactor {
             }
             Event::Command(Command::Reactor(ReactorCommand::SaveAndExit)) => {
                 let active_space = self.active_display_space();
+                let live: Vec<SpaceId> = self.space_state.iter_known_spaces().collect();
                 return command_workflow::handle_command_reactor_save_and_exit(
                     &self.state,
                     &mut self.layout_manager,
                     active_space,
+                    &live,
                 );
             }
             Event::Command(Command::Reactor(ReactorCommand::SaveLayout { path })) => {
@@ -5842,6 +5844,12 @@ impl Reactor {
             &self.state.windows,
             &mut self.state.display_memory,
             &connected,
+        );
+        let live: Vec<SpaceId> = self.space_state.iter_known_spaces().collect();
+        self.layout_manager.layout_engine.forget_vacant_spaces(
+            &self.state.windows,
+            &self.state.display_memory,
+            &live,
         );
         // autosave_current_layout, NOT save_current_layout: the latter also
         // normalizes floating-versus-tiled ownership and rewrites stored floating

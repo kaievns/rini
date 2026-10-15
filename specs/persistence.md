@@ -51,8 +51,22 @@ the strip fresh.
   answers, and writing the second for the first erases what was remembered.
 - A save MUST NOT write an origin hint that has no corresponding saved layout: a stale observation is
   worse than none, because it makes a portable file look unambiguous.
+- The autosave and the quit save MUST forget what is kept under a native space that no attached
+  display shows, that no display is remembered on, that is not the saved active space, and that no
+  window is on: its layouts, which workspace it showed and the focus remembered on it. macOS mints a
+  new space id on every reconnect and never reissues one, so such a space is one nothing reaches
+  again. A space a display is remembered on MUST stay, windows or none, because the next start moves
+  its layouts and the workspace it showed onto the display's new id; a space a window is on MUST stay,
+  because that window can come back to it. Nothing is forgotten before the startup restore has moved
+  the saved spaces onto this session's ids, since until then every one of them looks dead.
+
+> **Reported 2026-10-15.** The dead-code sweep found Kai's `~/.rini/layout.ron` holding 68 workspace
+> layouts over 17 native space ids, only 3 of them mapped to a display. Kai's decision: fix it. On
+> the copy taken that day, the rule forgets 14 of 18 space ids, all of them empty, and keeps the 4
+> displays' spaces; the file goes from 56069 to 38532 bytes.
 
 ## Where it lives
 
 `src/workspaces/engine/persistence/` is the whole of it: `storage.rs` loads and saves, `snapshot.rs` is
-the file shape, `restore.rs` the scoping, `matcher.rs` the identity rules.
+the file shape, `restore.rs` the scoping, `matcher.rs` the identity rules. Which native spaces a save
+forgets is decided in `src/workspaces/domain/workspaces.rs`.
