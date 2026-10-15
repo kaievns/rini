@@ -415,6 +415,12 @@ impl Score {
         presented
     }
 
+    /// When the last of `node`'s tracks ends; none with no tracks.
+    #[cfg(test)]
+    pub fn ends(&self, node: Node) -> Option<f64> {
+        self.tracks(node).map(Track::ends).reduce(f64::max)
+    }
+
     /// Every track has ended, so every node is drawn at its model.
     pub fn settled(&self, at: f64) -> bool {
         self.tracks.values().all(|track| track.ends() <= at)
@@ -809,7 +815,7 @@ mod tests {
     }
 
     /// Settled once the last track has ended, wherever the tracks are; `remaining` counts down to
-    /// it.
+    /// it and `ends` says when each node's last track ends.
     #[test]
     fn settled_once_every_track_has_ended() {
         let mut score = moving(0.0, 100.0, 1.0, 0.35, Curve::Bezier(MOTION_CURVE));
@@ -833,6 +839,13 @@ mod tests {
             Curve::Linear,
         ));
         let last = 1.2 + 0.455;
+        assert_eq!(
+            score.ends(strip()),
+            Some(last),
+            "the nudge outlasts the movement"
+        );
+        assert_eq!(score.ends(tile()), Some(1.0 + 0.2));
+        assert_eq!(score.ends(Node::Container(GroupKey::Floating)), None);
         for at in [1.0, 1.3, 1.5, last - 1e-9] {
             assert!(!score.settled(at), "{at}");
             assert!((score.remaining(at) - (last - at)).abs() < 1e-12, "{at}");
