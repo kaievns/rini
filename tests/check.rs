@@ -154,3 +154,82 @@ fn every_crate_inherits_the_workspace_lints() {
         );
     }
 }
+
+fn rust_sources() -> Vec<(String, String)> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(&Path::new(ROOT).join("src"), &mut files);
+    walk(&Path::new(ROOT).join("crates"), &mut files);
+    let mut sources: Vec<(String, String)> = files
+        .into_iter()
+        .map(|path| {
+            let relative = path.strip_prefix(ROOT).unwrap().to_string_lossy().into_owned();
+            (relative, fs::read_to_string(&path).unwrap())
+        })
+        .collect();
+    sources.sort();
+    sources
+}
+
+/// docs/testing.md's section on clippy, where both tables are.
+fn clippy_section() -> String {
+    let doc = fs::read_to_string(Path::new(ROOT).join("docs/testing.md")).unwrap();
+    let (_, section) = doc.split_once("\n## Clippy is a check").unwrap();
+    section.split("\n## ").next().unwrap().to_owned()
+}
+
+/// The roadmap is not in the repo, so the row of every id an allow cites is in docs/testing.md, and
+/// a row no allow cites any more is gone from it.
+#[test]
+fn every_roadmap_id_an_allow_cites_has_a_row_in_docs_testing() {
+    let mut cited: Vec<String> = rust_sources()
+        .iter()
+        .flat_map(|(_, source)| source.split("reason = \"P").skip(1).map(str::to_owned))
+        .map(|rest| format!("P{}", rest.split('"').next().unwrap()))
+        .collect();
+    cited.sort();
+    cited.dedup();
+    let mut rows: Vec<String> = clippy_section()
+        .lines()
+        .filter_map(|line| line.strip_prefix("| P"))
+        .map(|rest| format!("P{}", rest.split(' ').next().unwrap()))
+        .collect();
+    rows.sort();
+    assert!(!cited.is_empty());
+    assert_eq!(
+        rows, cited,
+        "the id table in docs/testing.md against the ids allows cite"
+    );
+}
+
+/// Every `#![allow]` over a whole crate or file has its row in docs/testing.md, and every row has
+/// its allow.
+#[test]
+fn every_file_wide_allow_is_named_in_docs_testing() {
+    let allowing: Vec<String> = rust_sources()
+        .into_iter()
+        .filter(|(_, source)| source.lines().any(|line| line.trim_start().starts_with("#![allow(")))
+        .map(|(path, _)| path)
+        .collect();
+    let mut rows: Vec<String> = clippy_section()
+        .lines()
+        .filter_map(|line| line.strip_prefix("| `"))
+        .filter_map(|rest| rest.split_once("` |").map(|(path, _)| path.to_owned()))
+        .filter(|path| path.ends_with(".rs"))
+        .collect();
+    rows.sort();
+    assert!(!allowing.is_empty());
+    assert_eq!(
+        rows, allowing,
+        "the file table in docs/testing.md against the files that allow"
+    );
+}

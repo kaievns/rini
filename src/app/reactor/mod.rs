@@ -23,8 +23,7 @@ pub mod state;
 mod testing;
 
 #[cfg(test)]
-#[allow(non_snake_case, reason = "P3.5")]
-mod SpaceEventHandler {
+mod space_event_handler {
     pub use super::events::space::WindowServerLifecyclePayload;
 
     pub fn handle_window_server_destroyed(

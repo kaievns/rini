@@ -209,9 +209,33 @@ why, in one of three ways. One a roadmap task removes names the quality roadmap'
 takes the lint away: splitting a function or a file leaves its parameter lists as long. One allowed
 for good names what makes it right, such as a C name, a reference count Core Foundation drives too,
 or a `RefMut` dropped before the await clippy counts it across. One no task removes says so: a long
-parameter list no task groups carries `reason = "no roadmap task groups them"`. The crate-wide allows are in the two `-sys` crates: their C names, and
-`rini-mach-sys`'s unsafe operations.
+parameter list no task groups carries `reason = "no roadmap task groups them"`.
 
-`unsafe_op_in_unsafe_fn` is not in the table. Edition 2024 warns on it already, and
+An allow over a whole crate or file, `#![allow]`, is one of these, held by
+`every_file_wide_allow_is_named_in_docs_testing`:
+
+| File | Allows |
+|---|---|
+| `crates/rini-mach-sys/src/lib.rs` | Mach's C names; unsafe operations and `missing_safety_doc`, P5.1 |
+| `crates/rini-ipc/src/mach.rs` | Mach's C names; unsafe operations and `missing_safety_doc`, P5.1 |
+| `crates/rini-skylight-sys/src/lib.rs` | SkyLight's C names |
+| `src/displays/platform/cgs_notify.rs` | SkyLight's C names |
+| `src/windows/platform/sub_level.rs` | SkyLight's C names |
+| `src/windows/platform/app_actor.rs` | Accessibility's notification names |
+| `src/windows/platform/carbon.rs` | `missing_safety_doc`, P5.1 |
+
+The quality roadmap the ids come from is a plan kept outside the repo, so the row of every id an
+allow cites is copied here. `every_roadmap_id_an_allow_cites_has_a_row_in_docs_testing` holds the
+table to the ids the allows cite, both ways, so a row goes with the last allow that cites it:
+
+| Id | Task | Done when |
+|---|---|---|
+| P2.9 | Pure `KeyRouter` in `input/domain` | `handle_keyboard_event` under 25 lines; 10+ router tests; no `RefCell<State>` in the tap |
+| P3.8 | `EngineFixture` over the production layout fn; delete the `cfg(test)` `calculate_layout` and the test-only `create_workspace`/`test_app_rules` | engine test average under 30 lines; `virtual_workspace.rs` has one `cfg(test)` |
+| P4.1 | Named structs for positional tuples: the `OnScreenEntry` 9-tuple, `Request::SetWindowFrame(.., bool)`, `Event::WindowFrameChanged`, `ReactorParts` for an 11-parameter `spawn` | no tuple over 3 in an enum variant or pub fn type at these sites |
+| P4.8 | Small enums: `Pass` for `update_layout(bool, bool, ..)`, `Press`, `Axis`, the repaint subsets in `StageSummary`/`Flight` | no fn with 2+ bool parameters (`clippy::fn_params_excessive_bools` denied) |
+| P5.1 | SAFETY comments everywhere; deny `undocumented_unsafe_blocks` and `unsafe_op_in_unsafe_fn`; replace `static mut SERVER` in `rini-ipc` | clippy clean with both denied; 0 `static mut` in the repo |
+
+`unsafe_op_in_unsafe_fn` is not in `[workspace.lints]`. Edition 2024 warns on it already, and
 `rini-mach-sys` and `rini-ipc`'s `mach.rs` allow it with 47 unsafe operations outside an `unsafe`
 block, so P5.1 denies it once they are wrapped, with `undocumented_unsafe_blocks` beside it.

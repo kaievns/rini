@@ -146,7 +146,7 @@ pub fn window_server_appeared(
     space: SpaceId,
     kind: SpaceEventKind,
 ) {
-    SpaceEventHandler::handle_window_server_appeared(reactor, wsid, space, kind);
+    space_event_handler::handle_window_server_appeared(reactor, wsid, space, kind);
 }
 
 pub fn window_server_destroyed(
@@ -155,9 +155,9 @@ pub fn window_server_destroyed(
     space: SpaceId,
     kind: SpaceEventKind,
 ) {
-    SpaceEventHandler::handle_window_server_destroyed(
+    space_event_handler::handle_window_server_destroyed(
         reactor,
-        SpaceEventHandler::WindowServerLifecyclePayload {
+        space_event_handler::WindowServerLifecyclePayload {
             window_server_id: wsid,
             space,
             kind,
