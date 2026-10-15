@@ -5,7 +5,7 @@ use rini_geometry::SameAs;
 use test_log::test;
 
 use super::fixtures::*;
-use crate::app::hotkeys::WmEvent;
+use crate::app::controller::WmEvent;
 use crate::app::reactor::managers::QuarantineSignal;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
@@ -16,7 +16,7 @@ use crate::workspaces::{LayoutCommand, LayoutEvent};
 #[test]
 fn config_reload_propagates_non_keybinding_changes_to_wm_controller() {
     let mut reactor = test_reactor();
-    let mut wm_rx = reactor.connect_test_hotkeys();
+    let mut wm_rx = reactor.connect_test_controller();
 
     let mut updated = reactor.config().clone();
     updated.settings.focus_follows_mouse = !updated.settings.focus_follows_mouse;

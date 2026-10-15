@@ -1,7 +1,7 @@
 use rini_core::ids::WindowId;
 use tracing::debug;
 
-use crate::app::hotkeys::Sender as WmSender;
+use crate::app::controller::Sender as WmSender;
 use crate::app::reactor::MenuState;
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::CommunicationManager;

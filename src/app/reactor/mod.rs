@@ -260,7 +260,7 @@ pub enum Event {
 
     Command(Command),
 
-    RegisterWmSender(crate::app::hotkeys::Sender),
+    RegisterWmSender(crate::app::controller::Sender),
 
     ConfigUpdated(Box<Config>),
 
@@ -1186,7 +1186,7 @@ impl Reactor {
 
     fn publish_service_config(&mut self, config: Config) {
         if let Some(wm) = &self.communication_manager.wm_sender {
-            wm.send(crate::app::hotkeys::WmEvent::ConfigUpdated(Box::new(config)));
+            wm.send(crate::app::controller::WmEvent::ConfigUpdated(Box::new(config)));
         }
         // Re-sends both the flag and the geometry, so toggling
         // warp_cursor_between_stacked_displays applies without a restart.

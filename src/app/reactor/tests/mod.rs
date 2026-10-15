@@ -5,7 +5,7 @@
 //! test now names a subject, and the file you open to change one is the size of its subject.
 //!
 //! A rule that can be tested without a reactor should not be here. Several have left over the last
-//! few passes — `space_resolution`, `present`, `hotkeys::lower`, `admissible`, `pointer` — and each
+//! few passes — `space_resolution`, `present`, `controller::lower`, `admissible`, `pointer` — and each
 //! took its tests with it.
 
 mod fixtures;

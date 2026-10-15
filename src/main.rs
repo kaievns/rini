@@ -8,7 +8,7 @@ use rini::app::boot::{Cli, Commands};
 use rini::app::config::Config;
 use rini::app::config::actor::{Change, ConfigActor};
 use rini::app::config::watcher::ConfigWatcher;
-use rini::app::hotkeys::WmController;
+use rini::app::controller::WmController;
 use rini::app::launch_agent::handle_service_command;
 use rini::app::notifications::NotificationCenter;
 use rini::app::reactor::{self, Reactor, ReactorParts};
@@ -298,7 +298,7 @@ fn serve_ipc(reactor: &reactor::ReactorHandle, config_tx: &rini::app::config::ac
     }
 }
 
-fn process_actor(wm_controller_sender: &rini::app::hotkeys::Sender) -> ProcessActor {
+fn process_actor(wm_controller_sender: &rini::app::controller::Sender) -> ProcessActor {
     ProcessActor::new({
         let sender = wm_controller_sender.clone();
         move |event| sender.send(event.into())
@@ -309,7 +309,7 @@ fn process_actor(wm_controller_sender: &rini::app::hotkeys::Sender) -> ProcessAc
 /// the reactor.
 fn input_tap(
     config: &Config,
-    wm_controller_sender: &rini::app::hotkeys::Sender,
+    wm_controller_sender: &rini::app::controller::Sender,
     event_tap_rx: channels::Receiver<rini::input::platform::input_tap::Request>,
     events_tx: &reactor::Sender,
 ) -> InputTap {

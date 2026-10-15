@@ -146,7 +146,7 @@ window once.
 admission, `src/windows/domain/catalogue.rs` the records, `src/windows/domain/ax_events.rs` the
 liveness rules, `src/windows/domain/frame_write.rs` which writes a frame takes,
 `src/windows/platform/app_actor.rs` and the files of its jobs under `src/windows/platform/app_actor/`
-the per-app thread, and `src/app/hotkeys/mod.rs` the controller that starts it. An application too
+the per-app thread, and `src/app/controller/mod.rs` the controller that starts it. An application too
 busy to answer a subscription while it launches is asked again by the thread's launch loop, every
 20ms doubling to 1s for up to 60s, on the schedule in `src/windows/platform/ax/ask_again.rs`;
 `an_application_too_busy_launching_to_answer_is_asked_again` and

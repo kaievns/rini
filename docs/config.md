@@ -115,7 +115,7 @@ columns, a stacked one leaves as a new column, which niri's `move-column-left` n
 `src/layout/docs/strip.md`), `explode-column` (niri expels one window at a time),
 `cycle-visible-windows`, `snap-strip`, `move-mouse-to-monitor-…` and `toggle-space-activated`. The
 retired `toggle-stack` is refused with where its two halves went. Every action and the wire command
-it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
+it lowers to is the table in `src/app/controller/lower/tests.rs`.
 
 ## What went with the TOML
 

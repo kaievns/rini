@@ -2,7 +2,7 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId};
 use rustc_hash::FxHashSet as HashSet;
 use tracing::{debug, trace};
 
-use crate::app::hotkeys::WmEvent;
+use crate::app::controller::WmEvent;
 use crate::app::reactor::events::{EventOutcome, window};
 use crate::app::reactor::managers::{DragManager, MissionControlManager};
 use crate::app::reactor::state::RiniState;

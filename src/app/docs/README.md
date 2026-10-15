@@ -51,7 +51,7 @@ knows the features and converts what they emit.
 | `reactor/tests/` | The integration tests, one file per subject, over `reactor/tests/fixtures.rs` |
 | `config/` | `config.kdl`: `config/kdl/` decodes each section into a part type and `kdl/apply.rs` lays the parts over each feature's settings, with the checks that span sections; then watching and reload. The format's decisions are [`docs/config.md`](../../../docs/config.md) |
 | `api/` | The Mach IPC backend bound to the reactor, and the shapes a query answers in |
-| `hotkeys/` | The controller: app launches and which apps get a thread (the rule is `windows::domain::app_threads`), hotkey registration, config reload. `hotkeys/lower.rs` is the translation from a bound `Action` to a `reactor::Command`, which is where the tests are |
+| `controller/` | The controller: app launches and which apps get a thread (the rule is `windows::domain::app_threads`), hotkey registration, config reload. `controller/lower.rs` is the translation from a bound `Action` to a `reactor::Command`, which is where the tests are |
 | `notifications.rs` | The NSWorkspace demultiplexer |
 | `power.rs` | Low Power Mode, read at start and kept current from its notification: the input tap and the reactor's flight decision read it |
 | `system_reads.rs` | `SystemReads`, everything the reactor asks of the machine as one value: the window-server port, through which it makes a display's desktop key, the pointer, Low Power Mode, the displays' bounds, the space kinds, the running applications, and the activity clock and window notifications it hands back. `Reactor::new` builds the live one; a test reactor's knows nothing until the test states it on `reactor.window_server()` or swaps a field |
@@ -79,7 +79,7 @@ several stores per event, which is what the application is for: `reactor/mod.rs`
 loop, `reactor/dispatch.rs` the dispatch, and each other sibling file is one concern's
 `impl Reactor`.
 
-**A bound action is a translation, not a side effect.** `hotkeys/lower.rs` turns an
+**A bound action is a translation, not a side effect.** `controller/lower.rs` turns an
 `Action` into a `reactor::Command`, a program to spawn, a config reload, or a named
 refusal. It was ninety match arms inside `handle_event`, each ending in a `send`, so
 nothing could check that two actions did not lower to the same command; now a table test
@@ -152,7 +152,7 @@ through its fields, so a store can move without touching the cases:
 `layout` alias the siblings use for `crate::workspaces`.
 
 A rule that can be tested without a reactor does not belong here. `space_resolution`,
-`present`, `hotkeys::lower`, `windows::domain::admissible` and `input::domain::pointer`
+`present`, `controller::lower`, `windows::domain::admissible` and `input::domain::pointer`
 each left this module and took their tests with them.
 
 ## Reading order

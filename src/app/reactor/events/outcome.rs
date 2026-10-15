@@ -2,7 +2,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 
 use crate::app::config::Config;
-use crate::app::hotkeys::WmEvent;
+use crate::app::controller::WmEvent;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::raise as raise_manager;
 use crate::windows::domain::request::Request;

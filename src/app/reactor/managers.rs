@@ -3,7 +3,7 @@ use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::FxHashSet as HashSet;
 
 use super::{Event, WorkspaceSwitchOrigin, WorkspaceSwitchState};
-use crate::app::{channels, hotkeys as wm_controller};
+use crate::app::{channels, controller};
 use crate::input::domain::drag_swap::DragSwap;
 use crate::input::platform::input_tap as event_tap;
 use crate::input::settings::WindowSnappingSettings;
@@ -260,7 +260,7 @@ pub(super) struct CommunicationManager {
     pub(super) transitions_tx: Option<crate::transitions::platform::engine::Sender>,
     pub(super) pictures: Option<crate::pictures::platform::service::Pictures>,
     pub(super) raise_manager_tx: raise_manager::Sender,
-    pub(super) wm_sender: Option<wm_controller::Sender>,
+    pub(super) wm_sender: Option<controller::Sender>,
     pub(super) events_tx: Option<channels::Sender<Event>>,
 }
 

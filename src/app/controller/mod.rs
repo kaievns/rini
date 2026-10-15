@@ -1,4 +1,4 @@
-//! The WM Controller launches app threads, registers the hotkeys and lowers what they fire, and
+//! The controller launches app threads, registers the hotkeys and lowers what they fire, and
 //! re-registers them when the config is reloaded.
 
 mod lower;

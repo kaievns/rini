@@ -18,14 +18,14 @@ use rini_runloop::dispatch::DispatchExt;
 use rini_skylight_sys::{CGDisplayRegisterReconfigurationCallback, DisplayReconfigFlags};
 use tracing::{debug, info_span, trace, warn};
 
-use crate::app::hotkeys::{self as wm_controller, WmEvent};
+use crate::app::controller::{self, WmEvent};
 use crate::app::power::{init_power_state, set_low_power_mode_state};
 use crate::displays::platform::spaces;
 use crate::windows::platform::app::NSRunningApplicationExt;
 
 #[repr(C)]
 struct Instance {
-    events_tx: wm_controller::Sender,
+    events_tx: controller::Sender,
     spaces_tx: spaces::Sender,
     session_inactive_hint: Cell<bool>,
 }
@@ -240,7 +240,7 @@ const OBSERVED: [(Center, Receiver, &str); 17] = [
 ];
 
 impl NotificationCenterInner {
-    fn new(events_tx: wm_controller::Sender, spaces_tx: spaces::Sender) -> Retained<Self> {
+    fn new(events_tx: controller::Sender, spaces_tx: spaces::Sender) -> Retained<Self> {
         let instance = Instance {
             events_tx,
             spaces_tx,
@@ -440,7 +440,7 @@ pub struct NotificationCenter {
 }
 
 impl NotificationCenter {
-    pub fn new(events_tx: wm_controller::Sender, spaces_tx: spaces::Sender) -> Self {
+    pub fn new(events_tx: controller::Sender, spaces_tx: spaces::Sender) -> Self {
         let handler = NotificationCenterInner::new(events_tx.clone(), spaces_tx);
 
         let workspace = &NSWorkspace::sharedWorkspace();

@@ -19,7 +19,7 @@ link the daemon, so anything it needs has to be in the protocol.
 **The command enum is not the config vocabulary.** A binding names an
 `input::domain::binding::Action`, in niri's words, and the application lowers it to a
 command here. The wire enum can be renamed or reshaped without breaking anyone's config;
-what has to change with it is the lowering, `src/app/hotkeys/lower.rs`, whose table test
+what has to change with it is the lowering, `src/app/controller/lower.rs`, whose table test
 names every action's command.
 
 **A command's name is the wire's.** `LayoutCommand` and `ReactorCommand` give their variant's name

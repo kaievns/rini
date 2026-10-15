@@ -693,7 +693,7 @@ fn a_file_cfg_test_names_and_every_file_below_it_are_test_files() {
         "src/app/reactor/testing.rs",
         "src/app/reactor/tests/mod.rs",
         "src/app/reactor/tests/spaces.rs",
-        "src/app/hotkeys/lower/tests.rs",
+        "src/app/controller/lower/tests.rs",
         "src/animation/domain/motion/testing.rs",
     ] {
         assert!(
@@ -703,7 +703,7 @@ fn a_file_cfg_test_names_and_every_file_below_it_are_test_files() {
     }
     for name in [
         "src/app/reactor/mod.rs",
-        "src/app/hotkeys/lower.rs",
+        "src/app/controller/lower.rs",
         "src/animation/domain/motion.rs",
     ] {
         assert!(

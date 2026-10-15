@@ -360,7 +360,7 @@ alias the siblings use for `crate::workspaces`.
 
 Every test here still builds a whole `Reactor`, which is what makes them integration tests. The
 answer to "a reactor change is slow to verify" is not to make these cheaper but to keep moving rules
-out to where they can be tested alone — `space_resolution`, `present`, `hotkeys::lower`,
+out to where they can be tested alone — `space_resolution`, `present`, `controller::lower`,
 `admissible` and `pointer` each left with their tests.
 
 The recent batches moved the opposite way deliberately — pure decisions to
@@ -376,7 +376,7 @@ The recent batches moved the opposite way deliberately — pure decisions to
 | `gesture_tap.rs`, the HID gesture tap | 657 | DONE, then deleted: the phase machine became `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`); the tap, the rules and their tests went with the trackpad swipes (2026-10-10) |
 | `src/app/reactor/observations.rs` | — | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
 | `src/main.rs` | — | the composition root: `main` builds the actors in order, each built by a function of its own, and joins them |
-| `src/app/hotkeys/mod.rs` | 404 | DONE: the alias lowering is `hotkeys/lower.rs` with 7 tests |
+| `src/app/controller/mod.rs` | 404 | DONE: the alias lowering is `controller/lower.rs` with 7 tests |
 
 ### 4.3 Worst code-to-test ratios among tested files
 

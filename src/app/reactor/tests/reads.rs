@@ -6,7 +6,7 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::WindowServerId;
 use test_log::test;
 
-use crate::app::hotkeys::WmEvent;
+use crate::app::controller::WmEvent;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::info::{AppInfo, WindowServerInfo};
@@ -70,7 +70,7 @@ fn in_low_power_mode_pushing_past_an_end_does_not_bounce() {
 #[test]
 fn a_window_of_an_app_with_no_thread_reads_its_launch_from_the_running_apps() {
     let mut reactor = test_reactor();
-    let mut wm_rx = reactor.connect_test_hotkeys();
+    let mut wm_rx = reactor.connect_test_controller();
     let space = SpaceId::new(1);
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
