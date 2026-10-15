@@ -24,7 +24,10 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **Desktop and bar levels** | `domain/backdrop.rs` — which window-server levels are the desktop and which the bar |
 | **The port** | `domain/target.rs` — `PictureTarget`, a window to picture and the size it should be |
 | **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, refreshes, hints, holds, display changes and handover checks in, the next call out; the warm filter, and the capture budgets and cadences |
-| **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the `Landing`, `Change` and `Live` watches, the focus hint, and the band prints each client was last delivered, which decide what is news; a window those watches wait for that ends cut by the display's edge, a focus target or a repainting `Landing` window, handed to ScreenCaptureKit (`Outcome::clipped`, `Outcome::elsewhere`) |
+| **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the types every watch shares, the focus hint, and the band prints each client was last delivered, which decide what is news; `Watches`, which hands each watch's looks, wake and what a round saw of it to its kind, and holds the windows behind the strip back while a landing or a change capture is due |
+| **A window landing** | `domain/watch/landing.rs` — the `Landing` watch: each window captured once it is where it ends, delivered at once or once its rendering settles, lost at the deadline, and a repainting one there but cut by the display's edge settled through ScreenCaptureKit (`Outcome::elsewhere`, `Watches::captured_elsewhere`) |
+| **A change of focus** | `domain/watch/change.rs` — the `Change` watch: armed by the focus report, the window gaining focus and the one losing it captured where each ends until its band print turns, each with its own baseline and tries; a target there but cut by the display's edge owed one ScreenCaptureKit capture (`Outcome::clipped`) |
+| **The windows behind the strip** | `domain/watch/live.rs` — the `Live` watch: the windows behind the strip refreshed at its pace once the watch it waits for is done, and once at `initial` regardless |
 | **Refreshes** | `domain/refresh.rs` — windows pictured afresh at rest once their look has turned: which are due a look, each one's captures held until its look settles and the one it settled on, and which are owed ScreenCaptureKit's capture instead |
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight and ScreenCaptureKit calls through its `Capturer`, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
 | **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, a landing whose picture will not come or a turn of the window losing focus that will not be seen, and a handover check's overlay picture taken and its measure |
@@ -153,9 +156,10 @@ through the handle. Every other picture a transition draws it asks for or watche
 `domain/watch.rs` is the SkyLight half of the schedule a transition drives: windows on screen, captured
 at the frames the window server has them at (`SLSGetWindowBounds`: a parked window's written frame is
 there within 0.1ms of the write returning, an app still activating applies a write late) and delivered
-under the asker's `Tag`, a client and its generation. None of it waits for a release: it is what a
-transition waits on. The schedule's other SkyLight work, a refresh at rest, is cancelled by one
-and asked again at its release (`domain/refresh.rs`, "The schedule").
+under the asker's `Tag`, a client and its generation. Each kind of watch is a file under
+`domain/watch/`, its tests beside it. None of it waits for a release: it is what a transition waits
+on. The schedule's other SkyLight work, a refresh at rest, is cancelled by one and asked again at its
+release (`domain/refresh.rs`, "The schedule").
 
 | Rule | Why |
 |---|---|
