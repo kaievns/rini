@@ -762,13 +762,7 @@ fn display_churn_end_refresh_preserves_non_default_workspace_without_app_rules()
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
 
     reactor.handle_event(Event::DisplayChurnBegin);
-    reactor.handle_event(space_state_event_with(
-        vec![screen],
-        vec![Some(space)],
-        |state| {
-            state.releases_display_churn_refresh_quarantine = true;
-        },
-    ));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.simulate_until_quiet(&mut reactor);
 
     assert_eq!(

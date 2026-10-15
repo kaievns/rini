@@ -7,7 +7,7 @@ use test_log::test;
 use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
-use crate::displays::platform::spaces::SpaceKinds;
+use crate::displays::domain::snapshot::SpaceKinds;
 use crate::workspaces::LayoutCommand;
 
 #[test]
@@ -76,9 +76,11 @@ fn command_space_only_snapshot_does_not_trigger_full_space_reconcile() {
     ));
 
     assert_eq!(reactor.workspace_command_space(), Some(space2));
+    let requests = apps.requests();
     assert!(
-        apps.requests().is_empty(),
-        "changing only command_space should not trigger visible-window refresh or space reconciliation"
+        matches!(requests.as_slice(), [Request::GetVisibleWindows]),
+        "changing only command_space reconciles no space, and asks only the one visible-window \
+         refresh every forwarded snapshot owes: {requests:?}"
     );
 }
 

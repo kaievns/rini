@@ -1033,13 +1033,7 @@ fn display_churn_snapshot_ack_triggers_visible_window_refresh() {
     apps.make_app_and_settle(&mut reactor, 1, make_windows(1));
 
     reactor.handle_event(Event::DisplayChurnBegin);
-    let Event::SpaceStateChanged(mut snapshot) =
-        space_state_event(vec![screen], vec![Some(SpaceId::new(1))])
-    else {
-        unreachable!("space_state_event must produce a space-state event");
-    };
-    snapshot.releases_display_churn_refresh_quarantine = true;
-    reactor.handle_event(Event::SpaceStateChanged(snapshot));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
 
     assert!(
         apps.requests()
@@ -1115,13 +1109,7 @@ fn display_churn_end_refresh_is_idempotent_without_topology_change() {
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
 
     reactor.handle_event(Event::DisplayChurnBegin);
-    reactor.handle_event(space_state_event_with(
-        vec![screen],
-        vec![Some(space)],
-        |state| {
-            state.releases_display_churn_refresh_quarantine = true;
-        },
-    ));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.simulate_until_quiet(&mut reactor);
 
     assert!(
@@ -1294,7 +1282,6 @@ fn clamshell_sleep_preserves_nested_layout_across_display_replacement() {
     recovered.allow_space_remap = true;
     recovered.should_force_refresh_layout = true;
     recovered.releases_lifecycle_refresh_quarantine = true;
-    recovered.releases_display_churn_refresh_quarantine = true;
     recovered.resized_spaces.push((space, internal_screen.size));
     for wid in &window_ids {
         recovered.active_window_spaces.insert(WindowServerId::new(wid.idx.get()), space);

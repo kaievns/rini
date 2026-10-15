@@ -1,8 +1,60 @@
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_runloop::channel;
 
+use super::schedule::Recorded;
 use super::*;
+use crate::displays::domain::settling::{DISPLAY_STABILIZE_MAX_ATTEMPTS, REFRESH_MAX_RETRIES};
+use crate::displays::domain::snapshot::TEST_FULLSCREEN_SPACE;
 use crate::displays::event::Event as OutEvent;
+use crate::windows::platform::window_server::FakeWindowServer;
+
+impl LiveDisplays {
+    /// A reader that knows nothing, which is what a test gets unless it says otherwise. Every rule
+    /// over these has a path for "the window server did not answer", and that is the path a test
+    /// takes by default. A window server that has reported nothing is a quiet one, as it is to the
+    /// production reader before the first window event.
+    fn silent() -> Self {
+        Self {
+            active_menu_bar_display: || None,
+            active_space: || None,
+            spaces_per_display: HashMap::default,
+            window_server_quiet: || true,
+        }
+    }
+}
+
+impl SpacesActor {
+    /// A test actor: no screen cache, a window server that knows nothing, and a schedule that only
+    /// records.
+    fn for_test(events: Box<dyn EventSink>, space_kinds: SpaceKinds, live: LiveDisplays) -> Self {
+        let (_, receiver) = channel::channel();
+        Self {
+            receiver,
+            events,
+            schedule: Box::new(Recorded::default()),
+            window_server: Arc::new(FakeWindowServer::default()),
+            state: AuthorityState::new(space_kinds, live, None),
+        }
+    }
+
+    fn new_for_tests(events: Box<dyn EventSink>) -> Self {
+        Self::for_test(events, SpaceKinds::for_tests(), LiveDisplays::silent())
+    }
+
+    /// The window server this actor reads from now on, for the test to state answers into.
+    fn hand_window_server(&mut self) -> Arc<FakeWindowServer> {
+        let ws = Arc::new(FakeWindowServer::default());
+        self.window_server = ws.clone();
+        ws
+    }
+
+    /// The schedule this actor asks from now on, for the test to read back.
+    fn hand_schedule(&mut self) -> Recorded {
+        let scheduled = Recorded::default();
+        self.schedule = Box::new(scheduled.clone());
+        scheduled
+    }
+}
 
 /// Splits the actor's one event stream the way the application does: topology snapshots one way,
 /// everything else the other, each in the order the actor sent them.
@@ -71,45 +123,6 @@ fn assert_no_reactor_event(rx: &mut channel::Receiver<OutEvent>) {
     assert!(rx.try_recv().is_err(), "expected no reactor event");
 }
 
-#[test]
-fn active_display_space_prefers_matching_display_uuid() {
-    let left_space = SpaceId::new(1);
-    let right_space = SpaceId::new(2);
-    let screens = vec![
-        make_screen_with(1, "display-left", 0.0, 1000.0, Some(left_space)),
-        make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right_space)),
-    ];
-
-    assert_eq!(
-        SpacesActor::resolve_active_display_space(
-            &screens,
-            Some("display-right"),
-            Some(left_space),
-        ),
-        Some(right_space),
-        "active display UUID should be authoritative over stale active-space fallback",
-    );
-}
-
-#[test]
-fn active_display_space_falls_back_to_active_space_then_screen_order() {
-    let left_space = SpaceId::new(1);
-    let right_space = SpaceId::new(2);
-    let screens = vec![
-        make_screen_with(1, "display-left", 0.0, 1000.0, Some(left_space)),
-        make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right_space)),
-    ];
-
-    assert_eq!(
-        SpacesActor::resolve_active_display_space(&screens, Some("missing"), Some(right_space)),
-        Some(right_space),
-    );
-    assert_eq!(
-        SpacesActor::resolve_active_display_space(&screens, Some("missing"), None),
-        Some(left_space),
-    );
-}
-
 /// An actor that calls one specific space id a login space: neither fullscreen nor a user space.
 fn build_actor_with_a_non_user_space() -> (
     SpacesActor,
@@ -122,12 +135,13 @@ fn build_actor_with_a_non_user_space() -> (
         is_fullscreen: |space| space.get() >= TEST_FULLSCREEN_SPACE,
         is_user: |space| space.get() != NON_USER_SPACE,
     };
-    let (actor, _) = SpacesActor::new_for_tests_classifying(
+    let actor = SpacesActor::for_test(
         Box::new(Split {
             topology: wm_tx,
             rest: reactor_tx,
         }),
         kinds,
+        LiveDisplays::silent(),
     );
     (actor, wm_rx, reactor_rx)
 }
@@ -142,7 +156,7 @@ fn build_actor() -> (
 ) {
     let (wm_tx, wm_rx) = channel::channel();
     let (reactor_tx, reactor_rx) = channel::channel();
-    let (actor, _) = SpacesActor::new_for_tests(Box::new(Split {
+    let actor = SpacesActor::new_for_tests(Box::new(Split {
         topology: wm_tx,
         rest: reactor_tx,
     }));
@@ -183,17 +197,12 @@ fn confirmed_window_move_forwards_membership_without_space_switch() {
     let destination = SpaceId::new(12);
     let wsid = WindowServerId::new(77);
 
-    actor.state.screens = vec![make_screen(Some(origin))];
+    actor.state.forwarded.screens = vec![make_screen(Some(origin))];
     actor.state.last_sent_spaces = Some(vec![Some(origin)]);
-    actor.state.visible_window_spaces.insert(wsid, origin);
-    crate::windows::platform::window_server::set_window_spaces_override(
-        wsid,
-        Some(vec![destination.get()]),
-    );
+    actor.state.forwarded.visible_window_spaces.insert(wsid, origin);
+    actor.hand_window_server().set_window_spaces(wsid, vec![destination]);
 
     actor.handle_event(Notification::WindowServerDestroyed(wsid, origin));
-
-    crate::windows::platform::window_server::set_window_spaces_override(wsid, None);
 
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
@@ -223,7 +232,7 @@ fn active_space_changed_forwards_immediately_when_space_snapshot_changes() {
     let old_space = SpaceId::new(11);
     let new_space = SpaceId::new(12);
 
-    actor.state.screens = vec![make_screen(Some(new_space))];
+    actor.state.forwarded.screens = vec![make_screen(Some(new_space))];
     actor.state.last_sent_spaces = Some(vec![Some(old_space)]);
 
     actor.handle_event(Notification::ActiveSpaceChanged);
@@ -247,7 +256,7 @@ fn quarantines_window_space_events_during_sleep_before_churn_begins() {
     let appeared = WindowServerId::new(7);
     let existing = WindowServerId::new(8);
     let existing_space = SpaceId::new(4);
-    actor.state.visible_window_spaces.insert(existing, existing_space);
+    actor.state.forwarded.visible_window_spaces.insert(existing, existing_space);
 
     actor.handle_event(Notification::SystemWillSleep);
     actor.handle_event(Notification::WindowServerAppeared(appeared, SpaceId::new(3)));
@@ -259,9 +268,9 @@ fn quarantines_window_space_events_during_sleep_before_churn_begins() {
         appeared_dropped: 1,
         destroyed_dropped: 1
     });
-    assert!(!actor.state.visible_window_spaces.contains_key(&appeared));
+    assert!(!actor.state.forwarded.visible_window_spaces.contains_key(&appeared));
     assert_eq!(
-        actor.state.visible_window_spaces.get(&existing),
+        actor.state.forwarded.visible_window_spaces.get(&existing),
         Some(&existing_space)
     );
     assert_no_wm_event(&mut wm_rx);
@@ -285,7 +294,7 @@ fn timed_refresh_does_not_forward_while_session_is_inactive() {
     let _ = recv_wm(&mut wm_rx);
 
     actor.handle_event(Notification::SessionDidResignActive);
-    actor.state.screens = vec![make_screen(Some(locked))];
+    actor.state.forwarded.screens = vec![make_screen(Some(locked))];
     actor.handle_event(Notification::ProcessScreenRefresh { attempt: 0 });
 
     assert!(matches!(
@@ -346,7 +355,7 @@ fn wake_into_display_churn_forwards_nothing_until_churn_settles_then_releases_th
     ));
     assert!(matches!(recv_reactor(&mut reactor_rx), OutEvent::SystemWoke));
 
-    actor.state.screens = vec![
+    actor.state.forwarded.screens = vec![
         make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
         make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right)),
     ];
@@ -654,7 +663,7 @@ fn topology_window_delta_is_emitted_when_windows_leave_space_during_churn_withou
     let space = SpaceId::new(301);
     let wsid = WindowServerId::new(77);
 
-    actor.state.visible_window_spaces.insert(wsid, space);
+    actor.state.forwarded.visible_window_spaces.insert(wsid, space);
     actor.state.pre_churn_visible_window_spaces.insert(wsid, space);
     actor.state.display_churn_flags = rini_skylight_sys::DisplayReconfigFlags::MOVED;
 
@@ -664,17 +673,10 @@ fn topology_window_delta_is_emitted_when_windows_leave_space_during_churn_withou
     );
     let _ = recv_wm(&mut wm_rx);
 
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space.get(),
-        Some(vec![]),
-    );
+    actor.hand_window_server().set_space_window_list(space.get(), Some(vec![]));
     actor.synthesize_topology_window_delta(9, actor.state.display_churn_flags, &[make_screen(
         Some(space),
     )]);
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space.get(),
-        None,
-    );
     actor.forward_screen_parameters(
         vec![make_screen(Some(space))],
         CoordinateConverter::from_height(800.0),
@@ -697,22 +699,14 @@ fn first_empty_post_wake_snapshot_preserves_known_visible_windows() {
     let space = SpaceId::new(302);
     let wsid = WindowServerId::new(79);
 
-    actor.state.screens = vec![make_screen(Some(space))];
-    actor.state.visible_window_spaces.insert(wsid, space);
+    actor.state.forwarded.screens = vec![make_screen(Some(space))];
+    actor.state.forwarded.visible_window_spaces.insert(wsid, space);
     actor.state.release_reactor_quarantine_on_next_forward = true;
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space.get(),
-        Some(vec![]),
-    );
+    actor.hand_window_server().set_space_window_list(space.get(), Some(vec![]));
 
     actor.forward_screen_parameters(
         vec![make_screen(Some(space))],
         CoordinateConverter::from_height(800.0),
-    );
-
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        space.get(),
-        None,
     );
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
@@ -730,7 +724,7 @@ fn topology_window_delta_treats_same_window_space_move_as_remove_then_add() {
     let new_space = SpaceId::new(312);
     let wsid = WindowServerId::new(78);
 
-    actor.state.visible_window_spaces.insert(wsid, old_space);
+    actor.state.forwarded.visible_window_spaces.insert(wsid, old_space);
     actor.state.pre_churn_visible_window_spaces.insert(wsid, old_space);
     actor.state.display_churn_flags = rini_skylight_sys::DisplayReconfigFlags::MOVED;
 
@@ -743,20 +737,15 @@ fn topology_window_delta_treats_same_window_space_move_as_remove_then_add() {
     );
     let _ = recv_wm(&mut wm_rx);
 
-    actor.state.visible_window_spaces.clear();
-    actor.state.visible_window_spaces.insert(wsid, new_space);
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        new_space.get(),
-        Some(vec![wsid.as_u32()]),
-    );
+    actor.state.forwarded.visible_window_spaces.clear();
+    actor.state.forwarded.visible_window_spaces.insert(wsid, new_space);
+    let ws = actor.hand_window_server();
+    ws.set_space_window_list(new_space.get(), Some(vec![wsid.as_u32()]));
     actor.synthesize_topology_window_delta(10, actor.state.display_churn_flags, &[
         make_screen_with(1, "display-left", 0.0, 1000.0, Some(old_space)),
         make_screen_with(2, "display-right", 1000.0, 1000.0, Some(new_space)),
     ]);
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(
-        new_space.get(),
-        None,
-    );
+    ws.set_space_window_list(new_space.get(), None);
     actor.forward_screen_parameters(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(old_space)),
@@ -773,64 +762,6 @@ fn topology_window_delta_treats_same_window_space_move_as_remove_then_add() {
         }
         other => panic!("unexpected wm event: {other:?}"),
     }
-}
-
-#[test]
-fn duplicate_visible_window_keeps_previous_active_space_when_lookup_races() {
-    let wsid = WindowServerId::new(91);
-    let old_space = SpaceId::new(501);
-    let other_space = SpaceId::new(502);
-    let mut visible = HashMap::default();
-    let previous_visible = HashMap::from_iter([(wsid, old_space)]);
-    let active_spaces = HashSet::from_iter([old_space, other_space]);
-
-    SpacesActor::record_visible_window_space(
-        &mut visible,
-        &previous_visible,
-        &active_spaces,
-        wsid,
-        other_space,
-        None,
-    );
-    SpacesActor::record_visible_window_space(
-        &mut visible,
-        &previous_visible,
-        &active_spaces,
-        wsid,
-        old_space,
-        None,
-    );
-
-    assert_eq!(visible.get(&wsid).copied(), Some(old_space));
-}
-
-#[test]
-fn duplicate_visible_window_uses_authoritative_space_when_available() {
-    let wsid = WindowServerId::new(92);
-    let left_space = SpaceId::new(511);
-    let right_space = SpaceId::new(512);
-    let mut visible = HashMap::default();
-    let previous_visible = HashMap::default();
-    let active_spaces = HashSet::from_iter([left_space, right_space]);
-
-    SpacesActor::record_visible_window_space(
-        &mut visible,
-        &previous_visible,
-        &active_spaces,
-        wsid,
-        left_space,
-        None,
-    );
-    SpacesActor::record_visible_window_space(
-        &mut visible,
-        &previous_visible,
-        &active_spaces,
-        wsid,
-        right_space,
-        Some(right_space),
-    );
-
-    assert_eq!(visible.get(&wsid).copied(), Some(right_space));
 }
 
 #[test]
@@ -873,7 +804,7 @@ fn normal_refresh_retries_duplicate_user_space_snapshot_until_valid() {
     let left = SpaceId::new(521);
     let right = SpaceId::new(522);
 
-    actor.state.screens = vec![
+    actor.state.forwarded.screens = vec![
         make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
         make_screen_with(2, "display-right", 1000.0, 1000.0, Some(left)),
     ];
@@ -886,7 +817,7 @@ fn normal_refresh_retries_duplicate_user_space_snapshot_until_valid() {
         "an invalid duplicate-space snapshot should stay pending so the refresh can retry"
     );
 
-    actor.state.screens = vec![
+    actor.state.forwarded.screens = vec![
         make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
         make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right)),
     ];
@@ -899,7 +830,6 @@ fn normal_refresh_retries_duplicate_user_space_snapshot_until_valid() {
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(left), Some(right)]
             );
-            assert!(state.releases_display_churn_refresh_quarantine);
         }
         other => panic!("unexpected wm event: {other:?}"),
     }
@@ -914,7 +844,7 @@ fn authoritative_snapshot_rejects_duplicate_user_space_snapshot() {
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
     let left = SpaceId::new(531);
 
-    actor.state.screens = vec![
+    actor.state.forwarded.screens = vec![
         make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
         make_screen_with(2, "display-right", 1000.0, 1000.0, Some(left)),
     ];
@@ -1012,7 +942,7 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
     ));
 
     let epoch = actor.state.display_churn_epoch;
-    actor.state.screens = vec![
+    actor.state.forwarded.screens = vec![
         make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
         make_screen_with(2, "display-right", 1000.0, 1000.0, Some(left)),
     ];
@@ -1021,7 +951,7 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
     actor.attempt_finish_display_churn(epoch, 1);
     assert_no_wm_event(&mut wm_rx);
 
-    actor.state.screens = vec![
+    actor.state.forwarded.screens = vec![
         make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
         make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right)),
     ];
@@ -1035,7 +965,6 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(left), Some(right)]
             );
-            assert!(state.releases_display_churn_refresh_quarantine);
         }
         other => panic!("unexpected wm event: {other:?}"),
     }
@@ -1059,7 +988,7 @@ fn display_churn_waits_for_a_quiet_window_server_as_its_reader_reports_it() {
         OutEvent::DisplayChurnBegin
     ));
     let epoch = actor.state.display_churn_epoch;
-    actor.state.screens = vec![
+    actor.state.forwarded.screens = vec![
         make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
         make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right)),
     ];
@@ -1238,11 +1167,12 @@ fn build_actor_seeing_display_and_space() -> (
         },
         window_server_quiet: || true,
     };
-    let (actor, _) = SpacesActor::new_for_tests_seeing(
+    let actor = SpacesActor::for_test(
         Box::new(Split {
             topology: wm_tx,
             rest: reactor_tx,
         }),
+        SpaceKinds::for_tests(),
         live,
     );
     (actor, wm_rx, reactor_rx)
@@ -1390,4 +1320,187 @@ fn a_silent_window_server_falls_back_to_the_snapshot() {
         state.display_space_ids_from_screens,
         "not a listing a save may prune by"
     );
+}
+
+/// Feeds back every refresh the actor schedules until it schedules none, and gives the attempt of
+/// each one, in order.
+fn run_refreshes(actor: &mut SpacesActor, scheduled: &Recorded) -> Vec<u8> {
+    let mut attempts = Vec::new();
+    loop {
+        let due = scheduled.take();
+        if due.is_empty() {
+            return attempts;
+        }
+        for (_, notification) in due {
+            let Notification::ProcessScreenRefresh { attempt } = notification else {
+                panic!("only refreshes are scheduled here, not {notification:?}");
+            };
+            attempts.push(attempt);
+            if attempts.len() > 3 * usize::from(REFRESH_MAX_RETRIES) {
+                return attempts;
+            }
+            actor.handle_event(notification);
+        }
+    }
+}
+
+/// A snapshot that never becomes one the actor can forward is asked for again
+/// `REFRESH_MAX_RETRIES` times, and then the refresh stops.
+#[test]
+fn a_refresh_asks_again_for_a_snapshot_it_cannot_forward_up_to_its_cap_then_stops() {
+    let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
+    let scheduled = actor.hand_schedule();
+    let space = SpaceId::new(701);
+    actor.state.forwarded.screens = vec![
+        make_screen_with(1, "display-left", 0.0, 1000.0, Some(space)),
+        make_screen_with(2, "display-right", 1000.0, 1000.0, Some(space)),
+    ];
+
+    actor.handle_event(Notification::ScreenRefreshRequested);
+
+    assert_eq!(
+        run_refreshes(&mut actor, &scheduled),
+        (0..=REFRESH_MAX_RETRIES).collect::<Vec<_>>(),
+        "the first refresh, then one retry per attempt up to the cap"
+    );
+    assert!(!actor.state.refresh_pending);
+    assert_no_wm_event(&mut wm_rx);
+}
+
+/// A refresh owed to a wake starts over once its retries run out, since only a forwarded snapshot
+/// releases the reactor's lifecycle quarantine.
+#[test]
+fn a_refresh_owed_to_a_wake_starts_over_once_its_retries_run_out() {
+    let (mut actor, _wm_rx, _reactor_rx) = build_actor();
+    let scheduled = actor.hand_schedule();
+    actor.state.release_reactor_quarantine_on_next_forward = true;
+    actor.state.refresh_pending = true;
+
+    actor.handle_event(Notification::ProcessScreenRefresh { attempt: REFRESH_MAX_RETRIES });
+
+    let due = scheduled.take();
+    assert!(
+        matches!(due.as_slice(), [(_, Notification::ProcessScreenRefresh {
+            attempt: 0
+        })]),
+        "{due:?}"
+    );
+    assert!(actor.state.refresh_pending);
+}
+
+/// While a space switch is still unconfirmed, a snapshot showing the spaces already forwarded is
+/// asked for again up to the cap, and the last one is forwarded as it is.
+#[test]
+fn an_unconfirmed_space_switch_asks_again_up_to_the_cap_then_forwards_what_it_has() {
+    let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
+    let scheduled = actor.hand_schedule();
+    let space = SpaceId::new(711);
+    actor.state.forwarded.screens = vec![make_screen(Some(space))];
+    actor.state.last_sent_spaces = Some(vec![Some(space)]);
+    actor.state.awaiting_space_switch_confirmation = true;
+    actor.state.refresh_pending = true;
+    actor.handle_event(Notification::ProcessScreenRefresh { attempt: 0 });
+    assert_no_wm_event(&mut wm_rx);
+
+    let attempts = run_refreshes(&mut actor, &scheduled);
+
+    assert_eq!(attempts, (1..=REFRESH_MAX_RETRIES).collect::<Vec<_>>());
+    assert!(matches!(recv_wm(&mut wm_rx), OutEvent::SpaceStateUpdated(..)));
+    assert!(!actor.state.awaiting_space_switch_confirmation);
+}
+
+/// Feeds back every churn check the actor schedules until it schedules none, and gives the attempt
+/// of each one, in order, and what else it scheduled.
+fn run_checks(actor: &mut SpacesActor, scheduled: &Recorded) -> (Vec<u8>, Vec<Notification>) {
+    let (mut attempts, mut rest) = (Vec::new(), Vec::new());
+    loop {
+        let due = scheduled.take();
+        if due.is_empty() {
+            return (attempts, rest);
+        }
+        for (_, notification) in due {
+            match notification {
+                Notification::CheckDisplayStabilization { attempt, .. } => {
+                    attempts.push(attempt);
+                    if attempts.len() > 3 * usize::from(DISPLAY_STABILIZE_MAX_ATTEMPTS) {
+                        return (attempts, rest);
+                    }
+                    actor.handle_event(notification);
+                }
+                other => rest.push(other),
+            }
+        }
+    }
+}
+
+/// A churn whose window server never goes quiet is checked again `DISPLAY_STABILIZE_MAX_ATTEMPTS`
+/// times, then ends unsettled with a refresh, forwarding nothing itself.
+#[test]
+fn a_churn_that_never_settles_is_checked_up_to_its_cap_then_ends_with_a_refresh() {
+    let _held = display_churn::hold_for_test();
+    let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
+    let scheduled = actor.hand_schedule();
+    actor.state.live.window_server_quiet = || false;
+    actor.state.forwarded.screens = vec![make_screen(Some(SpaceId::new(721)))];
+
+    actor.handle_event(Notification::DisplayReconfigured {
+        flags: rini_skylight_sys::DisplayReconfigFlags::ADD,
+    });
+    let (attempts, rest) = run_checks(&mut actor, &scheduled);
+
+    assert_eq!(
+        attempts,
+        (0..=DISPLAY_STABILIZE_MAX_ATTEMPTS).collect::<Vec<_>>()
+    );
+    assert!(!actor.state.display_churn_active);
+    assert!(
+        matches!(rest.as_slice(), [Notification::ProcessScreenRefresh {
+            attempt: 0
+        }]),
+        "{rest:?}"
+    );
+    assert!(matches!(
+        recv_reactor(&mut reactor_rx),
+        OutEvent::DisplayChurnBegin
+    ));
+    assert_no_wm_event(&mut wm_rx);
+}
+
+/// With no screens to sample at all, the churn is checked up to the same cap.
+#[test]
+fn a_churn_with_no_screens_is_checked_up_to_its_cap_too() {
+    let _held = display_churn::hold_for_test();
+    let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
+    let scheduled = actor.hand_schedule();
+
+    actor.handle_event(Notification::DisplayReconfigured {
+        flags: rini_skylight_sys::DisplayReconfigFlags::REMOVE,
+    });
+    let (attempts, _) = run_checks(&mut actor, &scheduled);
+
+    assert_eq!(
+        attempts,
+        (0..=DISPLAY_STABILIZE_MAX_ATTEMPTS).collect::<Vec<_>>()
+    );
+    assert!(!actor.state.display_churn_active);
+    assert_no_wm_event(&mut wm_rx);
+}
+
+/// A settled churn forwards on its second check, and schedules nothing after it.
+#[test]
+fn a_churn_that_settles_forwards_on_its_second_check_and_asks_nothing_more() {
+    let _held = display_churn::hold_for_test();
+    let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
+    let scheduled = actor.hand_schedule();
+    actor.state.forwarded.screens = vec![make_screen(Some(SpaceId::new(731)))];
+
+    actor.handle_event(Notification::DisplayReconfigured {
+        flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
+    });
+    let (attempts, rest) = run_checks(&mut actor, &scheduled);
+
+    assert_eq!(attempts, vec![0, 1]);
+    assert!(rest.is_empty(), "{rest:?}");
+    assert!(matches!(recv_wm(&mut wm_rx), OutEvent::SpaceStateUpdated(..)));
+    assert!(!actor.state.display_churn_active);
 }

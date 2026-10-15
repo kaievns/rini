@@ -531,21 +531,21 @@ impl Reactor {
         space_state: ForwardedSpaceState,
     ) -> anyhow::Result<EventOutcome> {
         let releases_lifecycle = space_state.releases_lifecycle_refresh_quarantine;
-        let releases_display_churn = space_state.releases_display_churn_refresh_quarantine;
         let outcome = self.handle_authoritative_space_snapshot(space_state)?;
+        // Every snapshot the spaces actor forwards is coherent, so each one, once incorporated,
+        // releases the display-churn quarantine and owes one visible-window refresh, made once
+        // every quarantine this snapshot releases is lifted.
+        self.refresh_quarantine_manager.display_churn_active = false;
+        self.defer_visible_refresh(true);
         if releases_lifecycle {
             self.release_post_instability_quarantine_after_authoritative_snapshot();
         }
-        if releases_display_churn {
-            self.refresh_quarantine_manager.display_churn_active = false;
-            self.request_refresh_when_spaces_actor_stabilizes();
-            // A display was plugged in or unplugged. Flush any debounced save now: this is exactly
-            // the transition where the arrangement about to be replaced is the one worth remembering,
-            // and it is also when the layout file gets consulted to put windows back on the display
-            // they came from.
-            if self.autosave_pending {
-                self.save_layout_now();
-            }
+        self.flush_deferred_visible_refresh();
+        // Flush any debounced save now: after a display was plugged in or unplugged, the
+        // arrangement about to be replaced is the one worth remembering, and it is also when the
+        // layout file gets consulted to put windows back on the display they came from.
+        if self.autosave_pending {
+            self.save_layout_now();
         }
         Ok(outcome)
     }

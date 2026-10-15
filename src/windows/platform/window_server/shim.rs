@@ -1,7 +1,8 @@
 //! TEMPORARY, for callers not yet handed a [`WindowServer`] port: the free functions they call and
 //! the `set_*_override` setters their tests state answers with. Production answers from
-//! [`LiveWindowServer`], a test build from a thread-local [`FakeWindowServer`]. Once the spaces
-//! actor is handed a port, this module goes.
+//! [`LiveWindowServer`], a test build from a thread-local [`FakeWindowServer`]. Once the platform
+//! code of the frames, pictures, rest-border, bar and input threads is handed a port, this module
+//! goes.
 
 use std::collections::HashMap;
 use std::ffi::c_int;

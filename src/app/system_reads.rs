@@ -12,7 +12,7 @@ use std::sync::Arc;
 use objc2_core_foundation::CGRect;
 use rini_core::ids::{ScreenId, WindowServerId, pid_t};
 
-use crate::displays::platform::spaces::SpaceKinds;
+use crate::displays::domain::snapshot::SpaceKinds;
 use crate::windows::domain::info::{AppInfo, WindowServerInfo};
 use crate::windows::domain::manageable::Facts;
 use crate::windows::platform::mouse::MouseState;
