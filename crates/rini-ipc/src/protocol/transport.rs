@@ -4,7 +4,6 @@ use serde_json::Value;
 use crate::{RiniCommand, WindowId};
 
 /// A request accepted by Rini's Mach IPC server.
-#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RiniRequest {
@@ -22,10 +21,6 @@ pub enum RiniRequest {
         space_id: Option<u64>,
         workspace_id: Option<usize>,
     },
-    GetWorkspaceLayouts {
-        space_id: Option<u64>,
-        workspace_id: Option<usize>,
-    },
     GetApplications,
     GetMetrics,
     /// One-shot dump of everything needed to reason about strips and displays.
@@ -37,26 +32,12 @@ pub enum RiniRequest {
 }
 
 /// The response envelope returned by Rini's Mach IPC server.
-#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RiniResponse<T = Value> {
     Success { data: T },
     Error { error: Value },
 }
-
-impl<T> RiniResponse<T> {
-    pub fn into_result(self) -> Result<T, Value> {
-        match self {
-            Self::Success { data } => Ok(data),
-            Self::Error { error } => Err(error),
-        }
-    }
-}
-
-/// The compatibility response type for callers that intentionally want raw
-/// JSON values.
-pub type JsonRiniResponse = RiniResponse<Value>;
 
 #[cfg(test)]
 mod tests {
@@ -111,7 +92,10 @@ mod tests {
             }] }))
             .unwrap();
 
-        assert_eq!(response.into_result().unwrap()[0].name, "main");
+        let RiniResponse::Success { data } = response else {
+            panic!("a data payload is a success");
+        };
+        assert_eq!(data[0].name, "main");
     }
 
     /// rini pushes no events (`specs/README.md`), so a subscription is not a request it reads.

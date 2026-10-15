@@ -10,10 +10,9 @@ pub use protocol::*;
 use std::ffi::c_char;
 
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 use tracing::{error, info, trace};
 
-pub use client::{ClientError as RiniMachClientError, RiniMachClient};
+pub use client::RiniMachClient;
 use mach::{is_mach_server_registered, mach_server_run, send_mach_reply};
 use rini_mach_sys::mach_msg_header_t;
 
@@ -29,11 +28,6 @@ pub trait Backend: Send + 'static {
         space: Option<u64>,
         workspace: Option<usize>,
     ) -> Option<crate::protocol::LayoutStateData>;
-    fn workspace_layouts(
-        &self,
-        space: Option<u64>,
-        workspace: Option<usize>,
-    ) -> Vec<crate::protocol::WorkspaceLayoutData>;
     fn applications(&self) -> Vec<crate::protocol::ApplicationData>;
     fn metrics(&self) -> serde_json::Value;
     fn diagnostics(&self) -> crate::protocol::DiagnosticsData;
@@ -95,9 +89,6 @@ impl<B: Backend> MachHandler<B> {
                     },
                 }
             }
-            RiniRequest::GetWorkspaceLayouts { space_id, workspace_id } => {
-                success(self.reactor.workspace_layouts(space_id, workspace_id))
-            }
             RiniRequest::GetApplications => success(self.reactor.applications()),
             RiniRequest::GetMetrics => RiniResponse::Success { data: self.reactor.metrics() },
             RiniRequest::GetDiagnostics => success(self.reactor.diagnostics()),
@@ -113,47 +104,25 @@ impl<B: Backend> MachHandler<B> {
             },
 
             RiniRequest::ExecuteCommand { command } => match command {
-                crate::protocol::RiniCommand::Config(command) => match decode_protocol(command) {
-                    Ok(command) => match self.reactor.apply_config(command) {
-                        Ok(Ok(())) => RiniResponse::Success {
-                            data: serde_json::json!("Config applied successfully"),
-                        },
-                        Ok(Err(msg)) => RiniResponse::Error {
-                            error: serde_json::json!({ "message": msg }),
-                        },
-                        Err(e) => RiniResponse::Error {
-                            error: serde_json::json!({ "message": format!("Failed to apply config: {}", e) }),
-                        },
+                RiniCommand::Config(command) => match self.reactor.apply_config(command) {
+                    Ok(Ok(())) => RiniResponse::Success {
+                        data: serde_json::json!("Config applied successfully"),
+                    },
+                    Ok(Err(msg)) => RiniResponse::Error {
+                        error: serde_json::json!({ "message": msg }),
                     },
                     Err(e) => RiniResponse::Error {
-                        error: serde_json::json!({ "message": format!("Invalid config command: {}", e) }),
+                        error: serde_json::json!({ "message": format!("Failed to apply config: {}", e) }),
                     },
                 },
-                crate::protocol::RiniCommand::Layout(command) => {
-                    self.send_typed_reactor_command(command)
-                }
-                crate::protocol::RiniCommand::Metrics(command) => {
-                    self.send_typed_reactor_command(command)
-                }
-                crate::protocol::RiniCommand::Reactor(command) => {
-                    self.send_typed_reactor_command(command)
-                }
+                RiniCommand::Layout(command) => self.execute(Command::Layout(command)),
+                RiniCommand::Metrics(command) => self.execute(Command::Metrics(command)),
+                RiniCommand::Reactor(command) => self.execute(Command::Reactor(command)),
             },
         }
     }
 
-    fn send_typed_reactor_command<T>(&self, command: T) -> RiniResponse
-    where
-        T: Serialize,
-    {
-        let command = match decode_protocol(command) {
-            Ok(command) => command,
-            Err(e) => {
-                return RiniResponse::Error {
-                    error: serde_json::json!({ "message": format!("Invalid command format: {}", e) }),
-                };
-            }
-        };
+    fn execute(&self, command: Command) -> RiniResponse {
         if let Err(e) = self.reactor.execute(command) {
             error!("Failed to send command to reactor: {}", e);
             return RiniResponse::Error {
@@ -174,14 +143,6 @@ fn success<T: Serialize>(data: T) -> RiniResponse {
             error: serde_json::json!({ "message": "Failed to serialize response", "details": e.to_string() }),
         },
     }
-}
-
-fn decode_protocol<T, U>(value: T) -> Result<U, serde_json::Error>
-where
-    T: Serialize,
-    U: DeserializeOwned,
-{
-    serde_json::from_value(serde_json::to_value(value)?)
 }
 
 unsafe extern "C" fn handle_mach_request_c<B: Backend>(
@@ -311,13 +272,6 @@ mod tests {
             _: Option<usize>,
         ) -> Option<crate::protocol::LayoutStateData> {
             None
-        }
-        fn workspace_layouts(
-            &self,
-            _: Option<u64>,
-            _: Option<usize>,
-        ) -> Vec<crate::protocol::WorkspaceLayoutData> {
-            vec![]
         }
         fn applications(&self) -> Vec<crate::protocol::ApplicationData> {
             vec![]

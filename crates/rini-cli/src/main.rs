@@ -8,9 +8,8 @@ use rini_core::ids::WindowServerId;
 use rini_ipc::RiniMachClient;
 use rini_ipc::protocol::WorkspaceSelector;
 use rini_ipc::protocol::{self as reactor, DisplaySelector};
-use rini_ipc::protocol::{RiniRequest, RiniResponse, SwitchScope};
+use rini_ipc::protocol::{RiniCommand, RiniRequest, RiniResponse, SwitchScope};
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 #[derive(Parser)]
 #[command(name = "rini-cli")]
@@ -18,11 +17,6 @@ use serde::de::DeserializeOwned;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-}
-
-enum CliCommand {
-    Reactor(reactor::Command),
-    Config(rini_ipc::protocol::ConfigCommand),
 }
 
 #[derive(Subcommand)]
@@ -63,13 +57,6 @@ enum QueryCommands {
         #[arg(long)]
         space_id: Option<u64>,
         /// Virtual workspace index; defaults to the active workspace
-        #[arg(long)]
-        workspace_id: Option<usize>,
-    },
-    /// Get workspace layout-engine mode(s)
-    WorkspaceLayout {
-        #[arg(long)]
-        space_id: Option<u64>,
         #[arg(long)]
         workspace_id: Option<usize>,
     },
@@ -159,9 +146,6 @@ enum ExecuteCommands {
     },
     /// Serialize and print runtime state
     Serialize,
-    /// this command is deprecated, use `rini-cli execute space toggle-activated`
-    #[deprecated]
-    ToggleSpaceActivated,
     /// Show timing metrics
     ShowTiming,
     /// Move every window back to the display it belongs to, keeping its workspace.
@@ -221,25 +205,19 @@ enum WindowCommands {
     ToggleFullscreenWithinGaps,
     /// Fold the selected window into the column on this side, or back out to where it came from
     ToggleFold { direction: String },
-    /// Grow the current window size (increments by ~5%).
-    ResizeGrow {
-        /// Axis to resize; smart chooses the nearest applicable split.
-        #[arg(long, value_enum, default_value_t = CliResizeOrientation::Horizontal)]
-        orientation: CliResizeOrientation,
-    },
-    /// Shrink the current window size (decrements by ~5%).
-    ResizeShrink {
-        /// Axis to resize; smart chooses the nearest applicable split.
-        #[arg(long, value_enum, default_value_t = CliResizeOrientation::Horizontal)]
-        orientation: CliResizeOrientation,
-    },
     /// Resize the selected window by a fractional amount.
     /// - Pass a signed floating value: positive to grow, negative to shrink.
-    /// - The value is a fraction of the current size (e.g. `0.05` = 5%).
+    /// - The value is a fraction of the tiling area (e.g. `0.05` = 5%).
     /// Examples:
-    ///   rini-cli execute window resize-by --amount 0.05    # grow by 5%
-    ///   rini-cli execute window resize-by --amount -0.10   # shrink by 10%
-    ResizeBy { amount: f64 },
+    ///   rini-cli execute window resize-by 0.05                          # widen by 5%
+    ///   rini-cli execute window resize-by -0.10 --orientation vertical  # 10% shorter
+    ResizeBy {
+        #[arg(allow_hyphen_values = true)]
+        amount: f64,
+        /// Axis to resize; smart chooses the nearest applicable split.
+        #[arg(long, value_enum, default_value_t = CliResizeOrientation::Horizontal)]
+        orientation: CliResizeOrientation,
+    },
     /// Close a window as if Command-W was pressed
     Close {
         /// Optional window server ID; defaults to the focused window
@@ -435,10 +413,6 @@ fn main() {
                 }
                 process::exit(1);
             }
-            _ => {
-                eprintln!("Received an unknown response shape from rini");
-                process::exit(1);
-            }
         },
         Err(e) => {
             eprintln!("Communication error: {}", e);
@@ -468,41 +442,32 @@ fn build_query_request(query: QueryCommands) -> Result<RiniRequest, String> {
         QueryCommands::Layout { space_id, workspace_id } => {
             Ok(RiniRequest::GetLayoutState { space_id, workspace_id })
         }
-        QueryCommands::WorkspaceLayout { space_id, workspace_id } => {
-            Ok(RiniRequest::GetWorkspaceLayouts { space_id, workspace_id })
-        }
         QueryCommands::Metrics => Ok(RiniRequest::GetMetrics),
         QueryCommands::Diagnostics => Ok(RiniRequest::GetDiagnostics),
     }
 }
 
 /// One step of the window switcher over `scope`.
-fn switch(backward: bool, scope: SwitchScope) -> CliCommand {
-    CliCommand::Reactor(reactor::Command::Reactor(
-        reactor::ReactorCommand::SwitchWindow { backward, scope },
-    ))
+fn switch(backward: bool, scope: SwitchScope) -> RiniCommand {
+    RiniCommand::Reactor(reactor::ReactorCommand::SwitchWindow { backward, scope })
 }
 
 fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String> {
-    let rini_command = match execute {
+    let command = match execute {
         ExecuteCommands::Window { window_cmd } => map_window_command(window_cmd)?,
-        ExecuteCommands::Workspace { workspace_cmd } => map_workspace_command(workspace_cmd)?,
+        ExecuteCommands::Workspace { workspace_cmd } => map_workspace_command(workspace_cmd),
         ExecuteCommands::Layout { layout_cmd } => map_layout_command(layout_cmd)?,
-        ExecuteCommands::Config { config_cmd } => map_config_command(config_cmd)?,
+        ExecuteCommands::Config { config_cmd } => return Ok(map_config_command(config_cmd)),
         ExecuteCommands::Display { display_cmd } => map_display_command(display_cmd)?,
         ExecuteCommands::Space { space_cmd } => map_space_command(space_cmd)?,
-        ExecuteCommands::SaveAndExit => {
-            CliCommand::Reactor(reactor::Command::Reactor(reactor::ReactorCommand::SaveAndExit))
-        }
+        ExecuteCommands::SaveAndExit => RiniCommand::Reactor(reactor::ReactorCommand::SaveAndExit),
         ExecuteCommands::SaveLayout { file } => {
             let path = if file.saved {
                 rini_core::paths::restore_file()
             } else {
                 absolute_layout_path(file.path.expect("clap requires either PATH or --saved"))?
             };
-            CliCommand::Reactor(reactor::Command::Reactor(reactor::ReactorCommand::SaveLayout {
-                path,
-            }))
+            RiniCommand::Reactor(reactor::ReactorCommand::SaveLayout { path })
         }
         ExecuteCommands::LoadLayout { file, scope } => {
             let (path, source) = if file.saved {
@@ -520,76 +485,29 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
                 CliRestoreScope::Workspace => rini_ipc::protocol::RestoreScope::Workspace,
                 CliRestoreScope::Space => rini_ipc::protocol::RestoreScope::Space,
             };
-            CliCommand::Reactor(reactor::Command::Reactor(
-                reactor::ReactorCommand::RestoreLayout { path, scope, source },
-            ))
+            RiniCommand::Reactor(reactor::ReactorCommand::RestoreLayout { path, scope, source })
         }
-        ExecuteCommands::Debug => {
-            CliCommand::Reactor(reactor::Command::Reactor(reactor::ReactorCommand::Debug))
+        ExecuteCommands::Debug => RiniCommand::Reactor(reactor::ReactorCommand::Debug),
+        ExecuteCommands::DebugWarmSnapshots => {
+            RiniCommand::Reactor(reactor::ReactorCommand::DebugWarmSnapshots)
         }
-        ExecuteCommands::DebugWarmSnapshots => CliCommand::Reactor(reactor::Command::Reactor(
-            reactor::ReactorCommand::DebugWarmSnapshots,
-        )),
         ExecuteCommands::DebugOverlaySlide { dx, dy, duration_ms } => {
-            CliCommand::Reactor(reactor::Command::Reactor(
-                reactor::ReactorCommand::DebugOverlaySlide { dx, dy, duration_ms },
-            ))
+            RiniCommand::Reactor(reactor::ReactorCommand::DebugOverlaySlide { dx, dy, duration_ms })
         }
-        ExecuteCommands::Serialize => {
-            CliCommand::Reactor(reactor::Command::Reactor(reactor::ReactorCommand::Serialize))
+        ExecuteCommands::Serialize => RiniCommand::Reactor(reactor::ReactorCommand::Serialize),
+        ExecuteCommands::ShowTiming => {
+            RiniCommand::Metrics(rini_ipc::protocol::MetricsCommand::ShowTiming)
         }
-        #[allow(deprecated)]
-        ExecuteCommands::ToggleSpaceActivated => {
-            eprintln!("this command is deprecated, use rini-cli execute space toggle-activated");
-            CliCommand::Reactor(reactor::Command::Reactor(
-                reactor::ReactorCommand::ToggleSpaceActivated,
-            ))
+        ExecuteCommands::Redistribute => {
+            RiniCommand::Reactor(reactor::ReactorCommand::RedistributeWindows)
         }
-        ExecuteCommands::ShowTiming => CliCommand::Reactor(reactor::Command::Metrics(
-            rini_ipc::protocol::MetricsCommand::ShowTiming,
-        )),
-        ExecuteCommands::Redistribute => CliCommand::Reactor(reactor::Command::Reactor(
-            reactor::ReactorCommand::RedistributeWindows,
-        )),
         ExecuteCommands::SwitchWindow { backward } => switch(backward, SwitchScope::Everything),
         ExecuteCommands::SwitchWorkspaceWindow { backward } => {
             switch(backward, SwitchScope::Workspace)
         }
         ExecuteCommands::SwitchAppWindow { backward } => switch(backward, SwitchScope::App),
     };
-
-    if let CliCommand::Config(rini_ipc::protocol::ConfigCommand::GetConfig) = &rini_command {
-        return Ok(RiniRequest::GetConfig);
-    }
-
-    let command = into_protocol_command(rini_command)?;
     Ok(RiniRequest::ExecuteCommand { command })
-}
-
-fn into_protocol_command(command: CliCommand) -> Result<rini_ipc::protocol::RiniCommand, String> {
-    match command {
-        CliCommand::Config(command) => Ok(rini_ipc::protocol::RiniCommand::Config(
-            decode_protocol(command)?,
-        )),
-        CliCommand::Reactor(reactor::Command::Layout(command)) => Ok(
-            rini_ipc::protocol::RiniCommand::Layout(decode_protocol(command)?),
-        ),
-        CliCommand::Reactor(reactor::Command::Metrics(command)) => Ok(
-            rini_ipc::protocol::RiniCommand::Metrics(decode_protocol(command)?),
-        ),
-        CliCommand::Reactor(reactor::Command::Reactor(command)) => Ok(
-            rini_ipc::protocol::RiniCommand::Reactor(decode_protocol(command)?),
-        ),
-    }
-}
-
-fn decode_protocol<T, U>(value: T) -> Result<U, String>
-where
-    T: Serialize,
-    U: DeserializeOwned,
-{
-    serde_json::from_value(serde_json::to_value(value).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())
 }
 
 fn absolute_layout_path(path: PathBuf) -> Result<PathBuf, String> {
@@ -602,61 +520,55 @@ fn absolute_layout_path(path: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
-fn map_window_command(cmd: WindowCommands) -> Result<CliCommand, String> {
+fn map_window_command(cmd: WindowCommands) -> Result<RiniCommand, String> {
     use rini_ipc::protocol::LayoutCommand as LC;
-    match cmd {
-        WindowCommands::Next => Ok(CliCommand::Reactor(reactor::Command::Layout(LC::NextWindow))),
-        WindowCommands::Prev => Ok(CliCommand::Reactor(reactor::Command::Layout(LC::PrevWindow))),
+    Ok(match cmd {
+        WindowCommands::Next => RiniCommand::Layout(LC::NextWindow),
+        WindowCommands::Prev => RiniCommand::Layout(LC::PrevWindow),
         WindowCommands::Focus {
             direction,
             window_id,
             window_server_id,
         } => match (direction, window_id) {
-            (Some(direction), None) => Ok(CliCommand::Reactor(reactor::Command::Layout(
-                LC::MoveFocus(parse_direction(&direction)?),
-            ))),
-            (None, Some(window_id)) => Ok(CliCommand::Reactor(reactor::Command::Reactor(
-                reactor::ReactorCommand::FocusWindow {
+            (Some(direction), None) => {
+                RiniCommand::Layout(LC::MoveFocus(parse_direction(&direction)?))
+            }
+            (None, Some(window_id)) => {
+                RiniCommand::Reactor(reactor::ReactorCommand::FocusWindow {
                     window_id: parse_window_id(&window_id)?.into(),
                     window_server_id: window_server_id
                         .as_deref()
                         .map(parse_window_server_id)
                         .map(|result| result.map(|id| id.as_u32()))
                         .transpose()?,
-                },
-            ))),
-            (None, None) => Err("window focus requires a direction or --window-id".to_string()),
+                })
+            }
+            (None, None) => {
+                return Err("window focus requires a direction or --window-id".to_string());
+            }
             (Some(_), Some(_)) => {
-                Err("window focus accepts either a direction or --window-id, not both".to_string())
+                return Err(
+                    "window focus accepts either a direction or --window-id, not both".to_string()
+                );
             }
         },
-        WindowCommands::ToggleFloat => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::ToggleWindowFloating,
-        ))),
-        WindowCommands::ToggleFullscreenWithinGaps => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::ToggleFullscreenWithinGaps),
-        )),
-        WindowCommands::ToggleFold { direction } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::ToggleFold(parse_direction(&direction)?)),
-        )),
-        WindowCommands::ResizeGrow { orientation } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::ResizeWindowGrow(orientation.into())),
-        )),
-        WindowCommands::ResizeShrink { orientation } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::ResizeWindowShrink(orientation.into())),
-        )),
-        WindowCommands::ResizeBy { amount } => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::ResizeWindowBy { amount, orientation: Default::default() },
-        ))),
+        WindowCommands::ToggleFloat => RiniCommand::Layout(LC::ToggleWindowFloating),
+        WindowCommands::ToggleFullscreenWithinGaps => {
+            RiniCommand::Layout(LC::ToggleFullscreenWithinGaps)
+        }
+        WindowCommands::ToggleFold { direction } => {
+            RiniCommand::Layout(LC::ToggleFold(parse_direction(&direction)?))
+        }
+        WindowCommands::ResizeBy { amount, orientation } => RiniCommand::Layout(
+            LC::ResizeWindowBy { amount, orientation: orientation.into() },
+        ),
         WindowCommands::Close { window_id } => {
             let window_server_id = window_id.as_deref().map(parse_window_server_id).transpose()?;
-            Ok(CliCommand::Reactor(reactor::Command::Reactor(
-                reactor::ReactorCommand::CloseWindow {
-                    window_server_id: window_server_id.map(|id| id.as_u32()),
-                },
-            )))
+            RiniCommand::Reactor(reactor::ReactorCommand::CloseWindow {
+                window_server_id: window_server_id.map(|id| id.as_u32()),
+            })
         }
-    }
+    })
 }
 
 fn parse_window_server_id(input: &str) -> Result<WindowServerId, String> {
@@ -696,83 +608,54 @@ fn protocol_window_id(
         .ok_or_else(|| "window id index must be non-zero".to_string())
 }
 
-fn map_workspace_command(cmd: WorkspaceCommands) -> Result<CliCommand, String> {
+fn map_workspace_command(cmd: WorkspaceCommands) -> RiniCommand {
     use rini_ipc::protocol::LayoutCommand as LC;
-    match cmd {
-        WorkspaceCommands::Next { skip_empty } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::NextWorkspace(skip_empty)),
-        )),
-        WorkspaceCommands::Prev { skip_empty } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::PrevWorkspace(skip_empty)),
-        )),
-        WorkspaceCommands::Switch { workspace_id } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::SwitchToWorkspace(workspace_id)),
-        )),
+    RiniCommand::Layout(match cmd {
+        WorkspaceCommands::Next { skip_empty } => LC::NextWorkspace(skip_empty),
+        WorkspaceCommands::Prev { skip_empty } => LC::PrevWorkspace(skip_empty),
+        WorkspaceCommands::Switch { workspace_id } => LC::SwitchToWorkspace(workspace_id),
         WorkspaceCommands::MoveWindow {
             workspace_id,
             follow,
             window_id,
-        } => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::MoveWindowToWorkspace {
-                workspace: WorkspaceSelector::Index(workspace_id),
-                follow,
-                window_id,
-            },
-        ))),
-        WorkspaceCommands::Create => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::CreateWorkspace,
-        ))),
-        WorkspaceCommands::Last => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::SwitchToLastWorkspace,
-        ))),
-    }
+        } => LC::MoveWindowToWorkspace {
+            workspace: WorkspaceSelector::Index(workspace_id),
+            follow,
+            window_id,
+        },
+        WorkspaceCommands::Create => LC::CreateWorkspace,
+        WorkspaceCommands::Last => LC::SwitchToLastWorkspace,
+    })
 }
 
-fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
+fn map_layout_command(cmd: LayoutCommands) -> Result<RiniCommand, String> {
     use rini_ipc::protocol::LayoutCommand as LC;
-    match cmd {
-        LayoutCommands::MoveNode { direction } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::MoveNode(parse_direction(&direction)?)),
-        )),
-        LayoutCommands::ToggleStack => {
-            Ok(CliCommand::Reactor(reactor::Command::Layout(LC::ToggleStack)))
+    Ok(RiniCommand::Layout(match cmd {
+        LayoutCommands::MoveNode { direction } => LC::MoveNode(parse_direction(&direction)?),
+        LayoutCommands::ToggleStack => LC::ToggleStack,
+        LayoutCommands::ToggleFocusFloat => LC::ToggleFocusFloating,
+        LayoutCommands::SwapWindows { a, b } => {
+            LC::SwapWindows(parse_window_id(&a)?.into(), parse_window_id(&b)?.into())
         }
-        LayoutCommands::ToggleFocusFloat => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::ToggleFocusFloating,
-        ))),
-        LayoutCommands::SwapWindows { a, b } => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::SwapWindows(parse_window_id(&a)?.into(), parse_window_id(&b)?.into()),
-        ))),
-        LayoutCommands::ScrollStrip { delta } => {
-            Ok(CliCommand::Reactor(reactor::Command::Layout(LC::ScrollStrip {
-                delta,
-            })))
-        }
-        LayoutCommands::SnapStrip => {
-            Ok(CliCommand::Reactor(reactor::Command::Layout(LC::SnapStrip)))
-        }
-        LayoutCommands::CenterSelection => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::CenterSelection,
-        ))),
-        LayoutCommands::CyclePresetColumnWidth => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::CyclePresetColumnWidth),
-        )),
-    }
+        LayoutCommands::ScrollStrip { delta } => LC::ScrollStrip { delta },
+        LayoutCommands::SnapStrip => LC::SnapStrip,
+        LayoutCommands::CenterSelection => LC::CenterSelection,
+        LayoutCommands::CyclePresetColumnWidth => LC::CyclePresetColumnWidth,
+    }))
 }
 
-fn map_config_command(cmd: ConfigCommands) -> Result<CliCommand, String> {
+/// `config get` is a query of its own; setting and reloading are config commands.
+fn map_config_command(cmd: ConfigCommands) -> RiniRequest {
     use rini_ipc::protocol::ConfigCommand;
-
-    let cfg_cmd = match cmd {
+    let command = match cmd {
+        ConfigCommands::Get => return RiniRequest::GetConfig,
         ConfigCommands::Set { kdl } => ConfigCommand::Set(kdl),
-        ConfigCommands::Get => ConfigCommand::GetConfig,
         ConfigCommands::Reload => ConfigCommand::ReloadConfig,
     };
-
-    Ok(CliCommand::Config(cfg_cmd))
+    RiniRequest::ExecuteCommand { command: RiniCommand::Config(command) }
 }
 
-fn map_space_command(cmd: SpaceCommands) -> Result<CliCommand, String> {
+fn map_space_command(cmd: SpaceCommands) -> Result<RiniCommand, String> {
     let command = match cmd {
         SpaceCommands::ToggleActivated => reactor::ReactorCommand::ToggleSpaceActivated,
         SpaceCommands::Switch { direction } => {
@@ -780,39 +663,31 @@ fn map_space_command(cmd: SpaceCommands) -> Result<CliCommand, String> {
         }
     };
 
-    Ok(CliCommand::Reactor(reactor::Command::Reactor(command)))
+    Ok(RiniCommand::Reactor(command))
 }
 
-fn map_display_command(cmd: DisplayCommands) -> Result<CliCommand, String> {
-    match cmd {
+fn map_display_command(cmd: DisplayCommands) -> Result<RiniCommand, String> {
+    use reactor::ReactorCommand as RC;
+    Ok(RiniCommand::Reactor(match cmd {
         DisplayCommands::Focus { direction, index, uuid } => {
-            let selector = build_display_selector(direction, index, uuid)?;
-            Ok(CliCommand::Reactor(reactor::Command::Reactor(
-                reactor::ReactorCommand::FocusDisplay(selector),
-            )))
+            RC::FocusDisplay(build_display_selector(direction, index, uuid)?)
         }
         DisplayCommands::MoveMouseToIndex { index } => {
-            Ok(CliCommand::Reactor(reactor::Command::Reactor(
-                reactor::ReactorCommand::MoveMouseToDisplay(DisplaySelector::Index(index)),
-            )))
+            RC::MoveMouseToDisplay(DisplaySelector::Index(index))
         }
         DisplayCommands::MoveMouseToUuid { uuid } => {
-            Ok(CliCommand::Reactor(reactor::Command::Reactor(
-                reactor::ReactorCommand::MoveMouseToDisplay(DisplaySelector::Uuid(uuid)),
-            )))
+            RC::MoveMouseToDisplay(DisplaySelector::Uuid(uuid))
         }
         DisplayCommands::MoveWindow {
             direction,
             index,
             uuid,
             window_id,
-        } => Ok(CliCommand::Reactor(reactor::Command::Reactor(
-            reactor::ReactorCommand::MoveWindowToDisplay {
-                selector: build_display_selector(direction, index, uuid)?,
-                window_id,
-            },
-        ))),
-    }
+        } => RC::MoveWindowToDisplay {
+            selector: build_display_selector(direction, index, uuid)?,
+            window_id,
+        },
+    }))
 }
 
 fn build_display_selector(
@@ -913,11 +788,8 @@ mod tests {
                 panic!("{subcommand} is not an execute subcommand");
             };
             assert_eq!(
-                serde_json::to_value(build_execute_request(command).unwrap()).unwrap(),
-                serde_json::to_value(RiniRequest::ExecuteCommand {
-                    command: into_protocol_command(switch(true, scope)).unwrap(),
-                })
-                .unwrap(),
+                build_execute_request(command).unwrap(),
+                RiniRequest::ExecuteCommand { command: switch(true, scope) },
                 "{subcommand}"
             );
         }
@@ -938,10 +810,7 @@ mod tests {
         };
         let layout = |command: LC| {
             serde_json::to_value(RiniRequest::ExecuteCommand {
-                command: into_protocol_command(CliCommand::Reactor(reactor::Command::Layout(
-                    command,
-                )))
-                .unwrap(),
+                command: RiniCommand::Layout(command),
             })
             .unwrap()
         };
@@ -981,24 +850,17 @@ mod tests {
                 WindowCommands::ToggleFold { direction: "left".into() },
             ),
             (
-                "resize-grow",
-                WindowCommands::ResizeGrow {
+                "resize-by",
+                WindowCommands::ResizeBy {
+                    amount: 0.05,
                     orientation: CliResizeOrientation::Horizontal,
                 },
             ),
-            (
-                "resize-shrink",
-                WindowCommands::ResizeShrink {
-                    orientation: CliResizeOrientation::Horizontal,
-                },
-            ),
-            ("resize-by", WindowCommands::ResizeBy { amount: 0.05 }),
         ];
         let mut seen: Vec<(&str, serde_json::Value)> = Vec::new();
         for (label, command) in commands {
-            let mapped = map_window_command(command)
-                .and_then(into_protocol_command)
-                .unwrap_or_else(|e| panic!("{label} did not map: {e}"));
+            let mapped =
+                map_window_command(command).unwrap_or_else(|e| panic!("{label} did not map: {e}"));
             let wire = serde_json::to_value(&mapped).unwrap();
             if let Some((other, _)) = seen.iter().find(|(_, seen)| *seen == wire) {
                 panic!("{label} and {other} both map to {wire}");
@@ -1011,12 +873,10 @@ mod tests {
     /// a direction.
     #[test]
     fn the_two_fold_directions_are_different_wire_commands() {
-        let left = map_window_command(WindowCommands::ToggleFold { direction: "left".into() })
-            .and_then(into_protocol_command)
-            .unwrap();
-        let right = map_window_command(WindowCommands::ToggleFold { direction: "right".into() })
-            .and_then(into_protocol_command)
-            .unwrap();
+        let left =
+            map_window_command(WindowCommands::ToggleFold { direction: "left".into() }).unwrap();
+        let right =
+            map_window_command(WindowCommands::ToggleFold { direction: "right".into() }).unwrap();
         assert_ne!(
             serde_json::to_value(&left).unwrap(),
             serde_json::to_value(&right).unwrap()
@@ -1045,9 +905,8 @@ mod tests {
             CliResizeOrientation::Vertical,
             CliResizeOrientation::Smart,
         ] {
-            let mapped = map_window_command(WindowCommands::ResizeGrow { orientation })
-                .and_then(into_protocol_command)
-                .unwrap();
+            let mapped =
+                map_window_command(WindowCommands::ResizeBy { amount: 0.05, orientation }).unwrap();
             let wire = serde_json::to_value(&mapped).unwrap();
             assert!(
                 !seen.contains(&wire),
@@ -1055,6 +914,43 @@ mod tests {
             );
             seen.push(wire);
         }
+    }
+
+    /// Shrinking is a negative step: `resize-by -0.05` has to reach the wire as one, not be read as
+    /// a flag.
+    #[test]
+    fn a_negative_resize_by_reaches_the_wire_as_a_shrink() {
+        let cli = Cli::try_parse_from([
+            "rini-cli",
+            "execute",
+            "window",
+            "resize-by",
+            "-0.05",
+            "--orientation",
+            "vertical",
+        ])
+        .unwrap_or_else(|e| panic!("{e}"));
+        let Commands::Execute { command } = cli.command else {
+            panic!("resize-by is an execute subcommand");
+        };
+        assert_eq!(
+            build_execute_request(command).unwrap(),
+            RiniRequest::ExecuteCommand {
+                command: RiniCommand::Layout(rini_ipc::protocol::LayoutCommand::ResizeWindowBy {
+                    amount: -0.05,
+                    orientation: rini_ipc::protocol::ResizeOrientation::Vertical,
+                }),
+            }
+        );
+    }
+
+    /// `config get` asks for the running config; it is not a command the config actor runs.
+    #[test]
+    fn config_get_is_the_config_query() {
+        let request =
+            build_execute_request(ExecuteCommands::Config { config_cmd: ConfigCommands::Get })
+                .unwrap();
+        assert_eq!(request, RiniRequest::GetConfig);
     }
 
     #[test]

@@ -1979,7 +1979,6 @@ mod query_view {
         let reactor = test_reactor();
         let never_seen = SpaceId::new(4242);
         assert!(reactor.query_workspaces(Some(never_seen)).is_empty());
-        assert!(reactor.query_workspace_layouts(Some(never_seen), None).is_empty());
         assert!(
             reactor
                 .layout_manager

@@ -145,6 +145,14 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   landing on `max-column-width` would make the window smaller. A shrink from above the bound, from
   full width, a dragged width or `Mod+R`'s 100%, MUST start from the width the column HAS, not the
   width it had before being maximised, and from full width MUST end it.
+- **`rini-cli execute window resize-by` is the resize keys' step from outside.** It MUST take a
+  signed fraction of the tiling area, a negative one shrinking, and `--orientation` `horizontal`,
+  `vertical` or `smart`, so a shrink and a height change reach it as they reach a bind. There is no
+  fixed-step grow or shrink beside it.
+
+> **Reported 2026-10-15.** Kai approved deleting `resize-grow` and `resize-shrink`, a fixed 5% step
+> only the CLI sent, as duplicates of `resize-by`. `resize-by` took their `--orientation`, and a
+> negative amount, which the CLI had refused as an unknown flag, became a shrink.
 - **A window the user zooms from its title bar MUST become the full-width column**, the same one
   `Mod+F` makes, whatever size the app zooms it to: the screen, or its content as Safari and Finder
   do. It MUST end exactly at rini's full-width frame, inside the viewport by the border's width with

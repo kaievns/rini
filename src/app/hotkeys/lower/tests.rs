@@ -323,9 +323,9 @@ fn an_index_is_not_checked_against_the_configured_names() {
     );
 }
 
-/// `set-column-width "+5%"` is what `resize_window_grow` was: the same step, the same orientation.
+/// `set-column-width "+5%"` and `"-5%"` step the column's width by 5% of the tiling area.
 #[test]
-fn a_five_percent_step_is_the_old_grow_and_shrink() {
+fn a_five_percent_step_resizes_the_width_by_five_percent() {
     assert_eq!(
         lower(Action::SetColumnWidth("+5%".parse().unwrap()), &names()),
         layout(LayoutCommand::ResizeWindowBy {

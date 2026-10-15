@@ -26,8 +26,6 @@ pub enum LayoutCommand {
     ToggleWindowFloating,
     /// niri's `maximize-column`: the column fills the tiling area and stays in the strip.
     ToggleFullscreenWithinGaps,
-    ResizeWindowGrow(ResizeOrientation),
-    ResizeWindowShrink(ResizeOrientation),
     /// Change the selection's size by `amount` of the tiling area: its column's width, its height
     /// in a stacked column, or whichever of the two `Smart` picks.
     ResizeWindowBy {
@@ -41,9 +39,8 @@ pub enum LayoutCommand {
     SnapStrip,
     /// Cycle the selected column through the configured preset widths.
     ///
-    /// niri's `switch-preset-column-width`. The existing ResizeWindowGrow /
-    /// ResizeWindowShrink commands step by a fixed ~5%, which leaves columns at
-    /// arbitrary in-between widths; this snaps to a known set instead.
+    /// niri's `switch-preset-column-width`. `ResizeWindowBy` leaves a column at whatever width
+    /// it reaches; this snaps to a known set instead.
     ///
     /// The whole viewport is one of those widths, a width rather than full-width mode:
     /// the cycle reaches it with the column's stack kept, and a step off a full-width
@@ -156,7 +153,6 @@ pub enum ConfigCommand {
     /// it writes replaces what is running, setting by setting, `workspace` and `window-rule` lists
     /// whole, and binds key by key (`specs/config.md`, "Changing the running config").
     Set(String),
-    GetConfig,
     ReloadConfig,
 }
 

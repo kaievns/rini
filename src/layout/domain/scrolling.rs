@@ -2156,10 +2156,9 @@ impl ScrollingLayoutSystem {
 
     /// Cycle the selected column through `preset_column_widths`.
     ///
-    /// niri's switch-preset-column-width. Unlike ResizeWindowGrow/Shrink, which
-    /// step by a fixed ~5% and leave columns at arbitrary in-between widths, this
-    /// snaps to a known set — so every column ends up at one of a few predictable
-    /// sizes instead of drifting.
+    /// niri's switch-preset-column-width. Unlike `resize_selection_by`, which leaves a
+    /// column at whatever width it reaches, this snaps to a known set — so every column
+    /// ends up at one of a few predictable sizes instead of drifting.
     ///
     /// Only ever a width: the 100% step makes the whole column, stack and all, the viewport wide and
     /// held only to it, as a drag across the viewport does, and enters no full-width mode. A
@@ -2957,7 +2956,7 @@ mod tests {
     }
 
     #[test]
-    fn niri_rightmost_resize_grow_increases_visible_width() {
+    fn niri_rightmost_widening_increases_visible_width() {
         let mut settings = ScrollingLayoutSettings::default();
         settings.column_width_ratio = 0.45;
         settings.min_column_width_ratio = 0.2;

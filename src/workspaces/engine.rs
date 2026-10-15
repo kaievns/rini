@@ -2086,9 +2086,7 @@ impl LayoutEngine {
                 target,
                 command,
             ),
-            LayoutCommand::ResizeWindowGrow(_)
-            | LayoutCommand::ResizeWindowShrink(_)
-            | LayoutCommand::ResizeWindowBy { .. }
+            LayoutCommand::ResizeWindowBy { .. }
             | LayoutCommand::CyclePresetColumnWidth => {
                 self.handle_resize_command(memory, target, is_floating, command)
             }

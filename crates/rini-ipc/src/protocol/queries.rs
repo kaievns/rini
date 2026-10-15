@@ -145,14 +145,6 @@ pub struct WorkspaceData {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WorkspaceLayoutData {
-    pub id: String,
-    pub index: usize,
-    pub name: String,
-    pub is_active: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ApplicationData {
     pub pid: i32,
     pub bundle_id: Option<String>,

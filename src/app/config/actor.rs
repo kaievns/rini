@@ -68,7 +68,6 @@ impl ConfigActor {
     fn handle_config_command(&mut self, cmd: ConfigCommand) -> Result<(), String> {
         debug!("Applying config command: {:?}", cmd);
         match cmd {
-            ConfigCommand::GetConfig => Ok(()),
             ConfigCommand::Set(fragment) => {
                 let changed =
                     self.config.with("config set", &fragment).map_err(|error| error.render())?;

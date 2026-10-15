@@ -5,7 +5,6 @@ use std::sync::mpsc::{RecvError, SyncSender, sync_channel};
 use objc2_core_foundation::CGRect;
 use rini_ipc::protocol::{
     ApplicationData, DiagnosticSpace, DiagnosticWindow, DiagnosticsData, LayoutStateData,
-    WorkspaceLayoutData,
 };
 
 use crate::app::api::dto::{RuntimeDisplayData, RuntimeWindowData, RuntimeWorkspaceData};
@@ -58,15 +57,6 @@ impl ReactorQueryHandle {
         self.send_query(QueryRequest::Displays).unwrap_or_default()
     }
 
-    pub fn query_workspace_layouts(
-        &self,
-        space_id: Option<SpaceId>,
-        workspace_id: Option<usize>,
-    ) -> Vec<WorkspaceLayoutData> {
-        self.send_query(|resp| QueryRequest::WorkspaceLayouts { space_id, workspace_id, resp })
-            .unwrap_or_default()
-    }
-
     pub fn query_window_info(&self, window_id: WindowId) -> Option<RuntimeWindowData> {
         self.send_query(|resp| QueryRequest::WindowInfo { window_id, resp })
             .ok()
@@ -113,11 +103,6 @@ pub enum QueryRequest {
         resp: SyncSender<Vec<RuntimeWindowData>>,
     },
     Displays(SyncSender<Vec<RuntimeDisplayData>>),
-    WorkspaceLayouts {
-        space_id: Option<SpaceId>,
-        workspace_id: Option<usize>,
-        resp: SyncSender<Vec<WorkspaceLayoutData>>,
-    },
     WindowInfo {
         window_id: WindowId,
         resp: SyncSender<Option<RuntimeWindowData>>,
@@ -143,9 +128,6 @@ impl Reactor {
             }
             QueryRequest::Displays(resp) => {
                 let _ = resp.send(self.query_displays());
-            }
-            QueryRequest::WorkspaceLayouts { space_id, workspace_id, resp } => {
-                let _ = resp.send(self.query_workspace_layouts(space_id, workspace_id));
             }
             QueryRequest::WindowInfo { window_id, resp } => {
                 let _ = resp.send(self.query_window_info(window_id));
@@ -202,14 +184,6 @@ impl Reactor {
 
     pub fn query_displays(&self) -> Vec<RuntimeDisplayData> {
         self.view().handle_displays_query()
-    }
-
-    pub fn query_workspace_layouts(
-        &self,
-        space_id: Option<SpaceId>,
-        workspace_id: Option<usize>,
-    ) -> Vec<WorkspaceLayoutData> {
-        self.view().handle_workspace_layouts_query(space_id, workspace_id)
     }
 
     pub fn query_window_info(&self, window_id: WindowId) -> Option<RuntimeWindowData> {
@@ -387,31 +361,6 @@ impl StateView<'_> {
         }
 
         workspaces
-    }
-
-    fn handle_workspace_layouts_query(
-        &self,
-        space_id_param: Option<SpaceId>,
-        workspace_id: Option<usize>,
-    ) -> Vec<WorkspaceLayoutData> {
-        let Some(space) = space_id_param.or_else(|| self.default_space) else {
-            return Vec::new();
-        };
-
-        let workspace_list = self.engine.virtual_workspace_manager().existing_workspaces(space);
-        let active_workspace = self.engine.active_workspace(space);
-
-        workspace_list
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| workspace_id.map(|target| target == *index).unwrap_or(true))
-            .map(|(index, (id, name))| WorkspaceLayoutData {
-                id: format!("{:?}", id),
-                index,
-                name: name.clone(),
-                is_active: active_workspace == Some(*id),
-            })
-            .collect()
     }
 
     fn handle_displays_query(&self) -> Vec<RuntimeDisplayData> {
@@ -1203,13 +1152,10 @@ mod tests {
         let f = Fixture::new(&[10], &[1]);
         let unknown = SpaceId::new(4242);
 
-        let known = f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), None);
-        let listed = f.view().handle_workspace_layouts_query(Some(unknown), None);
+        let known = f.view().handle_workspace_query(Some(SpaceId::new(10)));
+        let listed = f.view().handle_workspace_query(Some(unknown));
         assert_eq!(listed.len(), known.len(), "the workspace order is global");
 
-        assert!(
-            f.view().handle_workspace_query(Some(unknown)).iter().all(|workspace| !workspace.is_active)
-        );
         assert!(
             listed.iter().all(|workspace| !workspace.is_active),
             "none of them is active on a space rini has never seen"
@@ -1225,38 +1171,6 @@ mod tests {
     fn layout_state_for_an_unknown_space_answers_nothing() {
         let f = Fixture::new(&[10], &[1]);
         assert!(f.view().handle_layout_state_query(Some(4242), None).is_none());
-    }
-
-    #[test]
-    fn workspace_layouts_are_reported_for_a_space_rini_has_seen() {
-        let f = Fixture::new(&[10], &[1]);
-        assert!(!f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), None).is_empty());
-    }
-
-    /// Naming a workspace narrows the answer to that one rather than returning all of them.
-    #[test]
-    fn naming_a_workspace_narrows_the_layout_answer_to_it() {
-        let f = Fixture::new(&[10], &[1]);
-        let all = f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), None);
-        let one = f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), Some(0));
-        assert!(
-            all.len() > one.len() || all.len() == 1,
-            "all={} one={}",
-            all.len(),
-            one.len()
-        );
-        assert_eq!(one.len(), 1);
-    }
-
-    /// A workspace index the space does not have answers nothing rather than the nearest one.
-    #[test]
-    fn a_workspace_index_that_does_not_exist_answers_nothing() {
-        let f = Fixture::new(&[10], &[1]);
-        assert!(
-            f.view()
-                .handle_workspace_layouts_query(Some(SpaceId::new(10)), Some(99))
-                .is_empty()
-        );
     }
 
     #[test]

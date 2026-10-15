@@ -70,13 +70,6 @@ impl rini_ipc::Backend for IpcBackend {
     ) -> Option<protocol::LayoutStateData> {
         self.reactor.query_layout_state(space, workspace)
     }
-    fn workspace_layouts(
-        &self,
-        space: Option<u64>,
-        workspace: Option<usize>,
-    ) -> Vec<protocol::WorkspaceLayoutData> {
-        self.reactor.query_workspace_layouts(space.map(SpaceId::new), workspace)
-    }
     fn applications(&self) -> Vec<protocol::ApplicationData> {
         self.reactor.query_applications()
     }
