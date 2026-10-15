@@ -34,13 +34,57 @@ pub(super) struct Turning {
     baseline: Option<Vec<u8>>,
     end: ScreenRect,
     left: u32,
-    /// Its look changed, its tries ran out, the cache refused its capture, it was handed to
-    /// ScreenCaptureKit, or, the window losing focus, it was found clipped.
-    done: bool,
+    state: EndState,
+}
+
+/// Where one end of a `Change` watch is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EndState {
+    /// Watched, the last look found it where it ends or it has not been looked at.
+    Looking,
+    /// Watched, the last look found it not where it ends.
+    Missed,
+    /// Done: its look changed.
+    Turned,
+    /// Done with no change: its tries ran out, the cache refused its capture, it was handed to
+    /// ScreenCaptureKit, or, the window losing focus, it was found clipped. The window losing focus
+    /// ended so is lost.
+    Ended,
+}
+
+/// What befalls an end of a `Change` watch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EndEdge {
+    /// A look at it begins.
+    Looked,
+    /// The look found it not where it ends.
+    Missed,
     /// Its look changed.
-    turned: bool,
-    /// The last look found it not where it ends.
-    missed: bool,
+    Turned,
+    /// A try spent with no change, `left` tries left.
+    Spent { left: u32 },
+    /// Its capture refused, or it found cut by the display's edge.
+    Ended,
+}
+
+impl EndState {
+    /// A change of look turns any end, and a turned end stays turned. A spent try ends one with no
+    /// tries left and watches it again otherwise; a look clears a miss and a miss marks only an end
+    /// still watched.
+    pub(super) fn next(self, edge: EndEdge) -> EndState {
+        use EndState::*;
+        match (self, edge) {
+            (_, EndEdge::Turned) => Turned,
+            (Turned, _) => Turned,
+            (Missed, EndEdge::Looked) => Looking,
+            (Looking | Missed, EndEdge::Missed) => Missed,
+            (Ended, EndEdge::Looked | EndEdge::Missed) | (Looking, EndEdge::Looked) => self,
+            (_, EndEdge::Spent { left: 0 }) | (_, EndEdge::Ended) => Ended,
+            (_, EndEdge::Spent { .. }) => Looking,
+        }
+    }
+
+    pub(super) fn done(self) -> bool { matches!(self, EndState::Turned | EndState::Ended) }
 }
 
 impl Turning {
@@ -55,16 +99,18 @@ impl Turning {
             baseline,
             end,
             left: tries,
-            done: tries == 0,
-            turned: false,
-            missed: false,
+            state: if tries == 0 {
+                EndState::Ended
+            } else {
+                EndState::Looking
+            },
         }
     }
 
     /// A try spent: with none left it is done.
     fn spend(&mut self) {
         self.left = self.left.saturating_sub(1);
-        self.done = self.left == 0;
+        self.state = self.state.next(EndEdge::Spent { left: self.left });
     }
 
     /// Carries on from `old`, the same window's, while its end keeps its size: a band print is drawn
@@ -75,9 +121,7 @@ impl Turning {
         if kept {
             self.baseline = old.baseline;
             self.left = old.left.min(self.left);
-            self.done = old.done;
-            self.turned = old.turned;
-            self.missed = old.missed;
+            self.state = old.state;
         }
         kept
     }
@@ -101,8 +145,7 @@ impl Turning {
         if let Some(baseline) = judged.as_deref()
             && print_changed(Some(baseline), band)
         {
-            self.done = true;
-            self.turned = true;
+            self.state = self.state.next(EndEdge::Turned);
             out.deliver(tag, Why::FocusChanged, window, frame);
         } else {
             if judged.is_none() {
@@ -146,13 +189,15 @@ impl Change {
             .find(|end| end.target.window == window)
     }
 
-    fn done(&self) -> bool { self.ends().all(|end| end.done) }
+    fn done(&self) -> bool { self.ends().all(|end| end.state.done()) }
 
     /// When it is next looked at: its round, or a poll before it while an end the last look missed is
     /// still watched. A poll left by an end forgotten or retargeted since would hand out nothing.
     fn when(&self) -> Instant {
         match self.poll {
-            Some(poll) if self.ends().any(|end| !end.done && end.missed) => poll.min(self.next),
+            Some(poll) if self.ends().any(|end| end.state == EndState::Missed) => {
+                poll.min(self.next)
+            }
             _ => self.next,
         }
     }
@@ -165,8 +210,8 @@ impl Change {
     /// When its target is next looked at, while it is not done.
     fn target_wake(&self) -> Option<Instant> {
         let target = &self.target;
-        (!target.done).then(|| match self.poll {
-            Some(poll) if target.missed => poll.min(self.next),
+        (!target.state.done()).then(|| match self.poll {
+            Some(poll) if target.state == EndState::Missed => poll.min(self.next),
             _ => self.next,
         })
     }
@@ -177,7 +222,7 @@ impl Change {
     }
 
     /// Its target delivered its change, ran out of tries, or was handed over.
-    pub(super) fn target_done(&self) -> bool { self.target.done }
+    pub(super) fn target_done(&self) -> bool { self.target.state.done() }
 
     /// `window` was reported focused at `now`: when it is the target, the watch is armed from now.
     pub(super) fn arm(&mut self, window: WindowId, now: Instant) {
@@ -208,7 +253,7 @@ impl Change {
         }
         let retagged = self.tag != old.tag;
         let losing = self.losing.as_mut()?;
-        (losing.carry_on(old.losing?) && losing.done && !losing.turned && retagged)
+        (losing.carry_on(old.losing?) && losing.state == EndState::Ended && retagged)
             .then_some((self.tag, losing.target.window))
     }
 
@@ -222,7 +267,11 @@ impl Change {
         if full {
             round.plan.rounds.push(id);
         }
-        for end in self.ends().filter(|end| !end.done && (full || end.missed)) {
+        for end in self.ends().filter(|end| match end.state {
+            EndState::Looking => full,
+            EndState::Missed => true,
+            EndState::Turned | EndState::Ended => false,
+        }) {
             let accept = Accept::Near { end: end.end, slack: END_SLACK };
             round.add(id, &self.behind, look(end.target, accept, false));
         }
@@ -242,25 +291,29 @@ impl Change {
         let tag = self.tag;
         let losing = self.losing.as_ref().is_some_and(|end| end.target.window == window);
         let end = self.end_of(window)?;
-        end.missed = false;
+        end.state = end.state.next(EndEdge::Looked);
+        let mut found = true;
         match looked.at(window, Accept::Near { end: end.end, slack: END_SLACK }) {
             Some((frame, Capture::Taken(taken))) => end.judge(tag, frame, &taken.band, prints, out),
             // Every later capture at this size is refused too.
-            Some((_, Capture::Refused)) => end.done = true,
+            Some((_, Capture::Refused)) => end.state = end.state.next(EndEdge::Ended),
             Some((_, Capture::Missed)) | None => match looked.cut(window, end.end, END_SLACK) {
                 Some(frame) => {
-                    end.done = true;
+                    end.state = end.state.next(EndEdge::Ended);
                     if !losing {
                         out.clipped.push((tag, end.target, frame));
                     }
                 }
-                None => end.missed = true,
+                None => {
+                    end.state = end.state.next(EndEdge::Missed);
+                    found = false;
+                }
             },
         }
-        if losing && end.done && !end.turned {
+        if losing && end.state == EndState::Ended {
             out.lost.push((tag, window));
         }
-        Some(!end.missed)
+        Some(found)
     }
 
     /// Looked at again together `every` after a round that captured either end, and every
@@ -270,7 +323,7 @@ impl Change {
         if round {
             self.next = now + if captured { self.every } else { LANDING_POLL };
         }
-        let missed = self.ends().any(|end| !end.done && end.missed);
+        let missed = self.ends().any(|end| end.state == EndState::Missed);
         self.poll = missed.then_some(now + LANDING_POLL);
     }
 }
@@ -280,6 +333,32 @@ mod tests {
     use super::super::fixtures::*;
     use super::super::*;
     use super::*;
+
+    #[test]
+    fn an_end_moves_by_what_befalls_it() {
+        use EndState::{Ended, Looking, Missed, Turned};
+        let edges = [
+            EndEdge::Looked,
+            EndEdge::Missed,
+            EndEdge::Turned,
+            EndEdge::Spent { left: 0 },
+            EndEdge::Spent { left: 2 },
+            EndEdge::Ended,
+        ];
+        for (state, after) in [
+            (Looking, [Looking, Missed, Turned, Ended, Looking, Ended]),
+            (Missed, [Looking, Missed, Turned, Ended, Looking, Ended]),
+            (Turned, [Turned; 6]),
+            (Ended, [Ended, Ended, Turned, Ended, Looking, Ended]),
+        ] {
+            for (edge, after) in edges.into_iter().zip(after) {
+                assert_eq!(state.next(edge), after, "{state:?} on {edge:?}");
+            }
+        }
+        assert_eq!([Looking, Missed, Turned, Ended].map(EndState::done), [
+            false, false, true, true
+        ]);
+    }
 
     /// The focus target is captured only once its focus is reported; from then every 15ms, six times
     /// at most, stopping at the first change of its band print.
