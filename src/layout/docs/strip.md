@@ -182,7 +182,7 @@ is borrowed.
   `cycle_preset_column_width`, `resize_selection_by` and `toggle_full_width`
   keep a `Place` for the selection (`LayoutState::kept_place`): `Centred` under a centre override, or
   else the column's share of the viewport's free space on its left, which each
-  pass records for its selection (`last_selected_share`, `strip::place_share`,
+  pass records for its selection (`Measured::share`, `strip::place_share`,
   revealed first, a viewport-wide column at a half, which the clamps hold to its
   end of the strip as the first or last column). It is read
   only when that pass had the window selected and no scroll request has come
@@ -302,7 +302,7 @@ x=-860 with half the viewport empty. `Mod+Period` lands it in the stack's
 place and scrolls nothing, and the same rule holds for it. Under `"never"` the
 fold-out keeps how the last pass showed the stack (`View` in a `KeptView` naming
 the key's side, read before the fold's own reveal): centred, or its start
-against the scroll offset from `last_selected_rel_px`, which the fold back pins
+against the scroll offset from `Measured::selected_rel`, which the fold back pins
 (`Pin::Start`) where the pass applies a kept right edge (see "Mouse resize"). A
 start rather than a scroll offset, so the column keeps its x through a width
 change elsewhere in the strip that scrolls nothing. Only the fold-in of that
@@ -496,10 +496,11 @@ https://github.com/YaLTeR/niri/blob/ed22699d99462f61ab171472d3ea67e844ea580d/.
   pixel weights with `height_overridden` set; and the report's scroll request dropped the centre
   override, the view a fold back returns to and the place a width key or the full-width toggle
   keeps. Now, with no drag, an axis within 1pt of the slot
-  the last pass gave the window changes nothing (a lone column's height is no row's), and a report
+  the last pass gave the window changes nothing (a lone column's height is no row's;
+  `tile::kept_axes`), and a report
   that changes neither returns before its scroll request. The pass records that slot for its
-  selection as it wrote it, after the windows' own limits (`last_selected_width_px`,
-  `last_selected_height_px`, measured for `last_selected_rel_of`); a slot worked out again from the
+  selection as it wrote it, after the windows' own limits (`Measured::slot`, measured for
+  `Measured::selected`); a slot worked out again from the
   column's ratio missed those limits, so a window held to a 900pt minimum in an 860pt half answered
   900 and was taken as a width, which dropped a centring and a fold's way back each time. A report
   from a window the last pass did not select is taken. A width taken is read through

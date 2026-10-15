@@ -73,12 +73,70 @@ pub fn slot_limits(window: WindowLayoutConstraints, border: f64) -> WindowLayout
     }
 }
 
+/// Whether a reported length is the slot length the strip laid out, as drawn, to within the point a
+/// window's own rounding or its app's snapping takes off it.
+pub fn answers_slot(reported: f64, slot: f64) -> bool { (reported - slot.round()).abs() <= 1.0 }
+
+/// Which axes of a reported slot leave the window as the last pass laid it out, width then height:
+/// the width when it answers `slot` or the column is held to the viewport, the height when it
+/// answers `slot` or the window is alone in its column. With no `slot`, the last pass's for a
+/// report that is no drag, neither is kept.
+pub fn kept_axes(
+    slot: Option<CGSize>,
+    reported: CGSize,
+    held_to_viewport: bool,
+    stacked: bool,
+) -> (bool, bool) {
+    match slot {
+        Some(slot) => (
+            answers_slot(reported.width, slot.width) || held_to_viewport,
+            !stacked || answers_slot(reported.height, slot.height),
+        ),
+        None => (false, false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    #[test]
+    fn a_report_answers_the_slot_as_drawn_within_a_point() {
+        assert!(answers_slot(860.0, 859.5));
+        assert!(answers_slot(859.0, 859.5));
+        assert!(answers_slot(861.0, 859.5));
+        assert!(!answers_slot(858.0, 859.5));
+        assert!(answers_slot(367.0, 368.333));
+        assert!(!answers_slot(366.0, 368.333));
+    }
+
+    #[test]
+    fn a_report_within_a_point_of_its_slot_keeps_both_axes_and_one_off_keeps_the_other() {
+        let slot = Some(CGSize::new(859.5, 368.333));
+        let kept = |w, h| kept_axes(slot, CGSize::new(w, h), false, true);
+        assert_eq!(kept(860.0, 367.0), (true, true));
+        assert_eq!(kept(858.0, 367.0), (false, true));
+        assert_eq!(kept(860.0, 366.0), (true, false));
+        assert_eq!(kept(900.0, 400.0), (false, false));
+    }
+
+    #[test]
+    fn a_column_held_to_the_viewport_keeps_any_width_and_a_lone_window_any_height() {
+        let slot = Some(CGSize::new(859.5, 368.333));
+        let far = CGSize::new(500.0, 900.0);
+        assert_eq!(kept_axes(slot, far, true, true), (true, false));
+        assert_eq!(kept_axes(slot, far, false, false), (false, true));
+        assert_eq!(kept_axes(slot, far, true, false), (true, true));
+    }
+
+    #[test]
+    fn with_no_slot_neither_axis_is_kept() {
+        let exact = CGSize::new(859.5, 368.333);
+        assert_eq!(kept_axes(None, exact, true, false), (false, false));
     }
 
     #[test]
