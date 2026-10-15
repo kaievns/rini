@@ -29,7 +29,7 @@ use rini_geometry::space::{ScreenRect, ToCg};
 use rini_ipc as ipc;
 use rini_runloop::executor::Executor;
 use rini_skylight_sys::{
-    CGEnableEventStateCombining, CGSEventType, CGSetLocalEventsSuppressionInterval, KnownCGSEvent,
+    CGEnableEventStateCombining, CGSetLocalEventsSuppressionInterval, KnownCGSEvent,
     SLSWindowManagementBridgeSetDelegate,
 };
 use tokio::join;
@@ -330,22 +330,22 @@ fn main() {
         events_tx.clone(),
         spaces_tx.clone(),
         &[
-            CGSEventType::Known(KnownCGSEvent::ManagedSpaceMembershipUpdated),
-            CGSEventType::Known(KnownCGSEvent::SpaceWindowManagementCapabilitiesChanged),
-            CGSEventType::Known(KnownCGSEvent::SpaceWindowDestroyed),
-            CGSEventType::Known(KnownCGSEvent::SpaceWindowCreated),
+            KnownCGSEvent::ManagedSpaceMembershipUpdated,
+            KnownCGSEvent::SpaceWindowManagementCapabilitiesChanged,
+            KnownCGSEvent::SpaceWindowDestroyed,
+            KnownCGSEvent::SpaceWindowCreated,
             // Native focus wakeups. Payload identities are racy, so adjacent
             // events are coalesced before re-querying WindowServer key focus.
-            CGSEventType::Known(KnownCGSEvent::WindowReordered),
-            CGSEventType::Known(KnownCGSEvent::WindowUnhidden),
-            CGSEventType::Known(KnownCGSEvent::WindowHidden),
-            CGSEventType::Known(KnownCGSEvent::WindowClosed),
-            CGSEventType::Known(KnownCGSEvent::WindowManagerSpaceFrontConnectionChanged),
-            CGSEventType::Known(KnownCGSEvent::WindowManagerGlobalFrontConnectionChanged),
-            CGSEventType::Known(KnownCGSEvent::SpaceCreated),
-            CGSEventType::Known(KnownCGSEvent::SpaceDestroyed),
-            CGSEventType::Known(KnownCGSEvent::WindowMoved),
-            CGSEventType::Known(KnownCGSEvent::WindowResized),
+            KnownCGSEvent::WindowReordered,
+            KnownCGSEvent::WindowUnhidden,
+            KnownCGSEvent::WindowHidden,
+            KnownCGSEvent::WindowClosed,
+            KnownCGSEvent::WindowManagerSpaceFrontConnectionChanged,
+            KnownCGSEvent::WindowManagerGlobalFrontConnectionChanged,
+            KnownCGSEvent::SpaceCreated,
+            KnownCGSEvent::SpaceDestroyed,
+            KnownCGSEvent::WindowMoved,
+            KnownCGSEvent::WindowResized,
         ],
         // The rest windows follow every decorated window the window server moves, go back above the
         // ones it reorders, hide with the ones it hides or closes, and learn each one they first

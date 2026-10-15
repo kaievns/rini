@@ -7,7 +7,7 @@ rini uses it without disabling SIP and without a scripting addition.
 
 The `SLS*` and `CGS*` function declarations, and the plain value types that come with
 them: `SpaceId` (a `CGSSpaceID`), `WindowServerId` (a `CGWindowID`),
-`DisplayReconfigFlags`, `CGSEventType`, `KnownCGSEvent`.
+`DisplayReconfigFlags`, `KnownCGSEvent`.
 
 One function is declared as a pointer type and not linked:
 `SLSWindowIteratorGetCornerRadiiFn`. A symbol linked here that some macOS lacks stops rini

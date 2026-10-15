@@ -189,19 +189,6 @@ pub enum KnownCGSEvent {
     ManagedSpaceMembershipUpdated = 1342,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CGSEventType {
-    Known(KnownCGSEvent),
-}
-
-impl From<CGSEventType> for u32 {
-    fn from(k: CGSEventType) -> u32 {
-        match k {
-            CGSEventType::Known(k) => k as u32,
-        }
-    }
-}
-
 impl fmt::Display for KnownCGSEvent {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -209,13 +196,6 @@ impl fmt::Display for KnownCGSEvent {
     }
 }
 
-impl fmt::Display for CGSEventType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CGSEventType::Known(k) => write!(f, "{k}"),
-        }
-    }
-}
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub enum CGEventTapLocation {

@@ -46,11 +46,10 @@ const MACOS: [&str; 15] = [
 
 /// What the window server mints rather than what it does. A `SpaceId` is a number the domain has to
 /// carry; `SLSSpaceGetType` is a call it must not make.
-const SKYLIGHT_VALUE_TYPES: [&str; 5] = [
+const SKYLIGHT_VALUE_TYPES: [&str; 4] = [
     "SpaceId",
     "WindowServerId",
     "DisplayReconfigFlags",
-    "CGSEventType",
     "KnownCGSEvent",
 ];
 

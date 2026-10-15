@@ -15,9 +15,8 @@ use parking_lot::{Mutex, RwLock};
 use tracing::{debug, trace, warn};
 
 use rini_runloop::channel as channels;
-use rini_skylight_sys::KnownCGSEvent;
 use rini_skylight_sys::{
-    CGSEventType, SLSMainConnectionID, SLSRegisterConnectionNotifyProc,
+    KnownCGSEvent, SLSMainConnectionID, SLSRegisterConnectionNotifyProc,
     SLSRequestNotificationsForWindows, cid_t,
 };
 use rustc_hash::FxHashMap as HashMap;
@@ -31,23 +30,23 @@ pub struct EventData {
     pub space_id: Option<Sid>,
 }
 
-static EVENT_RECEIVERS: Lazy<Mutex<HashMap<CGSEventType, Option<channels::Receiver<EventData>>>>> =
+static EVENT_RECEIVERS: Lazy<Mutex<HashMap<KnownCGSEvent, Option<channels::Receiver<EventData>>>>> =
     Lazy::new(|| Mutex::new(HashMap::default()));
 
 static G_CONNECTION: Lazy<cid_t> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 
-static CALLBACK_CTXS: Lazy<RwLock<HashMap<CGSEventType, Box<CallbackContext>>>> =
+static CALLBACK_CTXS: Lazy<RwLock<HashMap<KnownCGSEvent, Box<CallbackContext>>>> =
     Lazy::new(|| RwLock::new(HashMap::default()));
 
 struct CallbackContext {
-    event_type: CGSEventType,
+    event_type: KnownCGSEvent,
     sender: channels::Sender<EventData>,
 }
 
 /// Registers `event` with SkyLight. MUST be called at most once per event type for the process: a
 /// second call registers the callback again over the first call's context, so the first receiver
 /// gets every event twice and the second receiver none.
-pub fn init(event: CGSEventType) -> i32 {
+pub fn init(event: KnownCGSEvent) -> i32 {
     let mut callback_ctxs = CALLBACK_CTXS.write();
     debug_assert!(
         !callback_ctxs.contains_key(&event),
@@ -61,7 +60,7 @@ pub fn init(event: CGSEventType) -> i32 {
         .entry(event)
         .or_insert_with(|| Box::new(CallbackContext { event_type: event, sender: tx }));
 
-    let raw: u32 = event.into();
+    let raw = event as u32;
     let callback_ctx_ptr = (&mut **callback_ctx as *mut CallbackContext).cast::<c_void>();
     let res = unsafe {
         SLSRegisterConnectionNotifyProc(*G_CONNECTION, connection_callback, raw, callback_ctx_ptr)
@@ -76,7 +75,7 @@ pub fn init(event: CGSEventType) -> i32 {
     res
 }
 
-pub fn take_receiver(event: CGSEventType) -> channels::Receiver<EventData> {
+pub fn take_receiver(event: KnownCGSEvent) -> channels::Receiver<EventData> {
     if let Some(rx) = EVENT_RECEIVERS.lock().get_mut(&event)
         && let Some(rxo) = rx.take()
     {
@@ -121,7 +120,7 @@ extern "C" fn connection_callback(
 
     let ctx = unsafe { &*(context as *const CallbackContext) };
     let kind = ctx.event_type;
-    debug_assert_eq!(event_raw, u32::from(kind));
+    debug_assert_eq!(event_raw, kind as u32);
     let sender = ctx.sender.clone();
 
     let bytes = if data.is_null() || len == 0 {
@@ -134,8 +133,7 @@ extern "C" fn connection_callback(
     let mut space_id = None;
 
     match kind {
-        CGSEventType::Known(KnownCGSEvent::SpaceWindowDestroyed)
-        | CGSEventType::Known(KnownCGSEvent::SpaceWindowCreated) => {
+        KnownCGSEvent::SpaceWindowDestroyed | KnownCGSEvent::SpaceWindowCreated => {
             if let Some(sid) = read::<u64>(bytes, 0) {
                 if let Some(wid) = read::<u32>(bytes, std::mem::size_of::<u64>()) {
                     space_id = Some(sid);
@@ -148,8 +146,7 @@ extern "C" fn connection_callback(
             }
         }
 
-        CGSEventType::Known(KnownCGSEvent::SpaceCreated)
-        | CGSEventType::Known(KnownCGSEvent::SpaceDestroyed) => {
+        KnownCGSEvent::SpaceCreated | KnownCGSEvent::SpaceDestroyed => {
             if let Some(sid) = read::<u64>(bytes, 0) {
                 space_id = Some(sid)
             } else {
@@ -157,12 +154,12 @@ extern "C" fn connection_callback(
             }
         }
 
-        CGSEventType::Known(KnownCGSEvent::WindowClosed)
-        | CGSEventType::Known(KnownCGSEvent::WindowMoved)
-        | CGSEventType::Known(KnownCGSEvent::WindowResized)
-        | CGSEventType::Known(KnownCGSEvent::WindowReordered)
-        | CGSEventType::Known(KnownCGSEvent::WindowUnhidden)
-        | CGSEventType::Known(KnownCGSEvent::WindowHidden) => {
+        KnownCGSEvent::WindowClosed
+        | KnownCGSEvent::WindowMoved
+        | KnownCGSEvent::WindowResized
+        | KnownCGSEvent::WindowReordered
+        | KnownCGSEvent::WindowUnhidden
+        | KnownCGSEvent::WindowHidden => {
             if let Some(wid) = read::<u32>(bytes, 0) {
                 window_id = Some(wid);
             } else {

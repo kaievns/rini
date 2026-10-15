@@ -13,7 +13,7 @@ use tracing::{debug, trace};
 
 use crate::windows::platform::window_server;
 use rini_core::ids::WindowServerId;
-use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
+use rini_skylight_sys::KnownCGSEvent;
 
 use crate::displays::domain::frames;
 use crate::displays::event::{
@@ -39,7 +39,7 @@ impl FocusWakeSender {
 
 pub struct WindowNotify {
     spaces_tx: spaces::Sender,
-    events: Vec<CGSEventType>,
+    events: Vec<KnownCGSEvent>,
     focus_wake: FocusWakeSender,
     following: Following,
 }
@@ -48,7 +48,7 @@ impl WindowNotify {
     pub fn new(
         displays_tx: impl EventSink + 'static,
         spaces_tx: spaces::Sender,
-        events: &[CGSEventType],
+        events: &[KnownCGSEvent],
         on_read: Vec<OnServerRead>,
         following: Following,
         reads: mpsc::Receiver<ToRead>,
@@ -82,7 +82,7 @@ impl WindowNotify {
     }
 
     fn subscribe(
-        event: CGSEventType,
+        event: KnownCGSEvent,
         spaces_tx: spaces::Sender,
         focus_wake: FocusWakeSender,
         following: Following,
@@ -99,25 +99,23 @@ impl WindowNotify {
                 trace!(?event, ?evt, "got event");
 
                 match event {
-                    CGSEventType::Known(KnownCGSEvent::SpaceDestroyed) => {
+                    KnownCGSEvent::SpaceDestroyed => {
                         if let Some(space_id) = evt.space_id {
                             spaces_tx
                                 .send(spaces::Notification::SpaceDestroyed(SpaceId::new(space_id)));
                         }
                     }
-                    CGSEventType::Known(KnownCGSEvent::SpaceCreated) => {
+                    KnownCGSEvent::SpaceCreated => {
                         if let Some(space_id) = evt.space_id {
                             spaces_tx
                                 .send(spaces::Notification::SpaceCreated(SpaceId::new(space_id)));
                         }
                     }
-                    CGSEventType::Known(KnownCGSEvent::ManagedSpaceMembershipUpdated)
-                    | CGSEventType::Known(
-                        KnownCGSEvent::SpaceWindowManagementCapabilitiesChanged,
-                    ) => {
+                    KnownCGSEvent::ManagedSpaceMembershipUpdated
+                    | KnownCGSEvent::SpaceWindowManagementCapabilitiesChanged => {
                         spaces_tx.send(spaces::Notification::SpaceInventoryChanged);
                     }
-                    CGSEventType::Known(KnownCGSEvent::SpaceWindowDestroyed) => {
+                    KnownCGSEvent::SpaceWindowDestroyed => {
                         focus_wake.notify();
                         let (Some(window_id), Some(space_id)) = (evt.window_id, evt.space_id)
                         else {
@@ -131,7 +129,7 @@ impl WindowNotify {
                             SpaceId::new(space_id),
                         ))
                     }
-                    CGSEventType::Known(KnownCGSEvent::SpaceWindowCreated) => {
+                    KnownCGSEvent::SpaceWindowCreated => {
                         focus_wake.notify();
                         let (Some(window_id), Some(space_id)) = (evt.window_id, evt.space_id)
                         else {
@@ -142,23 +140,18 @@ impl WindowNotify {
                             SpaceId::new(space_id),
                         ));
                     }
-                    CGSEventType::Known(KnownCGSEvent::WindowReordered)
-                    | CGSEventType::Known(KnownCGSEvent::WindowUnhidden)
-                    | CGSEventType::Known(KnownCGSEvent::WindowHidden) => {
+                    KnownCGSEvent::WindowReordered
+                    | KnownCGSEvent::WindowUnhidden
+                    | KnownCGSEvent::WindowHidden => {
                         focus_wake.notify();
                         note(&following, event, evt.window_id);
                     }
-                    CGSEventType::Known(KnownCGSEvent::WindowClosed) => {
+                    KnownCGSEvent::WindowClosed => {
                         note(&following, event, evt.window_id)
                     }
-                    CGSEventType::Known(
-                        KnownCGSEvent::WindowManagerSpaceFrontConnectionChanged,
-                    )
-                    | CGSEventType::Known(
-                        KnownCGSEvent::WindowManagerGlobalFrontConnectionChanged,
-                    ) => focus_wake.notify(),
-                    CGSEventType::Known(KnownCGSEvent::WindowMoved)
-                    | CGSEventType::Known(KnownCGSEvent::WindowResized) => {
+                    KnownCGSEvent::WindowManagerSpaceFrontConnectionChanged
+                    | KnownCGSEvent::WindowManagerGlobalFrontConnectionChanged => focus_wake.notify(),
+                    KnownCGSEvent::WindowMoved | KnownCGSEvent::WindowResized => {
                         note(&following, event, evt.window_id)
                     }
                 }
@@ -217,14 +210,14 @@ impl WindowNotify {
 
 /// Queues for the frames thread what the window server's `event` asks of `window`, while
 /// `following`: its frame after a move or a resize, its order otherwise.
-fn note(following: &Following, event: CGSEventType, window: Option<u32>) {
+fn note(following: &Following, event: KnownCGSEvent, window: Option<u32>) {
     let Some(window) = window.map(WindowServerId::new) else { return };
     let read = match event {
-        CGSEventType::Known(KnownCGSEvent::WindowMoved | KnownCGSEvent::WindowResized) => ToRead::Frame(window),
-        CGSEventType::Known(KnownCGSEvent::WindowReordered) => ToRead::Order(window, OrderChange::Reordered),
-        CGSEventType::Known(KnownCGSEvent::WindowHidden) => ToRead::Order(window, OrderChange::Hidden),
-        CGSEventType::Known(KnownCGSEvent::WindowUnhidden) => ToRead::Order(window, OrderChange::Unhidden),
-        CGSEventType::Known(KnownCGSEvent::WindowClosed) => ToRead::Order(window, OrderChange::Closed),
+        KnownCGSEvent::WindowMoved | KnownCGSEvent::WindowResized => ToRead::Frame(window),
+        KnownCGSEvent::WindowReordered => ToRead::Order(window, OrderChange::Reordered),
+        KnownCGSEvent::WindowHidden => ToRead::Order(window, OrderChange::Hidden),
+        KnownCGSEvent::WindowUnhidden => ToRead::Order(window, OrderChange::Unhidden),
+        KnownCGSEvent::WindowClosed => ToRead::Order(window, OrderChange::Closed),
         _ => return,
     };
     following.ask(read);
@@ -325,7 +318,7 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
     use rini_core::ids::WindowServerId;
 
-    use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
+    use rini_skylight_sys::KnownCGSEvent;
 
     use super::{FocusWakeSender, Reader, note, read_burst, spawn_frame_reader};
     use crate::displays::event::{
@@ -370,10 +363,10 @@ mod tests {
             KnownCGSEvent::WindowUnhidden,
             KnownCGSEvent::WindowClosed,
         ] {
-            note(&following, CGSEventType::Known(event), Some(56));
+            note(&following, event, Some(56));
         }
-        note(&following, CGSEventType::Known(KnownCGSEvent::WindowReordered), None);
-        note(&following, CGSEventType::Known(KnownCGSEvent::SpaceCreated), Some(56));
+        note(&following, KnownCGSEvent::WindowReordered, None);
+        note(&following, KnownCGSEvent::SpaceCreated, Some(56));
         drop(following);
         let window = ws(56);
         let order = |change, level| ServerRead::Order(ServerOrder { window, change, level });
@@ -391,15 +384,15 @@ mod tests {
     fn nothing_is_read_or_handed_on_while_nothing_follows() {
         let (off, reads) = Following::new();
         assert!(!off.on(), "off until turned on");
-        note(&off, CGSEventType::Known(KnownCGSEvent::WindowReordered), Some(56));
-        note(&off, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(56));
+        note(&off, KnownCGSEvent::WindowReordered, Some(56));
+        note(&off, KnownCGSEvent::WindowMoved, Some(56));
         off.ask(ToRead::Intro(ws(56)));
         assert_eq!(reads.try_iter().count(), 0, "nothing queued to be read");
         let on = off.clone();
         on.set(true);
         assert!(off.on(), "one switch");
-        note(&off, CGSEventType::Known(KnownCGSEvent::WindowReordered), Some(56));
-        note(&off, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(56));
+        note(&off, KnownCGSEvent::WindowReordered, Some(56));
+        note(&off, KnownCGSEvent::WindowMoved, Some(56));
         on.ask(ToRead::Intro(ws(56)));
         assert_eq!(reads.try_iter().collect::<Vec<_>>(), vec![
             ToRead::Order(ws(56), OrderChange::Reordered),
@@ -418,8 +411,8 @@ mod tests {
     #[test]
     fn a_move_and_a_resize_of_one_window_publish_one_frame() {
         let (following, reads) = following();
-        note(&following, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(7));
-        note(&following, CGSEventType::Known(KnownCGSEvent::WindowResized), Some(7));
+        note(&following, KnownCGSEvent::WindowMoved, Some(7));
+        note(&following, KnownCGSEvent::WindowResized, Some(7));
         drop(following);
         let published = run(Reader { frame: counted, ..STUB }, reads);
         assert_eq!(published, vec![ServerRead::Frames(vec![ServerFrame { window: ws(7), frame: AT }])]);
@@ -479,9 +472,9 @@ mod tests {
     #[test]
     fn a_hide_then_an_unhide_publish_in_order() {
         let (following, reads) = following();
-        note(&following, CGSEventType::Known(KnownCGSEvent::WindowHidden), Some(5));
-        note(&following, CGSEventType::Known(KnownCGSEvent::WindowMoved), Some(5));
-        note(&following, CGSEventType::Known(KnownCGSEvent::WindowUnhidden), Some(5));
+        note(&following, KnownCGSEvent::WindowHidden, Some(5));
+        note(&following, KnownCGSEvent::WindowMoved, Some(5));
+        note(&following, KnownCGSEvent::WindowUnhidden, Some(5));
         drop(following);
         let changes: Vec<OrderChange> = run(STUB, reads)
             .into_iter()
