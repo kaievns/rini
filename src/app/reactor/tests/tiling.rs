@@ -1,7 +1,4 @@
 //! Layout passes: strips, columns, folding, resizes, drags and the animation that carries them.
-//!
-//! Named `tiling` rather than `layout` because a module called `layout` inside `tests` shadows the
-//! `layout` alias the siblings use for `crate::workspaces`.
 use std::time::Instant;
 
 use objc2_core_foundation::{CGPoint, CGSize};

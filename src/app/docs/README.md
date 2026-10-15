@@ -148,9 +148,6 @@ A case reads and arranges the reactor through the accessors in `reactor/testing.
 through its fields, so a store can move without touching the cases:
 `a_reactor_test_reaches_no_field_of_the_reactor` in `tests/architecture.rs` holds it.
 
-`tiling.rs` is not `layout.rs` because a module named `layout` inside `tests` shadows the
-`layout` alias the siblings use for `crate::workspaces`.
-
 A rule that can be tested without a reactor does not belong here. `space_resolution`,
 `present`, `controller::lower`, `windows::domain::admissible` and `input::domain::pointer`
 each left this module and took their tests with them.

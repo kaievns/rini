@@ -355,9 +355,6 @@ files under `src/app/reactor/tests/`.**
 | `fixtures.rs` | — | 349 |
 | `mod.rs` | — | 20 |
 
-`tiling.rs` is not called `layout.rs`: a module named `layout` inside `tests` shadows the `layout`
-alias the siblings use for `crate::workspaces`.
-
 Every test here still builds a whole `Reactor`, which is what makes them integration tests. The
 answer to "a reactor change is slow to verify" is not to make these cheaper but to keep moving rules
 out to where they can be tested alone — `space_resolution`, `present`, `controller::lower`,

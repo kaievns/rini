@@ -574,7 +574,7 @@ impl Reactor {
         rx
     }
 
-    /// Wire in the hotkey controller, returning what it is sent.
+    /// Wire in the controller, returning what it is sent.
     pub(crate) fn connect_test_controller(
         &mut self,
     ) -> channels::Receiver<crate::app::controller::WmEvent> {

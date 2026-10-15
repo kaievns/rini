@@ -14,7 +14,7 @@ use crate::windows::domain::request::Request;
 use crate::workspaces::{LayoutCommand, LayoutEvent};
 
 #[test]
-fn config_reload_propagates_non_keybinding_changes_to_wm_controller() {
+fn config_reload_propagates_non_keybinding_changes_to_the_controller() {
     let mut reactor = test_reactor();
     let mut wm_rx = reactor.connect_test_controller();
 
