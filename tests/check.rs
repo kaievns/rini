@@ -182,7 +182,8 @@ fn every_crate_inherits_the_workspace_lints() {
     }
 }
 
-fn rust_sources() -> Vec<(String, String)> {
+/// Every Rust source under `dirs`, by path from the root, in path order.
+fn rust_sources(dirs: &[&str]) -> Vec<(String, String)> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
@@ -194,8 +195,9 @@ fn rust_sources() -> Vec<(String, String)> {
         }
     }
     let mut files = Vec::new();
-    walk(&Path::new(ROOT).join("src"), &mut files);
-    walk(&Path::new(ROOT).join("crates"), &mut files);
+    for dir in dirs {
+        walk(&Path::new(ROOT).join(dir), &mut files);
+    }
     let mut sources: Vec<(String, String)> = files
         .into_iter()
         .map(|path| {
@@ -218,7 +220,7 @@ fn clippy_section() -> String {
 /// a row no allow cites any more is gone from it.
 #[test]
 fn every_roadmap_id_an_allow_cites_has_a_row_in_docs_testing() {
-    let mut cited: Vec<String> = rust_sources()
+    let mut cited: Vec<String> = rust_sources(&["src", "crates"])
         .iter()
         .flat_map(|(_, source)| source.split("reason = \"P").skip(1).map(str::to_owned))
         .map(|rest| format!("P{}", rest.split('"').next().unwrap()))
@@ -303,7 +305,7 @@ fn a_roadmap_id_is_cited_only_in_an_allow_s_reason_or_docs_testing() {
 /// its allow.
 #[test]
 fn every_file_wide_allow_is_named_in_docs_testing() {
-    let allowing: Vec<String> = rust_sources()
+    let allowing: Vec<String> = rust_sources(&["src", "crates"])
         .into_iter()
         .filter(|(_, source)| source.lines().any(|line| line.trim_start().starts_with("#![allow(")))
         .map(|(path, _)| path)
@@ -331,7 +333,7 @@ fn no_long_parameter_list_tangled_type_or_bool_run_is_allowed() {
         "type_complexity",
         "fn_params_excessive_bools",
     ];
-    let allowed: Vec<String> = rust_sources()
+    let allowed: Vec<String> = rust_sources(&["src", "crates", "tests"])
         .iter()
         .flat_map(|(path, source)| {
             lints
