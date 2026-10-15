@@ -21,8 +21,8 @@ windows are on this space" is a window-server query over window ids.
 
 ## The shape that matters
 
-**A snapshot is never partial.** The spaces actor buffers during sleep, display churn
-and lock/login rather than forwarding a half-formed picture, and waits for two
+**A snapshot is never partial.** The spaces actor drops every refresh during sleep, display
+churn and lock/login rather than forwarding a half-formed picture, resamples after, and waits for two
 identical topology samples plus a quiet window server before it speaks. Treating an
 unstable snapshot as authoritative is what made rini remap every window onto fresh
 default workspaces.

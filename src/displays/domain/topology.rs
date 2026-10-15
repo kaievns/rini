@@ -229,38 +229,6 @@ pub fn analyze_space_snapshot(
         invalidates_pending_targets,
     }
 }
-/// What to do with the two halves of a buffered snapshot once the actor is settled again.
-///
-/// The screen list and the space list arrive from two different native callbacks, so a buffered
-/// snapshot can hold either, both, or neither.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BufferedSnapshot {
-    /// Both halves, agreeing on how many screens there are. Zip the spaces onto the screens and
-    /// forward one snapshot: forwarding the two separately lets the reactor see the new topology
-    /// with the old space ids and act between them.
-    Merge,
-    /// Both halves, disagreeing on the screen count. Neither half is worth forwarding on its own, so
-    /// resample.
-    Resample,
-    /// Only the screens were buffered.
-    ScreensOnly,
-    /// Only the spaces were buffered.
-    SpacesOnly,
-    /// Nothing was buffered.
-    Nothing,
-}
-
-/// Decide what a buffered snapshot amounts to, from the size of each half.
-pub fn buffered_snapshot(screens: Option<usize>, spaces: Option<usize>) -> BufferedSnapshot {
-    match (screens, spaces) {
-        (Some(screens), Some(spaces)) if screens == spaces => BufferedSnapshot::Merge,
-        (Some(_), Some(_)) => BufferedSnapshot::Resample,
-        (Some(_), None) => BufferedSnapshot::ScreensOnly,
-        (None, Some(_)) => BufferedSnapshot::SpacesOnly,
-        (None, None) => BufferedSnapshot::Nothing,
-    }
-}
-
 /// Whether a snapshot's spaces are coherent enough to commit.
 ///
 /// One user space may not appear on two screens at once. macOS reports exactly that mid-transition,
@@ -647,36 +615,6 @@ mod tests {
         let delta = display_set_delta(&[], &uuids(&["A", "B"]), true);
         assert_eq!(delta.arrived, uuids(&["A", "B"]));
         assert!(delta.departed.is_empty());
-    }
-
-    #[test]
-    fn two_agreeing_halves_merge() {
-        assert_eq!(buffered_snapshot(Some(2), Some(2)), BufferedSnapshot::Merge);
-    }
-
-    /// Forwarding the two halves separately lets the reactor see the new topology with the old space
-    /// ids and act between them, so a disagreement is resampled rather than half-forwarded.
-    #[test]
-    fn two_disagreeing_halves_are_resampled() {
-        assert_eq!(buffered_snapshot(Some(2), Some(1)), BufferedSnapshot::Resample);
-        assert_eq!(buffered_snapshot(Some(1), Some(2)), BufferedSnapshot::Resample);
-    }
-
-    #[test]
-    fn one_half_forwards_on_its_own() {
-        assert_eq!(buffered_snapshot(Some(1), None), BufferedSnapshot::ScreensOnly);
-        assert_eq!(buffered_snapshot(None, Some(1)), BufferedSnapshot::SpacesOnly);
-    }
-
-    #[test]
-    fn nothing_buffered_is_nothing_to_do() {
-        assert_eq!(buffered_snapshot(None, None), BufferedSnapshot::Nothing);
-    }
-
-    /// Two empty halves still agree, which is a merge of nothing rather than a resample.
-    #[test]
-    fn two_empty_halves_agree() {
-        assert_eq!(buffered_snapshot(Some(0), Some(0)), BufferedSnapshot::Merge);
     }
 
     fn never_fullscreen(_: SpaceId) -> bool {

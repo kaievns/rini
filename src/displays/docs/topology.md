@@ -6,10 +6,10 @@ application builds its workspace model on. The application must only do that
 on top of a stable native-space picture, so the actor is deliberately
 conservative:
 
-- Sleep, display churn and lock/login transitions buffer snapshots instead of
-  forwarding them. The buffered state is discarded on wake or unlock and the
-  actor resamples; a snapshot taken while the login window owned the displays
-  is never replayed.
+- Sleep, display churn and lock/login transitions hold snapshots back: a
+  refresh that comes due while one is under way is dropped, and the actor
+  resamples on wake and on unlock, so a snapshot taken while the login window
+  owned the displays never reaches the application.
 - Only user spaces (`SLSSpaceGetType == 0`) may become a display's current
   space in a snapshot. Fullscreen and system/login spaces are transient native
   state and are nulled out before they can rewrite workspace mappings.

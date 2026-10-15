@@ -1,5 +1,6 @@
-//! The authority on native displays and spaces: buffers lifecycle churn and forwards one coherent
-//! `ForwardedSpaceState` at a time. Why it buffers, and what it nulls out, is in `src/displays/docs/topology.md`.
+//! The authority on native displays and spaces: holds back every snapshot through lifecycle churn
+//! and forwards one coherent `ForwardedSpaceState` at a time. Why it holds back, and what it nulls
+//! out, is in `src/displays/docs/topology.md`.
 use dispatchr::queue;
 use dispatchr::time::Time;
 use objc2_foundation::MainThreadMarker;
@@ -11,8 +12,8 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::displays::domain::screen::{CoordinateConverter, ScreenInfo};
 use crate::displays::domain::topology::{
-    BufferedSnapshot, ForwardedSpaceState, QuarantineStats, SpaceEventKind, TopologyWindowDelta,
-    buffered_snapshot, snapshot_is_committable, snapshot_spaces_are_coherent,
+    ForwardedSpaceState, QuarantineStats, SpaceEventKind, TopologyWindowDelta,
+    snapshot_is_committable, snapshot_spaces_are_coherent,
 };
 use crate::displays::event::{Event as OutEvent, EventSink};
 use crate::displays::platform::display_churn;
@@ -43,10 +44,6 @@ pub enum Notification {
         display_id: u32,
         flags: DisplayReconfigFlags,
     },
-    DisplayChurnBegin,
-    DisplayChurnEnd,
-    ScreenParametersChanged(Vec<ScreenInfo>, CoordinateConverter),
-    SpaceChanged(Vec<Option<SpaceId>>),
     SpaceInventoryChanged,
     SpaceCreated(SpaceId),
     SpaceDestroyed(SpaceId),
@@ -73,12 +70,6 @@ struct DisplayTopologyFingerprint(Vec<(String, u64, u64, u64, u64, Option<u64>)>
 struct DisplayTopologyState {
     fingerprint: DisplayTopologyFingerprint,
     hits: u8,
-}
-
-#[derive(Debug, Clone)]
-struct PendingScreenParameters {
-    screens: Vec<ScreenInfo>,
-    converter: CoordinateConverter,
 }
 
 /// How a space id is classified.
@@ -194,10 +185,7 @@ pub struct AuthorityState {
     display_space_ids: HashMap<String, Vec<SpaceId>>,
     active_display_uuid: Option<String>,
     awaiting_space_switch_confirmation: bool,
-    refresh_deferred_until_stable: bool,
     release_reactor_quarantine_on_next_forward: bool,
-    pending_screen_parameters: Option<PendingScreenParameters>,
-    pending_spaces: Option<Vec<Option<SpaceId>>>,
     visible_window_spaces: HashMap<WindowServerId, SpaceId>,
     pre_churn_visible_window_spaces: HashMap<WindowServerId, SpaceId>,
     pending_topology_window_delta: Option<TopologyWindowDelta>,
@@ -226,10 +214,7 @@ impl Default for AuthorityState {
             display_space_ids: HashMap::default(),
             active_display_uuid: None,
             awaiting_space_switch_confirmation: false,
-            refresh_deferred_until_stable: false,
             release_reactor_quarantine_on_next_forward: false,
-            pending_screen_parameters: None,
-            pending_spaces: None,
             visible_window_spaces: HashMap::default(),
             pre_churn_visible_window_spaces: HashMap::default(),
             pending_topology_window_delta: None,
@@ -355,14 +340,11 @@ impl SpacesActor {
                     screen_cache.mark_sleeping(false);
                     screen_cache.mark_dirty();
                 }
-                self.state.pending_screen_parameters = None;
-                self.state.pending_spaces = None;
                 if self.state.display_churn_active {
                     let expected_epoch = self.state.display_churn_epoch;
                     self.schedule_display_stabilization_check(expected_epoch);
                 }
-                // Wake is inherently unstable; discard anything buffered while the
-                // machine was asleep and wait for a fresh authoritative rescan.
+                // Wake is inherently unstable; wait for a fresh authoritative rescan.
                 self.state.release_reactor_quarantine_on_next_forward = true;
                 self.schedule_screen_refresh();
             }
@@ -377,16 +359,12 @@ impl SpacesActor {
                 if let Some(screen_cache) = self.state.screen_cache.as_mut() {
                     screen_cache.mark_dirty();
                 }
-                self.state.pending_screen_parameters = None;
-                self.state.pending_spaces = None;
                 if self.state.display_churn_active {
                     let expected_epoch = self.state.display_churn_epoch;
                     self.schedule_display_stabilization_check(expected_epoch);
                 }
                 // The login window can transiently replace every display's current
-                // space. Do not replay buffered lock-screen snapshots into Rini's
-                // workspace model; always resample after the user session becomes
-                // active again.
+                // space, so always resample after the user session becomes active again.
                 self.state.release_reactor_quarantine_on_next_forward = true;
                 self.schedule_screen_refresh();
             }
@@ -406,30 +384,6 @@ impl SpacesActor {
             }
             Notification::DisplayReconfigured { display_id, flags } => {
                 self.handle_display_reconfig_event(display_id, flags);
-            }
-            Notification::DisplayChurnBegin => {
-                self.state.display_churn_active = true;
-                self.events.send(OutEvent::DisplayChurnBegin);
-            }
-            Notification::DisplayChurnEnd => {
-                self.state.display_churn_active = false;
-                self.flush_pending_if_stable();
-                self.schedule_screen_refresh();
-            }
-            Notification::ScreenParametersChanged(screens, converter) => {
-                if self.state.must_buffer() {
-                    self.state.pending_screen_parameters =
-                        Some(PendingScreenParameters { screens, converter });
-                } else {
-                    self.forward_screen_parameters(screens, converter);
-                }
-            }
-            Notification::SpaceChanged(spaces) => {
-                if self.state.must_buffer() {
-                    self.state.pending_spaces = Some(spaces);
-                } else {
-                    self.forward_space_snapshot(spaces);
-                }
             }
             Notification::SpaceInventoryChanged => {
                 self.handle_space_inventory_changed();
@@ -584,27 +538,6 @@ impl SpacesActor {
         self.state.last_converter = converter;
         let forwarded = self.build_forwarded_state(screens);
         self.state.last_sent_spaces = Some(Self::screen_spaces(&forwarded.screens));
-        self.state.awaiting_space_switch_confirmation = false;
-        self.events
-            .send(OutEvent::SpaceStateUpdated(forwarded, self.state.last_converter));
-    }
-
-    fn forward_space_snapshot(&mut self, spaces: Vec<Option<SpaceId>>) {
-        if self.state.last_sent_spaces.as_ref() == Some(&spaces) {
-            return;
-        }
-        if spaces.len() != self.state.screens.len() {
-            if !self.try_forward_authoritative_snapshot(true, true) {
-                self.schedule_screen_refresh_after(0, 0);
-            }
-            return;
-        }
-        let mut screens = self.state.screens.clone();
-        for (screen, space) in screens.iter_mut().zip(spaces.iter().copied()) {
-            screen.space = space;
-        }
-        self.state.last_sent_spaces = Some(spaces.clone());
-        let forwarded = self.build_forwarded_state(screens);
         self.state.awaiting_space_switch_confirmation = false;
         self.events
             .send(OutEvent::SpaceStateUpdated(forwarded, self.state.last_converter));
@@ -1065,47 +998,8 @@ impl SpacesActor {
         self.state.visible_window_spaces = current;
     }
 
-    fn flush_pending_if_stable(&mut self) {
-        if self.state.must_buffer() {
-            return;
-        }
-
-        let pending_screens = self.state.pending_screen_parameters.take();
-        let pending_spaces = self.state.pending_spaces.take();
-
-        match buffered_snapshot(
-            pending_screens.as_ref().map(|pending| pending.screens.len()),
-            pending_spaces.as_ref().map(Vec::len),
-        ) {
-            BufferedSnapshot::Merge => {
-                let pending = pending_screens.expect("Merge means both halves are present");
-                let spaces = pending_spaces.expect("Merge means both halves are present");
-                let mut screens = pending.screens;
-                for (screen, space) in screens.iter_mut().zip(spaces) {
-                    screen.space = space;
-                }
-                self.forward_screen_parameters(screens, pending.converter);
-            }
-            BufferedSnapshot::Resample => {
-                if !self.try_forward_authoritative_snapshot(true, true) {
-                    self.schedule_screen_refresh_after(0, 0);
-                }
-            }
-            BufferedSnapshot::ScreensOnly => {
-                let pending = pending_screens.expect("ScreensOnly means the screens are present");
-                self.forward_screen_parameters(pending.screens, pending.converter);
-            }
-            BufferedSnapshot::SpacesOnly => {
-                let spaces = pending_spaces.expect("SpacesOnly means the spaces are present");
-                self.forward_space_snapshot(spaces);
-            }
-            BufferedSnapshot::Nothing => {}
-        }
-    }
-
     fn process_screen_refresh(&mut self, attempt: u8, allow_retry: bool) {
         if self.state.must_buffer() {
-            self.state.refresh_deferred_until_stable = true;
             self.state.refresh_pending = false;
             return;
         }
@@ -1197,7 +1091,6 @@ impl SpacesActor {
         }
 
         if attempt == 0 && self.state.display_churn_active {
-            self.state.refresh_deferred_until_stable = true;
             return;
         }
 
@@ -1366,8 +1259,6 @@ impl SpacesActor {
             }
             let flags = self.state.display_churn_flags;
             self.synthesize_topology_window_delta(expected_epoch, flags, &screens);
-            self.state.pending_screen_parameters = None;
-            self.state.pending_spaces = None;
             // Forward the stabilized snapshot directly; its authoritative state
             // acknowledges the reactor's churn quarantine when it is incorporated.
             self.forward_screen_parameters(screens, converter);
@@ -1390,9 +1281,6 @@ impl SpacesActor {
         self.state.display_topology_state = None;
         let _ = display_churn::end();
 
-        if self.state.refresh_deferred_until_stable {
-            self.state.refresh_deferred_until_stable = false;
-        }
         if schedule_refresh {
             self.schedule_screen_refresh_after(0, 0);
         }
