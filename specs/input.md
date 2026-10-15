@@ -34,7 +34,7 @@
 > commands such as workspace back-and-forth on every one.
 
 - A bind's workspace and monitor numbers MUST start at 1, the first, as niri's do; `0` is refused.
-  `rini-cli` keeps counting from 0.
+  `rini-cli` keeps counting from 0, and its help MUST say so wherever it takes a workspace number.
 
 > **Reported 2026-10-01.** Kai's decision on the switch to KDL: `focus-workspace 1` is the first
 > workspace, as in niri. Kai's TOML had a comment explaining why `switch_to_workspace = 0` meant the

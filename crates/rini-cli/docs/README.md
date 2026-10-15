@@ -24,7 +24,7 @@ diagnostics output, so it is what a user has to hand.
 
 **Workspace numbers count from 0.** `workspace switch` and `workspace move-window` pass the
 index to the wire as given, while the config counts from 1, so `workspace switch 0` is the
-config's `focus-workspace 1`.
+config's `focus-workspace 1`. Every help that takes a workspace number says it counts from 0.
 
 ## Usage
 

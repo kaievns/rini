@@ -56,7 +56,7 @@ enum QueryCommands {
         /// macOS space ID; defaults to the active display space
         #[arg(long)]
         space_id: Option<u64>,
-        /// Virtual workspace index; defaults to the active workspace
+        /// Virtual workspace number, counting from 0; defaults to the active workspace
         #[arg(long)]
         workspace_id: Option<usize>,
     },
@@ -251,9 +251,13 @@ enum WorkspaceCommands {
     /// Switch to previous workspace
     Prev { skip_empty: Option<bool> },
     /// Switch to specific workspace
-    Switch { workspace_id: usize },
+    Switch {
+        /// The workspace's number, counting from 0: 0 is the config's `focus-workspace 1`
+        workspace_id: usize,
+    },
     /// Move current window to workspace
     MoveWindow {
+        /// The destination workspace's number, counting from 0: 0 is the config's first
         workspace_id: usize,
         /// Switch to the destination workspace after moving the window.
         #[arg(long)]
@@ -784,6 +788,26 @@ mod tests {
         assert_eq!(wire(&["switch", "0"]), layout(LC::SwitchToWorkspace(0)));
         assert_eq!(wire(&["move-window", "2"]), layout(moved(false)));
         assert_eq!(wire(&["move-window", "2", "--follow"]), layout(moved(true)));
+    }
+
+    /// The CLI counts workspaces from 0 and the config from 1, so every help that takes a workspace
+    /// number says which (`specs/input.md`).
+    #[test]
+    fn every_workspace_number_help_says_it_counts_from_0() {
+        for args in [
+            &["execute", "workspace", "switch", "--help"][..],
+            &["execute", "workspace", "move-window", "--help"],
+            &["query", "layout", "--help"],
+        ] {
+            let parsed = Cli::try_parse_from(std::iter::once("rini-cli").chain(args.iter().copied()));
+            let help = match parsed {
+                Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => {
+                    error.to_string()
+                }
+                other => panic!("{args:?} printed no help: {:?}", other.err()),
+            };
+            assert!(help.contains("counting from 0"), "{args:?}:\n{help}");
+        }
     }
 
     /// Every window subcommand has to map to a DISTINCT wire command. The arms are 33 lines of
