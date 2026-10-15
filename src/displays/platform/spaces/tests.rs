@@ -791,6 +791,49 @@ fn topology_window_delta_treats_same_window_space_move_as_remove_then_add() {
     }
 }
 
+/// The churn's own epoch, flags and windows reach the forwarded delta, not ones a caller hands in.
+#[test]
+fn a_settled_churn_forwards_the_windows_that_left_since_it_began_with_its_epoch_and_flags() {
+    let _held = display_churn::hold_for_test();
+    let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
+    let space = SpaceId::new(321);
+    let wsid = WindowServerId::new(81);
+    actor.forward_screen_parameters(
+        vec![make_screen(Some(space))],
+        CoordinateConverter::from_height(800.0),
+    );
+    let _ = recv_wm(&mut wm_rx);
+    actor.state.forwarded.visible_window_spaces.insert(wsid, space);
+
+    actor.handle_event(Notification::DisplayReconfigured {
+        flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
+    });
+    assert!(matches!(
+        recv_reactor(&mut reactor_rx),
+        OutEvent::DisplayChurnBegin
+    ));
+    actor.hand_window_server().set_space_window_list(space.get(), Some(vec![]));
+    let epoch = actor.state.churn.epoch();
+    for attempt in 0..2 {
+        actor.handle_event(Notification::CheckDisplayStabilization {
+            expected_epoch: epoch,
+            attempt,
+        });
+    }
+
+    match recv_wm(&mut wm_rx) {
+        OutEvent::SpaceStateUpdated(state, _) => {
+            let delta = state.topology_window_delta.expect("expected topology window delta");
+            assert_eq!(delta.epoch, epoch);
+            assert_eq!(delta.flags, rini_skylight_sys::DisplayReconfigFlags::MOVED);
+            assert!(delta.appeared.is_empty());
+            assert_eq!(delta.disappeared, vec![(wsid, space)]);
+        }
+        other => panic!("unexpected wm event: {other:?}"),
+    }
+    assert!(!actor.state.churn.is_active());
+}
+
 #[test]
 fn display_order_change_is_topology_change_without_display_set_change() {
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
