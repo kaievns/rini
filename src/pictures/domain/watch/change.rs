@@ -26,6 +26,14 @@ pub(super) struct Change {
     poll: Option<Instant>,
 }
 
+/// How a `Change` watch was looked at: at a poll for the ends the last look missed, or at its round,
+/// which `captured` either end or not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Visit {
+    Poll,
+    Round { captured: bool },
+}
+
 /// One end of a `Change` watch.
 pub(super) struct Turning {
     target: PictureTarget,
@@ -319,8 +327,8 @@ impl Change {
     /// Looked at again together `every` after a round that captured either end, and every
     /// `LANDING_POLL` for an end not there yet: a poll leaves the round where it was, however long
     /// its look took.
-    pub(super) fn reschedule(&mut self, now: Instant, round: bool, captured: bool) {
-        if round {
+    pub(super) fn reschedule(&mut self, now: Instant, visit: Visit) {
+        if let Visit::Round { captured } = visit {
             self.next = now + if captured { self.every } else { LANDING_POLL };
         }
         let missed = self.ends().any(|end| end.state == EndState::Missed);

@@ -275,14 +275,14 @@ until the window goes, and so is none found while the window is active. None fou
 inactive is no answer: macOS draws an inactive window's material flat, and Outlook inactive read 0.00
 baked against alone where active it read 1.96 with 9% of samples changed. Such a window keeps to the
 alpha call, whose picture is then what the screen shows, and is baked again, and measured, the first
-time it is captured active (`Learned::active`): the window last reported focused, `ACTIVE_SETTLED`
-(200ms) after the report, past the slowest focused look of 316 presses (158ms after the input,
-`docs/data/2026-10-03-focus`), while the process the window server has holding the keys
-(`SLPSGetKeyFocusProcess`) is its own. A panel of another application taking the keys reports no
-window, which the key process catches. A baked picture of a window with a material carries its blur
-(`carries_blur`), so the cache keeps it over a grey capture of the window alone. Each composite is
-checked against the shape of what it listed, the desktop windows included for the baked one, and a
-misshapen one yields no picture: a frame read is wrong, or a listed window has gone. The
+time it is captured active (`Learned::drawn`, `Drawn::Active`): the window last reported focused,
+`ACTIVE_SETTLED` (200ms) after the report, past the slowest focused look of 316 presses (158ms
+after the input, `docs/data/2026-10-03-focus`), while the process the window server has holding the
+keys (`SLPSGetKeyFocusProcess`) is its own. A panel of another application taking the keys reports
+no window, which the key process catches. A baked picture of a window with a material carries its
+blur (`carries_blur`), so the cache keeps it over a grey capture of the window alone. Each composite
+is checked against the shape of what it listed, the desktop windows included for the baked one, and
+a misshapen one yields no picture: a frame read is wrong, or a listed window has gone. The
 measurements are in "SLSHWCaptureWindowList captures only the visible portion" and "Translucency is
 three things" in [`capture-research.md`](capture-research.md).
 

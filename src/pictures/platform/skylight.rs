@@ -216,7 +216,7 @@ pub fn capture_on_screen(
             if learned.get(window.server_id).translucent.is_none() {
                 learned.saw_alpha(window.server_id, first_sight(&crop));
             }
-            match learned.get(window.server_id).after_alpha(learned.active(
+            match learned.get(window.server_id).after_alpha(learned.drawn(
                 window.window,
                 key,
                 taken,
@@ -242,12 +242,8 @@ pub fn capture_on_screen(
                         continue;
                     };
                     if let Some(alone) = alone.get(&window.server_id) {
-                        let active = learned.active(window.window, key, taken);
-                        learned.saw_material(
-                            window.server_id,
-                            shows_material(alone, &crop),
-                            active,
-                        );
+                        let drawn = learned.drawn(window.window, key, taken);
+                        learned.saw_material(window.server_id, shows_material(alone, &crop), drawn);
                     }
                     let material = learned.get(window.server_id).material == Some(true);
                     pictures.push(region(&window, &composite, rect, taken, Route::Baked, material));
