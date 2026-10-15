@@ -9,10 +9,11 @@
 Port allocation and rights (`mach_port_allocate`, `mach_port_insert_right`,
 `mach_port_mod_refs`, `mach_port_deallocate`), message send and receive (`mach_msg`,
 `mach_msg_destroy`), the MIG special reply port, and the bootstrap calls
-(`bootstrap_look_up`, `bootstrap_register`). Four thin helpers sit beside them for the
-server's subscriptions: `mach_get_bs_port`, `mach_try_send_message`, and
-`mach_retain_send_right`/`mach_release_send_right`. The client in `rini-ipc/src/client.rs`
-imports its constants, message layouts and externs from here.
+(`bootstrap_look_up`, `bootstrap_register`). Four thin helpers sit beside them. One,
+`mach_get_bs_port`, finds a registered service: the server's startup check for a second instance
+(`rini-ipc/src/mach.rs`). Three carry the server's subscriptions (`rini-ipc/src/subscriptions.rs`):
+`mach_try_send_message`, and `mach_retain_send_right`/`mach_release_send_right`. The client in
+`rini-ipc/src/client.rs` imports its constants, message layouts and externs from here.
 
 ## The shape that matters
 
