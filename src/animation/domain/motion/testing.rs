@@ -5,6 +5,7 @@ use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayRect, Point, Rect, ScreenRect, ScreenVector, Size, SurfaceRect};
 use rini_geometry::stretch::is_a_resize;
 
+use super::plan::Resolved;
 use super::surface::SurfaceGeometry;
 
 /// The built-in display the generator draws frames on.
@@ -59,7 +60,7 @@ impl Gen {
 /// A random pass: 1-12 windows over 1-4 distinct vectors (4pt apart on some axis, and from zero)
 /// plus ±1pt jitter; some still, resizing, or floating. Requests on `DISPLAY`, as `reflow_plan`
 /// takes them.
-pub(crate) fn random_requests(rng: &mut Gen) -> Vec<(WindowId, ScreenRect, ScreenRect, bool)> {
+pub(crate) fn random_requests(rng: &mut Gen) -> Vec<Resolved> {
     let shifted = |frame: ScreenRect, dx: f64, dy: f64| {
         rect(
             frame.origin.x + dx,
@@ -90,7 +91,7 @@ pub(crate) fn random_requests(rng: &mut Gen) -> Vec<(WindowId, ScreenRect, Scree
             let from: ScreenRect = rng.on_screen();
             let window = WindowId::new(7, i as u32 + 1);
             match rng.below(10) {
-                0 => (window, from, from, false),
+                0 => Resolved::tiled(window, from, from),
                 1 => {
                     let to = rect(
                         from.origin.x,
@@ -103,16 +104,16 @@ pub(crate) fn random_requests(rng: &mut Gen) -> Vec<(WindowId, ScreenRect, Scree
                     } else {
                         rect(to.origin.x, to.origin.y, from.size.width + 200.0, to.size.height)
                     };
-                    (window, from, to, false)
+                    Resolved::tiled(window, from, to)
                 }
                 2 => {
                     let v = palette[rng.below(palette.len() as u64) as usize];
-                    (window, from, shifted(from, v.x, v.y), true)
+                    Resolved::floating(window, from, shifted(from, v.x, v.y))
                 }
                 _ => {
                     let v = palette[rng.below(palette.len() as u64) as usize];
                     let (jx, jy) = (rng.pt(-1.0, 1.0), rng.pt(-1.0, 1.0));
-                    (window, from, shifted(from, v.x + jx, v.y + jy), false)
+                    Resolved::tiled(window, from, shifted(from, v.x + jx, v.y + jy))
                 }
             }
         })

@@ -167,7 +167,9 @@ mod tests {
 
     use super::*;
     use crate::animation::domain::motion::nudge::NUDGE_STRETCH;
-    use crate::animation::domain::motion::plan::{GroupKey, ReflowPlan, installed, reflow_plan};
+    use crate::animation::domain::motion::plan::{
+        GroupKey, ReflowPlan, Resolved, installed, reflow_plan,
+    };
     use crate::animation::domain::motion::score::{Channel, Node, Value};
     use crate::animation::domain::motion::testing::{DISPLAY, VIEWPORT, rect};
 
@@ -188,16 +190,11 @@ mod tests {
     }
 
     /// Columns `0..count` from `first`, all stepping `dx` from `at` columns along.
-    fn strip(
-        first: u32,
-        count: u32,
-        at: f64,
-        dx: f64,
-    ) -> Vec<(WindowId, ScreenRect, ScreenRect, bool)> {
+    fn strip(first: u32, count: u32, at: f64, dx: f64) -> Vec<Resolved> {
         (0..count)
             .map(|i| {
                 let from = column(at + i as f64);
-                (wid(first + i), from, shifted(from, dx), false)
+                Resolved::tiled(wid(first + i), from, shifted(from, dx))
             })
             .collect()
     }
@@ -211,7 +208,7 @@ mod tests {
     }
 
     impl Flight {
-        fn posed(requests: &[(WindowId, ScreenRect, ScreenRect, bool)]) -> Flight {
+        fn posed(requests: &[Resolved]) -> Flight {
             let mut score = FlightScore::new(Look::default());
             let plan = score.plan(reflow_plan(requests, DISPLAY), &Cue::Plain);
             let drawn = plan.windows();
@@ -300,7 +297,7 @@ mod tests {
                         flight.plan.position_of(key),
                     );
                     let from = rini_geometry::from_overlay_space(from, DISPLAY);
-                    Some((w, from, shifted(from, dx), false))
+                    Some(Resolved::tiled(w, from, shifted(from, dx)))
                 }
                 _ => None,
             })
@@ -314,11 +311,10 @@ mod tests {
     /// no leg.
     #[test]
     fn a_folds_corner_is_when_its_leg_turns_and_its_leg_plays_again_as_it_was() {
-        let fold = (
+        let fold = Resolved::tiled(
             wid(9),
             rect(866.0, 35.0, 860.0, 1079.0),
             rect(3.0, 576.0, 1148.0, 538.0),
-            false,
         );
         let mut requests = strip(1, 1, 3.0, -863.0);
         requests.push(fold);
@@ -388,9 +384,9 @@ mod tests {
         flight.drawn.push(wid(9));
         let incoming = reflow_plan(
             &[
-                (wid(1), first, shifted(first, -863.0), false),
-                (wid(2), second, shifted(second, -563.0), false),
-                (wid(9), newcomer, shifted(newcomer, 120.0), false),
+                Resolved::tiled(wid(1), first, shifted(first, -863.0)),
+                Resolved::tiled(wid(2), second, shifted(second, -563.0)),
+                Resolved::tiled(wid(9), newcomer, shifted(newcomer, 120.0)),
             ],
             DISPLAY,
         );
@@ -537,7 +533,7 @@ mod tests {
     fn a_snap_lands_in_the_score_before_the_next_merge() {
         let from = column(1.0);
         let resized = rect(from.origin.x, from.origin.y, 1200.0, from.size.height);
-        let mut flight = Flight::posed(&[(wid(1), from, resized, false)]);
+        let mut flight = Flight::posed(&[Resolved::tiled(wid(1), from, resized)]);
         flight.start();
         let real: OverlayRect = rect(from.origin.x, from.origin.y, 1199.0, from.size.height);
         let snapped = flight.score.snap(wid(1), real, BEGIN + 0.1);
@@ -550,11 +546,10 @@ mod tests {
         let now = BEGIN + 0.2;
         let drawn = flight.score.score().sample(node, now).expect("drawn");
         let incoming = reflow_plan(
-            &[(
+            &[Resolved::tiled(
                 wid(1),
                 from,
                 rect(from.origin.x, from.origin.y, 1500.0, from.size.height),
-                false,
             )],
             DISPLAY,
         );

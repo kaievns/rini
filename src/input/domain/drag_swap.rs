@@ -27,18 +27,18 @@ struct ActiveCandidate {
 }
 
 #[derive(Debug, Clone)]
-pub struct DragManager {
+pub struct DragSwap {
     dragged_window: Option<WindowId>,
     drag_origin_frame: Option<CGRect>,
     active_candidate: Option<ActiveCandidate>,
     config: WindowSnappingSettings,
 }
 
-impl Default for DragManager {
+impl Default for DragSwap {
     fn default() -> Self { Self::new(WindowSnappingSettings::default()) }
 }
 
-impl DragManager {
+impl DragSwap {
     pub fn new(config: WindowSnappingSettings) -> Self {
         Self {
             dragged_window: None,
@@ -120,34 +120,16 @@ impl DragManager {
         scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
         let best = scored[0];
 
-        let active_metrics = self
+        let active = self
             .active_candidate
             .and_then(|active| scored.iter().copied().find(|c| c.window == active.window));
-
-        if let Some(active) = active_metrics {
-            self.active_candidate = Some(ActiveCandidate { window: active.window });
-
-            if active.window == best.window {
-                return None;
-            }
-
-            if best.overlap >= self.config.drag_swap_fraction
-                && best.score >= active.score + SWITCH_DELTA
-            {
-                self.active_candidate = Some(ActiveCandidate { window: best.window });
-                return Some(best.window);
-            }
-
-            return None;
-        }
-
-        if best.overlap >= self.config.drag_swap_fraction {
-            self.active_candidate = Some(ActiveCandidate { window: best.window });
-            return Some(best.window);
-        }
-
-        self.active_candidate = None;
-        None
+        let switches = best.overlap >= self.config.drag_swap_fraction
+            && active.is_none_or(|active| {
+                active.window != best.window && best.score >= active.score + SWITCH_DELTA
+            });
+        let candidate = if switches { Some(best) } else { active };
+        self.active_candidate = candidate.map(|c| ActiveCandidate { window: c.window });
+        switches.then_some(best.window)
     }
 
     pub fn reset(&mut self) {
@@ -183,7 +165,7 @@ mod tests {
 
     #[test]
     fn selects_candidate_based_on_scored_overlap() {
-        let mut dm = DragManager::new(WindowSnappingSettings { drag_swap_fraction: 0.3 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.3 });
 
         let dragged = rect(0.0, 0.0, 100.0, 100.0);
         let wid = WindowId::new(1, 1);
@@ -197,7 +179,7 @@ mod tests {
 
     #[test]
     fn respects_last_target_to_avoid_repeats() {
-        let mut dm = DragManager::new(WindowSnappingSettings { drag_swap_fraction: 0.25 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.25 });
         let wid = WindowId::new(1, 10);
         let dragged = rect(0.0, 0.0, 200.0, 100.0);
 
@@ -212,7 +194,7 @@ mod tests {
 
     #[test]
     fn a_frame_change_of_another_window_starts_a_drag_of_its_own_from_where_it_is() {
-        let mut dm = DragManager::new(WindowSnappingSettings { drag_swap_fraction: 0.25 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.25 });
         let (first, second) = (WindowId::new(1, 10), WindowId::new(1, 11));
         let (first_frame, second_frame) =
             (rect(0.0, 0.0, 200.0, 100.0), rect(10.0, 0.0, 200.0, 100.0));
@@ -229,7 +211,7 @@ mod tests {
 
     #[test]
     fn clears_active_target_when_overlap_is_lost() {
-        let mut dm = DragManager::new(WindowSnappingSettings { drag_swap_fraction: 0.2 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.2 });
         let wid = WindowId::new(1, 42);
         let dragged = rect(0.0, 0.0, 100.0, 100.0);
         let cand = (WindowId::new(1, 99), rect(0.0, 0.0, 60.0, 100.0));
@@ -246,7 +228,7 @@ mod tests {
 
     #[test]
     fn hysteresis_keeps_candidate_when_overlap_drops_slightly() {
-        let mut dm = DragManager::new(WindowSnappingSettings { drag_swap_fraction: 0.4 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.4 });
         let wid = WindowId::new(5, 1);
         let dragged = rect(0.0, 0.0, 100.0, 100.0);
         let cand = (WindowId::new(5, 2), rect(0.0, 0.0, 50.0, 100.0)); // 50%
@@ -262,7 +244,7 @@ mod tests {
 
     #[test]
     fn switches_only_when_new_candidate_is_meaningfully_better() {
-        let mut dm = DragManager::new(WindowSnappingSettings { drag_swap_fraction: 0.3 });
+        let mut dm = DragSwap::new(WindowSnappingSettings { drag_swap_fraction: 0.3 });
         let wid = WindowId::new(7, 1);
         let dragged = rect(0.0, 0.0, 120.0, 100.0);
 

@@ -1,5 +1,5 @@
 //! Captures of windows on screen, through SkyLight: what a transition asks for at frame zero and just
-//! before its lift, and the watches that capture a window as it lands where it ends, as its look
+//! before its lift, and the watches that capture a window as it lands where it ends, as its face
 //! changes after a focus report, and as the windows behind the strip repaint. A window those watches
 //! wait for that ends cut by the display's edge, which SkyLight cannot picture whole, is handed to
 //! ScreenCaptureKit (`Outcome::clipped`, `Outcome::elsewhere`).
@@ -41,8 +41,8 @@ const FRAME_ZERO_SLACK: f64 = 2.0;
 const ON_DISPLAY_SLACK: f64 = 1.0;
 /// How often a window not yet landed has its server frame read.
 pub const LANDING_POLL: Duration = Duration::from_millis(1);
-/// How often, and how many times, a window whose look turned with the key window is captured until
-/// its look changes: by a `Change` watch in flight, and by a refresh at rest
+/// How often, and how many times, a window whose face turned with the key window is captured until
+/// its face changes: by a `Change` watch in flight, and by a refresh at rest
 /// (`crate::pictures::domain::refresh`).
 pub const CHANGE_EVERY: Duration = Duration::from_millis(15);
 pub const CHANGE_TRIES: u32 = 6;
@@ -73,7 +73,7 @@ pub enum Why {
     FrameZero,
     /// The window landed where it ends.
     Landed,
-    /// The window's look changed after it was reported focused.
+    /// The window's face changed after it was reported focused.
     FocusChanged,
     /// A window behind the strip, refreshed.
     Background,
@@ -137,7 +137,7 @@ pub enum Watch {
     },
     /// Armed by the window's focus report: captured where it ends every `every`, `tries` times at most,
     /// until its band print changes from the last picture delivered of it as the watch starts, even
-    /// when another watch delivered the changed look first, or until the cache refuses a capture; an
+    /// when another watch delivered the changed face first, or until the cache refuses a capture; an
     /// end not there yet is looked for every `LANDING_POLL` between those rounds. `losing`, the window
     /// focus leaves and where it ends, is captured in the same rounds and done the same way on its
     /// own, but never handed to ScreenCaptureKit, and reported lost when it is done with no change;

@@ -52,7 +52,7 @@ use crate::transitions::domain::journal::{
     Heard, Journalled, OVERLAY_TAKE_PATIENCE, Wearing, measures,
 };
 use crate::transitions::domain::lifecycle::{
-    self, Command, Generation, Kind, StageSummary, TileSummary, losing_focus,
+    self, Command, Generation, StageSummary, TileSummary, losing_focus,
 };
 use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
 use crate::transitions::domain::running::{
@@ -69,6 +69,7 @@ mod logged;
 mod tiles;
 
 use asks::{EndWatches, on_screen, sized_targets};
+use compose::{SurfaceFlight, SurfaceMotion};
 use tiles::frames_of;
 
 /// What the engine is told.
@@ -150,9 +151,9 @@ pub enum Event {
     Quiet(Generation),
     /// The patience of a lift held for the overlay's own picture ran out. Posted by its timer.
     LiftPatience,
-    /// The key window changed, which turned these windows' looks, each at the frame it is at. Sent by
+    /// The key window changed, which turned these windows' faces, each at the frame it is at. Sent by
     /// the reactor for every change it hears of, rini's own raises' included.
-    LooksTurned(Vec<(WindowId, ScreenRect)>),
+    FacesTurned(Vec<(WindowId, ScreenRect)>),
     /// What the pictures service landed. Posted by its sink.
     Pictures(crate::pictures::event::Event),
     /// Whether the journal is written and each lift's handover measured, which holds a lift's hide for
@@ -265,7 +266,7 @@ pub struct FlightEngine {
     running: Option<RunningAnimation<Picture>>,
     /// The picture delivered of each window, under its generation and at its frame, while the
     /// coordinator holds it to swap in later (`Coordinator::holds`): a landing held back from over a
-    /// focused look until focus hands over, and the target's change until the window focus leaves has
+    /// focused face until focus hands over, and the target's change until the window focus leaves has
     /// turned. Every other delivery a tile takes as it comes or is left to the pictures service's
     /// cache.
     delivered: HashMap<WindowId, (Generation, ScreenRect, Picture)>,
@@ -387,17 +388,18 @@ impl FlightEngine {
                 cause,
             } => {
                 self.take_request(cause);
-                self.start_surface(
+                self.start_surface(SurfaceFlight {
                     windows,
                     from_offset,
                     to_offset,
                     final_frames,
-                    (focus, focused_before),
+                    focus: (focus, focused_before),
                     key,
                     duration,
-                    (look, cue, accent),
-                    None,
-                )
+                    look,
+                    cue,
+                    motion: SurfaceMotion::Travels(accent),
+                })
             }
             Event::Bounce {
                 windows,
@@ -421,7 +423,7 @@ impl FlightEngine {
             }
             Event::LiftPatience => self.lift_heard(Heard::Patience),
             Event::Pictures(landed) => self.pictures_landed(landed),
-            Event::LooksTurned(windows) => self.drive(lifecycle::Event::LooksTurned(windows)),
+            Event::FacesTurned(windows) => self.drive(lifecycle::Event::FacesTurned(windows)),
             Event::Journal(settings) => self.set_journal(settings),
             Event::Rendered(answer) => self.rendered(answer),
             Event::MainTurn(turn) => self.flights.main_turn(
@@ -529,7 +531,7 @@ impl FlightEngine {
             ),
             Command::Swap { generation, window } => self.swap(generation, window, now),
             Command::Snap { window, frame } => self.snap(window, frame, now),
-            Command::KeepFocusedLook { generation, window } => {
+            Command::KeepFocusedFace { generation, window } => {
                 self.pictures.keep_focused(self.tag(generation), window)
             }
             Command::Focus { window, focused } => {
@@ -988,7 +990,7 @@ impl FlightEngine {
             focus,
             shown_focus: losing.or(focus),
             key: pass.key,
-            focused_look: None,
+            focused_face: None,
             plan: score.plan(pass.plan, &pass.cue),
             flown: false,
             score,
@@ -1006,26 +1008,26 @@ impl FlightEngine {
             return;
         };
         if let Some(target) = stage.parked_focus()
-            && self.fly_focused_look(target)
+            && self.fly_focused_face(target)
         {
-            stage.focused_look = Some(target);
+            stage.focused_face = Some(target);
         }
         self.reinstall();
         self.drive(lifecycle::Event::Merge { stage, moved: false });
     }
 
-    /// A focus target parked off the display flies its focused look, if the service holds one that
+    /// A focus target parked off the display flies its focused face, if the service holds one that
     /// fits: frame zero cannot picture it, and it arrives focused. Whether it does.
-    fn fly_focused_look(&mut self, target: WindowId) -> bool {
-        let look = self.pictures.focused(target);
-        let clipped = look.as_ref().is_some_and(|look| look.source.clips());
-        let worn = look.as_ref().map(|look| (target, look.source, look.carries_blur, look.taken));
+    fn fly_focused_face(&mut self, target: WindowId) -> bool {
+        let face = self.pictures.focused(target);
+        let clipped = face.as_ref().is_some_and(|face| face.source.clips());
+        let worn = face.as_ref().map(|face| (target, face.source, face.carries_blur, face.taken));
         let flown = self
             .running
             .as_mut()
-            .is_some_and(|running| running.fly_focused_look(target, look, clipped));
+            .is_some_and(|running| running.fly_focused_face(target, face, clipped));
         if flown {
-            self.journal_wears(Wearing::FocusedLook, worn.into_iter().collect());
+            self.journal_wears(Wearing::FocusedFace, worn.into_iter().collect());
         }
         flown
     }
@@ -1039,16 +1041,16 @@ impl FlightEngine {
         }
     }
 
-    /// On a flight that moves, the tiles a merge turned focused or not drawn so, the focused look a
+    /// On a flight that moves, the tiles a merge turned focused or not drawn so, the focused face a
     /// new parked target flies cut onto its tile, and the ring and border of every tile whose end the
     /// merge changed worn at once, as the overlay showed the first pass's: a retarget draws none.
-    fn redraw_focus(&mut self, before: &[(WindowId, (bool, Worn))], look: Option<WindowId>) {
+    fn redraw_focus(&mut self, before: &[(WindowId, (bool, Worn))], face: Option<WindowId>) {
         let Some(running) = self.running.as_ref() else { return };
         let mut drawn = Vec::new();
         for tile in running.tiles.iter() {
             let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, drawn)| *drawn);
             let (window, focused, worn) = (tile.window, tile.focused, tile.worn);
-            if look == Some(window) {
+            if face == Some(window) {
                 drawn.push(Render::Swap {
                     window,
                     picture: tile.snapshot.clone(),
@@ -1100,7 +1102,7 @@ impl FlightEngine {
 
     /// One later pass folded into the flight running: bent by its look from the score, from where
     /// each tile is drawn now, once the plan plays, folded into frame zero and posed again before. A
-    /// pass moving focus to a target parked off the display flies its focused look, as the first
+    /// pass moving focus to a target parked off the display flies its focused face, as the first
     /// pass's does.
     fn merge_now(&mut self, pass: Composed<Picture>) {
         let now = self.now();
@@ -1153,16 +1155,16 @@ impl FlightEngine {
         let focus_moved = running.focus != focus_before;
         self.journal_wears(Wearing::Compose, composed);
         self.play(played);
-        let look = if focus_moved
+        let face = if focus_moved
             && let Some(target) = self.stage(shape.clone()).and_then(|stage| stage.parked_focus())
-            && self.fly_focused_look(target)
+            && self.fly_focused_face(target)
         {
             Some(target)
         } else {
             None
         };
         if flown {
-            self.redraw_focus(&drawn_focused_before, look);
+            self.redraw_focus(&drawn_focused_before, face);
         } else {
             self.reinstall();
         }
@@ -1190,17 +1192,18 @@ impl FlightEngine {
         if !self.flights.coordinator().is_flying() {
             let at_rest = SurfacePoint::origin();
             // A push against an end moves no focus.
-            self.start_surface(
+            self.start_surface(SurfaceFlight {
                 windows,
-                at_rest,
-                at_rest,
+                from_offset: at_rest,
+                to_offset: at_rest,
                 final_frames,
-                (focus, None),
-                None,
+                focus: (focus, None),
+                key: None,
                 duration,
-                (look, cue, None),
-                Some(Kind::Bounce),
-            );
+                look,
+                cue,
+                motion: SurfaceMotion::Bounces,
+            });
         }
         let at = self.media.at(self.now());
         let Some(running) = self.running.as_mut() else { return };
@@ -2285,19 +2288,19 @@ mod tests {
             assert!(joined(wid(1)).iter().all(|tile| !tile.clipped), "captured alone");
         }
 
-        /// A merge that moves focus onto a parked window flies its focused look, swapped onto its tile
-        /// clipped when the look was baked with the desktop behind it and drawn whole when it was not.
+        /// A merge that moves focus onto a parked window flies its focused face, swapped onto its tile
+        /// clipped when the face was baked with the desktop behind it and drawn whole when it was not.
         #[test]
-        fn a_parked_targets_focused_look_swaps_in_clipped_by_what_it_is() {
+        fn a_parked_targets_focused_face_swaps_in_clipped_by_what_it_is() {
             for (route, clipped) in [(Route::Baked, true), (Route::SkyLight, false)] {
                 let mut h = Harness::new();
                 let (_, shown) = h.shown();
                 h.commit(shown);
                 h.advance(Duration::from_millis(50));
                 park(&h, 2);
-                let mut look = test_picture(end().size);
-                look.source = route;
-                h.engine.pictures.hold_focused(wid(2), look);
+                let mut face = test_picture(end().size);
+                face.source = route;
+                h.engine.pictures.hold_focused(wid(2), face);
                 let mut merge = strip_of(
                     &h,
                     &[1, 2],
@@ -2309,7 +2312,7 @@ mod tests {
                 }
                 let sent = h.step(merge);
                 assert_eq!(
-                    h.engine.running.as_ref().and_then(|running| running.focused_look),
+                    h.engine.running.as_ref().and_then(|running| running.focused_face),
                     Some(wid(2)),
                     "flown"
                 );
@@ -3286,8 +3289,8 @@ mod tests {
             h.advance(FRAME_INTERVAL);
             assert!(batches(&h.step(Event::Tick)).is_empty(), "a tick");
             assert!(
-                batches(&h.step(Event::LooksTurned(vec![(wid(1), end())]))).is_empty(),
-                "a turned look"
+                batches(&h.step(Event::FacesTurned(vec![(wid(1), end())]))).is_empty(),
+                "a turned face"
             );
         }
 

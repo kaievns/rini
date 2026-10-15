@@ -84,6 +84,7 @@ mod tests {
     use super::*;
     use crate::animation::domain::motion::testing::rect;
     use crate::pictures::platform::picture::test_picture;
+    use crate::transitions::domain::running::Drawn;
 
     fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
 
@@ -113,7 +114,11 @@ mod tests {
             }
         );
         let (from, to) = (rect(0.0, 32.0, 859.0, 1081.0), rect(863.0, 32.0, 859.0, 1081.0));
-        let tile = read.flying((from, to), test_picture(to.size), true, true);
+        let drawn = Drawn {
+            snapshot: test_picture(to.size),
+            clipped: true,
+        };
+        let tile = read.flying((from, to), drawn, true);
         assert_eq!(
             (tile.window, tile.from, tile.to, tile.floating, tile.server_order),
             (wid(1), from, to, true, Some(3))

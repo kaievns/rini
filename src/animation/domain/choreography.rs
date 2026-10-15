@@ -179,7 +179,9 @@ mod tests {
     use rini_geometry::{from_overlay_space, to_overlay_space};
 
     use super::*;
-    use crate::animation::domain::motion::plan::{GroupKey, Member, overlay_of, reflow_plan};
+    use crate::animation::domain::motion::plan::{
+        GroupKey, Member, Resolved, overlay_of, reflow_plan,
+    };
     use crate::animation::domain::motion::score::{Node, Value};
     use crate::animation::domain::motion::testing::{
         DISPLAY, Gen, RUNS, VIEWPORT, random_requests, rect,
@@ -239,11 +241,7 @@ mod tests {
 
     impl Flight {
         /// `requests` posed at frame zero, the windows `drawn` keeps drawn.
-        fn posed(
-            look: Look,
-            requests: &[(WindowId, ScreenRect, ScreenRect, bool)],
-            drawn: impl Fn(WindowId) -> bool,
-        ) -> Flight {
+        fn posed(look: Look, requests: &[Resolved], drawn: impl Fn(WindowId) -> bool) -> Flight {
             let choreography = look.choreography();
             let plan = choreography.plan(reflow_plan(requests, DISPLAY), &Cue::Plain);
             let drawn: Vec<WindowId> = plan.windows().into_iter().filter(|w| drawn(*w)).collect();
@@ -307,13 +305,13 @@ mod tests {
             for run in 0..RUNS {
                 let requests = random_requests(&mut rng);
                 let left_out: Vec<WindowId> =
-                    requests.iter().map(|r| r.0).filter(|_| rng.below(4) == 0).collect();
+                    requests.iter().map(|r| r.window).filter(|_| rng.below(4) == 0).collect();
                 let flight = Flight::posed(look, &requests, |w| !left_out.contains(&w));
                 assert!(
                     flight.score.settled(BEGIN),
                     "{look:?} run {run}: frame zero plays"
                 );
-                for &(window, from, _, _) in &requests {
+                for &Resolved { window, start: from, .. } in &requests {
                     let drawn = flight.score.drawn(window, BEGIN);
                     if left_out.contains(&window) {
                         assert_eq!(drawn, None, "{look:?} run {run}: {window:?} is not drawn");
@@ -396,7 +394,7 @@ mod tests {
                             for w in &windows {
                                 if let Some(Member::Rigid { key, rel }) = flight.plan.member(*w) {
                                     let from = screen(overlay_of(rel, position(&flight.plan, key)));
-                                    requests.push((*w, from, shifted(from, d.x), false));
+                                    requests.push(Resolved::tiled(*w, from, shifted(from, d.x)));
                                 }
                             }
                             if rng.coin() {
@@ -436,12 +434,16 @@ mod tests {
                                                 from.size.height,
                                             )
                                         };
-                                        requests.push((*w, from, to, false));
+                                        requests.push(Resolved::tiled(*w, from, to));
                                     }
                                     Some(Member::Changing { from, to }) => {
                                         let loose = position(&flight.plan, GroupKey::Loose);
                                         let at = |rel| screen(overlay_of(rel, loose));
-                                        requests.push((*w, at(from), shifted(at(to), v.x), false));
+                                        requests.push(Resolved::tiled(
+                                            *w,
+                                            at(from),
+                                            shifted(at(to), v.x),
+                                        ));
                                     }
                                     _ => {}
                                 }
@@ -449,7 +451,11 @@ mod tests {
                             if rng.coin() {
                                 if requests.is_empty() {
                                     let from = rng.on_screen();
-                                    requests.push((newcomer, from, shifted(from, v1.x), false));
+                                    requests.push(Resolved::tiled(
+                                        newcomer,
+                                        from,
+                                        shifted(from, v1.x),
+                                    ));
                                 } else {
                                     bring(&mut requests, newcomer, &mut rng);
                                 }
@@ -510,16 +516,12 @@ mod tests {
 
     /// A window brought beside the last rigid one of `requests` as the last pass left it, three
     /// points to its right, travelling as it does.
-    fn bring(
-        requests: &mut Vec<(WindowId, ScreenRect, ScreenRect, bool)>,
-        newcomer: WindowId,
-        rng: &mut Gen,
-    ) {
-        let Some(&(_, from, to, _)) =
-            requests.iter().rev().find(|(_, from, to, _)| from.size == to.size)
+    fn bring(requests: &mut Vec<Resolved>, newcomer: WindowId, rng: &mut Gen) {
+        let Some(&Resolved { start: from, end: to, .. }) =
+            requests.iter().rev().find(|r| r.start.size == r.end.size)
         else {
             let from = rng.on_screen();
-            requests.push((newcomer, from, from, false));
+            requests.push(Resolved::tiled(newcomer, from, from));
             return;
         };
         let beside = shifted(from, from.size.width + 3.0);
@@ -530,7 +532,7 @@ mod tests {
             ),
             beside.size,
         );
-        requests.push((newcomer, beside, lands, false));
+        requests.push(Resolved::tiled(newcomer, beside, lands));
     }
 
     /// Whatever the press and the strip, a look stages no window but those of the pair it is given,

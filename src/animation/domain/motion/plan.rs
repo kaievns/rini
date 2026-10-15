@@ -36,6 +36,47 @@ impl GroupKey {
     pub const STILL: GroupKey = GroupKey::Rigid(0);
 }
 
+/// A window of a layout pass, its tile going from `start` to `end` on the display, and whether it
+/// floats: what [`reflow_plan`] takes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Resolved {
+    pub window: WindowId,
+    pub start: ScreenRect,
+    pub end: ScreenRect,
+    pub floating: bool,
+}
+
+impl Resolved {
+    /// A window of the strip.
+    pub fn tiled(window: WindowId, start: ScreenRect, end: ScreenRect) -> Self {
+        Self {
+            window,
+            start,
+            end,
+            floating: false,
+        }
+    }
+
+    /// A floating window.
+    pub fn floating(window: WindowId, start: ScreenRect, end: ScreenRect) -> Self {
+        Self {
+            window,
+            start,
+            end,
+            floating: true,
+        }
+    }
+}
+
+/// A window riding no rigid group, on a path of its own in its container: a resize, an entrance or a
+/// floating window, from `from` to `to`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OwnPath {
+    pub window: WindowId,
+    pub from: GroupRect,
+    pub to: GroupRect,
+}
+
 /// One rigid piece of the strip.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RigidGroup {
@@ -111,9 +152,9 @@ pub fn entrance_from<U>(to: Rect<U>) -> Rect<U> {
 pub struct ReflowPlan {
     /// `groups[0]` is the still group, always present, possibly empty.
     pub groups: Vec<RigidGroup>,
-    pub changing: Vec<(WindowId, GroupRect, GroupRect)>,
-    pub entrances: Vec<(WindowId, GroupRect, GroupRect)>,
-    pub floating: Vec<(WindowId, GroupRect, GroupRect)>,
+    pub changing: Vec<OwnPath>,
+    pub entrances: Vec<OwnPath>,
+    pub floating: Vec<OwnPath>,
     /// Travel the floating container itself takes (a switch); zero for a pan or a layout pass.
     pub floating_travel: OverlayVector,
 }
@@ -172,9 +213,9 @@ impl ReflowPlan {
 /// How `window` takes part in a plan's lists, or `None` when none names it.
 fn member_in(
     groups: &[RigidGroup],
-    changing: &[(WindowId, GroupRect, GroupRect)],
-    entrances: &[(WindowId, GroupRect, GroupRect)],
-    floating: &[(WindowId, GroupRect, GroupRect)],
+    changing: &[OwnPath],
+    entrances: &[OwnPath],
+    floating: &[OwnPath],
     window: WindowId,
 ) -> Option<Member> {
     for group in groups {
@@ -182,8 +223,8 @@ fn member_in(
             return Some(Member::Rigid { key: group.key, rel: m.rel });
         }
     }
-    let find = |list: &[(WindowId, GroupRect, GroupRect)]| {
-        list.iter().find(|(w, _, _)| *w == window).map(|(_, from, to)| (*from, *to))
+    let find = |list: &[OwnPath]| {
+        list.iter().find(|path| path.window == window).map(|path| (path.from, path.to))
     };
     if let Some((from, to)) = find(changing) {
         return Some(Member::Changing { from, to });
@@ -201,15 +242,13 @@ fn member_in(
 #[cfg(test)]
 fn windows_in(
     groups: &[RigidGroup],
-    changing: &[(WindowId, GroupRect, GroupRect)],
-    entrances: &[(WindowId, GroupRect, GroupRect)],
-    floating: &[(WindowId, GroupRect, GroupRect)],
+    changing: &[OwnPath],
+    entrances: &[OwnPath],
+    floating: &[OwnPath],
 ) -> Vec<WindowId> {
     let mut out: Vec<WindowId> =
         groups.iter().flat_map(|g| g.members.iter().map(|m| m.window)).collect();
-    out.extend(changing.iter().map(|(w, _, _)| *w));
-    out.extend(entrances.iter().map(|(w, _, _)| *w));
-    out.extend(floating.iter().map(|(w, _, _)| *w));
+    out.extend(changing.iter().chain(entrances).chain(floating).map(|path| path.window));
     out
 }
 
@@ -219,9 +258,9 @@ pub struct FlightPlan {
     pub groups: Vec<RigidGroup>,
     /// Model position of each container: install position plus every retarget's travel.
     pub positions: HashMap<GroupKey, OverlayPoint>,
-    pub changing: Vec<(WindowId, GroupRect, GroupRect)>,
-    pub entrances: Vec<(WindowId, GroupRect, GroupRect)>,
-    pub floating: Vec<(WindowId, GroupRect, GroupRect)>,
+    pub changing: Vec<OwnPath>,
+    pub entrances: Vec<OwnPath>,
+    pub floating: Vec<OwnPath>,
     pub floating_travel: OverlayVector,
     pub next_key: u16,
 }
@@ -378,9 +417,7 @@ impl FlightPlan {
                 return Located::Group(group.key, m.rel);
             }
         }
-        let index = |list: &[(WindowId, GroupRect, GroupRect)]| {
-            list.iter().position(|(w, _, _)| *w == window)
-        };
+        let index = |list: &[OwnPath]| list.iter().position(|path| path.window == window);
         if let Some(i) = index(&self.changing) {
             return Located::Changing(i);
         }
@@ -482,20 +519,22 @@ pub fn on_overlay(rel: GroupRect) -> OverlayRect {
     Rect::new(rel.origin.to_vector().respace().to_point(), rel.size.respace())
 }
 
-/// A layout pass as rigid pieces. `requests` are `(window, start, end, floating)` after `start`
-/// has resolved parks and dropped what is not worth animating.
-pub fn reflow_plan(
-    requests: &[(WindowId, ScreenRect, ScreenRect, bool)],
-    display: ScreenRect,
-) -> ReflowPlan {
+/// A layout pass as rigid pieces. `requests` are after `start` has resolved parks and dropped what
+/// is not worth animating.
+pub fn reflow_plan(requests: &[Resolved], display: ScreenRect) -> ReflowPlan {
     let mut plan = ReflowPlan::empty();
-    for &(window, start, end, floating) in requests {
+    for &Resolved { window, start, end, floating } in requests {
         let from = to_overlay_space(start, display);
         let to = to_overlay_space(end, display);
+        let path = OwnPath {
+            window,
+            from: installed(from),
+            to: installed(to),
+        };
         if floating {
-            plan.floating.push((window, installed(from), installed(to)));
+            plan.floating.push(path);
         } else if is_a_resize(from.size, to.size) {
-            plan.changing.push((window, installed(from), installed(to)));
+            plan.changing.push(path);
         } else {
             plan.place(window, installed(from), to.origin - from.origin);
         }
@@ -520,12 +559,24 @@ pub fn surface_plan<W: SurfaceGeometry>(
     for window in windows {
         let (from, to) = window.travel(from_offset, to_offset);
         if window.pinned() {
-            plan.floating.push((window.window(), installed(from), installed(from)));
+            plan.floating.push(OwnPath {
+                window: window.window(),
+                from: installed(from),
+                to: installed(from),
+            });
         } else if window.floating() {
             if mixed {
-                plan.floating.push((window.window(), installed(from), installed(to)));
+                plan.floating.push(OwnPath {
+                    window: window.window(),
+                    from: installed(from),
+                    to: installed(to),
+                });
             } else {
-                plan.floating.push((window.window(), installed(from), installed(from)));
+                plan.floating.push(OwnPath {
+                    window: window.window(),
+                    from: installed(from),
+                    to: installed(from),
+                });
                 plan.floating_travel = travel;
             }
         } else if window.from().is_some() {
@@ -607,10 +658,10 @@ pub fn animation_targets(plan: &FlightPlan) -> Vec<AnimationTarget> {
             to,
         });
     }
-    for &(window, from, to) in plan.changing.iter().chain(&plan.entrances) {
+    for &OwnPath { window, from, to } in plan.changing.iter().chain(&plan.entrances) {
         out.push(AnimationTarget::Tile { window, from, to });
     }
-    for &(window, from, to) in &plan.floating {
+    for &OwnPath { window, from, to } in &plan.floating {
         if !from.same_as(to) {
             out.push(AnimationTarget::Tile { window, from, to });
         }
@@ -696,19 +747,21 @@ mod tests {
                 rel: rect(900.0, 20.0, 300.0, 400.0),
             }],
         });
-        reflow.changing.push((
-            wid(3),
-            rect(0.0, 0.0, 100.0, 100.0),
-            rect(50.0, 60.0, 200.0, 100.0),
-        ));
-        reflow
-            .entrances
-            .push((wid(4), rect(0.0, 0.0, 0.0, 100.0), rect(70.0, 80.0, 90.0, 100.0)));
-        reflow.floating.push((
-            wid(5),
-            rect(0.0, 0.0, 50.0, 50.0),
-            rect(100.0, 100.0, 50.0, 50.0),
-        ));
+        reflow.changing.push(OwnPath {
+            window: wid(3),
+            from: rect(0.0, 0.0, 100.0, 100.0),
+            to: rect(50.0, 60.0, 200.0, 100.0),
+        });
+        reflow.entrances.push(OwnPath {
+            window: wid(4),
+            from: rect(0.0, 0.0, 0.0, 100.0),
+            to: rect(70.0, 80.0, 90.0, 100.0),
+        });
+        reflow.floating.push(OwnPath {
+            window: wid(5),
+            from: rect(0.0, 0.0, 50.0, 50.0),
+            to: rect(100.0, 100.0, 50.0, 50.0),
+        });
         reflow.floating_travel = OverlayVector::new(0.0, 1117.0);
         let mut plan = FlightPlan::from(reflow);
         plan.positions.insert(GroupKey::Loose, OverlayPoint::new(5.0, 7.0));
@@ -740,7 +793,7 @@ mod tests {
             super::shifted(frame, ScreenVector::new(dx, 0.0))
         }
 
-        fn flight(requests: &[(WindowId, ScreenRect, ScreenRect, bool)]) -> FlightPlan {
+        fn flight(requests: &[Resolved]) -> FlightPlan {
             FlightPlan::from(reflow_plan(requests, DISPLAY))
         }
 
@@ -768,8 +821,8 @@ mod tests {
         fn a_one_group_plan_is_exactly_one_container_target() {
             let (a, b) = (column(0.0), column(1.0));
             let plan = flight(&[
-                (wid(1), a, shifted(a, -859.0), false),
-                (wid(2), b, shifted(b, -859.0), false),
+                Resolved::tiled(wid(1), a, shifted(a, -859.0)),
+                Resolved::tiled(wid(2), b, shifted(b, -859.0)),
             ]);
             let targets = animation_targets(&plan);
             assert_eq!(targets, vec![AnimationTarget::Container {
@@ -783,9 +836,9 @@ mod tests {
         fn a_still_group_and_two_moving_groups_are_two_container_targets() {
             let (a, b, c) = (column(0.0), column(1.0), column(2.0));
             let plan = flight(&[
-                (wid(1), a, a, false),
-                (wid(2), b, shifted(b, 300.0), false),
-                (wid(3), c, shifted(c, -300.0), false),
+                Resolved::tiled(wid(1), a, a),
+                Resolved::tiled(wid(2), b, shifted(b, 300.0)),
+                Resolved::tiled(wid(3), c, shifted(c, -300.0)),
             ]);
             let targets = animation_targets(&plan);
             assert_eq!(containers(&targets), vec![
@@ -800,8 +853,8 @@ mod tests {
             let (a, b) = (column(0.0), column(1.0));
             let grown = rect(a.origin.x, a.origin.y, a.size.width + 400.0, a.size.height);
             let plan = flight(&[
-                (wid(1), a, grown, false),
-                (wid(2), b, shifted(b, 400.0), false),
+                Resolved::tiled(wid(1), a, grown),
+                Resolved::tiled(wid(2), b, shifted(b, 400.0)),
             ]);
             let targets = animation_targets(&plan);
             assert_eq!(tiles(&targets), vec![wid(1)]);
@@ -816,7 +869,7 @@ mod tests {
         #[test]
         fn the_floating_container_is_a_target_iff_it_travels() {
             let settings = rect(500.0, 300.0, 700.0, 500.0);
-            let mut plan = flight(&[(wid(1), settings, settings, true)]);
+            let mut plan = flight(&[Resolved::floating(wid(1), settings, settings)]);
             assert!(
                 animation_targets(&plan).is_empty(),
                 "a standing floating window: nothing flies"
@@ -831,7 +884,7 @@ mod tests {
             }]);
 
             let moved = shifted(settings, -100.0);
-            let plan = flight(&[(wid(1), settings, moved, true)]);
+            let plan = flight(&[Resolved::floating(wid(1), settings, moved)]);
             assert_eq!(
                 animation_targets(&plan),
                 vec![AnimationTarget::Tile {
@@ -846,7 +899,7 @@ mod tests {
         #[test]
         fn zero_travel_groups_are_never_targets() {
             let (a, b) = (column(0.0), column(1.0));
-            let plan = flight(&[(wid(1), a, a, false), (wid(2), b, b, false)]);
+            let plan = flight(&[Resolved::tiled(wid(1), a, a), Resolved::tiled(wid(2), b, b)]);
             assert!(animation_targets(&plan).is_empty());
             assert_eq!(plan.groups.len(), 1, "everything standing is the still group");
         }
@@ -995,7 +1048,7 @@ mod tests {
 
         fn column(i: f64) -> ScreenRect { rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0) }
 
-        fn flight_of(requests: &[(WindowId, ScreenRect, ScreenRect, bool)]) -> FlightPlan {
+        fn flight_of(requests: &[Resolved]) -> FlightPlan {
             FlightPlan::from(reflow_plan(requests, DISPLAY))
         }
 
@@ -1039,11 +1092,15 @@ mod tests {
             let slot = held(rect(867.0, 32.0, 859.0, 1081.0));
             let push = ScreenVector::new(859.0, 0.0);
             let mut current = flight_of(&[
-                (wid(1), a, a, false),
-                (wid(2), b, shifted(b, push), false),
-                (wid(3), c, shifted(c, push), false),
+                Resolved::tiled(wid(1), a, a),
+                Resolved::tiled(wid(2), b, shifted(b, push)),
+                Resolved::tiled(wid(3), c, shifted(c, push)),
             ]);
-            current.entrances.push((wid(9), entrance_from(slot), slot));
+            current.entrances.push(OwnPath {
+                window: wid(9),
+                from: entrance_from(slot),
+                to: slot,
+            });
             let before = current.clone();
 
             let d = OverlayVector::new(-574.0, 0.0);
@@ -1095,7 +1152,7 @@ mod tests {
             }
             assert!(delta.reparented.is_empty());
             assert!(delta.new_groups.is_empty(), "the pan names known windows only");
-            assert_eq!(merged.entrances[0].2, shifted(slot, d.respace()));
+            assert_eq!(merged.entrances[0].to, shifted(slot, d.respace()));
             assert_eq!(delta.retargeted_tiles, vec![(
                 wid(9),
                 shifted(slot, d.respace())
@@ -1111,8 +1168,8 @@ mod tests {
         fn a_redundant_pass_is_an_empty_delta() {
             let (a, b) = (column(0.0), column(1.0));
             let requests = [
-                (wid(1), a, a, false),
-                (wid(2), b, shifted(b, ScreenVector::new(-300.0, 0.0)), false),
+                Resolved::tiled(wid(1), a, a),
+                Resolved::tiled(wid(2), b, shifted(b, ScreenVector::new(-300.0, 0.0))),
             ];
             let current = flight_of(&requests);
             let again = reflow_plan(&requests, DISPLAY);
@@ -1127,16 +1184,16 @@ mod tests {
             let (a, b) = (column(0.0), column(1.0));
             let v = ScreenVector::new(-300.0, 0.0);
             let current = flight_of(&[
-                (wid(1), a, shifted(a, v), false),
-                (wid(2), b, shifted(b, v), false),
+                Resolved::tiled(wid(1), a, shifted(a, v)),
+                Resolved::tiled(wid(2), b, shifted(b, v)),
             ]);
             let group = current.groups[1].key;
             let presented = midway(&current);
             let elsewhere = shifted(b, ScreenVector::new(500.0, 0.0));
             let pass = reflow_plan(
                 &[
-                    (wid(1), a, shifted(a, v), false),
-                    (wid(2), b, elsewhere, false),
+                    Resolved::tiled(wid(1), a, shifted(a, v)),
+                    Resolved::tiled(wid(2), b, elsewhere),
                 ],
                 DISPLAY,
             );
@@ -1175,9 +1232,9 @@ mod tests {
             let (a, b, c) = (column(0.0), column(1.0), column(2.0));
             let up = ScreenVector::new(0.0, -DISPLAY.size.height);
             let current = flight_of(&[
-                (wid(1), a, shifted(a, up), false),
-                (wid(2), b, shifted(b, up), false),
-                (wid(3), c, shifted(c, up), false),
+                Resolved::tiled(wid(1), a, shifted(a, up)),
+                Resolved::tiled(wid(2), b, shifted(b, up)),
+                Resolved::tiled(wid(3), c, shifted(c, up)),
             ]);
             let group = key_of(&current, wid(1)).unwrap();
             let past_right =
@@ -1185,9 +1242,9 @@ mod tests {
             let past_left = rect(-c.size.width - 1.0, c.origin.y, c.size.width, c.size.height);
             let pass = reflow_plan(
                 &[
-                    (wid(1), a, shifted(a, up), false),
-                    (wid(2), b, past_right, false),
-                    (wid(3), c, past_left, false),
+                    Resolved::tiled(wid(1), a, shifted(a, up)),
+                    Resolved::tiled(wid(2), b, past_right),
+                    Resolved::tiled(wid(3), c, past_left),
                 ],
                 DISPLAY,
             );
@@ -1200,9 +1257,14 @@ mod tests {
             }
 
             // A still container lends no motion: the member leaves on its own vector.
-            let still = flight_of(&[(wid(1), a, a, false), (wid(2), b, b, false)]);
-            let pass =
-                reflow_plan(&[(wid(1), a, a, false), (wid(2), b, past_right, false)], DISPLAY);
+            let still = flight_of(&[Resolved::tiled(wid(1), a, a), Resolved::tiled(wid(2), b, b)]);
+            let pass = reflow_plan(
+                &[
+                    Resolved::tiled(wid(1), a, a),
+                    Resolved::tiled(wid(2), b, past_right),
+                ],
+                DISPLAY,
+            );
             let (merged, delta) =
                 merge_plans(&still, &pass, None, &midway(&still).into(), None, VIEWPORT);
             assert_eq!(delta.reparented.len(), 1, "{delta:?}");
@@ -1214,13 +1276,13 @@ mod tests {
             let (a, b) = (column(0.0), column(1.0));
             let v = ScreenVector::new(-300.0, 0.0);
             let current = flight_of(&[
-                (wid(1), a, shifted(a, v), false),
-                (wid(2), b, shifted(b, v), false),
+                Resolved::tiled(wid(1), a, shifted(a, v)),
+                Resolved::tiled(wid(2), b, shifted(b, v)),
             ]);
             let group = current.groups[1].key;
             let presented = midway(&current);
             let grown = rect(b.origin.x + v.x, b.origin.y, b.size.width + 400.0, b.size.height);
-            let pass = reflow_plan(&[(wid(2), shifted(b, v), grown, false)], DISPLAY);
+            let pass = reflow_plan(&[Resolved::tiled(wid(2), shifted(b, v), grown)], DISPLAY);
             let (merged, delta) =
                 merge_plans(&current, &pass, None, &presented.clone().into(), None, VIEWPORT);
             assert_eq!(delta.reparented, vec![(wid(2), group, GroupKey::Loose)]);
@@ -1245,14 +1307,14 @@ mod tests {
         fn a_join_travelling_as_a_group_does_rides_it_where_the_last_pass_left_it() {
             let (a, b) = (column(0.0), column(1.0));
             let v = ScreenVector::new(-400.0, 0.0);
-            let current = flight_of(&[(wid(1), a, shifted(a, v), false)]);
+            let current = flight_of(&[Resolved::tiled(wid(1), a, shifted(a, v))]);
             let group = key_of(&current, wid(1)).unwrap();
             let further = ScreenVector::new(-300.0, 0.0);
             let (one, beside) = (shifted(a, v), shifted(b, v));
             let pass = reflow_plan(
                 &[
-                    (wid(1), one, shifted(one, further), false),
-                    (wid(2), beside, shifted(beside, further), false),
+                    Resolved::tiled(wid(1), one, shifted(one, further)),
+                    Resolved::tiled(wid(2), beside, shifted(beside, further)),
                 ],
                 DISPLAY,
             );
@@ -1278,8 +1340,8 @@ mod tests {
         fn a_newcomer_rides_the_group_of_the_window_nearest_it() {
             let (a, b) = (column(0.0), column(1.0));
             let current = flight_of(&[
-                (wid(1), a, shifted(a, ScreenVector::new(-400.0, 0.0)), false),
-                (wid(2), b, shifted(b, ScreenVector::new(200.0, 0.0)), false),
+                Resolved::tiled(wid(1), a, shifted(a, ScreenVector::new(-400.0, 0.0))),
+                Resolved::tiled(wid(2), b, shifted(b, ScreenVector::new(200.0, 0.0))),
             ]);
             let second = key_of(&current, wid(2)).unwrap();
             assert_ne!(key_of(&current, wid(1)), Some(second));
@@ -1287,7 +1349,10 @@ mod tests {
                 current.destination(wid(2)).unwrap(),
                 OverlayVector::new(863.0, 0.0),
             );
-            let pass = reflow_plan(&[(wid(3), screen(beside), screen(beside), false)], DISPLAY);
+            let pass = reflow_plan(
+                &[Resolved::tiled(wid(3), screen(beside), screen(beside))],
+                DISPLAY,
+            );
             let (merged, delta) =
                 merge_plans(&current, &pass, None, &midway(&current).into(), None, VIEWPORT);
             assert_eq!(delta.joined_tiles, vec![(wid(3), second)]);
@@ -1300,11 +1365,11 @@ mod tests {
         fn a_floating_newcomer_starts_where_the_last_pass_left_the_floating_container() {
             let up = OverlayVector::new(0.0, -DISPLAY.size.height);
             let settings = rect(500.0, 300.0, 700.0, 500.0);
-            let mut current = flight_of(&[(wid(1), settings, settings, true)]);
+            let mut current = flight_of(&[Resolved::floating(wid(1), settings, settings)]);
             current.floating_travel = up;
             current.positions.insert(GroupKey::Floating, up.to_point());
             let panel = rect(1300.0, 300.0, 400.0, 300.0);
-            let mut pass = reflow_plan(&[(wid(2), panel, panel, true)], DISPLAY);
+            let mut pass = reflow_plan(&[Resolved::floating(wid(2), panel, panel)], DISPLAY);
             pass.floating_travel = up;
             let (merged, delta) =
                 merge_plans(&current, &pass, None, &midway(&current).into(), None, VIEWPORT);
@@ -1322,9 +1387,13 @@ mod tests {
         fn a_join_with_a_new_vector_opens_a_group() {
             let (a, b) = (column(0.0), column(1.0));
             let away = ScreenVector::new(-400.0, 0.0);
-            let current = flight_of(&[(wid(1), a, shifted(a, away), false)]);
+            let current = flight_of(&[Resolved::tiled(wid(1), a, shifted(a, away))]);
             let pass = reflow_plan(
-                &[(wid(2), b, shifted(b, ScreenVector::new(120.0, 0.0)), false)],
+                &[Resolved::tiled(
+                    wid(2),
+                    b,
+                    shifted(b, ScreenVector::new(120.0, 0.0)),
+                )],
                 DISPLAY,
             );
             let (merged, delta) =
@@ -1351,25 +1420,29 @@ mod tests {
             };
             let push = ScreenVector::new(859.0, 0.0);
             // The open: columns from index 1 shift right by the newcomer's width.
-            let requests: Vec<(WindowId, ScreenRect, ScreenRect, bool)> = (0..22)
+            let requests: Vec<Resolved> = (0..22)
                 .map(|i| {
                     let f = col(i as f64);
                     let to = if i == 0 { f } else { shifted(f, push) };
-                    (wid(i + 1), f, to, false)
+                    Resolved::tiled(wid(i + 1), f, to)
                 })
                 .collect();
             let slot = col(1.0);
             let mut current = FlightPlan::from(reflow_plan(&requests, EXTERNAL));
             let slot_o = installed(to_overlay_space(slot, EXTERNAL));
-            current.entrances.push((wid(100), entrance_from(slot_o), slot_o));
+            current.entrances.push(OwnPath {
+                window: wid(100),
+                from: entrance_from(slot_o),
+                to: slot_o,
+            });
 
             let d = OverlayVector::new(-574.0, 0.0);
             let at_rest = viewport(SurfacePoint::origin()).inverse();
             let windows: Vec<OnSurface> = requests
                 .iter()
-                .map(|(w, _, to, _)| OnSurface {
-                    window: *w,
-                    frame: at_rest.transform_rect(&to_overlay_space(*to, EXTERNAL)),
+                .map(|r| OnSurface {
+                    window: r.window,
+                    frame: at_rest.transform_rect(&to_overlay_space(r.end, EXTERNAL)),
                     pinned: false,
                     floating: false,
                     from: None,
@@ -1383,7 +1456,7 @@ mod tests {
             let (merged, delta) =
                 merge_plans(&current, &pan, Some(d), &midway(&current).into(), None, VIEWPORT);
 
-            for (w, _, to, _) in &requests {
+            for Resolved { window: w, end: to, .. } in &requests {
                 let expected = shifted(to_overlay_space(*to, EXTERNAL), d);
                 assert!(
                     merged.destination(*w).unwrap().same_as(expected),
@@ -1391,7 +1464,7 @@ mod tests {
                     merged.destination(*w)
                 );
             }
-            assert_eq!(merged.entrances[0].2, shifted(slot_o, d.respace()));
+            assert_eq!(merged.entrances[0].to, shifted(slot_o, d.respace()));
             assert!(delta.reparented.is_empty());
             assert_eq!(
                 delta.retargeted_groups.len(),
@@ -1406,17 +1479,17 @@ mod tests {
             let (a, b, c) = (column(0.0), column(1.0), column(2.0));
             let v = ScreenVector::new(-300.0, 0.0);
             let current = flight_of(&[
-                (wid(1), a, shifted(a, v), false),
-                (wid(2), b, shifted(b, v), false),
-                (wid(3), c, shifted(c, v), false),
+                Resolved::tiled(wid(1), a, shifted(a, v)),
+                Resolved::tiled(wid(2), b, shifted(b, v)),
+                Resolved::tiled(wid(3), c, shifted(c, v)),
             ]);
             let group = current.groups[1].key;
             // The pass composes 1 and 3 with a further 100pt; 2 has no picture.
             let further = ScreenVector::new(-400.0, 0.0);
             let pass = reflow_plan(
                 &[
-                    (wid(1), a, shifted(a, further), false),
-                    (wid(3), c, shifted(c, further), false),
+                    Resolved::tiled(wid(1), a, shifted(a, further)),
+                    Resolved::tiled(wid(3), c, shifted(c, further)),
                 ],
                 DISPLAY,
             );
@@ -1472,8 +1545,7 @@ mod tests {
                         1 | 2 => {
                             let v1 = ScreenVector::new(rng.pt(-9.0, 9.0) * 50.0, 0.0);
                             let v2 = ScreenVector::new(rng.pt(-9.0, 9.0) * 50.0, 0.0);
-                            let mut reqs: Vec<(WindowId, ScreenRect, ScreenRect, bool)> =
-                                Vec::new();
+                            let mut reqs: Vec<Resolved> = Vec::new();
                             for w in &windows {
                                 if rng.coin() {
                                     continue;
@@ -1483,12 +1555,16 @@ mod tests {
                                 };
                                 let from = screen(overlay_of(rel, presented[&key]));
                                 let v = if rng.coin() { v1 } else { v2 };
-                                reqs.push((*w, from, shifted(from, v), false));
+                                reqs.push(Resolved::tiled(*w, from, shifted(from, v)));
                             }
                             // Sometimes a newcomer.
                             if rng.coin() {
                                 let from = rng.on_screen();
-                                reqs.push((wid(500 + step as u32), from, shifted(from, v1), false));
+                                reqs.push(Resolved::tiled(
+                                    wid(500 + step as u32),
+                                    from,
+                                    shifted(from, v1),
+                                ));
                             }
                             reflow_plan(&reqs, DISPLAY)
                         }
@@ -1499,8 +1575,7 @@ mod tests {
                                 .copied()
                                 .filter(|w| matches!(plan.member(*w), Some(Member::Rigid { .. })))
                                 .collect();
-                            let mut reqs: Vec<(WindowId, ScreenRect, ScreenRect, bool)> =
-                                Vec::new();
+                            let mut reqs: Vec<Resolved> = Vec::new();
                             if let Some(w) = rigid.first() {
                                 let Some(Member::Rigid { key, rel }) = plan.member(*w) else {
                                     unreachable!()
@@ -1512,7 +1587,7 @@ mod tests {
                                     from.size.width + 300.0,
                                     from.size.height,
                                 );
-                                reqs.push((*w, from, to, false));
+                                reqs.push(Resolved::tiled(*w, from, to));
                             }
                             reflow_plan(&reqs, DISPLAY)
                         }
@@ -1611,8 +1686,8 @@ mod tests {
                     midway(&current)
                 };
                 // The same destinations, expressed from the presented frames.
-                let mut reqs: Vec<(WindowId, ScreenRect, ScreenRect, bool)> = Vec::new();
-                for &(w, _, _, floating) in &requests {
+                let mut reqs: Vec<Resolved> = Vec::new();
+                for &Resolved { window: w, floating, .. } in &requests {
                     let (from, to) = match current.member(w).unwrap() {
                         Member::Rigid { key, rel } => (
                             overlay_of(rel, presented[&key]),
@@ -1626,7 +1701,12 @@ mod tests {
                             overlay_of(to, current.position_of(GroupKey::Floating)),
                         ),
                     };
-                    reqs.push((w, screen(from), screen(to), floating));
+                    reqs.push(Resolved {
+                        window: w,
+                        start: screen(from),
+                        end: screen(to),
+                        floating,
+                    });
                 }
                 let same = reflow_plan(&reqs, DISPLAY);
                 let (merged, delta) =
@@ -1646,8 +1726,8 @@ mod tests {
             let v = ScreenVector::new(-300.0, 0.0);
             let current = FlightPlan::from(reflow_plan(
                 &[
-                    (wid(1), a, rect(a.origin.x + v.x, 32.0, 860.0, 1081.0), false),
-                    (wid(2), b, rect(b.origin.x + v.x, 32.0, 860.0, 1081.0), false),
+                    Resolved::tiled(wid(1), a, rect(a.origin.x + v.x, 32.0, 860.0, 1081.0)),
+                    Resolved::tiled(wid(2), b, rect(b.origin.x + v.x, 32.0, 860.0, 1081.0)),
                 ],
                 DISPLAY,
             ));
@@ -1668,8 +1748,8 @@ mod tests {
             let elsewhere = rect(1500.0, 32.0, 860.0, 1081.0);
             let pass = reflow_plan(
                 &[
-                    (wid(1), a, rect(a.origin.x + v.x, 32.0, 860.0, 1081.0), false),
-                    (wid(2), b, elsewhere, false),
+                    Resolved::tiled(wid(1), a, rect(a.origin.x + v.x, 32.0, 860.0, 1081.0)),
+                    Resolved::tiled(wid(2), b, elsewhere),
                 ],
                 DISPLAY,
             );
@@ -1716,13 +1796,20 @@ mod tests {
             group.members.iter().map(|m| m.window).collect()
         }
 
-        fn strip_window(idx: u32, frame: SurfaceRect, pinned: bool, floating: bool) -> OnSurface {
+        fn tiled(idx: u32, frame: SurfaceRect) -> OnSurface {
             OnSurface {
                 window: wid(idx),
                 frame,
-                pinned,
-                floating,
+                pinned: false,
+                floating: false,
                 from: None,
+            }
+        }
+
+        fn floating(idx: u32, frame: SurfaceRect) -> OnSurface {
+            OnSurface {
+                floating: true,
+                ..tiled(idx, frame)
             }
         }
 
@@ -1732,8 +1819,8 @@ mod tests {
             let b = column(1.0);
             let plan = reflow_plan(
                 &[
-                    (wid(1), a, shifted(a, -859.0, 0.0), false),
-                    (wid(2), b, shifted(b, -859.0, 0.0), false),
+                    Resolved::tiled(wid(1), a, shifted(a, -859.0, 0.0)),
+                    Resolved::tiled(wid(2), b, shifted(b, -859.0, 0.0)),
                 ],
                 DISPLAY,
             );
@@ -1758,8 +1845,8 @@ mod tests {
             let b = column(1.0);
             let same = reflow_plan(
                 &[
-                    (wid(1), a, shifted(a, 300.0, 0.0), false),
-                    (wid(2), b, shifted(b, 302.0, 0.0), false),
+                    Resolved::tiled(wid(1), a, shifted(a, 300.0, 0.0)),
+                    Resolved::tiled(wid(2), b, shifted(b, 302.0, 0.0)),
                 ],
                 DISPLAY,
             );
@@ -1768,8 +1855,8 @@ mod tests {
 
             let split = reflow_plan(
                 &[
-                    (wid(1), a, shifted(a, 300.0, 0.0), false),
-                    (wid(2), b, shifted(b, 303.0, 0.0), false),
+                    Resolved::tiled(wid(1), a, shifted(a, 300.0, 0.0)),
+                    Resolved::tiled(wid(2), b, shifted(b, 303.0, 0.0)),
                 ],
                 DISPLAY,
             );
@@ -1786,8 +1873,12 @@ mod tests {
         fn a_resizing_column_is_changing_and_in_no_group() {
             let a: ScreenRect = column(0.0);
             let grown = rect(a.origin.x, a.origin.y, a.size.width + 400.0, a.size.height);
-            let plan = reflow_plan(&[(wid(1), a, grown, false)], DISPLAY);
-            assert_eq!(plan.changing, vec![(wid(1), held(a), held(grown))]);
+            let plan = reflow_plan(&[Resolved::tiled(wid(1), a, grown)], DISPLAY);
+            assert_eq!(plan.changing, vec![OwnPath {
+                window: wid(1),
+                from: held(a),
+                to: held(grown)
+            }]);
             assert!(plan.group_of(wid(1)).is_none());
             assert!(moving(&plan).is_empty());
             assert_eq!(
@@ -1802,9 +1893,9 @@ mod tests {
             let settings = rect(500.0, 300.0, 700.0, 500.0);
             let plan = reflow_plan(
                 &[
-                    (wid(1), a, shifted(a, -100.0, 0.0), false),
-                    (wid(2), settings, shifted(settings, -100.0, 0.0), true),
-                    (wid(3), settings, settings, true),
+                    Resolved::tiled(wid(1), a, shifted(a, -100.0, 0.0)),
+                    Resolved::floating(wid(2), settings, shifted(settings, -100.0, 0.0)),
+                    Resolved::floating(wid(3), settings, settings),
                 ],
                 DISPLAY,
             );
@@ -1814,8 +1905,16 @@ mod tests {
                 "the same vector does not pull it in"
             );
             assert_eq!(plan.floating, vec![
-                (wid(2), held(settings), held(shifted(settings, -100.0, 0.0))),
-                (wid(3), held(settings), held(settings))
+                OwnPath {
+                    window: wid(2),
+                    from: held(settings),
+                    to: held(shifted(settings, -100.0, 0.0))
+                },
+                OwnPath {
+                    window: wid(3),
+                    from: held(settings),
+                    to: held(settings)
+                }
             ]);
             assert!(plan.group_of(wid(2)).is_none() && plan.group_of(wid(3)).is_none());
             assert_eq!(
@@ -1831,8 +1930,8 @@ mod tests {
             let b = column(1.0);
             let plan = reflow_plan(
                 &[
-                    (wid(1), a, a, false),
-                    (wid(2), b, shifted(b, 40.0, 0.0), false),
+                    Resolved::tiled(wid(1), a, a),
+                    Resolved::tiled(wid(2), b, shifted(b, 40.0, 0.0)),
                 ],
                 DISPLAY,
             );
@@ -1852,8 +1951,7 @@ mod tests {
         /// The 3:27:20 pan: 22 survivors scrolled 574pt. One group, 22 members, one travel.
         #[test]
         fn the_3_27_20_pan_is_one_group_of_twenty_two() {
-            let windows: Vec<OnSurface> =
-                (0..22).map(|i| strip_window(i + 1, column(i as f64), false, false)).collect();
+            let windows: Vec<OnSurface> = (0..22).map(|i| tiled(i + 1, column(i as f64))).collect();
             let from_offset = SurfacePoint::new(-574.0, 0.0);
             let to_offset = SurfacePoint::new(0.0, 0.0);
             let plan = surface_plan(&windows, from_offset, to_offset);
@@ -1880,17 +1978,21 @@ mod tests {
         #[test]
         fn pinned_windows_are_floating_with_zero_travel() {
             let settings: SurfaceRect = rect(500.0, 300.0, 700.0, 500.0);
-            let windows = vec![
-                strip_window(1, column(0.0), false, false),
-                strip_window(2, settings, true, true),
-            ];
+            let windows = vec![tiled(1, column(0.0)), OnSurface {
+                pinned: true,
+                ..floating(2, settings)
+            }];
             let plan = surface_plan(
                 &windows,
                 SurfacePoint::new(-574.0, 0.0),
                 SurfacePoint::new(0.0, 0.0),
             );
             let standing: GroupRect = rect(500.0, 300.0, 700.0, 500.0);
-            assert_eq!(plan.floating, vec![(wid(2), standing, standing)]);
+            assert_eq!(plan.floating, vec![OwnPath {
+                window: wid(2),
+                from: standing,
+                to: standing
+            }]);
             assert_eq!(plan.floating_travel, OverlayVector::zero());
             assert_eq!(
                 plan.member(wid(2)),
@@ -1902,10 +2004,7 @@ mod tests {
         #[test]
         fn a_switch_moves_the_floating_container_by_the_surface_travel() {
             let settings: SurfaceRect = rect(500.0, 300.0, 700.0, 500.0);
-            let windows = vec![
-                strip_window(1, column(0.0), false, false),
-                strip_window(2, settings, false, true),
-            ];
+            let windows = vec![tiled(1, column(0.0)), floating(2, settings)];
             let from_offset = SurfacePoint::new(0.0, 0.0);
             let to_offset = SurfacePoint::new(0.0, 1117.0);
             let plan = surface_plan(&windows, from_offset, to_offset);
@@ -1916,7 +2015,11 @@ mod tests {
             let standing: GroupRect = rect(500.0, 300.0, 700.0, 500.0);
             assert_eq!(
                 plan.floating,
-                vec![(wid(2), standing, standing)],
+                vec![OwnPath {
+                    window: wid(2),
+                    from: standing,
+                    to: standing
+                }],
                 "the tile itself stands in its container"
             );
             let (_, to) = surface_travel(settings, from_offset, to_offset, false);
@@ -1951,8 +2054,8 @@ mod tests {
             let a: ScreenRect = column(0.0);
             let plan = reflow_plan(
                 &[
-                    (wid(1), a, shifted(a, -100.0, 0.0), false),
-                    (wid(2), a, a, false),
+                    Resolved::tiled(wid(1), a, shifted(a, -100.0, 0.0)),
+                    Resolved::tiled(wid(2), a, a),
                 ],
                 DISPLAY,
             );
@@ -1987,7 +2090,7 @@ mod tests {
 
                 let mut named = plan.windows();
                 named.sort();
-                let mut asked: Vec<WindowId> = requests.iter().map(|r| r.0).collect();
+                let mut asked: Vec<WindowId> = requests.iter().map(|r| r.window).collect();
                 asked.sort();
                 assert_eq!(named, asked, "{tag}: partition");
                 assert!(plan.entrances.is_empty(), "{tag}");
@@ -2002,7 +2105,7 @@ mod tests {
                     );
                 }
 
-                for &(window, start, end, floating) in &requests {
+                for &Resolved { window, start, end, floating } in &requests {
                     let from = to_overlay_space(start, display);
                     let to = to_overlay_space(end, display);
                     let v = to.origin - from.origin;
@@ -2040,8 +2143,11 @@ mod tests {
                 }
 
                 let vector_of = |window: WindowId| {
-                    let r = requests.iter().find(|r| r.0 == window).unwrap();
-                    ScreenVector::new(r.2.origin.x - r.1.origin.x, r.2.origin.y - r.1.origin.y)
+                    let r = requests.iter().find(|r| r.window == window).unwrap();
+                    ScreenVector::new(
+                        r.end.origin.x - r.start.origin.x,
+                        r.end.origin.y - r.start.origin.y,
+                    )
                 };
                 for (i, a) in plan.groups.iter().enumerate() {
                     for b in plan.groups.iter().skip(i + 1) {
@@ -2067,8 +2173,8 @@ mod tests {
             let left = column(0.0);
             let plan = reflow_plan(
                 &[
-                    (wid(1), left, left, false),
-                    (wid(2), neighbour, shifted(neighbour, 859.0, 0.0), false),
+                    Resolved::tiled(wid(1), left, left),
+                    Resolved::tiled(wid(2), neighbour, shifted(neighbour, 859.0, 0.0)),
                 ],
                 DISPLAY,
             );
@@ -2092,13 +2198,17 @@ mod tests {
             );
             let plan = reflow_plan(
                 &[
-                    (wid(1), left, left, false),
-                    (wid(2), middle, grown, false),
-                    (wid(3), right, shifted(right, dw, 0.0), false),
+                    Resolved::tiled(wid(1), left, left),
+                    Resolved::tiled(wid(2), middle, grown),
+                    Resolved::tiled(wid(3), right, shifted(right, dw, 0.0)),
                 ],
                 DISPLAY,
             );
-            assert_eq!(plan.changing, vec![(wid(2), held(middle), held(grown))]);
+            assert_eq!(plan.changing, vec![OwnPath {
+                window: wid(2),
+                from: held(middle),
+                to: held(grown)
+            }]);
             let groups = moving(&plan);
             assert_eq!(groups.len(), 1);
             assert_eq!(members(groups[0]), vec![wid(3)]);
@@ -2109,10 +2219,10 @@ mod tests {
         #[test]
         fn a_close_shifts_every_survivor_as_one_group() {
             let w = 863.0;
-            let survivors: Vec<(WindowId, ScreenRect, ScreenRect, bool)> = (1..=4)
+            let survivors: Vec<Resolved> = (1..=4)
                 .map(|i| {
                     let f = column(i as f64);
-                    (wid(i as u32), f, shifted(f, -w, 0.0), false)
+                    Resolved::tiled(wid(i as u32), f, shifted(f, -w, 0.0))
                 })
                 .collect();
             let plan = reflow_plan(&survivors, DISPLAY);
@@ -2127,16 +2237,20 @@ mod tests {
         fn a_floating_only_pass_has_no_groups_and_one_floating_member() {
             let settings = rect(500.0, 300.0, 700.0, 500.0);
             let plan = reflow_plan(
-                &[(wid(1), settings, shifted(settings, 40.0, 20.0), true)],
+                &[Resolved::floating(
+                    wid(1),
+                    settings,
+                    shifted(settings, 40.0, 20.0),
+                )],
                 DISPLAY,
             );
             assert!(moving(&plan).is_empty());
             assert!(plan.groups[0].members.is_empty());
-            assert_eq!(plan.floating, vec![(
-                wid(1),
-                held(settings),
-                held(shifted(settings, 40.0, 20.0))
-            )]);
+            assert_eq!(plan.floating, vec![OwnPath {
+                window: wid(1),
+                from: held(settings),
+                to: held(shifted(settings, 40.0, 20.0)),
+            }]);
             let flight = FlightPlan::from(plan);
             let targets = animation_targets(&flight);
             assert_eq!(targets.len(), 1, "the floating tile flies on its own");
@@ -2153,8 +2267,8 @@ mod tests {
                 let switch = run % 5 == 0 && !plan.floating.is_empty();
                 if switch {
                     plan.floating_travel = OverlayVector::new(0.0, -DISPLAY.size.height);
-                    for (_, from, to) in plan.floating.iter_mut() {
-                        *to = *from;
+                    for path in plan.floating.iter_mut() {
+                        path.to = path.from;
                     }
                 }
                 let flight = FlightPlan::from(plan.clone());
@@ -2210,10 +2324,8 @@ mod tests {
                     .changing
                     .iter()
                     .chain(&plan.entrances)
-                    .map(|(w, _, _)| *w)
-                    .chain(
-                        plan.floating.iter().filter(|(_, f, t)| !f.same_as(*t)).map(|(w, _, _)| *w),
-                    )
+                    .chain(plan.floating.iter().filter(|path| !path.from.same_as(path.to)))
+                    .map(|path| path.window)
                     .collect();
                 expected.sort();
                 tiles.sort();

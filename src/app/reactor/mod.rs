@@ -617,7 +617,7 @@ impl Reactor {
             regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
-                drag_swap_manager: crate::input::domain::drag_swap::DragManager::new(
+                drag_swap: crate::input::domain::drag_swap::DragSwap::new(
                     config.settings.window_snapping,
                 ),
                 skip_layout_for_window: None,
@@ -819,12 +819,12 @@ impl Reactor {
         }
     }
 
-    /// Tells the flight engine whose look the key window turned if it changed, rini's own raise
+    /// Tells the flight engine whose face the key window turned if it changed, rini's own raise
     /// included, each managed window at its frame: at rest the engine pictures both afresh, and in
     /// flight whatever the flight does not picture. See "Focus changing during a flight" in
     /// `src/transitions/docs/coordination.md`.
-    fn tell_looks_turned(&self, key_before: Option<WindowId>) {
-        let turned = crate::windows::domain::focus::looks_turned(
+    fn tell_faces_turned(&self, key_before: Option<WindowId>) {
+        let turned = crate::windows::domain::focus::faces_turned(
             key_before,
             self.main_window_tracker.key_window(),
         );
@@ -838,7 +838,7 @@ impl Reactor {
             .collect();
         if let (false, Some(tx)) = (windows.is_empty(), &self.communication_manager.transitions_tx)
         {
-            tx.send(crate::transitions::platform::engine::Event::LooksTurned(windows));
+            tx.send(crate::transitions::platform::engine::Event::FacesTurned(windows));
         }
     }
 

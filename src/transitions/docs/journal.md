@@ -26,7 +26,7 @@ down (below). Its inbox hands each commit the renderer reports (`Rendered(Commit
 when the engine heard it, so the real frames, the bar's picture and the quiet a commit releases go
 out at its `t`. And each picture a tile takes goes to `Journalled::wears` as the engine puts it on
 (`FlightEngine::journal_wears`): every tile a pass composes, a later pass's only for the windows it
-brings, with the cache's picture or the stand-in; frame zero's, worn before the show; the focused look a
+brings, with the cache's picture or the stand-in; frame zero's, worn before the show; the focused face a
 parked focus target flies; each picture swapped onto a tile or an entrance joining with its first;
 and each repaint a tile's leg in two steps holds for its corner, flown from there.
 A `wears` mark each, stamped when the engine put it on. And each turn of the main thread's run loop
@@ -46,12 +46,12 @@ until it has a mark.
 |---|---|---|
 | a request's first drive, ahead of that event's own marks | `press`, stamped when the reactor took the event the request answers | `what` |
 | `Event::Begin(stage)` | `begin` | `kind`, `coalesced` (the stage waits for the reactor's follow-up passes), `tiles`, `awaiting`, `repainting`, `focus`, `losing_focus`, `key`, `duration_ms` |
-| `Event::Merge { stage, moved }` | `merge` | `kind`, `moved`, `tiles`, `awaiting`, `repainting`, `focus`, `focused_look`, `duration_ms` |
+| `Event::Merge { stage, moved }` | `merge` | `kind`, `moved`, `tiles`, `awaiting`, `repainting`, `focus`, `focused_look` (the stage's `focused_face`), `duration_ms` |
 | `Event::HoldMerge { grows, writes }` | `hold_merge` | `grows`, `writes` (counts) |
 | `Event::Extend(d)` / `Abandon` / `Quiet(g)` | `extend` / `abandon` / `quiet` | `ms` / none / `of` |
 | `Event::Tick { settled, landed }`, from `FRAME_INTERVAL` before the clock runs out, or from its end with nothing drawn at rest | `at_rest`, `landed`: each once a generation, at its first `true` | |
 | `Event::Lost { generation, window }` | `lost` | `of`, `window` |
-| `Event::LooksTurned(windows)` | `looks_turned`, one for each window | `window` |
+| `Event::FacesTurned(windows)` | `looks_turned`, one for each window | `window` |
 | `Event::Picture`, `Event::FrameZero` | none: the delivery's marks are the record | |
 | a delivery of the pictures service under the engine's tag | `delivery` | `of`, `why`, `pictures` (a count), `sent_before_us` |
 | each picture in it, after its `delivery` | `delivered` | `window`, `frame` (screen points, where the window was when it was taken), `taken_before_us` |
@@ -62,9 +62,9 @@ until it has a mark.
 | `Write` / `Holes` / `Warm` / `Refresh` | `write` / `holes` / `warm` / `refresh` | `windows` (a count) |
 | `Watch(EndWatch)` | `watch` | `landing`, `awaiting`, `background` (counts), `focus`, `losing_focus` |
 | `AskFinal` | `ask_final` | `windows`, `behind` (counts) |
-| `Swap` / `KeepFocusedLook` | `swap` / `keep_focused_look` | `of`, `window` |
+| `Swap` / `KeepFocusedFace` | `swap` / `keep_focused_look` | `of`, `window` |
 | `Snap { window, frame }` | `snap` | `window`, `frame` (overlay points) |
-| a picture a tile takes, after the marks of the drive or delivery it came with | `wears` | `window`, `at` (`compose`, `frame_zero`, `focused_look`, `swap` or `corner`), `route` (`skylight`, the window alone; `baked`, SkyLight's baked call; `screencapturekit`; `stand_in`), `blur` (it carries its window's blur), `taken_before_us` |
+| a picture a tile takes, after the marks of the drive or delivery it came with | `wears` | `window`, `at` (`compose`, `frame_zero`, `focused_look` (`Wearing::FocusedFace`), `swap` or `corner`), `route` (`skylight`, the window alone; `baked`, SkyLight's baked call; `screencapturekit`; `stand_in`), `blur` (it carries its window's blur), `taken_before_us` |
 | `Focus { window, focused }` | `focus` | `window`, `focused` |
 | `Lift` | `lift` | `at_rest`, `landed`, as the tick that lifted it read them: either `false` is `LIFT_GRACE` run out |
 | a lift held for the overlay's picture coming down | `hide` | `measured` (it hid on that picture), `waited_us` after the lift |
@@ -147,7 +147,9 @@ clock then, and `lost` how many marks the ring overwrote before they were writte
 window is `[pid, idx]`, its `idx` the window server's id; a rect is `[x, y, w, h]` as `f32`; a
 generation is a number; a `why` is `frame_zero`, `landed`, `focus_changed`, `background` or `final`;
 `null` is none. `a_line_is_one_object_with_t_g_and_mark` pins the format, and
-`the_sample_the_tools_read_is_what_the_journal_writes` two whole bursts of it (below).
+`the_sample_the_tools_read_is_what_the_journal_writes` two whole bursts of it (below). The marks of a
+window's focused face keep the names the format first wrote, `looks_turned`, `keep_focused_look`, a
+`merge`'s `focused_look` and a `wears` at `focused_look`, so every journal recorded reads the same.
 
 ## The press
 
@@ -209,7 +211,7 @@ ring loses its oldest marks, and its header says how many.
 
 While the journal is written, `Journalled` gives a burst, every mark since the last one, at each
 `ReportSettled`: the quiet after a lift, or an abandon. It gives none between a `ReportUp` and its
-`ReportSettled`, so nothing touches the disk while a transition is up. Marks pushed at rest, a look
+`ReportSettled`, so nothing touches the disk while a transition is up. Marks pushed at rest, a face
 turned with nothing flying or a slow main-thread turn, go with the next burst. On the `transitions` thread a write is one `Vec`
 copied out of the ring and one channel send; the `journal` thread formats and appends.
 

@@ -11,7 +11,7 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | | |
 |---|---|
 | `domain/motion.rs` | The root of `motion`: how a transition moves, as pure functions over rects, its modules below |
-| `domain/motion/plan.rs` | `FlightPlan` and where it lands each window (`FlightPlan::destination`), rigid groups, `reflow_plan` and `surface_plan`, a frame in its container and back (`group_relative`, `overlay_of`, and `installed` for a fresh plan), the containers an edge bounce or a nudge carries, and an entrance's shape |
+| `domain/motion/plan.rs` | `FlightPlan` and where it lands each window (`FlightPlan::destination`), rigid groups and the windows on paths of their own (`OwnPath`), `reflow_plan` over a pass's `Resolved` windows and `surface_plan`, a frame in its container and back (`group_relative`, `overlay_of`, and `installed` for a fresh plan), the containers an edge bounce or a nudge carries, and an entrance's shape |
 | `domain/motion/plan/merge.rs` | `merge_plans`, a pass arriving mid-flight folded into the plan: a pan carrying every group, the members' votes for where their containers go, the largest cluster keeping each and the rest reparented, a newcomer riding beside the windows it sits beside, and the loose and floating tiles retargeted |
 | `domain/motion/surface.rs` | How a strip movement carries a surface: what the viewport at an offset shows (`viewport`), `surface_travel`, `pan_travel`, and what a window on the surface has to say (`SurfaceGeometry`) |
 | `domain/motion/glide.rs` | `Leg`: a container's movement over time; `Leg::toward`, the spring a merge bends it on, from where the score has its movement (`Score::along`) and as fast as its leg is going |

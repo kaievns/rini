@@ -432,7 +432,7 @@ impl Reactor {
         reported_space: SpaceId,
     ) -> anyhow::Result<EventOutcome> {
         // Every report, rini's own raise's included: it arms the pictures service's watch on a
-        // focus target's look.
+        // focus target's face.
         if let Some(pictures) = &self.communication_manager.pictures {
             pictures.hint(crate::pictures::domain::watch::Hint::Focused(window));
         }
@@ -567,7 +567,7 @@ impl Reactor {
             })
             .or_else(|| {
                 self.drag_manager
-                    .drag_swap_manager
+                    .drag_swap
                     .origin_frame()
                     .and_then(|frame| self.affinity().best_space_for_frame(&frame))
             })

@@ -19,7 +19,7 @@ use rini_geometry::space::{OverlayRect, Rect, ScreenRect};
 use serde::{Serialize, Serializer};
 use serde_with::{SerializeAs, serde_as};
 
-use super::lifecycle::{Command, Coordinator, Event, Generation, Kind, Start};
+use super::lifecycle::{Arrived, Command, Coordinator, Event, Generation, Kind, Start};
 use super::request::Cause;
 use crate::animation::event::Crops;
 use crate::pictures::domain::handover::HandoverDiff;
@@ -66,7 +66,8 @@ pub enum Mark {
         #[serde_as(as = "Option<PidIdx>")]
         focus: Option<WindowId>,
         #[serde_as(as = "Option<PidIdx>")]
-        focused_look: Option<WindowId>,
+        #[serde(rename = "focused_look")]
+        focused_face: Option<WindowId>,
         duration_ms: u32,
     },
     /// A pass reaching a flight whose motion runs, not merged yet: how many windows it grows, and how
@@ -97,7 +98,8 @@ pub enum Mark {
         #[serde_as(as = "PidIdx")]
         window: WindowId,
     },
-    LooksTurned {
+    #[serde(rename = "looks_turned")]
+    FacesTurned {
         #[serde_as(as = "PidIdx")]
         window: WindowId,
     },
@@ -159,7 +161,8 @@ pub enum Mark {
         #[serde_as(as = "PidIdx")]
         window: WindowId,
     },
-    KeepFocusedLook {
+    #[serde(rename = "keep_focused_look")]
+    KeepFocusedFace {
         of: Generation,
         #[serde_as(as = "PidIdx")]
         window: WindowId,
@@ -171,7 +174,7 @@ pub enum Mark {
         frame: OverlayRect,
     },
     /// A picture a tile took: as the flight composed it, from frame zero before the show, as its
-    /// focused look, or swapped in. Which way the picture was taken, whether it carries its window's
+    /// focused face, or swapped in. Which way the picture was taken, whether it carries its window's
     /// blur, and how long before this mark its capture started.
     Wears {
         #[serde_as(as = "PidIdx")]
@@ -258,8 +261,9 @@ pub enum Wearing {
     Compose,
     /// Frame zero's picture, put on before the overlay was up.
     FrameZero,
-    /// The parked focus target's focused look.
-    FocusedLook,
+    /// The parked focus target's focused face.
+    #[serde(rename = "focused_look")]
+    FocusedFace,
     /// A delivered picture swapped onto the tile, or an entrance joining with its first.
     Swap,
     /// A delivered picture held for the corner of the tile's leg in two steps, on from there.
@@ -395,11 +399,8 @@ enum Pending {
     Nothing,
     One(Mark),
     /// A tick's reading, taken only once the clock has run out: before that the engine reads nothing.
-    Tick {
-        settled: bool,
-        landed: bool,
-    },
-    LooksTurned(Vec<WindowId>),
+    Tick(Arrived),
+    FacesTurned(Vec<WindowId>),
 }
 
 /// The generation `at_rest` and `landed` were each last marked in.
@@ -449,8 +450,8 @@ impl Journal {
                 kind: stage.kind,
                 coalesced: stage.start == Start::Coalesced,
                 tiles: count(stage.tiles.len()),
-                awaiting: count(stage.awaiting.len()),
-                repainting: count(stage.repainting.len()),
+                awaiting: count(stage.waits.awaiting().count()),
+                repainting: count(stage.waits.repainting().count()),
                 focus: stage.focus,
                 losing_focus: stage.losing_focus,
                 key: stage.key,
@@ -460,10 +461,10 @@ impl Journal {
                 kind: stage.kind,
                 moved: *moved,
                 tiles: count(stage.tiles.len()),
-                awaiting: count(stage.awaiting.len()),
-                repainting: count(stage.repainting.len()),
+                awaiting: count(stage.waits.awaiting().count()),
+                repainting: count(stage.waits.repainting().count()),
                 focus: stage.focus,
-                focused_look: stage.focused_look,
+                focused_face: stage.focused_face,
                 duration_ms: millis(stage.duration),
             }),
             Event::HoldMerge { grows, writes } => Pending::One(Mark::HoldMerge {
@@ -476,15 +477,15 @@ impl Journal {
                 window: *window,
             }),
             Event::Extend(needs) => Pending::One(Mark::Extend { ms: millis(*needs) }),
-            Event::Tick { settled, landed } if reads_landing => Pending::Tick {
+            Event::Tick { settled, landed } if reads_landing => Pending::Tick(Arrived {
                 settled: *settled,
                 landed: *landed,
-            },
+            }),
             Event::Tick { .. } => Pending::Nothing,
             Event::Quiet(of) => Pending::One(Mark::Quiet { of: *of }),
             Event::Abandon => Pending::One(Mark::Abandon),
-            Event::LooksTurned(windows) => {
-                Pending::LooksTurned(windows.iter().map(|(window, _)| *window).collect())
+            Event::FacesTurned(windows) => {
+                Pending::FacesTurned(windows.iter().map(|(window, _)| *window).collect())
             }
         }
     }
@@ -497,22 +498,22 @@ impl Journal {
         pending: Pending,
         commands: &[Command],
     ) {
-        let mut read = (false, false);
+        let mut read = Arrived::default();
         match pending {
             Pending::Nothing => {}
             Pending::One(mark) => self.push(now, generation, mark),
-            Pending::Tick { settled, landed } => {
-                read = (settled, landed);
-                if first_in(&mut self.edges.at_rest, settled, generation) {
+            Pending::Tick(arrived) => {
+                read = arrived;
+                if first_in(&mut self.edges.at_rest, arrived.settled, generation) {
                     self.push(now, generation, Mark::AtRest);
                 }
-                if first_in(&mut self.edges.landed, landed, generation) {
+                if first_in(&mut self.edges.landed, arrived.landed, generation) {
                     self.push(now, generation, Mark::Landed);
                 }
             }
-            Pending::LooksTurned(windows) => {
+            Pending::FacesTurned(windows) => {
                 for window in windows {
-                    self.push(now, generation, Mark::LooksTurned { window });
+                    self.push(now, generation, Mark::FacesTurned { window });
                 }
             }
         }
@@ -521,8 +522,8 @@ impl Journal {
         }
     }
 
-    /// `(at_rest, landed)`: what the drive's tick read, which a lift carries.
-    fn mark(command: &Command, (at_rest, landed): (bool, bool)) -> Mark {
+    /// `read`: what the drive's tick read, which a lift carries.
+    fn mark(command: &Command, read: Arrived) -> Mark {
         match command {
             Command::Hold => Mark::Hold,
             Command::Settle => Mark::Settle,
@@ -554,7 +555,7 @@ impl Journal {
                 window: *window,
             },
             Command::Snap { window, frame } => Mark::Snap { window: *window, frame: *frame },
-            Command::KeepFocusedLook { generation, window } => Mark::KeepFocusedLook {
+            Command::KeepFocusedFace { generation, window } => Mark::KeepFocusedFace {
                 of: *generation,
                 window: *window,
             },
@@ -563,7 +564,10 @@ impl Journal {
                 focused: *focused,
             },
             Command::PlaceRest => Mark::PlaceRest,
-            Command::Lift { .. } => Mark::Lift { at_rest, landed },
+            Command::Lift { .. } => Mark::Lift {
+                at_rest: read.settled,
+                landed: read.landed,
+            },
             Command::Warm(windows) => Mark::Warm { windows: count(windows.len()) },
             Command::Refresh(windows) => Mark::Refresh { windows: count(windows.len()) },
             Command::ReportUp => Mark::ReportUp,
@@ -1034,7 +1038,7 @@ mod tests {
             (Command::Swap { generation: g, window: w(1) }, "swap"),
             (Command::Snap { window: w(1), frame: snap }, "snap"),
             (
-                Command::KeepFocusedLook { generation: g, window: w(1) },
+                Command::KeepFocusedFace { generation: g, window: w(1) },
                 "keep_focused_look",
             ),
             (Command::Focus { window: w(1), focused: false }, "focus"),
@@ -1047,13 +1051,16 @@ mod tests {
         ];
         for (command, expected) in table {
             assert_eq!(
-                name(&Journal::mark(&command, (true, false))),
+                name(&Journal::mark(&command, Arrived {
+                    settled: true,
+                    landed: false
+                })),
                 expected,
                 "{command:?}"
             );
         }
         assert_eq!(
-            Journal::mark(&Command::Watch(watch), (false, false)),
+            Journal::mark(&Command::Watch(watch), Arrived::default()),
             Mark::Watch {
                 landing: 1,
                 awaiting: 0,
@@ -1063,7 +1070,10 @@ mod tests {
             }
         );
         assert_eq!(
-            Journal::mark(&Command::Lift { generation: g }, (true, false)),
+            Journal::mark(&Command::Lift { generation: g }, Arrived {
+                settled: true,
+                landed: false
+            }),
             Mark::Lift { at_rest: true, landed: false }
         );
         assert_eq!(
@@ -1071,7 +1081,7 @@ mod tests {
                 &Command::Retarget {
                     held: Duration::from_micros(140_900)
                 },
-                (false, false)
+                Arrived::default()
             ),
             Mark::Retarget { waited_ms: 140 }
         );
@@ -1100,7 +1110,7 @@ mod tests {
         assert_eq!(marks_of(Event::Quiet(g)), ["quiet"]);
         assert_eq!(marks_of(Event::Abandon), ["abandon"]);
         assert_eq!(
-            marks_of(Event::LooksTurned(vec![(w(1), frame), (w(2), frame)])),
+            marks_of(Event::FacesTurned(vec![(w(1), frame), (w(2), frame)])),
             ["looks_turned", "looks_turned"]
         );
         assert!(
@@ -1602,7 +1612,7 @@ mod tests {
                     awaiting: 1,
                     repainting: 0,
                     focus: Some(w(7)),
-                    focused_look: None,
+                    focused_face: None,
                     duration_ms: 350,
                 })
             ),
@@ -1656,7 +1666,7 @@ mod tests {
         let wearing = [
             Wearing::Compose,
             Wearing::FrameZero,
-            Wearing::FocusedLook,
+            Wearing::FocusedFace,
             Wearing::Swap,
             Wearing::Corner,
         ];
@@ -1776,7 +1786,7 @@ mod tests {
         let mut flights = Journalled::default();
         flights.pressed(pressed(now, Duration::from_millis(1)));
         flights.answered();
-        flights.drive(Event::LooksTurned(vec![(w(1), r(0.0, 0.0, 200.0, 200.0))]), now);
+        flights.drive(Event::FacesTurned(vec![(w(1), r(0.0, 0.0, 200.0, 200.0))]), now);
         flights.drive(Event::Begin(pan()), now);
         let marks = held(&flights);
         assert!(presses(&marks).is_empty(), "{marks:?}");
@@ -1831,7 +1841,7 @@ mod tests {
         said += drives_alike(
             &mut bare,
             &mut journalled,
-            Event::LooksTurned(vec![(w(2), frame)]),
+            Event::FacesTurned(vec![(w(2), frame)]),
             at(120),
         );
         said += drives_alike(
@@ -2365,7 +2375,7 @@ mod tests {
         script.wears(
             3_004_900,
             w(2),
-            Wearing::FocusedLook,
+            Wearing::FocusedFace,
             Route::Baked,
             true,
             2_104_000,

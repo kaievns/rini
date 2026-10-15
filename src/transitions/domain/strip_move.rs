@@ -1167,7 +1167,7 @@ pub(crate) mod tests {
             let (current, _, _, _) = two_presses(WIDTH);
             let key = key_of(&current, w).unwrap();
             let stands = rect(900.0, 200.0, 400.0, 300.0);
-            let pass = reflow_plan(&[(wid(40), stands, stands, false)], DISPLAY);
+            let pass = reflow_plan(&[Resolved::tiled(wid(40), stands, stands)], DISPLAY);
             let presented = Presented::from(halfway(&current));
 
             let (merged, _) = merge_plans(&current, &pass, None, &presented, None, VIEWPORT);

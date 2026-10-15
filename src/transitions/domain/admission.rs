@@ -99,7 +99,7 @@ impl<P> EntranceDecision<P> {
 /// How a window's picture where it ends is waited for. See "A grow waits for its repaint" and "A
 /// window that opens" in `src/transitions/docs/coordination.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::transitions) enum EndPicture {
+pub enum EndPicture {
     /// No picture of the window: held for, overlay up, and watched until it has repainted where it
     /// ends.
     Awaited,
@@ -151,7 +151,8 @@ pub(in crate::transitions) struct Landing {
 
 impl EndPicture {
     /// Every sort.
-    const ALL: [Self; 5] = [
+    #[cfg(test)]
+    pub(in crate::transitions) const ALL: [Self; 5] = [
         Self::Awaited,
         Self::Held,
         Self::Kept,
@@ -159,15 +160,16 @@ impl EndPicture {
         Self::Lands,
     ];
 
-    /// Which of `Waits`' lists a window so sorted is in: `awaiting`, `repainting` and `kept`.
-    const fn lists(self) -> (bool, bool, bool) {
-        match self {
-            Self::Awaited => (true, false, false),
-            Self::Held => (true, true, false),
-            Self::Kept => (false, true, true),
-            Self::Repainting => (false, true, false),
-            Self::Lands => (false, false, false),
-        }
+    /// Held for, overlay up, until it has repainted where it ends: a window with no picture of its
+    /// own and a grow.
+    pub(in crate::transitions) const fn holds(self) -> bool {
+        matches!(self, Self::Awaited | Self::Held)
+    }
+
+    /// Pictured where it ends only once it has repainted there: a resize and an entrance flying from
+    /// where it opened.
+    pub(in crate::transitions) const fn repaints(self) -> bool {
+        matches!(self, Self::Held | Self::Kept | Self::Repainting)
     }
 
     /// The window `request` places, its tile starting at `start` on `display`, flying on `flies`:
@@ -262,42 +264,56 @@ fn covers_start(
         || carried.is_some_and(|carried| fits_frame(carried, start.size))
 }
 
-/// A pass's windows as their `EndPicture`s sort them: `StageSummary::awaiting`, `::repainting` and
-/// `::kept`.
+/// A pass's windows as their `EndPicture`s sort them, a window that lands left out: what
+/// `StageSummary::waits` holds. Each list a sort puts a window in is read from its sort, so a kept
+/// window is always one repainting and a grow always one held for.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(in crate::transitions) struct Waits {
-    /// Held for, overlay up, and watched until they repaint: grows, stand-ins and reserved entrances.
-    pub(in crate::transitions) awaiting: Vec<WindowId>,
-    /// Watched until they repaint, and pictured where they end only once they have: windows resized,
-    /// held for if they grow and kept if they shrink inside the picture they start with, and windows
-    /// flying from where they opened.
-    pub(in crate::transitions) repainting: Vec<WindowId>,
-    /// Of `repainting`, the shrinks whose tiles start with a picture covering their start, which they
-    /// keep to the lift (`Flight::keeps`).
-    pub(in crate::transitions) kept: Vec<WindowId>,
+pub struct Waits {
+    ends: Vec<(WindowId, EndPicture)>,
 }
 
 impl Waits {
+    /// Every window the pass waits for anything of, with its sort, in the order sorted.
+    pub(in crate::transitions) fn ends(&self) -> impl Iterator<Item = (WindowId, EndPicture)> + '_ {
+        self.ends.iter().copied()
+    }
+
+    /// Held for, overlay up, and watched until they repaint: grows, stand-ins and reserved entrances.
+    pub(in crate::transitions) fn awaiting(&self) -> impl Iterator<Item = WindowId> + '_ {
+        self.sorted(EndPicture::holds)
+    }
+
+    /// Watched until they repaint, and pictured where they end only once they have: windows resized,
+    /// held for if they grow and kept if they shrink inside the picture they start with, and windows
+    /// flying from where they opened.
+    pub(in crate::transitions) fn repainting(&self) -> impl Iterator<Item = WindowId> + '_ {
+        self.sorted(EndPicture::repaints)
+    }
+
+    /// Of `repainting`, the shrinks whose tiles start with a picture covering their start, which they
+    /// keep to the lift (`Flight::keeps`).
+    #[cfg(test)]
+    pub(in crate::transitions) fn kept(&self) -> impl Iterator<Item = WindowId> + '_ {
+        self.sorted(|end| end == EndPicture::Kept)
+    }
+
     /// The grows: held for and pictured where they end only once repainted, what a pass merged while
     /// the motion runs is held for, a merged pass's judged against its tiles (`Landing`).
     pub(in crate::transitions) fn grows(&self) -> impl Iterator<Item = WindowId> + '_ {
-        self.awaiting
-            .iter()
-            .copied()
-            .filter(|window| self.of(*window) == EndPicture::Held)
+        self.sorted(|end| end == EndPicture::Held)
     }
 
-    /// How `push` sorted `window`: a window in none of the lists lands.
-    fn of(&self, window: WindowId) -> EndPicture {
-        let lists = (
-            self.awaiting.contains(&window),
-            self.repainting.contains(&window),
-            self.kept.contains(&window),
-        );
-        EndPicture::ALL
-            .into_iter()
-            .find(|end| end.lists() == lists)
-            .unwrap_or(EndPicture::Lands)
+    fn sorted(&self, by: fn(EndPicture) -> bool) -> impl Iterator<Item = WindowId> + '_ {
+        self.ends.iter().filter(move |(_, end)| by(*end)).map(|(window, _)| *window)
+    }
+
+    /// How `push` sorted `window`: a window it was never given lands.
+    #[cfg(test)]
+    pub(in crate::transitions) fn of(&self, window: WindowId) -> EndPicture {
+        self.ends
+            .iter()
+            .find(|(w, _)| *w == window)
+            .map_or(EndPicture::Lands, |(_, end)| *end)
     }
 
     /// Sorts the window `request` places, its tile starting at `start` on `display`, flying on `flies`
@@ -326,15 +342,8 @@ impl Waits {
     }
 
     pub(in crate::transitions) fn push(&mut self, window: WindowId, end: EndPicture) {
-        let (holds, repaints, keeps) = end.lists();
-        for (sorted, into) in [
-            (holds, &mut self.awaiting),
-            (repaints, &mut self.repainting),
-            (keeps, &mut self.kept),
-        ] {
-            if sorted {
-                into.push(window);
-            }
+        if end != EndPicture::Lands {
+            self.ends.push((window, end));
         }
     }
 }
@@ -380,6 +389,15 @@ mod tests {
     use crate::animation::domain::motion::testing::{Gen, RUNS, rect};
 
     fn window(idx: u32) -> WindowId { WindowId::new(1, idx) }
+
+    /// `waits`' awaiting, repainting and kept windows.
+    fn lists(waits: &Waits) -> (Vec<WindowId>, Vec<WindowId>, Vec<WindowId>) {
+        (
+            waits.awaiting().collect(),
+            waits.repainting().collect(),
+            waits.kept().collect(),
+        )
+    }
 
     /// The built-in display, the menu bar's band included.
     const DISPLAY: ScreenRect =
@@ -627,11 +645,14 @@ mod tests {
             idx: std::num::NonZeroU32::new(idx).unwrap(),
         };
         let waits: Waits = (1..).map(window).zip(EndPicture::ALL).collect();
-        assert_eq!(waits, Waits {
-            awaiting: vec![window(1), window(2)],
-            repainting: vec![window(2), window(3), window(4)],
-            kept: vec![window(3)],
-        });
+        assert_eq!(
+            lists(&waits),
+            (
+                vec![window(1), window(2)],
+                vec![window(2), window(3), window(4)],
+                vec![window(3)],
+            )
+        );
         assert_eq!(waits.grows().collect::<Vec<_>>(), [window(2)], "the grow alone");
     }
 
@@ -738,11 +759,14 @@ mod tests {
                 DISPLAY,
             );
         }
-        assert_eq!(waits, Waits {
-            awaiting: vec![window(1), window(3)],
-            repainting: vec![window(1), window(2), window(3), window(4)],
-            kept: vec![window(2), window(4)],
-        });
+        assert_eq!(
+            lists(&waits),
+            (
+                vec![window(1), window(3)],
+                vec![window(1), window(2), window(3), window(4)],
+                vec![window(2), window(4)],
+            )
+        );
         assert_eq!(waits.grows().collect::<Vec<_>>(), [window(1), window(3)]);
     }
 
@@ -889,11 +913,10 @@ mod tests {
             waits.push_request(request, *flies, None, request.from, DISPLAY);
         }
         let windows = |idxs: &[u32]| idxs.iter().copied().map(window).collect::<Vec<_>>();
-        assert_eq!(waits, Waits {
-            awaiting: windows(&[1, 2, 5, 8]),
-            repainting: windows(&[1, 2, 3, 6]),
-            kept: windows(&[3])
-        });
+        assert_eq!(
+            lists(&waits),
+            (windows(&[1, 2, 5, 8]), windows(&[1, 2, 3, 6]), windows(&[3]))
+        );
     }
 
     /// fold1's g17 (`docs/data/2026-10-10-fold`): a shrink starting part off the display, where frame

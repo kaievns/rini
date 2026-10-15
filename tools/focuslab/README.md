@@ -233,7 +233,7 @@ given:
   in `src/animation/docs/capture-overlay-research.md`, and the band outside the outline where a
   window wore one at rest.
 - `journal.py pictures [--target]`: every picture a tile took, flight by flight, as the flight
-  composed it, from frame zero, as a focused look or swapped in: its route, whether it carries its
+  composed it, from frame zero, as a focused face (`focused_look`) or swapped in: its route, whether it carries its
   window's blur, and its age; `--target` keeps the focus targets alone.
 - `journal.py turns`: every turn of rini's main thread over 8ms, by flight or at rest: how long it
   ran, each actor's share, the time outside them, and the window changes made just before it.

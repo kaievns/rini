@@ -9,13 +9,13 @@ and why the CLI is a first-class client rather than a debugging aid.
 | | |
 |---|---|
 | `domain/key.rs` | `Modifiers`, `KeyCode`, the token parsing that needs no keyboard, and `Mod` (`input › mod-key`) |
-| `domain/hotkey.rs` | `modifiers_satisfy`: whether the keys held down are the ones a binding asked for; `HotkeyTable`: what a press fires, and that a held key's repeats fire only a bind written `repeat=true` |
+| `domain/hotkey.rs` | `modifiers_satisfy`: whether the keys held down are the ones a binding asked for; `HotkeyTable`: what a press does (`Press`: unbound, swallowed or fired), and that a held key's repeats fire only a bind written `repeat=true` |
 | `domain/held_keys.rs` | `HeldKeys`: which keys are held now, modifiers from the event's flags and every other key from its down and up edges, the cache dropped whenever the tap comes back |
 | `domain/switch_session.rs` | `SwitchSession`: the switcher's hold-to-reveal session, deciding for each key event at once whether the tap swallows it and what the reactor is told (`Verdict`) |
 | `domain/router.rs` | `KeyRouter`: the tap's whole state about the keyboard, the held keys, the switcher's session and the hotkey table, and for each `Keystroke` the order they are asked in and what is swallowed (`Verdict`) |
 | `domain/binding.rs` | `Action` and `Bind`: what a `binds` entry names, in niri's words, decoded straight from the config |
 | `domain/pointer.rs` | When a mouse move is worth processing, when the cached pointer window still answers, which press is a double-click, how long ago an event happened, and which events the tap asks for at all |
-| `domain/drag_swap.rs` | Recognising a drag that means "swap these two windows" |
+| `domain/drag_swap.rs` | `DragSwap`: recognising a drag that means "swap these two windows" |
 | `platform/tap.rs` | `EventTap`, plus the tap lifecycle: `ReEnableGovernor` and `on_recovery` |
 | `platform/input_tap.rs` | The session tap: mouse buttons (a release through the sink, and every left press to `set_on_left_press`), and keys whenever a hotkey is bound, each read into a `Keystroke` and done as `KeyRouter` says |
 | `platform/keyboard.rs` | The layout-dependent `FromStr` impls — the only part that needs the current keyboard |

@@ -490,7 +490,7 @@ impl Reactor {
         let skip_wid = self
             .drag_manager
             .skip_layout_for_window
-            .or(self.drag_manager.drag_swap_manager.dragged());
+            .or(self.drag_manager.drag_swap.dragged());
         let mut any_frame_changed = false;
 
         for (space, layout) in layout_result {

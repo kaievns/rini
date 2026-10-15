@@ -30,7 +30,7 @@ pub enum Priority {
     /// A focus target ending clipped by the display's edge, which SkyLight cannot picture whole.
     Focus,
     /// A window refreshed at rest that the window server does not have wholly on the display, or that
-    /// SkyLight never captured, whose turned look keeps the size the cache holds it at.
+    /// SkyLight never captured, whose turned face keeps the size the cache holds it at.
     Background,
     /// Windows named for a later transition or the switcher: skipped where the picture held fits and is
     /// fresh.
@@ -97,7 +97,7 @@ pub fn wants_warm(held: Option<Held>, size: ScreenSize, now: Instant) -> bool {
 /// as it takes the request; started at once, it would put ScreenCaptureKit to work at the flight's
 /// frame zero, or a SkyLight call ahead of it. A flight whose request waits behind the engine's own
 /// work on the `transitions` thread, such as a compose, holds later than this, and so does one a press
-/// starts with no look turned: what is listed meanwhile is listed again at the release (`hold`), a
+/// starts with no face turned: what is listed meanwhile is listed again at the release (`hold`), a
 /// refresh is cancelled by the hold and asked again at the release, and the service checks for a
 /// transition asked before each SkyLight call of a refresh, so at most the one call already out is
 /// ahead of frame zero.
@@ -149,7 +149,7 @@ pub enum Next<P, O> {
 }
 
 /// Every capture owed and under way, and the holds over them. `P` and `O` are the platform's, as in
-/// [`Next`]; `C` a capture a refresh holds until its window's look settles.
+/// [`Next`]; `C` a capture a refresh holds until its window's face settles.
 pub struct Schedule<P, O, C> {
     hold: Hold,
     watches: Watches,
@@ -337,7 +337,7 @@ impl<P, O, C> Schedule<P, O, C> {
     /// Windows on screen, wanted now: see [`OnScreen`].
     pub fn ask_on_screen(&mut self, ask: OnScreen) { self.watches.ask(ask) }
 
-    /// Windows whose look has just turned, pictured afresh at rest (see [`Refreshes`]) from
+    /// Windows whose face has just turned, pictured afresh at rest (see [`Refreshes`]) from
     /// `SETTLE_BEFORE_STARTING` on, every refresh already owed held until then too. Asked while held,
     /// they are cancelled as they arrive, and asked again at the release.
     pub fn refresh(&mut self, targets: Vec<PictureTarget>, now: Instant) {
@@ -416,7 +416,7 @@ impl<P, O, C> Schedule<P, O, C> {
     }
 
     /// What the window server and the captures said of the windows `Next::Refresh` named, with the
-    /// capture of each the cache would take: the capture each window whose look settled is pictured
+    /// capture of each the cache would take: the capture each window whose face settled is pictured
     /// with, once (see [`Refreshes::seen`]). One a refresh cannot capture through SkyLight is owed a
     /// ScreenCaptureKit capture at background priority.
     pub fn refreshed(
@@ -1037,7 +1037,7 @@ mod tests {
         );
     }
 
-    /// A clipped focus end, the display's visible windows and a turned look off the display are
+    /// A clipped focus end, the display's visible windows and a turned face off the display are
     /// captured whatever is held: none is about a size the cache could already have.
     #[test]
     fn only_a_warm_is_filtered() {
@@ -1587,7 +1587,7 @@ mod tests {
     /// starts: it waits long enough for that hold to arrive, which cancels it, as a hold cancels one
     /// asked while it holds; the flight's own rounds over the window, a frame-zero miss among them,
     /// send it nowhere else. The release asks again for each from the release plus the settle, but for
-    /// one the cache holds a picture of taken `REPAINT_SETTLED` after its look turned, and its look
+    /// one the cache holds a picture of taken `REPAINT_SETTLED` after its face turned, and its face
     /// goes before any ScreenCaptureKit call.
     #[test]
     fn a_hold_cancels_a_refresh_and_the_release_asks_again_ahead_of_screencapturekit() {
@@ -1662,7 +1662,7 @@ mod tests {
 
     /// Both windows of a refresh are looked at in one round. One the window server does not have
     /// wholly on the display is owed one ScreenCaptureKit capture at background priority, whatever is
-    /// held, since its turned look keeps its size; until done, a refreshed window is owed, its capture
+    /// held, since its turned face keeps its size; until done, a refreshed window is owed, its capture
     /// held rather than put, and a forgotten one is not.
     #[test]
     fn a_refreshed_window_off_the_display_is_owed_one_capture_at_background_priority() {

@@ -291,7 +291,7 @@ mod tests {
     use rini_geometry::space::{Point, Rect, ScreenPoint, ScreenSize, Size};
 
     use super::*;
-    use crate::animation::domain::motion::plan::entrance_from;
+    use crate::animation::domain::motion::plan::{Resolved, entrance_from};
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
 
     /// A start asked for a window already at rest is kept: correcting that "drift" from the window
@@ -619,7 +619,9 @@ mod tests {
             let requests: Vec<_> = tiles
                 .iter()
                 .enumerate()
-                .map(|(i, (start, end))| (WindowId::new(7, i as u32 + 1), *start, *end, false))
+                .map(|(i, (start, end))| {
+                    Resolved::tiled(WindowId::new(7, i as u32 + 1), *start, *end)
+                })
                 .collect();
             let plan = reflow_plan(&requests, DISPLAY);
             assert!(plan.changing.is_empty(), "{plan:?}");
@@ -947,16 +949,22 @@ mod tests {
             xs
         }
 
-        /// Row `row` of a `rows`-stack maximized, the stack left or right of the other column, the
-        /// maximized column going in left or right of what is left of the stack. The stack's rows are
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Side {
+            Left,
+            Right,
+        }
+
+        /// Row `row` of a `rows`-stack maximized, the stack on one `Side` of the other column, the
+        /// maximized column going in on one `Side` of what is left of the stack. The stack's rows are
         /// windows 1 to `rows`, the other column the last; the strip before and after.
         fn maximize(
             rows: usize,
             row: usize,
-            stack_left: bool,
-            goes_left: bool,
+            stack: Side,
+            goes: Side,
         ) -> (Vec<ScreenRect>, Vec<ScreenRect>) {
-            let (stack_x, other_x) = if stack_left {
+            let (stack_x, other_x) = if stack == Side::Left {
                 (3.0, 866.0)
             } else {
                 (866.0, 3.0)
@@ -965,8 +973,12 @@ mod tests {
             before.push(column(other_x, 1)[0]);
 
             // Columns after, in strip order: 0 the other, 1 what is left of the stack, 2 the maximized.
-            let mut order = if goes_left { vec![2, 1] } else { vec![1, 2] };
-            if stack_left {
+            let mut order = if goes == Side::Left {
+                vec![2, 1]
+            } else {
+                vec![1, 2]
+            };
+            if stack == Side::Left {
                 order.push(0);
             } else {
                 order.insert(0, 0);
@@ -1044,11 +1056,11 @@ mod tests {
                 }
             }
             let plan = reflow_plan(
-                &drawn.iter().map(|&(w, s, e)| (w, s, e, false)).collect::<Vec<_>>(),
+                &drawn.iter().map(|&(w, s, e)| Resolved::tiled(w, s, e)).collect::<Vec<_>>(),
                 SCREEN,
             );
             assert_eq!(
-                plan.changing.iter().map(|c| c.0).collect::<Vec<_>>(),
+                plan.changing.iter().map(|path| path.window).collect::<Vec<_>>(),
                 vec![resized],
                 "{case}"
             );
@@ -1071,14 +1083,12 @@ mod tests {
         fn a_maximize_and_its_restore_move_the_rest_only_along_the_strip() {
             for rows in [2, 3] {
                 for row in 0..rows {
-                    for stack_left in [true, false] {
-                        for goes_left in [true, false] {
-                            let (before, after) = maximize(rows, row, stack_left, goes_left);
+                    for stack in [Side::Left, Side::Right] {
+                        for goes in [Side::Left, Side::Right] {
+                            let (before, after) = maximize(rows, row, stack, goes);
                             let resized = WindowId::new(1, row as u32 + 1);
                             let case = format!(
-                                "row {row} of a {rows}-stack {}, maximized going in {}",
-                                if stack_left { "left" } else { "right" },
-                                if goes_left { "left" } else { "right" }
+                                "row {row} of a {rows}-stack {stack:?}, maximized going in {goes:?}"
                             );
                             holds_its_row(
                                 &format!("maximize {case}"),
@@ -1602,7 +1612,10 @@ mod tests {
             assert_eq!(a_end, shifted(a, -863.0, 0.0), "where the strip takes it");
 
             let plan = reflow_plan(
-                &[(window(1), a, a_end, false), (window(2), b, b_to, false)],
+                &[
+                    Resolved::tiled(window(1), a, a_end),
+                    Resolved::tiled(window(2), b, b_to),
+                ],
                 DISPLAY,
             );
             let groups = moving(&plan);
@@ -1626,8 +1639,8 @@ mod tests {
 
             let plan = reflow_plan(
                 &[
-                    (window(1), a, a_end, false),
-                    (window(2), still, still, false),
+                    Resolved::tiled(window(1), a, a_end),
+                    Resolved::tiled(window(2), still, still),
                 ],
                 DISPLAY,
             );

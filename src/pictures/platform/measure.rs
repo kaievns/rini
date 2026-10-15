@@ -652,7 +652,7 @@ mod tests {
         );
     }
 
-    /// A P3 bitmap and a surface holding its bytes are sampled alike, so a focused look kept from one
+    /// A P3 bitmap and a surface holding its bytes are sampled alike, so a focused face kept from one
     /// is not dropped for a newer picture of the other route showing the same window.
     #[test]
     fn a_p3_bitmap_and_a_surface_of_its_colour_do_not_differ() {

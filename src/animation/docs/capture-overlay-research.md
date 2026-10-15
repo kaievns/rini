@@ -1033,7 +1033,7 @@ Interleaved ABBA, 64 presses per order, load average 6 to 11 with the endpoint a
 absolute numbers are a loaded machine's; the comparisons hold. Times in ms, p50/p99.
 
 **A window covered by the overlay may stop painting.** Ghostty under the overlay never reached its
-final focused look within 450ms (0 of 24); uncovered it did every time. Chrome kept painting but
+final focused face within 450ms (0 of 24); uncovered it did every time. Chrome kept painting but
 took 181 against 157. Either change below restores both to their uncovered times, 24 of 24:
 
 ```
@@ -1084,7 +1084,7 @@ SkyLight capture in it costs is "What a capture costs in a press" in
 `src/pictures/docs/capture-research.md`.
 
 **A focus change with nothing moving is at the floor.** Two half-width windows side by side, the
-focused look visible on screen, ms after the input, p50 / p90:
+focused face visible on screen, ms after the input, p50 / p90:
 
 ```
                                       Chrome          Ghostty
@@ -1127,10 +1127,10 @@ wholly behind an opaque one at frame zero is captured after the overlay is up, n
 frame-zero call; landing is read from `SLSGetWindowBounds` and watched from the moment the frames
 are sent. Making the window key before the raise's Accessibility calls changed nothing measurable.
 
-**The focused look can fly from frame zero.** After every flight the off-screen warm-up recaptures the
-window just left, unfocused, so a parked target's tile showed the unfocused look until its landing
+**The focused face can fly from frame zero.** After every flight the off-screen warm-up recaptures the
+window just left, unfocused, so a parked target's tile showed the unfocused face until its landing
 capture. Keeping each window's last focused picture, dropped once a newer capture shows different
-content below the titlebar, gives the tile the focused look at overlay-up, 48ms.
+content below the titlebar, gives the tile the focused face at overlay-up, 48ms.
 
 ## The handover, measured: an end-state mirror
 
@@ -1174,7 +1174,7 @@ What each part of the prototype fixed:
   screen are captured through SkyLight as they land, so the tile the lift ends on shows the window
   where it ends rather than a picture taken before it got there. The build measured here captured
   them back to back and sent every picture on every pass. The one kept captures each window once it
-  is where it ends, the focus target again until its look changes and every one once more 110ms
+  is where it ends, the focus target again until its face changes and every one once more 110ms
   before the clock ends, and swaps a picture in only when its band print differs from the last one
   delivered (`src/pictures/domain/watch.rs`, "The lifecycle" in
   `src/transitions/docs/coordination.md`).

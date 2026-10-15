@@ -8,7 +8,7 @@ scale, with 35 real app windows across 4 rini workspaces; later sections date th
 `src/animation/docs/capture-overlay-research.md`.
 
 Status: the approach is viable. The design is a hybrid: capture on-screen
-windows fresh through SkyLight at the press, as they land, as their look turns
+windows fresh through SkyLight at the press, as they land, as their face turns
 and before the lift, and again at rest once a change of focus has turned their
 look; serve off-strip and hidden-workspace windows from a cache ScreenCaptureKit
 warms in the background.
@@ -366,7 +366,7 @@ for it at most 80ms ("Nothing is captured on the main thread on the way in"
 below). This matches the original instinct that only on-screen and incoming
 windows need fresh pixels, and the rest can be refreshed occasionally: through
 ScreenCaptureKit for the windows off the strip, and through SkyLight for a window
-on screen whose look a change of focus turned, which keeps its blur only that way
+on screen whose face a change of focus turned, which keeps its blur only that way
 ("The schedule" in `README.md`).
 
 **Staleness is acceptable for a window that was off screen.** The bitmap is on
@@ -671,7 +671,7 @@ the median and 71.9 at p90 ("Where a moving focus change spends its time" in
 `src/animation/docs/capture-overlay-research.md`).
 
 The trade: a window not on screen at the press, the destination of a switch or a
-column coming in from its park, flies what the cache holds, its focused look when
+column coming in from its park, flies what the cache holds, its focused face when
 it gains focus, until its landing capture is swapped in. For an app that dims when
 unfocused, a cached picture taken unfocused slides in dim. The off-thread capture
 that once corrected it measured 280ms on one occasion, most of a flight; the
@@ -813,7 +813,7 @@ reads the framebuffer and the destination workspace's windows are not on screen 
 
 ### Unfocused rendering
 
-Because the destination cannot be recaptured, its picture is its focused look when
+Because the destination cannot be recaptured, its picture is its focused face when
 the service kept one, else whatever it last had, and if that was taken while the app
 was unfocused the tile slides in dimmed and snaps to focused at the handover. Ghostty greys out noticeably when
 unfocused.
@@ -1186,7 +1186,7 @@ after the sizing fixes.
 
 Fixed by recapturing it mid-flight, by which point the reactor has shown the
 workspace and moved focus, so SkyLight returns the focused rendering: once its focus is
-reported, until its look changes. The window being left is pictured again by the last
+reported, until its face changes. The window being left is pictured again by the last
 capture before the lift. When and by which route is "Focus changing during a flight" in
 `src/transitions/docs/coordination.md`.
 

@@ -5,7 +5,7 @@
 use std::time::{Duration, Instant};
 
 use rini_core::ids::{WindowId, WindowServerId};
-use rini_geometry::space::{FromCg, GroupRect, Respace, ScreenRect, SurfacePoint};
+use rini_geometry::space::{FromCg, Respace, ScreenRect, SurfacePoint};
 use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
 use tracing::debug;
 
@@ -14,7 +14,7 @@ use super::logged::Whole;
 use super::tiles::{Stacking, frames_of, live_frame};
 use crate::animation::domain::choreography::{Cue, Look};
 use crate::animation::domain::motion::accents::Accent;
-use crate::animation::domain::motion::plan;
+use crate::animation::domain::motion::plan::{self, OwnPath, Resolved};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::platform::overlay::OverlayTile;
 use crate::pictures::domain::route::Route;
@@ -28,7 +28,7 @@ use crate::transitions::domain::admission::{
 use crate::transitions::domain::flight::worth_flying;
 use crate::transitions::domain::lifecycle::{Kind, Start, TileSummary, drawn_focused};
 use crate::transitions::domain::request::{AnimationRequest, SurfaceWindow};
-use crate::transitions::domain::running::{Composed, Shape, restack};
+use crate::transitions::domain::running::{Composed, Drawn, Shape, restack};
 use crate::transitions::domain::travel::{TilePath, is_moving, tile_path};
 
 /// What every request of a layout pass is composed against: the display and its scale, the focus
@@ -41,14 +41,54 @@ struct PassReads {
     stacking: Stacking,
 }
 
+/// A strip movement or a bounce from rest, as `start_surface` flies it: its windows travelling from
+/// `from_offset` to `to_offset`, the frames they end at, focus as the flight draws it and the key
+/// window, how long it runs and in which look.
+pub(super) struct SurfaceFlight {
+    pub(super) windows: Vec<SurfaceWindow>,
+    pub(super) from_offset: SurfacePoint,
+    pub(super) to_offset: SurfacePoint,
+    pub(super) final_frames: Vec<(WindowId, ScreenRect)>,
+    pub(super) focus: (Option<WindowId>, Option<WindowId>),
+    pub(super) key: Option<WindowId>,
+    pub(super) duration: Duration,
+    pub(super) look: Look,
+    pub(super) cue: Cue,
+    pub(super) motion: SurfaceMotion,
+}
+
+/// What a surface flight does: travel along the strip, a move's step (`accent`) stepping it, or
+/// bounce from rest against an end, with no travel of its own.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum SurfaceMotion {
+    Travels(Option<Accent>),
+    Bounces,
+}
+
+impl SurfaceMotion {
+    /// The kind of flight it is, `windows` travelling from `from_offset` to `to_offset`, and the step
+    /// it carries.
+    fn kind(
+        self,
+        windows: &[SurfaceWindow],
+        from_offset: SurfacePoint,
+        to_offset: SurfacePoint,
+    ) -> (Kind, Option<Accent>) {
+        match self {
+            Self::Travels(accent) => (Kind::of_surface(windows, from_offset, to_offset), accent),
+            Self::Bounces => (Kind::Bounce, None),
+        }
+    }
+}
+
 /// A layout pass's tiles as its requests are composed, one by one.
 #[derive(Default)]
 struct PassTiles {
     tiles: Vec<OverlayTile>,
     /// Each window drawn from where its tile starts to where it ends, for the pass's plan.
-    resolved: Vec<(WindowId, ScreenRect, ScreenRect, bool)>,
+    resolved: Vec<Resolved>,
     /// Newly opened windows travelling from their spawn frame.
-    spawn_entrances: Vec<(WindowId, GroupRect, GroupRect)>,
+    spawn_entrances: Vec<OwnPath>,
     /// Windows drawn once a first picture of them is swapped in.
     entrances: Vec<PendingEntrance>,
     /// Windows with no picture, asked for the next flight.
@@ -136,8 +176,10 @@ impl FlightEngine {
             "overlay animation composition"
         );
 
-        let moving_drawable = tiles.iter().any(|tile| is_moving(tile.from, tile.to));
-        if !worth_flying(moving_drawable, self.running.is_some()) {
+        if !worth_flying(
+            tiles.iter().map(|tile| (tile.from, tile.to)),
+            self.running.is_some(),
+        ) {
             self.abandon();
             return;
         }
@@ -230,7 +272,10 @@ impl FlightEngine {
             source: snapshot.source,
             covered: snapshot.coverage.covered,
         };
-        let clipped = snapshot.source.clips();
+        let drawn = Drawn {
+            clipped: snapshot.source.clips(),
+            snapshot,
+        };
         let (focus, losing) = pass.focus;
         let focused = drawn_focused(request.window, focus, losing);
         let tile = pass.stacking.tile_of(
@@ -243,8 +288,13 @@ impl FlightEngine {
             to_overlay_space(start, pass.display),
             to_overlay_space(end, pass.display),
         );
-        composed.tiles.push(tile.flying(path, snapshot, clipped, focused));
-        composed.resolved.push((request.window, start, end, request.floating));
+        composed.tiles.push(tile.flying(path, drawn, focused));
+        composed.resolved.push(Resolved {
+            window: request.window,
+            start,
+            end,
+            floating: request.floating,
+        });
         flies
     }
 
@@ -286,7 +336,10 @@ impl FlightEngine {
                     "entrance from spawn"
                 );
                 self.pictures.insert(request.window, snapshot.clone());
-                let clipped = snapshot.source.clips();
+                let drawn = Drawn {
+                    clipped: snapshot.source.clips(),
+                    snapshot,
+                };
                 let from_o = to_overlay_space(from, pass.display);
                 let to_o = to_overlay_space(to, pass.display);
                 // Already at its slot (a cold cache, not an open): a still tile.
@@ -302,12 +355,20 @@ impl FlightEngine {
                 if !standing {
                     tile.server_order = Some(0);
                 }
-                composed.tiles.push(tile.flying((from_o, to_o), snapshot, clipped, focused));
+                composed.tiles.push(tile.flying((from_o, to_o), drawn, focused));
                 if standing {
-                    composed.resolved.push((request.window, from, to, request.floating));
+                    composed.resolved.push(Resolved {
+                        window: request.window,
+                        start: from,
+                        end: to,
+                        floating: request.floating,
+                    });
                 } else {
-                    let entrance = (plan::installed(from_o), plan::installed(to_o));
-                    composed.spawn_entrances.push((request.window, entrance.0, entrance.1));
+                    composed.spawn_entrances.push(OwnPath {
+                        window: request.window,
+                        from: plan::installed(from_o),
+                        to: plan::installed(to_o),
+                    });
                 }
             }
             EntranceDecision::Reserve(reason) => {
@@ -333,25 +394,26 @@ impl FlightEngine {
     /// animation, with a container of its own for each column a move swapped that crosses it, and a
     /// move's step (`accent`) stepping every strip container. A bounce from rest is one with no
     /// travel. See "The move flight, staged" in `src/transitions/docs/coordination.md`.
-    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
-    pub(super) fn start_surface(
-        &mut self,
-        windows: Vec<SurfaceWindow>,
-        from_offset: SurfacePoint,
-        to_offset: SurfacePoint,
-        final_frames: Vec<(WindowId, ScreenRect)>,
-        focus: (Option<WindowId>, Option<WindowId>),
-        key: Option<WindowId>,
-        duration: Duration,
-        (look, cue, accent): (Look, Cue, Option<Accent>),
-        kind: Option<Kind>,
-    ) {
+    pub(super) fn start_surface(&mut self, flight: SurfaceFlight) {
+        let SurfaceFlight {
+            windows,
+            from_offset,
+            to_offset,
+            final_frames,
+            focus,
+            key,
+            duration,
+            look,
+            cue,
+            motion,
+        } = flight;
         let Some((display, _)) = self.display else {
             debug!("no display geometry yet; skipping animation");
             return;
         };
+        let (kind, accent) = motion.kind(&windows, from_offset, to_offset);
         let shape = Shape {
-            kind: kind.unwrap_or_else(|| Kind::of_surface(&windows, from_offset, to_offset)),
+            kind,
             start: Start::Immediate,
             duration,
             waits: Waits::default(),
@@ -445,7 +507,10 @@ impl FlightEngine {
                         misshapen += 1;
                     }
                     waits.push_strip(window.window, self.landing(window.window, to.size.respace()));
-                    let clipped = snapshot.source.clips();
+                    let drawn = Drawn {
+                        clipped: snapshot.source.clips(),
+                        snapshot,
+                    };
                     let focused = drawn_focused(window.window, drawing_focus, losing);
                     let tile = stacking.tile_of(
                         window.window,
@@ -453,7 +518,7 @@ impl FlightEngine {
                         window.floating,
                         window.worn,
                     );
-                    tiles.push(tile.flying((from, to), snapshot, clipped, focused));
+                    tiles.push(tile.flying((from, to), drawn, focused));
                 }
                 // Still placed by `final_frames`, and warmed once the movement settles.
                 None => missing += 1,
@@ -470,5 +535,69 @@ impl FlightEngine {
             "surface group animation"
         );
         (tiles, waits)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rini_core::ids::WindowServerId;
+    use rini_geometry::space::OverlayVector;
+
+    use super::*;
+    use crate::animation::domain::motion::testing::rect;
+
+    fn swapped() -> SurfaceWindow {
+        let slot = rect(4.0, 32.0, 859.0, 1081.0);
+        SurfaceWindow {
+            window: WindowId::new(7, 1),
+            server_id: WindowServerId::new(1),
+            frame: slot,
+            pinned: false,
+            floating: false,
+            from: Some(slot.translate(rini_geometry::space::Vector::new(863.0, 0.0))),
+            worn: Default::default(),
+        }
+    }
+
+    /// A surface flight's kind is its travel's, carrying its step; a bounce from rest is a bounce
+    /// whatever its windows are, and carries none.
+    #[test]
+    fn a_surface_flight_is_the_kind_its_travel_makes_and_a_bounce_is_a_bounce() {
+        let step = Accent::Step {
+            offset: OverlayVector::new(12.0, 0.0),
+            seconds: 0.3,
+        };
+        let at_rest = SurfacePoint::origin();
+        let below = SurfacePoint::new(0.0, 1117.0);
+        let cases = [
+            (
+                SurfaceMotion::Travels(Some(step)),
+                vec![swapped()],
+                at_rest,
+                (Kind::Move, Some(step)),
+            ),
+            (
+                SurfaceMotion::Travels(None),
+                Vec::new(),
+                below,
+                (Kind::Switch, None),
+            ),
+            (
+                SurfaceMotion::Travels(None),
+                Vec::new(),
+                at_rest,
+                (Kind::Pan, None),
+            ),
+            (
+                SurfaceMotion::Bounces,
+                vec![swapped()],
+                at_rest,
+                (Kind::Bounce, None),
+            ),
+            (SurfaceMotion::Bounces, Vec::new(), below, (Kind::Bounce, None)),
+        ];
+        for (motion, windows, to, expected) in cases {
+            assert_eq!(motion.kind(&windows, at_rest, to), expected, "{motion:?}");
+        }
     }
 }

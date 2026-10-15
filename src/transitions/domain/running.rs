@@ -2,7 +2,7 @@
 //! score, the entrances waiting for a picture and the passes held; and the rules over it, each a pure
 //! change of what it holds: a later pass merged into its tiles and score, a reserved entrance joining
 //! with its first picture, frame zero's pictures and each one swapped in, a repaint held for its
-//! tile's corner, the focus handover and a parked target's focused look, the tiles the coordinator is
+//! tile's corner, the focus handover and a parked target's focused face, the tiles the coordinator is
 //! told of, and how the tiles band in depth. Generic over the picture a tile is drawn with
 //! (`TilePicture`), so it is tested over plain sizes and routes; the engine
 //! (`crate::transitions::platform::engine`) carries it out on the renderer.
@@ -19,7 +19,7 @@ use rini_geometry::stretch::grows;
 
 use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
 use crate::animation::domain::motion::accents::Accent;
-use crate::animation::domain::motion::plan::{self, entrance_from};
+use crate::animation::domain::motion::plan::{self, OwnPath, entrance_from};
 use crate::animation::domain::motion::score::{Edit, Score};
 use crate::animation::domain::motion::tile::{self, OverlayTile};
 use crate::animation::domain::motion::z_group::{Band, Stacked, focus_is_off_strip, stack};
@@ -63,8 +63,8 @@ pub(in crate::transitions) struct RunningAnimation<P> {
     pub(in crate::transitions) shown_focus: Option<WindowId>,
     /// The key window as the flight's first pass went out.
     pub(in crate::transitions) key: Option<WindowId>,
-    /// The focus target whose tile flies its focused look, until a picture is swapped onto it.
-    pub(in crate::transitions) focused_look: Option<WindowId>,
+    /// The focus target whose tile flies its focused face, until a picture is swapped onto it.
+    pub(in crate::transitions) focused_face: Option<WindowId>,
     /// The flight as rigid pieces, which its look composes the score from.
     /// See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
     pub(in crate::transitions) plan: plan::FlightPlan,
@@ -154,7 +154,7 @@ pub(in crate::transitions) fn band_plan<P>(
     }
     if !plan.changing.is_empty() || !plan.entrances.is_empty() {
         let loose: Vec<WindowId> =
-            plan.changing.iter().chain(&plan.entrances).map(|(w, _, _)| *w).collect();
+            plan.changing.iter().chain(&plan.entrances).map(|path| path.window).collect();
         let holds_focus = focus.is_some_and(|f| loose.contains(&f));
         let shallowest = loose.iter().filter_map(|w| within.get(w)).copied().min().unwrap_or(0);
         strip.push((plan::GroupKey::Loose, holds_focus, shallowest));
@@ -204,7 +204,7 @@ pub(in crate::transitions) fn summary(
     final_frames: Vec<(WindowId, ScreenRect)>,
     focus: Option<WindowId>,
     losing_focus: Option<WindowId>,
-    focused_look: Option<WindowId>,
+    focused_face: Option<WindowId>,
     key: Option<WindowId>,
     shape: Shape,
     (display, rests): (ScreenRect, bool),
@@ -218,10 +218,8 @@ pub(in crate::transitions) fn summary(
         focus,
         losing_focus,
         key,
-        focused_look,
-        awaiting: shape.waits.awaiting,
-        repainting: shape.waits.repainting,
-        kept: shape.waits.kept,
+        focused_face,
+        waits: shape.waits,
         start: shape.start,
         duration: shape.duration,
         display,
@@ -260,7 +258,7 @@ impl<P: TilePicture> RunningAnimation<P> {
             self.final_frames.clone(),
             self.focus,
             losing_focus(self.focus, self.shown_focus),
-            self.focused_look,
+            self.focused_face,
             self.key,
             shape,
             (display, rests),
@@ -325,7 +323,7 @@ impl<P: TilePicture> RunningAnimation<P> {
     /// entrance joins with it, rounded at the radius `radius` reads; one waiting for the corner of
     /// its tile's leg in two steps is what the tile flies from there (`waits_for_corner`), clipped if
     /// it or the tile's own is; else its tile takes it in place, a stand-in's included, moving on as
-    /// it was. Either way the tile flies no focused look from now.
+    /// it was. Either way the tile flies no focused face from now.
     pub(in crate::transitions) fn take_picture(
         &mut self,
         window: WindowId,
@@ -341,8 +339,8 @@ impl<P: TilePicture> RunningAnimation<P> {
         let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window) else {
             return Took::Nothing;
         };
-        if self.focused_look == Some(window) {
-            self.focused_look = None;
+        if self.focused_face == Some(window) {
+            self.focused_face = None;
         }
         if waits {
             tile.from_corner = Some(picture.clone());
@@ -437,24 +435,24 @@ impl<P: TilePicture> RunningAnimation<P> {
         Some(held.unwrap_or(&tile.snapshot).coverage().covered)
     }
 
-    /// `target`'s tile flies `look`, drawn focused and `clipped` or whole, if it fits where the tile
+    /// `target`'s tile flies `face`, drawn focused and `clipped` or whole, if it fits where the tile
     /// starts. Whether it does.
-    pub(in crate::transitions) fn fly_focused_look(
+    pub(in crate::transitions) fn fly_focused_face(
         &mut self,
         target: WindowId,
-        look: Option<P>,
+        face: Option<P>,
         clipped: bool,
     ) -> bool {
         let Some(tile) = self.tiles.iter_mut().find(|t| t.window == target) else {
             return false;
         };
-        let Some(look) = look.filter(|look| look.fits(tile.from.size)) else {
+        let Some(face) = face.filter(|face| face.fits(tile.from.size)) else {
             return false;
         };
-        tile.snapshot = look;
+        tile.snapshot = face;
         tile.clipped = clipped;
         tile.focused = true;
-        self.focused_look = Some(target);
+        self.focused_face = Some(target);
         true
     }
 
@@ -471,7 +469,7 @@ impl<P: TilePicture> RunningAnimation<P> {
     /// Folds one later pass into the flight's tiles and focus; the overlay follows `merge_plans`. A
     /// pass moving focus redraws which tiles are drawn focused, but for the window focus is drawn
     /// leaving, which stays as its own turn left it, focus moving back to it or on, and none flies a
-    /// focused look until the engine gives the new target its own.
+    /// focused face until the engine gives the new target its own.
     pub(in crate::transitions) fn merge_pass(
         &mut self,
         tiles: Vec<OverlayTile<P>>,
@@ -494,7 +492,7 @@ impl<P: TilePicture> RunningAnimation<P> {
             for tile in self.tiles.iter_mut().filter(|t| Some(t.window) != shown) {
                 tile.focused = drawn_focused(tile.window, self.focus, losing);
             }
-            self.focused_look = None;
+            self.focused_face = None;
         }
         restack(&mut self.tiles, self.focus);
         outcomes
@@ -590,15 +588,15 @@ impl<P: TilePicture> RunningAnimation<P> {
                 plan::group_relative(tile.from, loose),
                 plan::group_relative(tile.to, loose),
             );
-            self.plan.entrances.push((tile.window, from, to));
+            self.plan.entrances.push(OwnPath { window: tile.window, from, to });
             return None;
         }
         let mut entrance = plan::ReflowPlan::empty();
-        entrance.entrances.push((
-            tile.window,
-            plan::installed(tile.from),
-            plan::installed(tile.to),
-        ));
+        entrance.entrances.push(OwnPath {
+            window: tile.window,
+            from: plan::installed(tile.from),
+            to: plan::installed(tile.to),
+        });
         let drawn = self.drawn();
         let pass = Pass {
             plan: &entrance,
@@ -725,12 +723,11 @@ fn entrance_tile<P: Clone>(
         worn: entrance.worn,
         radius,
     };
-    tile.flying(
-        (entrance_from(entrance.to), entrance.to),
-        snapshot.clone(),
+    let drawn = Drawn {
+        snapshot: snapshot.clone(),
         clipped,
-        true,
-    )
+    };
+    tile.flying((entrance_from(entrance.to), entrance.to), drawn, true)
 }
 
 /// Whose a tile is, and how it stacks and what it wears: what a tile is made of beside where it
@@ -744,14 +741,20 @@ pub(in crate::transitions) struct TileOf {
     pub(in crate::transitions) radius: Option<f64>,
 }
 
+/// The picture a tile is drawn with, clipped to the tile's corner or whole.
+#[derive(Clone, Debug)]
+pub(in crate::transitions) struct Drawn<P> {
+    pub(in crate::transitions) snapshot: P,
+    pub(in crate::transitions) clipped: bool,
+}
+
 impl TileOf {
-    /// Its tile flying `from` to `to` on `snapshot`, `clipped` or whole and drawn `focused` or not,
-    /// at no depth until `restack` bands it.
+    /// Its tile flying `from` to `to` `drawn` so and drawn `focused` or not, at no depth until
+    /// `restack` bands it.
     pub(in crate::transitions) fn flying<P>(
         self,
         (from, to): (OverlayRect, OverlayRect),
-        snapshot: P,
-        clipped: bool,
+        Drawn { snapshot, clipped }: Drawn<P>,
         focused: bool,
     ) -> OverlayTile<P> {
         OverlayTile {
@@ -778,6 +781,7 @@ mod tests {
     use rini_geometry::{SameAs, to_overlay_space};
 
     use super::*;
+    use crate::animation::domain::motion::plan::Resolved;
     use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel, viewport};
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, VIEWPORT, rect};
     use crate::decorations::domain::style::Ring;
@@ -872,7 +876,7 @@ mod tests {
             focus: None,
             shown_focus: None,
             key: None,
-            focused_look: None,
+            focused_face: None,
             plan: plan::FlightPlan::empty(),
             flown: false,
             score: FlightScore::new(Look::default()),
@@ -896,7 +900,11 @@ mod tests {
             worn: Worn::default(),
             radius: None,
         };
-        tile.flying((from, to), test_picture(to.size), false, false)
+        let drawn = Drawn {
+            snapshot: test_picture(to.size),
+            clipped: false,
+        };
+        tile.flying((from, to), drawn, false)
     }
 
     fn layout(waits: Waits) -> Shape {
@@ -955,10 +963,10 @@ mod tests {
                 "drawn focused until focus hands over"
             );
             assert_eq!(stage.opaque, vec![wid(1)]);
-            assert_eq!(
-                (stage.awaiting, stage.repainting, stage.kept),
-                (vec![wid(2)], vec![wid(1)], vec![wid(1)])
-            );
+            assert_eq!(stage.waits.ends().collect::<Vec<_>>(), [
+                (wid(2), EndPicture::Awaited),
+                (wid(1), EndPicture::Kept)
+            ]);
             assert_eq!(stage.display, display);
             running.shown_focus = Some(wid(2));
             assert_eq!(
@@ -1123,7 +1131,7 @@ mod tests {
         }
 
         /// A reserved entrance joins with its picture; a window with a tile takes it in place, and
-        /// stops flying a focused look; a window nothing draws takes nothing. Only the entrance reads
+        /// stops flying a focused face; a window nothing draws takes nothing. Only the entrance reads
         /// a radius.
         #[test]
         fn a_swapped_in_picture_admits_an_entrance_or_goes_onto_its_windows_tile() {
@@ -1136,7 +1144,7 @@ mod tests {
                 floating: false,
                 worn: Default::default(),
             });
-            running.focused_look = Some(wid(1));
+            running.focused_face = Some(wid(1));
             let picture = test_picture(slot.size);
             assert!(
                 matches!(running.take_picture(wid(2), &picture, false, || None, 0.0), Took::Entrance(tile) if tile.from == entrance_from(slot))
@@ -1151,7 +1159,7 @@ mod tests {
                 ),
                 Took::Tile
             ));
-            assert_eq!(running.focused_look, None);
+            assert_eq!(running.focused_face, None);
             assert!(matches!(
                 running.take_picture(
                     wid(3),
@@ -1177,17 +1185,21 @@ mod tests {
                 )
             };
             let requests = [
-                (wid(1), a, shifted(a, -863.0), false),
-                (wid(2), b, shifted(b, -863.0), false),
+                Resolved::tiled(wid(1), a, shifted(a, -863.0)),
+                Resolved::tiled(wid(2), b, shifted(b, -863.0)),
             ];
             let mut running = flight();
             running.tiles = requests
                 .iter()
-                .map(|&(w, from, to, _)| stacked(w, on(from), on(to), Some(0), false))
+                .map(|r| stacked(r.window, on(r.start), on(r.end), Some(0), false))
                 .collect();
             running.plan = running.score.plan(plan::reflow_plan(&requests, DISPLAY), &Cue::Plain);
             pose(&mut running);
-            let again = requests.map(|(w, _, to, floating)| (w, to, shifted(to, -863.0), floating));
+            let again = requests.map(|r| Resolved {
+                start: r.end,
+                end: shifted(r.end, -863.0),
+                ..r
+            });
             (running, plan::reflow_plan(&again, DISPLAY))
         }
 
@@ -1274,11 +1286,11 @@ mod tests {
             let loose = running.plan.position_of(plan::GroupKey::Loose);
             assert_eq!(
                 running.plan.entrances.last(),
-                Some(&(
-                    wid(3),
-                    plan::group_relative(entrance_from(slot), loose),
-                    plan::group_relative(slot, loose)
-                ))
+                Some(&OwnPath {
+                    window: wid(3),
+                    from: plan::group_relative(entrance_from(slot), loose),
+                    to: plan::group_relative(slot, loose),
+                })
             );
             assert!(running.plan.destination(wid(3)).unwrap().same_as(slot));
 
@@ -1398,7 +1410,7 @@ mod tests {
                 (10.1, further, false),
                 (10.005, column, false),
             ] {
-                let requests = [(wid(1), column, folded, false)];
+                let requests = [Resolved::tiled(wid(1), column, folded)];
                 let mut running = flight();
                 running.tiles = vec![stacked(wid(1), on(column), on(folded), Some(0), false)];
                 running.tiles[0].snapshot = test_picture(column.size);
@@ -1432,7 +1444,7 @@ mod tests {
                     "held through the start"
                 );
 
-                let again = plan::reflow_plan(&[(wid(1), folded, to, false)], DISPLAY);
+                let again = plan::reflow_plan(&[Resolved::tiled(wid(1), folded, to)], DISPLAY);
                 let drawn = running.drawn();
                 let pass = Pass {
                     plan: &again,
@@ -1471,7 +1483,7 @@ mod tests {
         fn a_repaint_landing_after_a_bend_waits_for_the_new_legs_corner() {
             let (column, folded) =
                 (rect(866.0, 35.0, 860.0, 1079.0), rect(3.0, 576.0, 1148.0, 538.0));
-            let requests = [(wid(1), column, folded, false)];
+            let requests = [Resolved::tiled(wid(1), column, folded)];
             let mut running = flight();
             running.tiles = vec![stacked(wid(1), on(column), on(folded), Some(0), false)];
             running.tiles[0].snapshot = test_picture(column.size);
@@ -1482,7 +1494,7 @@ mod tests {
             let (plan, drawn) = (running.plan.clone(), running.drawn());
             running.score.start_moving(&stage(&plan, &drawn), 10.0);
 
-            let again = plan::reflow_plan(&[(wid(1), folded, column, false)], DISPLAY);
+            let again = plan::reflow_plan(&[Resolved::tiled(wid(1), folded, column)], DISPLAY);
             let drawn = running.drawn();
             let pass = Pass {
                 plan: &again,
@@ -1643,7 +1655,7 @@ mod tests {
         }
 
         #[test]
-        fn a_parked_focus_target_flies_its_focused_look_only_where_it_fits() {
+        fn a_parked_focus_target_flies_its_focused_face_only_where_it_fits() {
             let park = rect(-860.0, 32.0, 859.0, 1081.0);
             let mut running = flight();
             running.tiles.push(stacked(
@@ -1654,30 +1666,30 @@ mod tests {
                 false,
             ));
             assert!(
-                !running.fly_focused_look(
+                !running.fly_focused_face(
                     wid(2),
                     Some(test_picture(ScreenSize::new(600.0, 1081.0))),
                     false
                 ),
                 "drawn squashed"
             );
-            assert!(!running.fly_focused_look(wid(2), None, false));
+            assert!(!running.fly_focused_face(wid(2), None, false));
             assert!(
-                !running.fly_focused_look(wid(3), Some(test_picture(park.size)), false),
+                !running.fly_focused_face(wid(3), Some(test_picture(park.size)), false),
                 "no tile"
             );
-            assert_eq!((running.focused_look, running.tiles[0].focused), (None, false));
-            let mut look = test_picture(park.size);
-            look.coverage.covered.height -= 1.0;
-            assert!(running.fly_focused_look(wid(2), Some(look.clone()), true));
-            assert_eq!(running.tiles[0].snapshot.coverage, look.coverage);
+            assert_eq!((running.focused_face, running.tiles[0].focused), (None, false));
+            let mut face = test_picture(park.size);
+            face.coverage.covered.height -= 1.0;
+            assert!(running.fly_focused_face(wid(2), Some(face.clone()), true));
+            assert_eq!(running.tiles[0].snapshot.coverage, face.coverage);
             assert!(running.tiles[0].clipped, "as it was handed");
             assert!(running.tiles[0].focused);
-            assert_eq!(running.focused_look, Some(wid(2)));
+            assert_eq!(running.focused_face, Some(wid(2)));
         }
 
         /// A pass is composed from the cache. A tile it retargets keeps the picture the flight gave it
-        /// and how focus is drawn on it: its focused look, frame zero's or a swapped-in end picture.
+        /// and how focus is drawn on it: its focused face, frame zero's or a swapped-in end picture.
         #[test]
         fn a_retargeted_tile_keeps_its_picture_and_its_focus_while_the_cache_holds_another() {
             let park = rect(-860.0, 32.0, 859.0, 1081.0);
@@ -1688,21 +1700,21 @@ mod tests {
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
             running.tiles[0].focused = true;
-            let mut look = test_picture(park.size);
-            look.coverage.covered.height -= 1.0;
-            assert!(running.fly_focused_look(wid(2), Some(look.clone()), false));
+            let mut face = test_picture(park.size);
+            face.coverage.covered.height -= 1.0;
+            assert!(running.fly_focused_face(wid(2), Some(face.clone()), false));
             let next = rect(867.0, 32.0, 859.0, 1081.0);
             let outcomes =
                 running.merge_pass(vec![stacked(wid(2), park, next, Some(0), false)], None);
             assert_eq!(outcomes, vec![(wid(2), Admitted::Retargeted)]);
             let tile = running.tiles.iter().find(|t| t.window == wid(2)).unwrap();
             assert_eq!(tile.to, next);
-            assert_eq!(tile.snapshot.coverage, look.coverage, "not the cache's");
+            assert_eq!(tile.snapshot.coverage, face.coverage, "not the cache's");
             assert!(tile.focused);
-            assert_eq!(running.focused_look, Some(wid(2)));
+            assert_eq!(running.focused_face, Some(wid(2)));
             running.merge_pass(vec![stacked(wid(2), park, slot, Some(0), false)], Some(wid(2)));
             assert_eq!(
-                running.focused_look,
+                running.focused_face,
                 Some(wid(2)),
                 "a pass naming the same focus moves none"
             );
@@ -1710,7 +1722,7 @@ mod tests {
 
         /// A pass moving focus on: the window focused as the flight began is still drawn as its own
         /// turn left it, focused until then, the target before it no longer is, and nothing flies a
-        /// focused look until the new target is given its own. Focus moving back to it, or on again,
+        /// focused face until the new target is given its own. Focus moving back to it, or on again,
         /// leaves it as its turn left it.
         #[test]
         fn a_pass_moving_focus_on_redraws_which_tiles_are_drawn_focused() {
@@ -1724,7 +1736,7 @@ mod tests {
             running.tiles[0].focused = true;
             running.focus = Some(wid(2));
             running.shown_focus = Some(wid(1));
-            assert!(running.fly_focused_look(wid(2), Some(test_picture(park.size)), false));
+            assert!(running.fly_focused_face(wid(2), Some(test_picture(park.size)), false));
             running.merge_pass(vec![stacked(wid(3), park, slot, Some(2), false)], Some(wid(3)));
             let focused = |running: &RunningAnimation| {
                 running
@@ -1738,7 +1750,7 @@ mod tests {
                 (wid(2), false),
                 (wid(3), false)
             ]);
-            assert_eq!(running.focused_look, None);
+            assert_eq!(running.focused_face, None);
             running.draw_focused(wid(1), false);
             running.merge_pass(vec![stacked(wid(4), park, slot, Some(3), false)], Some(wid(4)));
             assert_eq!(
@@ -2020,7 +2032,12 @@ mod tests {
                 .iter()
                 .map(|t| {
                     let screen = |r| from_overlay_space(r, DISPLAY);
-                    (t.window, screen(t.from), screen(t.to), t.floating)
+                    Resolved {
+                        window: t.window,
+                        start: screen(t.from),
+                        end: screen(t.to),
+                        floating: t.floating,
+                    }
                 })
                 .collect();
             FlightPlan::from(reflow_plan(&requests, DISPLAY))

@@ -4,7 +4,7 @@ use rustc_hash::FxHashSet as HashSet;
 
 use super::{Event, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 use crate::app::{channels, hotkeys as wm_controller};
-use crate::input::domain::drag_swap::DragManager as DragSwapManager;
+use crate::input::domain::drag_swap::DragSwap;
 use crate::input::platform::input_tap as event_tap;
 use crate::input::settings::WindowSnappingSettings;
 use crate::windows::domain::raise as raise_manager;
@@ -12,7 +12,7 @@ use crate::windows::domain::raise as raise_manager;
 /// Manages drag operations and window swapping
 pub(super) struct DragManager {
     pub(super) drag_state: super::DragState,
-    pub(super) drag_swap_manager: DragSwapManager,
+    pub(super) drag_swap: DragSwap,
     pub(super) skip_layout_for_window: Option<WindowId>,
     /// The last double-click on a tiled window's title bar, while it can still explain that
     /// window's resizes.
@@ -20,16 +20,16 @@ pub(super) struct DragManager {
 }
 
 impl DragManager {
-    pub(super) fn reset(&mut self) { self.drag_swap_manager.reset(); }
+    pub(super) fn reset(&mut self) { self.drag_swap.reset(); }
 
-    pub(super) fn last_target(&self) -> Option<WindowId> { self.drag_swap_manager.last_target() }
+    pub(super) fn last_target(&self) -> Option<WindowId> { self.drag_swap.last_target() }
 
-    pub(super) fn dragged(&self) -> Option<WindowId> { self.drag_swap_manager.dragged() }
+    pub(super) fn dragged(&self) -> Option<WindowId> { self.drag_swap.dragged() }
 
-    pub(super) fn origin_frame(&self) -> Option<CGRect> { self.drag_swap_manager.origin_frame() }
+    pub(super) fn origin_frame(&self) -> Option<CGRect> { self.drag_swap.origin_frame() }
 
     pub(super) fn update_config(&mut self, config: WindowSnappingSettings) {
-        self.drag_swap_manager.update_config(config);
+        self.drag_swap.update_config(config);
     }
 }
 

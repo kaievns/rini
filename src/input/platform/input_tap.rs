@@ -85,6 +85,16 @@ struct MouseSettings {
     low_power_mode: bool,
 }
 
+impl MouseSettings {
+    fn mouse_move_switches(&self) -> pointer::MouseMoveSwitches {
+        pointer::MouseMoveSwitches {
+            processing: self.event_processing_enabled,
+            configured: self.focus_follows_mouse_config_enabled,
+            live: self.focus_follows_mouse_enabled,
+        }
+    }
+}
+
 impl Default for MouseSettings {
     fn default() -> Self {
         Self {
@@ -116,19 +126,14 @@ impl InputTap {
     }
 
     fn mouse_move_handlers_enabled(&self) -> bool {
-        let mouse = self.mouse.get();
-        pointer::wants_mouse_move_events(
-            mouse.event_processing_enabled,
-            mouse.focus_follows_mouse_config_enabled,
-            mouse.focus_follows_mouse_enabled,
-        )
+        pointer::wants_mouse_move_events(self.mouse.get().mouse_move_switches())
     }
 
     fn desired_event_mask(&self) -> CGEventMask {
-        build_event_mask(
-            self.keyboard_handlers_enabled(),
-            self.mouse_move_handlers_enabled(),
-        )
+        build_event_mask(Asks {
+            keys: self.keyboard_handlers_enabled(),
+            mouse_moves: self.mouse_move_handlers_enabled(),
+        })
     }
 
     fn create_tap_with_mask(
@@ -228,14 +233,10 @@ impl InputTap {
             focus_follows_mouse_config_enabled: settings.focus_follows_mouse,
             ..MouseSettings::default()
         };
-        let event_mask = build_event_mask(
-            pointer::wants_keyboard_events(0),
-            pointer::wants_mouse_move_events(
-                mouse.event_processing_enabled,
-                mouse.focus_follows_mouse_config_enabled,
-                mouse.focus_follows_mouse_enabled,
-            ),
-        );
+        let event_mask = build_event_mask(Asks {
+            keys: pointer::wants_keyboard_events(0),
+            mouse_moves: pointer::wants_mouse_move_events(mouse.mouse_move_switches()),
+        });
         let mouse_move_min_interval_ns = mouse_move_sampling_profile(mouse.low_power_mode);
         InputTap {
             events,
@@ -687,7 +688,14 @@ fn mouse_window_hint(event: &CGEvent) -> Option<WindowServerId> {
     u32::try_from(field_value).ok().filter(|id| *id != 0).map(WindowServerId::new)
 }
 
-fn build_event_mask(keyboard_enabled: bool, mouse_move_enabled: bool) -> CGEventMask {
+/// Which optional events the tap asks for, beyond the mouse buttons it always does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Asks {
+    keys: bool,
+    mouse_moves: bool,
+}
+
+fn build_event_mask(asks: Asks) -> CGEventMask {
     let mut m: u64 = 0;
     let add = |m: &mut u64, ty: CGEventType| *m |= 1u64 << (ty.0 as u64);
 
@@ -701,10 +709,10 @@ fn build_event_mask(keyboard_enabled: bool, mouse_move_enabled: bool) -> CGEvent
     ] {
         add(&mut m, ty);
     }
-    if mouse_move_enabled {
+    if asks.mouse_moves {
         add(&mut m, CGEventType::MouseMoved);
     }
-    if keyboard_enabled {
+    if asks.keys {
         for ty in [
             CGEventType::KeyDown,
             CGEventType::KeyUp,
@@ -722,12 +730,22 @@ mod tests {
 
     fn wants(mask: CGEventMask, ty: CGEventType) -> bool { mask & (1u64 << (ty.0 as u64)) != 0 }
 
+    const NOTHING: Asks = Asks {
+        keys: false,
+        mouse_moves: false,
+    };
+    const KEYS: Asks = Asks { keys: true, mouse_moves: false };
+    const MOUSE_MOVES: Asks = Asks { keys: false, mouse_moves: true };
+
     /// Mouse buttons are always asked for: they are how a drag is noticed, and a drag is how a
     /// window is moved between displays.
     #[test]
     fn the_mask_always_carries_the_mouse_buttons() {
         for enabled in [false, true] {
-            let mask = build_event_mask(enabled, enabled);
+            let mask = build_event_mask(Asks {
+                keys: enabled,
+                mouse_moves: enabled,
+            });
             for ty in [
                 CGEventType::LeftMouseDown,
                 CGEventType::LeftMouseUp,
@@ -746,7 +764,7 @@ mod tests {
     /// user and every keystroke for nothing.
     #[test]
     fn keys_are_only_in_the_mask_when_something_is_bound() {
-        let without = build_event_mask(false, false);
+        let without = build_event_mask(NOTHING);
         for ty in [
             CGEventType::KeyDown,
             CGEventType::KeyUp,
@@ -754,7 +772,7 @@ mod tests {
         ] {
             assert!(!wants(without, ty), "{ty:?} should not be asked for");
         }
-        let with = build_event_mask(true, false);
+        let with = build_event_mask(KEYS);
         for ty in [
             CGEventType::KeyDown,
             CGEventType::KeyUp,
@@ -766,16 +784,16 @@ mod tests {
 
     #[test]
     fn mouse_moves_are_only_in_the_mask_when_focus_follows_mouse_is_live() {
-        assert!(!wants(build_event_mask(false, false), CGEventType::MouseMoved));
-        assert!(wants(build_event_mask(false, true), CGEventType::MouseMoved));
+        assert!(!wants(build_event_mask(NOTHING), CGEventType::MouseMoved));
+        assert!(wants(build_event_mask(MOUSE_MOVES), CGEventType::MouseMoved));
     }
 
     /// The two halves are independent: keyboard bindings must not drag mouse moves in with them, or
     /// every pointer movement becomes a window-server query on a machine that only uses hotkeys.
     #[test]
     fn the_two_halves_of_the_mask_are_independent() {
-        assert!(!wants(build_event_mask(true, false), CGEventType::MouseMoved));
-        assert!(!wants(build_event_mask(false, true), CGEventType::KeyDown));
+        assert!(!wants(build_event_mask(KEYS), CGEventType::MouseMoved));
+        assert!(!wants(build_event_mask(MOUSE_MOVES), CGEventType::KeyDown));
     }
 
     /// specs/input.md: rini MUST NOT tap trackpad gestures. A two-finger scroll arrives as a scroll
@@ -788,7 +806,10 @@ mod tests {
         for ty in gestures {
             for keyboard in [false, true] {
                 for mouse_move in [false, true] {
-                    let mask = build_event_mask(keyboard, mouse_move);
+                    let mask = build_event_mask(Asks {
+                        keys: keyboard,
+                        mouse_moves: mouse_move,
+                    });
                     assert!(
                         !wants(mask, ty),
                         "{ty:?} asked for with keyboard={keyboard} mouse_move={mouse_move}"

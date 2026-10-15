@@ -1711,6 +1711,7 @@ mod tests {
     use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
     use crate::animation::domain::motion::glide::Leg;
     use crate::animation::domain::motion::nudge::nudge_track;
+    use crate::animation::domain::motion::plan::Resolved;
     use crate::animation::domain::motion::score::SAMPLE_STEP;
     use crate::animation::domain::motion::tile::Anchor;
     use crate::decorations::domain::shape::{self, shadow_mask_frame};
@@ -3664,20 +3665,19 @@ mod tests {
             };
             let (a, b, c, d, e, f) = (wid(1), wid(2), wid(3), wid(4), wid(5), wid(6));
             let requests = [
-                (a, column(0.0, 859.0), step(column(0.0, 859.0)), false),
-                (b, column(1.0, 859.0), step(column(1.0, 859.0)), false),
-                (c, column(2.0, 859.0), step(column(2.0, 859.0)), false),
-                (d, column(1.0, 400.0), column(1.0, 600.0), false),
-                (
+                Resolved::tiled(a, column(0.0, 859.0), step(column(0.0, 859.0))),
+                Resolved::tiled(b, column(1.0, 859.0), step(column(1.0, 859.0))),
+                Resolved::tiled(c, column(2.0, 859.0), step(column(2.0, 859.0))),
+                Resolved::tiled(d, column(1.0, 400.0), column(1.0, 600.0)),
+                Resolved::floating(
                     e,
                     typed(224.0, 95.0, 600.0, 400.0),
                     typed(264.0, 95.0, 600.0, 400.0),
-                    true,
                 ),
             ];
             let mut tiles: Vec<OverlayTile> = requests
                 .iter()
-                .map(|&(w, from, to, floating)| overlay_tile(w, on(from), on(to), floating))
+                .map(|r| overlay_tile(r.window, on(r.start), on(r.end), r.floating))
                 .collect();
             let plan = FlightPlan::from(reflow_plan(&requests, DISPLAY));
             let windows: Vec<WindowId> = tiles.iter().map(|t| t.window).collect();
@@ -3724,25 +3724,10 @@ mod tests {
             tiles.push(overlay_tile(f, on(joined), on(step(joined)), false));
             let incoming = reflow_plan(
                 &[
-                    (
-                        a,
-                        step(column(0.0, 859.0)),
-                        step(step(column(0.0, 859.0))),
-                        false,
-                    ),
-                    (
-                        b,
-                        step(column(1.0, 859.0)),
-                        step(step(column(1.0, 859.0))),
-                        false,
-                    ),
-                    (
-                        c,
-                        step(column(2.0, 859.0)),
-                        step(step(column(2.0, 859.0))),
-                        false,
-                    ),
-                    (f, joined, step(joined), false),
+                    Resolved::tiled(a, step(column(0.0, 859.0)), step(step(column(0.0, 859.0)))),
+                    Resolved::tiled(b, step(column(1.0, 859.0)), step(step(column(1.0, 859.0)))),
+                    Resolved::tiled(c, step(column(2.0, 859.0)), step(step(column(2.0, 859.0)))),
+                    Resolved::tiled(f, joined, step(joined)),
                 ],
                 DISPLAY,
             );
@@ -3791,7 +3776,7 @@ mod tests {
             );
             let mut tiles = vec![overlay_tile(window, on(from), on(to), false)];
             tiles[0].snapshot = test_picture(ScreenSize::new(1004.0, 1081.0));
-            let plan = FlightPlan::from(reflow_plan(&[(window, from, to, false)], DISPLAY));
+            let plan = FlightPlan::from(reflow_plan(&[Resolved::tiled(window, from, to)], DISPLAY));
             let mut slide = Look::Slide.choreography();
             let stage = Stage {
                 plan: &plan,
