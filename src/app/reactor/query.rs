@@ -393,105 +393,10 @@ impl StateView<'_> {
 
     fn handle_diagnostics_query(&self) -> DiagnosticsData {
         let screens = self.spaces.screens.clone();
-        let mut spaces = Vec::new();
-
-        for screen in &screens {
-            let Some(space) = screen.space else { continue };
-            let engine = &self.engine;
-            let workspace = engine.active_workspace(space);
-            let ordered = engine.ordered_windows_in_active_workspace(space);
-            let owned: Vec<WindowId> = engine
-                .virtual_workspace_manager()
-                .windows_in_active_workspace(self.windows, space);
-
-            // Column geometry is read off the applied frames rather than the layout
-            // system's internals: it is what the user is actually looking at, and it makes
-            // several columns collapsing onto one parking position directly visible.
-            let mut column_origins: Vec<f64> = Vec::new();
-            let mut column_widths: Vec<f64> = Vec::new();
-            let mut windows = Vec::new();
-
-            for window_id in owned.iter().copied() {
-                let Some(state) = self.windows.window(window_id) else {
-                    continue;
-                };
-                let frame = state.frame_monotonic;
-                let is_floating = self.engine.is_window_floating(window_id);
-                let left = frame.origin.x.max(screen.frame.origin.x);
-                let right = (frame.origin.x + frame.size.width)
-                    .min(screen.frame.origin.x + screen.frame.size.width);
-                let visible_width = (right - left).max(0.0);
-                let column = (!is_floating)
-                    .then(|| ordered.iter().position(|candidate| *candidate == window_id))
-                    .flatten();
-
-                if !is_floating {
-                    let origin = (frame.origin.x * 10.0).round() / 10.0;
-                    if !column_origins.iter().any(|existing| (existing - origin).abs() < 0.5) {
-                        column_origins.push(origin);
-                        column_widths.push(frame.size.width);
-                    }
-                }
-
-                windows.push(DiagnosticWindow {
-                    window_id: window_id.into(),
-                    app: self
-                        .apps
-                        .get(&window_id.pid)
-                        .and_then(|app| app.info.localized_name.clone())
-                        .unwrap_or_default(),
-                    title: state.info.title.clone(),
-                    column,
-                    row: None,
-                    frame: crate::app::api::dto::to_protocol_rect(frame),
-                    visible_width,
-                    is_parked: !is_floating && visible_width <= 3.0,
-                    is_floating,
-                    is_focused: self.main_window == Some(window_id),
-                    home_display: self.memory.affinity.window_home(window_id).map(str::to_owned),
-                });
-            }
-            column_origins.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-            // Owned but absent from the layout tree. Such a window is cmd-tab reachable
-            // while being unreachable by scrolling, which is what "a second invisible
-            // strip" actually looks like.
-            let orphaned_windows: Vec<rini_ipc::protocol::WindowId> =
-                diagnostics::orphaned_windows(
-                    &owned,
-                    |window| self.engine.is_window_floating(window),
-                    |window| ordered.contains(&window),
-                )
-                .into_iter()
-                .map(Into::into)
-                .collect();
-
-            let engine = self.engine;
-            let workspace_index = workspace.and_then(|workspace| {
-                engine
-                    .virtual_workspace_manager()
-                    .existing_workspaces()
-                    .iter()
-                    .position(|(candidate, _)| *candidate == workspace)
-            });
-
-            spaces.push(DiagnosticSpace {
-                space_id: space.get(),
-                display_uuid: screen.display_uuid_owned(),
-                display_name: screen.name.clone(),
-                display_frame: crate::app::api::dto::to_protocol_rect(screen.frame),
-                is_active: self.is_space_active(space),
-                workspace_id: workspace.map(|workspace| format!("{workspace:?}")),
-                workspace_name: workspace
-                    .and_then(|workspace| self.engine.workspace_name(workspace)),
-                workspace_index,
-                column_origins,
-                column_widths,
-                windows,
-                orphaned_windows,
-            });
-        }
-
+        let spaces = screens
+            .iter()
+            .filter_map(|screen| Some(self.diagnostic_space(screen, screen.space?)))
+            .collect();
         // Workspaces still holding windows but belonging to no attached display. These are
         // left over from earlier space generations — macOS mints a new space id on every
         // reconnect — and their windows are unreachable from any strip.
@@ -515,63 +420,7 @@ impl StateView<'_> {
         // turn, and tallying the `spaces` list instead silently measures what is ON SCREEN —
         // which reads as windows vanishing whenever a switch happens. Cost me a wrong
         // conclusion, the same way `query windows` did before this whole query existed.
-        let mut census = Vec::new();
-        for screen in &screens {
-            let Some(space) = screen.space else { continue };
-            let Some(display_uuid) = screen.display_uuid_owned() else {
-                continue;
-            };
-            let homed = self
-                .memory
-                .affinity
-                .windows_homed_to(&display_uuid)
-                .into_iter()
-                .filter(|window| self.windows.contains_window(*window))
-                .count();
-
-            let workspaces = self.engine.virtual_workspace_manager().existing_workspaces();
-            let active_workspace = self.engine.active_workspace(space);
-            let mut by_workspace = Vec::new();
-            let mut census_windows = Vec::new();
-            let mut assigned = 0;
-            for (workspace_id, name) in workspaces {
-                let windows = self.engine.virtual_workspace_manager().workspace_windows(
-                    self.windows,
-                    space,
-                    workspace_id,
-                );
-                assigned += windows.len();
-                by_workspace.push((name.clone(), windows.len()));
-
-                let visible = active_workspace == Some(workspace_id);
-                for window_id in windows {
-                    let Some(state) = self.windows.window(window_id) else {
-                        continue;
-                    };
-                    census_windows.push(rini_ipc::protocol::DiagnosticCensusWindow {
-                        window_id: window_id.into(),
-                        app: self
-                            .apps
-                            .get(&window_id.pid)
-                            .and_then(|app| app.info.localized_name.clone())
-                            .unwrap_or_default(),
-                        title: state.info.title.clone(),
-                        workspace_name: name.clone(),
-                        visible,
-                        is_floating: self.engine.is_window_floating(window_id),
-                    });
-                }
-            }
-
-            census.push(rini_ipc::protocol::DiagnosticDisplayCensus {
-                display_uuid,
-                display_name: screen.name.clone(),
-                homed,
-                assigned,
-                by_workspace,
-                windows: census_windows,
-            });
-        }
+        let census = screens.iter().filter_map(|screen| self.display_census(screen)).collect();
 
         DiagnosticsData {
             spaces,
@@ -581,6 +430,161 @@ impl StateView<'_> {
             // Every tracked window, manageable or not: see the note on filtering above.
             windows_managed: self.windows.tracked_window_count(),
         }
+    }
+
+    /// One attached screen's space as the diagnostics dump shows it: its active workspace's windows
+    /// at their applied frames, the columns those frames make, and what it owns outside the layout.
+    fn diagnostic_space(&self, screen: &ScreenInfo, space: SpaceId) -> DiagnosticSpace {
+        let engine = &self.engine;
+        let workspace = engine.active_workspace(space);
+        let ordered = engine.ordered_windows_in_active_workspace(space);
+        let owned: Vec<WindowId> = engine
+            .virtual_workspace_manager()
+            .windows_in_active_workspace(self.windows, space);
+
+        // Column geometry is read off the applied frames rather than the layout
+        // system's internals: it is what the user is actually looking at, and it makes
+        // several columns collapsing onto one parking position directly visible.
+        let mut column_origins: Vec<f64> = Vec::new();
+        let mut column_widths: Vec<f64> = Vec::new();
+        let mut windows = Vec::new();
+
+        for window_id in owned.iter().copied() {
+            let Some(state) = self.windows.window(window_id) else {
+                continue;
+            };
+            let frame = state.frame_monotonic;
+            let is_floating = self.engine.is_window_floating(window_id);
+            let left = frame.origin.x.max(screen.frame.origin.x);
+            let right = (frame.origin.x + frame.size.width)
+                .min(screen.frame.origin.x + screen.frame.size.width);
+            let visible_width = (right - left).max(0.0);
+            let column = (!is_floating)
+                .then(|| ordered.iter().position(|candidate| *candidate == window_id))
+                .flatten();
+
+            if !is_floating {
+                let origin = (frame.origin.x * 10.0).round() / 10.0;
+                if !column_origins.iter().any(|existing| (existing - origin).abs() < 0.5) {
+                    column_origins.push(origin);
+                    column_widths.push(frame.size.width);
+                }
+            }
+
+            windows.push(DiagnosticWindow {
+                window_id: window_id.into(),
+                app: self.app_name(window_id.pid),
+                title: state.info.title.clone(),
+                column,
+                row: None,
+                frame: crate::app::api::dto::to_protocol_rect(frame),
+                visible_width,
+                is_parked: !is_floating && visible_width <= 3.0,
+                is_floating,
+                is_focused: self.main_window == Some(window_id),
+                home_display: self.memory.affinity.window_home(window_id).map(str::to_owned),
+            });
+        }
+        column_origins.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Owned but absent from the layout tree. Such a window is cmd-tab reachable
+        // while being unreachable by scrolling, which is what "a second invisible
+        // strip" actually looks like.
+        let orphaned_windows: Vec<rini_ipc::protocol::WindowId> = diagnostics::orphaned_windows(
+            &owned,
+            |window| self.engine.is_window_floating(window),
+            |window| ordered.contains(&window),
+        )
+        .into_iter()
+        .map(Into::into)
+        .collect();
+
+        let engine = self.engine;
+        let workspace_index = workspace.and_then(|workspace| {
+            engine
+                .virtual_workspace_manager()
+                .existing_workspaces()
+                .iter()
+                .position(|(candidate, _)| *candidate == workspace)
+        });
+
+        DiagnosticSpace {
+            space_id: space.get(),
+            display_uuid: screen.display_uuid_owned(),
+            display_name: screen.name.clone(),
+            display_frame: crate::app::api::dto::to_protocol_rect(screen.frame),
+            is_active: self.is_space_active(space),
+            workspace_id: workspace.map(|workspace| format!("{workspace:?}")),
+            workspace_name: workspace.and_then(|workspace| self.engine.workspace_name(workspace)),
+            workspace_index,
+            column_origins,
+            column_widths,
+            windows,
+            orphaned_windows,
+        }
+    }
+
+    /// One attached display's windows across EVERY workspace, or `None` for a screen with no space
+    /// or no display UUID.
+    fn display_census(
+        &self,
+        screen: &ScreenInfo,
+    ) -> Option<rini_ipc::protocol::DiagnosticDisplayCensus> {
+        let space = screen.space?;
+        let display_uuid = screen.display_uuid_owned()?;
+        let homed = self
+            .memory
+            .affinity
+            .windows_homed_to(&display_uuid)
+            .into_iter()
+            .filter(|window| self.windows.contains_window(*window))
+            .count();
+
+        let workspaces = self.engine.virtual_workspace_manager().existing_workspaces();
+        let active_workspace = self.engine.active_workspace(space);
+        let mut by_workspace = Vec::new();
+        let mut census_windows = Vec::new();
+        let mut assigned = 0;
+        for (workspace_id, name) in workspaces {
+            let windows = self.engine.virtual_workspace_manager().workspace_windows(
+                self.windows,
+                space,
+                workspace_id,
+            );
+            assigned += windows.len();
+            by_workspace.push((name.clone(), windows.len()));
+
+            let visible = active_workspace == Some(workspace_id);
+            for window_id in windows {
+                let Some(state) = self.windows.window(window_id) else {
+                    continue;
+                };
+                census_windows.push(rini_ipc::protocol::DiagnosticCensusWindow {
+                    window_id: window_id.into(),
+                    app: self.app_name(window_id.pid),
+                    title: state.info.title.clone(),
+                    workspace_name: name.clone(),
+                    visible,
+                    is_floating: self.engine.is_window_floating(window_id),
+                });
+            }
+        }
+
+        Some(rini_ipc::protocol::DiagnosticDisplayCensus {
+            display_uuid,
+            display_name: screen.name.clone(),
+            homed,
+            assigned,
+            by_workspace,
+            windows: census_windows,
+        })
+    }
+
+    fn app_name(&self, pid: pid_t) -> String {
+        self.apps
+            .get(&pid)
+            .and_then(|app| app.info.localized_name.clone())
+            .unwrap_or_default()
     }
 
     fn handle_windows_query(&self, space_id: Option<SpaceId>) -> Vec<RuntimeWindowData> {

@@ -2162,6 +2162,43 @@ fn diagnostics_report_every_display_not_just_the_default_space() {
     );
 }
 
+/// The census counts each display's windows across every workspace, the hidden ones with the
+/// visible, so a workspace switch does not read as windows vanishing.
+#[test]
+fn the_diagnostics_census_counts_every_workspace_on_each_display() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    set_space_membership(&reactor, &[(space, &[901, 902])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    for (index, wsid) in [(0, 901u32), (1, 902)] {
+        let window = WindowId::new(1, wsid - 900);
+        let workspace = reactor.test_workspace(space, index);
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+    }
+
+    let diagnostics = reactor.query_diagnostics();
+
+    let [census] = &diagnostics.census[..] else {
+        panic!("one display, one census: {:?}", diagnostics.census);
+    };
+    assert_eq!(census.display_uuid, "test-display-0");
+    assert_eq!(census.assigned, 2);
+    assert_eq!(census.windows.len(), 2);
+    let visible: Vec<bool> = census.windows.iter().map(|window| window.visible).collect();
+    assert_eq!(
+        visible,
+        [true, false],
+        "the second window is on a workspace not shown"
+    );
+    assert_eq!(
+        census.by_workspace.iter().map(|(_, count)| count).sum::<usize>(),
+        2
+    );
+}
+
 /// A window rini parked off-screen must not be treated as having changed display.
 ///
 /// Windows belonging to a workspace their display is not showing are moved off-screen, and
