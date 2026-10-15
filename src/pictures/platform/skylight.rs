@@ -138,6 +138,17 @@ pub struct OnScreen {
     pub frame: CGRect,
 }
 
+/// One batched capture asked: the windows to capture, what lies behind them, the desktop listed after
+/// them, the display they are on, and the process the window server has holding the keys.
+#[derive(Clone, Copy)]
+pub struct BatchCall<'a> {
+    pub windows: &'a [OnScreen],
+    pub behind: &'a [(WindowServerId, CGRect)],
+    pub desktop: &'a DesktopBackdrop,
+    pub display: CGRect,
+    pub key: Option<pid_t>,
+}
+
 /// What one batched capture brought back.
 pub struct Batch {
     pub pictures: Vec<(WindowId, Picture)>,
@@ -148,7 +159,7 @@ pub struct Batch {
     pub halted: Vec<WindowId>,
 }
 
-/// The windows in `windows`, wholly on `display` at their server frames and none overlapping
+/// The windows in `asked.windows`, wholly on its display at their server frames and none overlapping
 /// another, each as a region of the call it was captured in. What is known of each decides the call
 /// (`crate::pictures::domain::knowledge`):
 ///
@@ -164,14 +175,17 @@ pub struct Batch {
 /// composites in the order given" in `src/pictures/docs/capture-research.md`. `halt` is asked before
 /// each call, and once it says stop no call is made.
 pub fn capture_on_screen(
-    windows: &[OnScreen],
-    behind: &[(WindowServerId, CGRect)],
-    desktop: &DesktopBackdrop,
-    display: CGRect,
+    asked: BatchCall<'_>,
     learned: &mut Learned,
-    key: Option<pid_t>,
     halt: &dyn Fn() -> bool,
 ) -> Batch {
+    let BatchCall {
+        windows,
+        behind,
+        desktop,
+        display,
+        key,
+    } = asked;
     let taken = Instant::now();
     let mut pictures = Vec::new();
     let (alpha, mut baked): (Vec<OnScreen>, Vec<OnScreen>) = windows

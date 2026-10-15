@@ -2,7 +2,8 @@
 //! the bar, the cache those pictures land in, and the handle every client holds.
 //!
 //! One thread, `pictures`, runs the schedule (`crate::pictures::domain::schedule`) and makes the
-//! service's own calls: its SkyLight captures, one at a time, a handover check's two pictures, which a
+//! service's own calls through its `Capturer` (`crate::pictures::platform::capturer`): its SkyLight
+//! captures, one at a time, a handover check's two pictures, which a
 //! thread of the check's own compares, and its ScreenCaptureKit asks, whose completions post back to
 //! it. A transition's dressing is composited on
 //! the caller's thread until its display's first render lands, and the flight engine takes its spawn
@@ -37,14 +38,12 @@ use crate::pictures::domain::watch::{
     WatchId, Why,
 };
 use crate::pictures::event::Event;
-use crate::pictures::platform::desktop::{
-    BarStrip, DesktopBackdrop, bar_strip, desktop_backdrop_windows,
-};
+use crate::pictures::platform::capturer::{Capturer, MacCapturer, bar_of};
+use crate::pictures::platform::desktop::{DesktopBackdrop, bar_strip, desktop_backdrop_windows};
 use crate::pictures::platform::measure::{band_print, body_samples, picture_thumbprint, rgba};
 use crate::pictures::platform::picture::{Picture, Pixels, stand_in_image, stand_in_picture};
-use crate::pictures::platform::screencapturekit::{self, Prepared};
-use crate::pictures::platform::skylight::{self, capture_list_via_skylight};
-use crate::windows::platform::window_server::{key_focus_pid, server_frame};
+use crate::pictures::platform::screencapturekit::Prepared;
+use crate::pictures::platform::skylight::{self, BatchCall, capture_list_via_skylight};
 
 /// What a client asks of the service.
 #[derive(Debug)]
@@ -445,6 +444,7 @@ impl Pictures {
             watches: Arc::default(),
         };
         let service = Service {
+            capturer: MacCapturer,
             requests,
             done,
             done_tx,
@@ -649,17 +649,6 @@ fn composite_desktop(display: Display) -> Option<Picture> {
     usable
 }
 
-/// The bar listed in `strip`, captured on its own to keep its alpha, and the strip it covers. See "The
-/// bar has to be captured on its own" in `src/pictures/docs/capture-research.md`.
-fn bar_of(strip: &BarStrip, scale: f64) -> (Option<Picture>, Option<ScreenRect>) {
-    let Some(bounds) = strip.bounds else {
-        return (None, None);
-    };
-    let picture = capture_list_via_skylight(&strip.windows, bounds.size, scale)
-        .filter(|picture| picture.fits(bounds.size));
-    (picture, Some(bounds))
-}
-
 /// Whose SkyLight round it is: the watches' a transition waits on, or a refresh's at rest.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Looking {
@@ -667,8 +656,10 @@ enum Looking {
     Refresh,
 }
 
-/// The thread's side: the schedule's calls made, and what they bring back put where it belongs.
-struct Service {
+/// The thread's side: the schedule's calls made through `capturer`, and what they bring back put where
+/// it belongs.
+struct Service<C: Capturer> {
+    capturer: C,
     requests: Receiver<Command>,
     done: Receiver<Done>,
     done_tx: Sender<Done>,
@@ -682,7 +673,7 @@ struct Service {
     sinks: Vec<Sink>,
 }
 
-impl Service {
+impl<C: Capturer> Service<C> {
     async fn run(mut self) {
         loop {
             let wait = self.make_calls();
@@ -857,19 +848,17 @@ impl Service {
                         return Some(Duration::ZERO);
                     }
                 }
-                Next::List(targets) => screencapturekit::list(targets, move |target, prepared| {
+                Next::List(targets) => self.capturer.list(targets, move |target, prepared| {
                     done.send(Done::Listed { target, prepared })
                 }),
                 Next::Capture { target, prepared } => {
-                    screencapturekit::capture(target, prepared, move |picture| {
+                    self.capturer.capture(target, prepared, move |picture| {
                         done.send(Done::Captured { window: target.window, picture })
                     })
                 }
-                Next::Desktop(display) => {
-                    screencapturekit::render_desktop(display, move |picture| {
-                        done.send(Done::Desktop { display, picture })
-                    })
-                }
+                Next::Desktop(display) => self.capturer.render_desktop(display, move |picture| {
+                    done.send(Done::Desktop { display, picture })
+                }),
                 Next::Bar(display) => self.picture_bar(display),
                 Next::Overlay(overlay) => self.take_overlay(overlay),
                 Next::Screen(check, overlay) => self.compare_screen(check, overlay),
@@ -897,28 +886,38 @@ impl Service {
         let mut desktop_stale = false;
         let mut halted: Vec<WindowId> = Vec::new();
         for set in sets {
-            let frames: Vec<Option<CGRect>> =
-                set.looks.iter().map(|look| server_frame(look.target.server_id)).collect();
+            let frames: Vec<Option<CGRect>> = set
+                .looks
+                .iter()
+                .map(|look| self.capturer.server_frame(look.target.server_id))
+                .collect();
             let wanted = wanted(&set.looks, &frames, display);
             if let (Some(display), false) = (display, wanted.is_empty()) {
-                let behind: Vec<(WindowServerId, CGRect)> =
-                    set.behind.iter().filter_map(|id| Some((*id, server_frame(*id)?))).collect();
+                let behind: Vec<(WindowServerId, CGRect)> = set
+                    .behind
+                    .iter()
+                    .filter_map(|id| Some((*id, self.capturer.server_frame(*id)?)))
+                    .collect();
                 let (learned, desktop) = known.get_or_insert_with(|| {
-                    key = key_focus_pid();
+                    key = self.capturer.key_focus_pid();
                     let shared = self.shared.lock().unwrap();
                     (shared.learned.clone(), shared.display.desktop_windows.clone())
                 });
                 let desktop =
-                    desktop.get_or_insert_with(|| desktop_backdrop_windows(display.frame));
+                    desktop.get_or_insert_with(|| self.capturer.desktop_windows(display.frame));
                 let frames: Vec<ScreenRect> =
                     wanted.iter().map(|window| ScreenRect::from_cg(window.frame)).collect();
                 for group in apart(&frames) {
                     let windows: Vec<skylight::OnScreen> =
                         group.into_iter().map(|at| wanted[at]).collect();
-                    let on = display.frame.to_cg();
-                    let batch = skylight::capture_on_screen(
-                        &windows, &behind, desktop, on, learned, key, &halt,
-                    );
+                    let call = BatchCall {
+                        windows: &windows,
+                        behind: &behind,
+                        desktop,
+                        display: display.frame.to_cg(),
+                        key,
+                    };
+                    let batch = self.capturer.capture_on_screen(call, learned, &halt);
                     desktop_stale |= batch.desktop_stale;
                     captured.extend(batch.pictures);
                     halted.extend(batch.halted);
@@ -989,7 +988,7 @@ impl Service {
         let picture = if self.transition_waits() {
             None
         } else {
-            skylight::capture_alone(overlay).map(Whole)
+            self.capturer.capture_alone(overlay).map(Whole)
         };
         let taken = picture.is_some();
         let tag = self.shared.lock().unwrap().schedule.overlay_taken(Instant::now(), picture);
@@ -1005,7 +1004,7 @@ impl Service {
         if self.transition_waits() {
             return;
         }
-        let Some(screen) = skylight::capture_screen(check.display).map(Whole) else {
+        let Some(screen) = self.capturer.capture_screen(check.display).map(Whole) else {
             debug!("no picture of the screen for the handover check");
             return;
         };
@@ -1026,7 +1025,7 @@ impl Service {
         if transition_asked(before, self.applied_transitions) {
             return;
         }
-        let (picture, strip) = bar_of(&bar_strip(display.frame), display.scale);
+        let (picture, strip) = self.capturer.bar(display);
         let after = self.transitions.load(Ordering::Acquire);
         if !bar_read_kept(before, self.applied_transitions, after) {
             return;
@@ -1116,6 +1115,7 @@ mod tests {
     use super::*;
     use crate::pictures::domain::handover::AFTER_LIFT;
     use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, CHANGE_TRIES, Moment, Settle};
+    use crate::pictures::platform::capturer::FakeCapturer;
     use crate::pictures::platform::picture::test_picture;
 
     fn wid(idx: u32) -> WindowId { WindowId::new(1, idx) }
@@ -1787,18 +1787,21 @@ mod tests {
         assert!(!transition_asked(4, 4));
     }
 
-    /// The thread's side of a service with no thread, ScreenCaptureKit or sink behind it.
-    fn detached_service() -> (Service, Arc<Mutex<Shared>>) {
+    /// The thread's side of a service with no thread or sink behind it, capturing through a
+    /// `FakeCapturer`.
+    fn detached_service() -> (Service<FakeCapturer>, Arc<Mutex<Shared>>) {
         let (service, shared, _commands) = detached_service_and_commands();
         (service, shared)
     }
 
     /// The same, with the handle's side of its command channel.
-    fn detached_service_and_commands() -> (Service, Arc<Mutex<Shared>>, Sender<Command>) {
+    fn detached_service_and_commands()
+    -> (Service<FakeCapturer>, Arc<Mutex<Shared>>, Sender<Command>) {
         let (commands, requests) = channel::channel();
         let (done_tx, done) = channel::channel();
         let shared = Arc::new(Mutex::new(Shared::default()));
         let service = Service {
+            capturer: FakeCapturer::default(),
             requests,
             done,
             done_tx,
@@ -1925,7 +1928,7 @@ mod tests {
     /// One SkyLight round on the service at `at`: the looks the schedule hands out past the desktop and
     /// the bar, due on their own, every window found at `frame()` and captured as `pictures` says.
     fn service_round(
-        service: &mut Service,
+        service: &mut Service<FakeCapturer>,
         shared: &Arc<Mutex<Shared>>,
         at: Instant,
         pictures: Vec<(WindowId, Picture)>,
@@ -2097,7 +2100,7 @@ mod tests {
         }
         service.apply(Command::Refresh(vec![target(1)]));
         let later = Instant::now() + Duration::from_secs(1);
-        let refreshed = |service: &mut Service, picture: Picture| {
+        let refreshed = |service: &mut Service<FakeCapturer>, picture: Picture| {
             let looks = sky(shared.lock().unwrap().schedule.next(later, |_| None));
             let captured = with_prints(&looks, vec![(wid(1), picture)]);
             service.put_round(
@@ -2356,5 +2359,214 @@ mod tests {
             .map(|(window, _)| window)
             .collect();
         assert_eq!(drawn, vec![wid(3), wid(1)]);
+    }
+
+    /// A window of `frame()`'s size at `x`: `frame()` itself at 4, overlapping it below 863, apart from
+    /// it from 870.
+    fn frame_at(x: f64) -> ScreenRect { ScreenRect::new(ScreenPoint::new(x, 32.0), frame().size) }
+
+    /// A service on the built-in display whose window server has each of `windows` at the frame given.
+    fn capturing(windows: &[(u32, ScreenRect)]) -> (Service<FakeCapturer>, Arc<Mutex<Shared>>) {
+        let (mut service, shared) = detached_service();
+        shared.lock().unwrap().schedule.set_display(built_in(), false, Instant::now());
+        for &(idx, at) in windows {
+            service.capturer.frames.insert(WindowServerId::new(idx), at.to_cg());
+        }
+        (service, shared)
+    }
+
+    /// A set of `windows`, each wanted wherever it is on the display.
+    fn set_of(windows: &[u32]) -> Set {
+        Set {
+            looks: windows
+                .iter()
+                .map(|idx| Look {
+                    target: target(*idx),
+                    accepts: vec![Accept::OnDisplay],
+                    thumbprint: false,
+                })
+                .collect(),
+            behind: Vec::new(),
+        }
+    }
+
+    /// The press asked while a round is under way, after its first call.
+    fn press_after_the_first_call(service: &mut Service<FakeCapturer>) {
+        let transitions = service.transitions.clone();
+        service.capturer.after_call = Some(Box::new(move || {
+            transitions.fetch_add(1, Ordering::AcqRel);
+        }));
+    }
+
+    /// A refresh makes no call once a transition is asked that the thread has not applied, and says it
+    /// stopped, so the thread applies the press before anything else; a watch's round, which is what
+    /// that transition waits on, makes every call.
+    #[test]
+    fn a_refresh_makes_no_call_once_a_transition_is_asked_and_a_watch_round_makes_every_one() {
+        use crate::pictures::domain::schedule::SETTLE_BEFORE_STARTING;
+        let windows = [(1, frame_at(4.0)), (2, frame_at(400.0))];
+        let (mut service, shared) = capturing(&windows);
+        press_after_the_first_call(&mut service);
+        let asked = Instant::now() - SETTLE_BEFORE_STARTING;
+        shared.lock().unwrap().schedule.refresh(vec![target(1), target(2)], asked);
+        assert_eq!(
+            service.make_calls(),
+            Some(Duration::ZERO),
+            "stopped for the press"
+        );
+        assert_eq!(*service.capturer.calls.borrow(), vec![vec![wid(1)]]);
+
+        let (mut service, _shared) = capturing(&windows);
+        press_after_the_first_call(&mut service);
+        assert!(!service.look(vec![set_of(&[1, 2])], Looking::Watches));
+        assert_eq!(*service.capturer.calls.borrow(), vec![vec![wid(1)], vec![wid(
+            2
+        )]]);
+    }
+
+    /// A window whose call a press stopped is left out of what the refresh saw: it spends no try and
+    /// is due again at once, where the window captured before the press spent one.
+    #[test]
+    fn a_window_whose_call_a_press_stopped_is_not_seen() {
+        let (mut service, shared) = capturing(&[(1, frame_at(4.0)), (2, frame_at(400.0))]);
+        press_after_the_first_call(&mut service);
+        let asked = Instant::now() - Duration::from_secs(1);
+        let set = {
+            let mut shared = shared.lock().unwrap();
+            shared.schedule.refresh(vec![target(1), target(2)], asked);
+            let Next::Refresh(set) = shared.schedule.next(Instant::now(), |_| None) else {
+                panic!("not a refresh");
+            };
+            set
+        };
+        let before = Instant::now();
+        assert!(service.look(vec![set], Looking::Refresh), "stopped");
+        let due = sky(shared.lock().unwrap().schedule.next(before, |_| None));
+        let due: Vec<WindowId> = due.into_iter().map(|look| look.target.window).collect();
+        assert_eq!(due, vec![wid(2)]);
+    }
+
+    /// Windows that overlap go in calls of their own, set by set: one call holds no two that overlap
+    /// and no two sets' windows, though window 4 overlaps only window 3 and would share window 2's
+    /// call were the sets one.
+    #[test]
+    fn overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own() {
+        let (mut service, _shared) = capturing(&[
+            (1, frame_at(4.0)),
+            (2, frame_at(400.0)),
+            (3, frame_at(870.0)),
+            (
+                4,
+                ScreenRect::new(ScreenPoint::new(1270.0, 32.0), ScreenSize::new(400.0, 1081.0)),
+            ),
+        ]);
+        service.look(vec![set_of(&[1, 2, 3]), set_of(&[4])], Looking::Watches);
+        assert_eq!(*service.capturer.calls.borrow(), vec![
+            vec![wid(1), wid(3)],
+            vec![wid(2)],
+            vec![wid(4)],
+        ]);
+    }
+
+    /// A batched call that comes back another shape than its windows brings no picture and leaves the
+    /// desktop's windows unheld, so the next round lists them afresh; one that comes back whole keeps
+    /// them for the rounds after.
+    #[test]
+    fn a_misshapen_batch_leaves_the_desktop_windows_to_be_listed_again() {
+        let (mut service, shared) = capturing(&[(1, frame_at(4.0))]);
+        service.capturer.desktop.windows = vec![WindowServerId::new(7)];
+        service.capturer.misshapen = true;
+        service.look(vec![set_of(&[1])], Looking::Watches);
+        assert!(shared.lock().unwrap().display.desktop_windows.is_none(), "stale");
+        assert!(shared.lock().unwrap().cache.get(wid(1)).is_none(), "no picture");
+        let learned = shared.lock().unwrap().learned.clone();
+        assert_eq!(
+            learned.get(WindowServerId::new(1)).translucent,
+            Some(false),
+            "baked: opaque"
+        );
+
+        service.capturer.misshapen = false;
+        service.look(vec![set_of(&[1])], Looking::Watches);
+        assert_eq!(service.capturer.desktop_reads.get(), 2, "listed afresh");
+        assert!(shared.lock().unwrap().display.desktop_windows.is_some());
+
+        service.look(vec![set_of(&[1])], Looking::Watches);
+        assert_eq!(service.capturer.desktop_reads.get(), 2, "held");
+    }
+
+    /// What is known for a round's calls, the keys' holder, what was learned and the desktop's
+    /// windows, is read once a round at most, and only once a window is wanted; what the calls learned
+    /// is kept.
+    #[test]
+    fn what_a_round_knows_is_read_once_and_only_once_a_window_is_wanted() {
+        let (mut service, shared) = capturing(&[(1, frame_at(4.0)), (2, frame_at(870.0))]);
+        service.look(vec![set_of(&[3])], Looking::Watches);
+        assert_eq!(
+            (
+                service.capturer.key_reads.get(),
+                service.capturer.desktop_reads.get()
+            ),
+            (0, 0),
+            "nothing wanted: a landing poll"
+        );
+
+        service.look(vec![set_of(&[1]), set_of(&[2])], Looking::Watches);
+        assert_eq!(service.capturer.calls.borrow().len(), 2);
+        assert_eq!(
+            (
+                service.capturer.key_reads.get(),
+                service.capturer.desktop_reads.get()
+            ),
+            (1, 1)
+        );
+        let learned = shared.lock().unwrap().learned.clone();
+        for idx in [1, 2] {
+            assert_eq!(learned.get(WindowServerId::new(idx)).translucent, Some(true));
+        }
+
+        service.look(vec![set_of(&[1])], Looking::Watches);
+        assert_eq!(
+            (
+                service.capturer.key_reads.get(),
+                service.capturer.desktop_reads.get()
+            ),
+            (2, 1),
+            "the desktop's windows held"
+        );
+    }
+
+    /// A listing and a desktop render go through the capturer, and what a listing posts back is applied
+    /// on the thread: a window it did not find is owed nothing more.
+    #[test]
+    fn a_listing_and_a_render_are_asked_of_the_capturer_and_a_listing_posts_back() {
+        let (mut service, shared) = capturing(&[]);
+        shared.lock().unwrap().schedule.ask(
+            Ask {
+                priority: crate::pictures::domain::schedule::Priority::Focus,
+                targets: vec![target(1)],
+            },
+            Instant::now(),
+        );
+        service.make_calls();
+        assert_eq!(*service.capturer.listed.borrow(), vec![target(1)]);
+        assert_eq!(*service.capturer.rendered.borrow(), vec![built_in()]);
+        while let Ok((_, done)) = service.done.try_recv() {
+            service.finish(done);
+        }
+        assert_eq!(shared.lock().unwrap().schedule.owed().count(), 0, "not listed");
+    }
+
+    /// The bar is read off the framebuffer only with no transition asked: the overlay may be up.
+    #[test]
+    fn the_bar_is_read_only_with_no_transition_asked() {
+        let (service, _shared) = capturing(&[]);
+        service.transitions.fetch_add(1, Ordering::AcqRel);
+        service.picture_bar(built_in());
+        assert_eq!(service.capturer.bar_reads.get(), 0);
+
+        let (service, _shared) = capturing(&[]);
+        service.picture_bar(built_in());
+        assert_eq!(service.capturer.bar_reads.get(), 1);
     }
 }

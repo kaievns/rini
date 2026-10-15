@@ -27,13 +27,20 @@ without checking. Both are in `docs/implementation-audit.md` under 4.4 and 4.4.1
 The test for it: if the thing behind the `#[cfg]` is a QUERY — something the operating system
 answers — a fake is fine, and it belongs at the boundary with the other fakes. If it is a RULE —
 something rini decides — take what the rule reads as a value and let the test name it.
-`manageable(Facts)` in `src/windows/domain/manageable.rs` is what that looks like.
+`manageable(Facts)` in `src/windows/domain/manageable.rs` is what that looks like. Where a thread
+both decides and makes the calls, the calls are a port it is generic over: the pictures service is
+`Service<C: Capturer>` (`src/pictures/platform/capturer.rs`), and its tests run its rounds against
+`FakeCapturer`, which answers from the frames a test gives it and records every call made
+(`overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own`). A fake gives only answers
+the real calls can: its misshapen call is the baked one, so it yields no picture and its windows are
+opaque, as in `skylight::capture_on_screen`.
 
 ## Which seam to use
 
 Reach for the seam where the read is made; a rule below it takes the answers as values and needs
-none. Each boundary has one seam but the window server, which has two until the frames thread moves
-onto the port: `WindowServer`, and the frames thread's narrower `Reader`.
+none. Each boundary has one seam but the window server, which has three: `WindowServer`; the frames
+thread's narrower `Reader`, until that thread moves onto the port; and the pictures thread's
+`Capturer`, which makes its captures as well as its reads.
 
 | what the code asks | seam | production | a test passes |
 |---|---|---|---|
@@ -41,6 +48,7 @@ onto the port: `WindowServer`, and the frames thread's narrower `Reader`.
 | Accessibility, from the per-app thread | `AxWorld`, a type parameter (`src/windows/platform/ax/world.rs`) | `MacAx` | `FakeAx`, whose elements are numbers; an element with nothing recorded answers as a window that has gone |
 | the window server, from the frames thread that follows windows | `Reader`, a struct of fn pointers (`src/displays/platform/window_notify.rs`), a narrower view of the window server answered through the same free functions, which folds into `WindowServer` when `window_notify` moves onto the port | `LIVE` | a `Reader` of its own fns |
 | displays and spaces, from the spaces actor | `LiveDisplays` and `SpaceKinds`, structs of fn pointers (`src/displays/platform/spaces.rs`) | `from_window_server()` | `LiveDisplays::silent()`, which knows nothing, and `SpaceKinds::for_tests()`, or a struct of its own |
+| the window server and ScreenCaptureKit, from the pictures thread | `Capturer`, a type parameter (`src/pictures/platform/capturer.rs`) | `MacCapturer` | `FakeCapturer`, answering from the frames a test gives it and recording every call |
 | the screens, for `ScreenCache` | `System`, a type parameter (`src/displays/screen.rs`) | `Actual` | a `System` of its own, as the stubs in `screen.rs`'s tests are |
 
 A caller not yet handed a `WindowServer` calls the free functions of the same names in

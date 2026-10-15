@@ -26,9 +26,10 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, refreshes, hints, holds, display changes and handover checks in, the next call out; the warm filter, and the capture budgets and cadences |
 | **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the `Landing`, `Change` and `Live` watches, the focus hint, and the band prints each client was last delivered, which decide what is news; a window those watches wait for that ends cut by the display's edge, a focus target or a repainting `Landing` window, handed to ScreenCaptureKit (`Outcome::clipped`, `Outcome::elsewhere`) |
 | **Refreshes** | `domain/refresh.rs` — windows pictured afresh at rest once their look has turned: which are due a look, each one's captures held until its look settles and the one it settled on, and which are owed ScreenCaptureKit's capture instead |
-| **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight calls, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
+| **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes the service's own SkyLight and ScreenCaptureKit calls through its `Capturer`, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
 | **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, a landing whose picture will not come or a turn of the window losing focus that will not be seen, and a handover check's overlay picture taken and its measure |
 | **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage`, its `Route` (`domain/route.rs`) and its `Ground`, read once on first ask; the stand-in, one pixel, whose colour is the ground of any picture none could be read off; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
+| **What the thread reads and captures** | `platform/capturer.rs` — `Capturer`, the port the service is generic over: every window-server read and every capture its thread makes, a window's server frame, the process holding the keys, the desktop's windows, a batched capture of windows on screen, a listing, a capture and a render through ScreenCaptureKit, a handover check's two pictures and the bar; `MacCapturer`, the calls themselves, and under test `FakeCapturer`, which answers from what a test gives it and records each call |
 | **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, the framed capture of one window with, wholly on a display, its blur, and a handover check's overlay alone and whole screen |
 | **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, read in the picture's own colour space and pixel format where `sample_format` reads it, and its ground off them, its thumbprint, a bitmap's drawn small and a surface's read off its pixels, which says whether its window's rendering has settled (`picture_thumbprint`, `surface_thumbprint`), what a window's first picture says of its translucency, and whether its baked picture shows a material; and a picture drawn whole for a handover check |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
@@ -63,6 +64,16 @@ engine, the reactor and the switcher each hold a `Pictures` handle.
 | holds | `hold` at a transition's begin, before anything is composed, `Settling` at its lift, `Released` at its quiet |
 | reads | `usable`, `usable_many`, `focused`, `knowledge`, `windows`, `stand_in`, `dressing`, from any thread under one lock |
 | hands over | `insert`, for the flight engine's one capture of its own, of a window that has just opened |
+
+Every read and capture the thread makes goes through the `Capturer` it was started with
+(`platform/capturer.rs`), so its rounds run in a test against `FakeCapturer`: a refresh that stops at a
+press asked mid-round (`a_refresh_makes_no_call_once_a_transition_is_asked_and_a_watch_round_makes_every_one`),
+what it leaves unseen (`a_window_whose_call_a_press_stopped_is_not_seen`), the calls a set is split
+into (`overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own`), no picture and the
+desktop's windows dropped after a misshapen call (`a_misshapen_batch_leaves_the_desktop_windows_to_be_listed_again`) and
+what a round reads once (`what_a_round_knows_is_read_once_and_only_once_a_window_is_wanted`). The
+handle's own captures, the desktop and the bar `dressing` composites on the caller's thread, do not
+go through it.
 
 Asks, refreshes, watches, hints, holds and forgets are messages, applied in order on the thread, every
 one already queued before the next call is made, so the newest wins. Reads are not: they lock the shared state and
@@ -292,7 +303,7 @@ own id, and every flight and the switcher draw it by that id. Why: "The pictures
 
 `domain/coverage.rs` → `domain/cache.rs` → `domain/route.rs` → `platform/picture.rs` → `domain/region.rs` →
 `domain/knowledge.rs` → `domain/schedule.rs` → `domain/watch.rs` → `domain/refresh.rs` →
-`platform/service.rs` → `platform/skylight.rs` → `platform/measure.rs` →
+`platform/service.rs` → `platform/capturer.rs` → `platform/skylight.rs` → `platform/measure.rs` →
 `platform/screencapturekit.rs`.
 
 ## Detail
