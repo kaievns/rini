@@ -1108,14 +1108,13 @@ const FN_LIMIT: usize = 100;
 const FILE_LIMIT: usize = 1500;
 
 /// The functions over `FN_LIMIT`, each at its size now as its ceiling: file, name, ceiling.
-const LONG_FNS: [(&str, &str, usize); 27] = [
+const LONG_FNS: [(&str, &str, usize); 26] = [
     ("crates/rini-ipc/src/mach.rs", "mach_server_begin", 101),
     ("src/animation/domain/choreography/slide.rs", "retarget", 156),
     ("src/animation/domain/motion/plan.rs", "merge_plans", 202),
     ("src/app/config/kdl/apply.rs", "apply", 137),
     ("src/app/config/kdl/apply.rs", "apply_binds", 105),
     ("src/app/config/kdl/apply.rs", "window_rule", 124),
-    ("src/app/notifications.rs", "new", 130),
     ("src/displays/screen.rs", "refresh_snapshot", 106),
     ("src/input/platform/keyboard.rs", "build_cg_keycode_table", 125),
     ("src/layout/domain/constraints.rs", "solve_axis_lengths", 114),
