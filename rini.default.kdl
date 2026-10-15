@@ -373,7 +373,6 @@ binds {
     //   spawn-sh "command"                            run a command line through sh -c
     //   load-config-file                              re-read this file now
     //   quit                                          save the layout and exit
-    //   save-layout "path" / restore-layout "path" scope="workspace"|"space" source="saved-active-space"|"current-space"
     //   redistribute-windows                          spread windows back across workspaces by where they belong
     // The switcher's next-window and previous-window go in recent-windows' binds.
 

@@ -1098,6 +1098,16 @@ fn the_debug_actions_are_gone() {
     }
 }
 
+/// Kai deleted the scoped manual layouts on 2026-10-15 (`specs/persistence.md`).
+#[test]
+fn no_action_saves_or_restores_a_layout_file() {
+    for bind in ["save-layout \"/tmp/l.ron\"", "restore-layout \"/tmp/l.ron\" scope=\"space\""] {
+        let report = refused(&format!("binds {{\n    Mod+J {{ {bind}; }}\n}}\n"));
+        let name = bind.split_once(' ').unwrap().0;
+        assert!(report.contains(&format!("unknown action `{name}`")), "{name}: {report}");
+    }
+}
+
 /// Every action decodes from its name, with the arguments it needs.
 #[test]
 fn every_action_name_decodes() {
@@ -1111,8 +1121,6 @@ fn every_action_name_decodes() {
         | "move-window-to-monitor"
         | "move-mouse-to-monitor" => " 1",
         "spawn" | "spawn-sh" => " \"true\"",
-        "save-layout" => " \"/tmp/layout.ron\"",
-        "restore-layout" => " \"/tmp/layout.ron\" scope=\"workspace\"",
         _ => "",
     };
     for (index, name) in Action::VARIANTS.iter().enumerate() {

@@ -1,11 +1,6 @@
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    Direction, DisplaySelector, ResizeOrientation, RestoreScope, RestoreSource, WindowId,
-    WorkspaceSelector,
-};
+use crate::{Direction, DisplaySelector, ResizeOrientation, WindowId, WorkspaceSelector};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[cfg_attr(test, derive(strum::VariantNames))]
@@ -61,16 +56,7 @@ pub enum LayoutCommand {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum ReactorCommand {
-    SaveLayout {
-        path: PathBuf,
-    },
     SaveAndExit,
-    RestoreLayout {
-        path: PathBuf,
-        scope: RestoreScope,
-        #[serde(default)]
-        source: RestoreSource,
-    },
     SwitchSpace(Direction),
     ToggleSpaceActivated,
     /// Spread each display's windows back across workspaces by their recorded affinity.

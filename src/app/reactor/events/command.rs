@@ -238,17 +238,6 @@ fn save_layout(
     )
 }
 
-pub fn handle_command_reactor_save_layout(
-    state: &RiniState,
-    layout: &mut LayoutManager,
-    path: std::path::PathBuf,
-    active_space: Option<SpaceId>,
-) -> anyhow::Result<EventOutcome> {
-    save_layout(state, layout, path.clone(), active_space)?;
-    info!(path = %path.display(), "Saved layout");
-    Ok(EventOutcome::no_change().with_stdout_line(format!("Saved layout to {}", path.display())))
-}
-
 #[derive(Debug, Clone)]
 pub struct ToggleSpacePayload {
     pub config: SpaceActivationConfig,

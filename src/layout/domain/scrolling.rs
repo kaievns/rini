@@ -1713,17 +1713,6 @@ impl ScrollingLayoutSystem {
         state.enter_full_width(wid);
     }
 
-    /// Remove a window from ONE layout only.
-    ///
-    /// `remove_window` spans every layout the system owns. A workspace now owns one layout
-    /// (strip) per display, so normalizing a single display's strip must not reach into the
-    /// others — doing so deleted windows from the display they legitimately sat on.
-    pub fn remove_window_from_layout(&mut self, layout: LayoutId, wid: WindowId) {
-        if let Some(state) = self.layouts.get_mut(layout) {
-            let _ = state.remove_window(wid);
-        }
-    }
-
     pub fn remove_windows_for_app(&mut self, pid: pid_t) {
         for state in self.layouts.values_mut() {
             let windows: Vec<_> = state

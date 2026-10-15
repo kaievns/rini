@@ -1,4 +1,4 @@
-use rini_ipc::protocol::{RestoreScope, RestoreSource, SwitchScope, WorkspaceSelector};
+use rini_ipc::protocol::{SwitchScope, WorkspaceSelector};
 use strum::VariantNames;
 
 use super::*;
@@ -182,22 +182,6 @@ fn table() -> Vec<(Action, Lowered)> {
         ),
         (Action::LoadConfigFile, Lowered::ReloadConfig),
         (Action::Quit, reactor(R::SaveAndExit)),
-        (
-            Action::SaveLayout("/tmp/l.ron".into()),
-            reactor(R::SaveLayout { path: "/tmp/l.ron".into() }),
-        ),
-        (
-            Action::RestoreLayout {
-                path: "/tmp/l.ron".into(),
-                scope: RestoreScope::Space,
-                source: None,
-            },
-            reactor(R::RestoreLayout {
-                path: "/tmp/l.ron".into(),
-                scope: RestoreScope::Space,
-                source: RestoreSource::SavedActiveSpace,
-            }),
-        ),
         (Action::RedistributeWindows, reactor(R::RedistributeWindows)),
         (
             Action::NextWindow { scope: None, filter: None },

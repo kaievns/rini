@@ -16,10 +16,6 @@ struct SpaceLayoutInfo {
     last_saved: Option<LayoutId>,
 }
 
-/// Opaque workspace-layout payload used by transactional restore code.
-/// Keeping `SpaceLayoutInfo` private prevents persistence from depending on its internal maps.
-pub struct WorkspaceLayoutSnapshot(SpaceLayoutInfo);
-
 impl SpaceLayoutInfo {
     fn active(&self) -> Option<LayoutId> {
         self.configurations.get(&self.active_size).copied()
@@ -82,31 +78,6 @@ impl WorkspaceLayouts {
             }
         }
         Ok(())
-    }
-
-    pub fn snapshot_workspace(
-        &self,
-        space: SpaceId,
-        workspace: crate::workspaces::VirtualWorkspaceId,
-    ) -> Option<WorkspaceLayoutSnapshot> {
-        self.map.get(&(space, workspace)).cloned().map(WorkspaceLayoutSnapshot)
-    }
-
-    pub fn install_workspace_snapshot(
-        &mut self,
-        space: SpaceId,
-        workspace: crate::workspaces::VirtualWorkspaceId,
-        snapshot: WorkspaceLayoutSnapshot,
-    ) {
-        self.map.insert((space, workspace), snapshot.0);
-    }
-
-    pub fn contains_workspace(
-        &self,
-        space: SpaceId,
-        workspace: crate::workspaces::VirtualWorkspaceId,
-    ) -> bool {
-        self.map.contains_key(&(space, workspace))
     }
 
     pub fn ensure_active_for_space(
@@ -269,21 +240,6 @@ impl WorkspaceLayouts {
         layouts.sort_unstable();
         layouts.dedup();
         layouts
-    }
-
-    #[cfg(test)]
-    pub fn insert_layout_configuration_for_test(
-        &mut self,
-        space: SpaceId,
-        workspace: crate::workspaces::VirtualWorkspaceId,
-        size: CGSize,
-        layout: LayoutId,
-    ) {
-        self.map
-            .get_mut(&(space, workspace))
-            .expect("test workspace must be initialized")
-            .configurations
-            .insert(Size::from(size), layout);
     }
 
     pub fn ensure_active_for_workspace(

@@ -141,8 +141,3 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   migrated them back; one dock/undock produced a layout only fixable by
   deleting `layout.ron`. The released windows lay out fresh at default width;
   their affinity survives, so replugging repatriates them.
-- **Restoring one display's strip must not overwrite the others.** A workspace's
-  `layout_system` holds a strip per display; replacing the whole
-  `VirtualWorkspace` object (safe when a workspace had one display) wiped every
-  other display's strip. Only this display's focused window and strip are taken
-  from the snapshot; name and mode are current-session metadata.

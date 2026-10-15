@@ -2,12 +2,6 @@ use super::matcher::{RestoreCandidate, choose_match};
 use super::*;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(super) struct ReconcileOutcome {
-    pub(super) matched: bool,
-    pub(super) duplicates_removed: usize,
-}
-
 impl LayoutEngine {
     pub(super) fn discard_candidates(&mut self, discarded: Vec<WindowId>) -> usize {
         for window in &discarded {
@@ -25,24 +19,6 @@ impl LayoutEngine {
             self.persistence.remove_candidate(*window);
         }
         discarded.len()
-    }
-
-    fn discard_unmatched_candidates_matching(
-        &mut self,
-        mut should_discard: impl FnMut(WindowId) -> bool,
-    ) -> usize {
-        let discarded: Vec<_> = self
-            .persistence
-            .pending_windows
-            .iter()
-            .copied()
-            .filter(|window| should_discard(*window))
-            .collect();
-        self.discard_candidates(discarded)
-    }
-
-    pub(super) fn discard_all_unmatched_candidates(&mut self) -> usize {
-        self.discard_unmatched_candidates_matching(|_| true)
     }
 
     pub fn discard_unmatched_candidates_for_app(
@@ -210,9 +186,9 @@ impl LayoutEngine {
         live_space: SpaceId,
         live: WindowId,
         fingerprint: &WindowFingerprint,
-    ) -> ReconcileOutcome {
+    ) {
         if self.persistence.pending_windows.is_empty() {
-            return ReconcileOutcome::default();
+            return;
         }
 
         let preferred_location = window_store
@@ -234,10 +210,9 @@ impl LayoutEngine {
         let Some(decision) =
             choose_match(live, live_space, fingerprint, preferred_location, &candidates)
         else {
-            return ReconcileOutcome::default();
+            return;
         };
         let old = decision.selected;
-        let duplicates_removed = decision.duplicate_identities.len();
 
         if decision.exact_identity && !decision.duplicate_identities.is_empty() {
             // A WindowServer id identifies one live window. Old snapshots produced during AX
@@ -267,10 +242,6 @@ impl LayoutEngine {
                 live,
                 workspace,
             );
-        }
-        ReconcileOutcome {
-            matched: true,
-            duplicates_removed,
         }
     }
 }

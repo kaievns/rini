@@ -50,8 +50,8 @@ fragment leaves.
 The format lives in `app/config/kdl`, except for what a bind names. `input::domain::binding` derives
 knus's `Decode` for `Action` and decodes the values its actions take: `Decimal`,
 `WorkspaceReference` and `MonitorReference` as knus scalars, and `SizeChange`, `SwitcherScope` and
-`SwitcherFilter` from the config's spelling with `FromStr`, as `rini-ipc` does for `RestoreScope`
-and `RestoreSource`. The features' settings types carry no parsing.
+`SwitcherFilter` from the config's spelling with `FromStr`. The features' settings types carry no
+parsing.
 
 ## Naming
 
@@ -110,9 +110,8 @@ rini-only actions keep rini's own words: `move-window-left` and `-right` (a lone
 columns, a stacked one leaves as a new column, which niri's `move-column-left` never does),
 `toggle-fold-left` and `-right` (niri's `consume-or-expel-window-left` never round-tripped:
 `src/layout/docs/strip.md`), `toggle-stack`, `cycle-visible-windows`, `snap-strip`,
-`move-mouse-to-monitor-…`, `switch-space-left` and `-right`, `toggle-space-activated`, and the
-layout save and restore. Every action and the
-wire command it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
+`move-mouse-to-monitor-…`, `switch-space-left` and `-right`, and `toggle-space-activated`. Every
+action and the wire command it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
 
 ## What went with the TOML
 

@@ -18,9 +18,9 @@ the strip fresh.
 ## Refusing a file
 
 - A file written by a NEWER schema version MUST be refused rather than half-read.
-- A file written by an OLDER schema version MUST be refused too, layout and all, whether it is
-  `layout.ron` or a file `save-layout` wrote, and the refusal MUST say which version it is. rini reads only the current shape, so an older file read as one would
-  come back without the window records its own shape held.
+- A file written by an OLDER schema version MUST be refused too, layout and all, and the refusal
+  MUST say which version it is. rini reads only the current shape, so an older file read as one
+  would come back without the window records its own shape held.
 
 > **Reported 2026-10-15.** Kai's decision in the dead-code sweep: delete every reader of files older
 > than schema 6. Kai's `~/.rini/layout.ron` was already at 6, and the readers for 0 to 3 could not
@@ -42,15 +42,19 @@ the strip fresh.
 - A saved identity MUST NOT be matched to the wrong live window. Both identities are unreliable —
   rini's own dies with the process, the window server's is recycled — so a match needs evidence
   specific to the window: its title and size within a known application.
-- A scoped restore MUST NOT consume a live window from outside its scope.
 - Restoring MUST NOT strand a window at coordinates no attached display covers.
+- rini restores only `~/.rini/layout.ron`, and only at start. No action saves the layout to a file
+  of its own or restores one into a workspace or a Space: a bind to `save-layout` or
+  `restore-layout` MUST be refused as an unknown action, and `rini-cli execute` MUST have no
+  `save-layout` or `load-layout`.
+
+> **Reported 2026-10-15.** Kai's decision in the dead-code sweep: delete the scoped manual layouts,
+> "we'll implement layouts differently later".
 
 ## Saving
 
 - A save MUST NOT write a value it could not read. "Could not read" and "is not set" are different
   answers, and writing the second for the first erases what was remembered.
-- A save MUST NOT write an origin hint that has no corresponding saved layout: a stale observation is
-  worse than none, because it makes a portable file look unambiguous.
 - The autosave and the quit save MUST forget what is kept under a native space that macOS no longer
   lists on any attached display, on screen or off, that no display is remembered on, that is not the
   saved active space, and that no window is on: its layouts, which workspace it showed and the focus
@@ -73,5 +77,6 @@ the strip fresh.
 ## Where it lives
 
 `src/workspaces/engine/persistence/` is the whole of it: `storage.rs` loads and saves, `snapshot.rs` is
-the file shape, `restore.rs` the scoping, `matcher.rs` the identity rules. Which native spaces a save
+the file shape, `reconcile.rs` puts a live window back in its saved slot, `matcher.rs` the identity
+rules. Which native spaces a save
 forgets is decided in `src/workspaces/domain/workspaces.rs`.

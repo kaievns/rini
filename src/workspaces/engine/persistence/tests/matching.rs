@@ -7,10 +7,7 @@ use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::CGSize;
 
 use super::*;
-use crate::windows::domain::info::WindowInfo;
-use crate::windows::domain::state::WindowState;
 use crate::workspaces::LayoutEvent;
-use rini_core::ids::WindowServerId;
 
 #[test]
 fn identity_transfer_preserves_window_tree_position_and_fingerprint() {
@@ -398,7 +395,7 @@ fn rejected_fuzzy_candidate_is_removed_when_discovery_finishes() {
     );
     engine.persistence.pending_windows.insert(ghost);
 
-    let outcome = engine.reconcile_restored_window(
+    engine.reconcile_restored_window(
         &mut window_store,
         &mut memory,
         space,
@@ -411,7 +408,6 @@ fn rejected_fuzzy_candidate_is_removed_when_discovery_finishes() {
             app_id: Some("com.example.app".into()),
         },
     );
-    assert!(!outcome.matched);
     assert!(engine.persistence.pending_windows.contains(&ghost));
 
     let _ = engine.handle_event(
@@ -614,114 +610,5 @@ fn duplicate_restored_identity_prefers_live_workspace_assignment() {
         engine
             .workspace_tree(preferred_workspace)
             .contains_window(preferred_layout, live)
-    );
-}
-
-#[test]
-fn workspace_restore_preserves_live_window_when_saved_process_local_id_is_reused() {
-    let space = SpaceId::new(133);
-    let size = CGSize::new(1200.0, 800.0);
-    let frame = objc2_core_foundation::CGRect::new(
-        objc2_core_foundation::CGPoint::new(10.0, 20.0),
-        CGSize::new(700.0, 500.0),
-    );
-    let reused = WindowId::new(76, 1);
-
-    let mut snapshot = test_engine();
-    let mut snapshot_memory = DisplayMemory::default();
-    let mut snapshot_store = WindowStore::default();
-    let _ = snapshot.handle_event(
-        &mut snapshot_store,
-        &mut snapshot_memory,
-        LayoutEvent::SpaceExposed(space, size),
-    );
-    let source_workspace = snapshot.active_workspace(space).unwrap();
-    let source_layout = snapshot.workspace_layouts.active(space, source_workspace).unwrap();
-    snapshot
-        .workspace_tree_mut(source_workspace)
-        .add_window_after_selection(source_layout, reused);
-    snapshot.persistence.windows.insert(
-        reused,
-        WindowFingerprint {
-            window_server_id: Some(7600),
-            title: Some("Old window".into()),
-            width: 700.0,
-            height: 500.0,
-            app_id: Some("com.example.old".into()),
-        },
-    );
-    let path = std::env::temp_dir().join(format!(
-        "rini-reused-id-workspace-restore-test-{}-{}.ron",
-        std::process::id(),
-        space.get(),
-    ));
-    snapshot.save(&mut snapshot_memory, path.clone()).unwrap();
-
-    let mut engine = test_engine();
-    let mut engine_memory = DisplayMemory::default();
-
-    let _memory = DisplayMemory::default();
-    let mut window_store = WindowStore::default();
-    let _ = engine.handle_event(
-        &mut window_store,
-        &mut engine_memory,
-        LayoutEvent::SpaceExposed(space, size),
-    );
-    let target_workspace = engine.active_workspace(space).unwrap();
-    window_store.insert_window(
-        reused,
-        WindowState {
-            info: WindowInfo {
-                is_standard: true,
-                is_root: true,
-                is_minimized: false,
-                is_resizable: true,
-                min_size: None,
-                max_size: None,
-                title: "Current window".into(),
-                frame,
-                sys_id: Some(WindowServerId::new(7601)),
-                bundle_id: Some("com.example.current".into()),
-                path: None,
-                ax_role: None,
-                ax_subrole: None,
-                is_modal: false,
-            },
-            frame_monotonic: frame,
-            is_manageable: true,
-            ignore_app_rule: false,
-        },
-    );
-    assert!(engine.virtual_workspace_manager.assign_window_to_workspace(
-        &mut window_store,
-        space,
-        reused,
-        target_workspace,
-    ));
-    engine.add_window_to_layout(&mut window_store, &mut engine_memory, space, reused);
-
-    let report = engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::new(RestoreScope::Workspace, space),
-            &mut window_store,
-            &mut engine_memory,
-            &LayoutSettings::default(),
-        )
-        .unwrap();
-    let _ = std::fs::remove_file(path);
-
-    let target_layout = engine.workspace_layouts.active(space, target_workspace).unwrap();
-    assert_eq!(report.matched, 0);
-    assert_eq!(report.unmatched, 1);
-    assert!(engine.workspace_tree(target_workspace).contains_window(target_layout, reused));
-    assert_eq!(
-        window_store.workspace_for_window(space, reused),
-        Some(target_workspace)
-    );
-    assert_eq!(engine.persistence.windows[&reused].window_server_id, Some(7601));
-    assert_eq!(
-        engine.persistence.windows[&reused].app_id.as_deref(),
-        Some("com.example.current")
     );
 }

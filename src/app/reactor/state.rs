@@ -97,36 +97,3 @@ pub(crate) struct AppState {
     pub(crate) info: AppInfo,
     pub(crate) handle: AppThreadHandle,
 }
-
-#[cfg(test)]
-mod tests {
-    use rini_ipc::protocol::{RestoreScope, RestoreSource};
-
-    use super::*;
-
-    #[test]
-    fn legacy_restore_command_defaults_to_portable_source_policy() {
-        let mut serialized = serde_json::to_value(ReactorCommand::RestoreLayout {
-            path: "layout.ron".into(),
-            scope: RestoreScope::Workspace,
-            source: RestoreSource::CurrentSpace,
-        })
-        .unwrap();
-        serialized
-            .get_mut("restore_layout")
-            .and_then(serde_json::Value::as_object_mut)
-            .unwrap()
-            .remove("source");
-
-        let restored: ReactorCommand = serde_json::from_value(serialized).unwrap();
-
-        assert_eq!(
-            restored,
-            ReactorCommand::RestoreLayout {
-                path: "layout.ron".into(),
-                scope: RestoreScope::Workspace,
-                source: RestoreSource::SavedActiveSpace,
-            }
-        );
-    }
-}

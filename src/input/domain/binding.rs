@@ -11,7 +11,7 @@ use knus::decode::{Context, Kind};
 use knus::errors::DecodeError;
 use knus::span::Spanned;
 use knus::traits::ErrorSpan;
-pub use rini_ipc::protocol::{RestoreScope, RestoreSource, SwitchScope};
+pub use rini_ipc::protocol::SwitchScope;
 use serde::Serialize;
 
 use crate::input::domain::key::{ModKey, substitute_mod};
@@ -102,15 +102,6 @@ pub enum Action {
     LoadConfigFile,
     /// Save the layout and exit.
     Quit,
-    SaveLayout(#[knus(argument)] String),
-    RestoreLayout {
-        #[knus(argument)]
-        path: String,
-        #[knus(property, str)]
-        scope: RestoreScope,
-        #[knus(property, str)]
-        source: Option<RestoreSource>,
-    },
     RedistributeWindows,
     /// The switcher, only in `recent-windows › binds`.
     NextWindow {
@@ -324,7 +315,7 @@ mod tests {
 
     #[test]
     fn every_action_name_is_kebab_case_and_counted() {
-        assert_eq!(Action::VARIANTS.len(), 60);
+        assert_eq!(Action::VARIANTS.len(), 58);
         for name in Action::VARIANTS {
             assert!(
                 name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),

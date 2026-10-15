@@ -13,7 +13,6 @@ fn test_engine() -> LayoutEngine {
 mod announcements;
 mod launch_memory;
 mod matching;
-mod restore_scope;
 mod save_load;
 mod schema;
 mod startup;

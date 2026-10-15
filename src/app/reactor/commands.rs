@@ -11,45 +11,15 @@ use tracing::warn;
 
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::centered_in;
-use rini_ipc::protocol::{DisplaySelector, LayoutCommand, RestoreScope, RestoreSource};
+use rini_ipc::protocol::{DisplaySelector, LayoutCommand};
 
 use crate::displays::domain::screen::ScreenInfo;
-use crate::workspaces as layout;
 
 use super::Reactor;
 use super::events::EventOutcome;
 use super::events::command as command_workflow;
 
 impl Reactor {
-    pub(super) fn on_restore_layout(
-        &mut self,
-        path: std::path::PathBuf,
-        scope: RestoreScope,
-        source: RestoreSource,
-    ) -> anyhow::Result<EventOutcome> {
-        let Some(active_space) = self.active_display_space() else {
-            return Ok(EventOutcome::no_change().with_stdout_line(
-                "Could not restore saved layout: no active macOS space is available".into(),
-            ));
-        };
-        let request = layout::RestoreRequest { scope, active_space, source };
-        let outcome = EventOutcome::window_membership_changed(false, true);
-        let report = self.layout_manager.layout_engine.restore_layout(
-            path,
-            request,
-            &mut self.state.windows,
-            &mut self.state.display_memory,
-            &self.config.settings.layout,
-        );
-        Ok(match report {
-            Ok(report) => outcome.with_stdout_line(report.summary()),
-            Err(error) => {
-                tracing::error!(?scope, %error, "Could not restore saved layout");
-                outcome.with_stdout_line(format!("Could not restore saved layout: {error}"))
-            }
-        })
-    }
-
     pub(super) fn on_toggle_space_activated(&mut self) -> anyhow::Result<EventOutcome> {
         let space = self.active_display_space();
         let display_uuid = space.and_then(|space| {

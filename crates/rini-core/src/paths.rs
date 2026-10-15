@@ -9,7 +9,7 @@ pub fn data_dir() -> PathBuf {
     dirs::home_dir().unwrap().join(".rini")
 }
 
-/// `~/.rini/layout.ron`: the layout snapshot rini restores at start and `save-layout --saved` writes.
+/// `~/.rini/layout.ron`: the layout snapshot rini saves as it runs and at quit, and restores at start.
 pub fn restore_file() -> PathBuf {
     data_dir().join("layout.ron")
 }

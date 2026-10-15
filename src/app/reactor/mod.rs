@@ -1488,22 +1488,6 @@ impl Reactor {
                 let saved = self.save_layout_before_exit(rini_core::paths::restore_file());
                 return command_workflow::handle_command_reactor_save_and_exit(saved);
             }
-            Event::Command(Command::Reactor(ReactorCommand::SaveLayout { path })) => {
-                let active_space = self.active_display_space();
-                return command_workflow::handle_command_reactor_save_layout(
-                    &self.state,
-                    &mut self.layout_manager,
-                    path,
-                    active_space,
-                );
-            }
-            Event::Command(Command::Reactor(ReactorCommand::RestoreLayout {
-                path,
-                scope,
-                source,
-            })) => {
-                return self.on_restore_layout(path, scope, source);
-            }
             Event::Command(Command::Reactor(ReactorCommand::SwitchSpace(direction))) => {
                 return command_workflow::handle_switch_native_space(direction);
             }

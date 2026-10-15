@@ -140,17 +140,6 @@ impl FloatingPositionStore {
         self.positions.retain(|(_, _, stored_window), _| *stored_window != window);
     }
 
-    pub fn remove_workspace_window(
-        &mut self,
-        space: SpaceId,
-        workspace: VirtualWorkspaceId,
-        window: WindowId,
-    ) {
-        self.positions.retain(|(stored_space, stored_workspace, stored_window), _| {
-            (*stored_space, *stored_workspace, *stored_window) != (space, workspace, window)
-        });
-    }
-
     /// Keep at most one persisted location for a window identity.
     ///
     /// Layout restore treats workspace membership as singular. Floating frames must obey the
@@ -163,22 +152,6 @@ impl FloatingPositionStore {
         self.positions.retain(|(space, workspace, stored_window), _| {
             *stored_window != window || (*space, *workspace) == keep
         });
-    }
-
-    /// Replace one target workspace's saved floating frames from a snapshot.
-    /// Clearing first is essential: restore is replacement, not a merge with stale target state.
-    pub fn replace_workspace_positions(
-        &mut self,
-        target_space: SpaceId,
-        target_workspace: VirtualWorkspaceId,
-        positions: Vec<(WindowId, CGRect)>,
-    ) {
-        self.positions.retain(|(space, workspace, _), _| {
-            (*space, *workspace) != (target_space, target_workspace)
-        });
-        for (window, frame) in positions {
-            self.store(target_space, target_workspace, window, frame);
-        }
     }
 
     pub fn remove_app(&mut self, pid: pid_t) {
@@ -243,29 +216,5 @@ mod tests {
 
         assert_eq!(positions.get(SpaceId::new(1), workspace(), old), None);
         assert_eq!(positions.get(SpaceId::new(1), workspace(), new), Some(frame()));
-    }
-
-    #[test]
-    fn workspace_restore_replaces_target_frames_instead_of_merging() {
-        let mut source = FloatingPositionStore::default();
-        let mut target = FloatingPositionStore::default();
-        let source_space = SpaceId::new(1);
-        let target_space = SpaceId::new(2);
-        let source_window = WindowId::new(1, 1);
-        let stale_target_window = WindowId::new(2, 2);
-
-        source.store(source_space, workspace(), source_window, frame());
-        target.store(target_space, workspace(), stale_target_window, frame());
-        target.replace_workspace_positions(
-            target_space,
-            workspace(),
-            source.workspace_positions(source_space, workspace()),
-        );
-
-        assert_eq!(
-            target.get(target_space, workspace(), source_window),
-            Some(frame())
-        );
-        assert_eq!(target.get(target_space, workspace(), stale_target_window), None);
     }
 }

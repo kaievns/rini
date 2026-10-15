@@ -1,8 +1,7 @@
 use std::io::{self, Write};
-use std::path::PathBuf;
 use std::process::{self};
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use rini_core::ids::WindowId as InternalWindowId;
 use rini_core::ids::WindowServerId;
 use rini_ipc::RiniMachClient;
@@ -104,23 +103,6 @@ enum ExecuteCommands {
     },
     /// Save the layout file and exit Rini
     SaveAndExit,
-    /// Save Rini's current layout state without exiting
-    ///
-    /// Use --saved instead of PATH to update Rini's saved layout file.
-    SaveLayout {
-        #[command(flatten)]
-        file: LayoutFileSelection,
-    },
-    /// Restore a layout file to the current workspace or macOS Space
-    ///
-    /// Use --saved instead of PATH to load Rini's saved layout file.
-    LoadLayout {
-        #[command(flatten)]
-        file: LayoutFileSelection,
-        /// Restore one workspace or all saved workspaces for the current macOS Space.
-        #[arg(long, value_enum, default_value_t = CliRestoreScope::Workspace)]
-        scope: CliRestoreScope,
-    },
     /// Move every window back to the display it belongs to, keeping its workspace.
     ///
     /// Recovery for a layout where windows have piled onto one display. Does nothing when
@@ -200,12 +182,6 @@ enum WindowCommands {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum CliRestoreScope {
-    Workspace,
-    Space,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliResizeOrientation {
     Horizontal,
     Vertical,
@@ -220,17 +196,6 @@ impl From<CliResizeOrientation> for rini_ipc::protocol::ResizeOrientation {
             CliResizeOrientation::Smart => Self::Smart,
         }
     }
-}
-
-#[derive(Debug, Clone, Args)]
-#[group(required = true, multiple = false)]
-struct LayoutFileSelection {
-    /// Layout file path.
-    #[arg(value_name = "PATH")]
-    path: Option<PathBuf>,
-    /// Use Rini's saved layout file (~/.rini/layout.ron).
-    #[arg(long)]
-    saved: bool,
 }
 
 #[derive(Subcommand)]
@@ -434,32 +399,6 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::Display { display_cmd } => map_display_command(display_cmd)?,
         ExecuteCommands::Space { space_cmd } => map_space_command(space_cmd)?,
         ExecuteCommands::SaveAndExit => RiniCommand::Reactor(reactor::ReactorCommand::SaveAndExit),
-        ExecuteCommands::SaveLayout { file } => {
-            let path = if file.saved {
-                rini_core::paths::restore_file()
-            } else {
-                absolute_layout_path(file.path.expect("clap requires either PATH or --saved"))?
-            };
-            RiniCommand::Reactor(reactor::ReactorCommand::SaveLayout { path })
-        }
-        ExecuteCommands::LoadLayout { file, scope } => {
-            let (path, source) = if file.saved {
-                (
-                    rini_core::paths::restore_file(),
-                    rini_ipc::protocol::RestoreSource::CurrentSpace,
-                )
-            } else {
-                (
-                    absolute_layout_path(file.path.expect("clap requires either PATH or --saved"))?,
-                    rini_ipc::protocol::RestoreSource::SavedActiveSpace,
-                )
-            };
-            let scope = match scope {
-                CliRestoreScope::Workspace => rini_ipc::protocol::RestoreScope::Workspace,
-                CliRestoreScope::Space => rini_ipc::protocol::RestoreScope::Space,
-            };
-            RiniCommand::Reactor(reactor::ReactorCommand::RestoreLayout { path, scope, source })
-        }
         ExecuteCommands::Redistribute => {
             RiniCommand::Reactor(reactor::ReactorCommand::RedistributeWindows)
         }
@@ -470,16 +409,6 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::SwitchAppWindow { backward } => switch(backward, SwitchScope::App),
     };
     Ok(RiniRequest::ExecuteCommand { command })
-}
-
-fn absolute_layout_path(path: PathBuf) -> Result<PathBuf, String> {
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        std::env::current_dir()
-            .map(|current_dir| current_dir.join(path))
-            .map_err(|error| format!("could not resolve layout path: {error}"))
-    }
 }
 
 fn map_window_command(cmd: WindowCommands) -> Result<RiniCommand, String> {
@@ -801,6 +730,17 @@ mod tests {
                 other => panic!("{args:?} printed no help: {:?}", other.err()),
             };
             assert!(help.contains("counting from 0"), "{args:?}:\n{help}");
+        }
+    }
+
+    /// Kai deleted the scoped manual layouts on 2026-10-15 (`specs/persistence.md`).
+    #[test]
+    fn no_subcommand_saves_or_loads_a_layout_file() {
+        for subcommand in ["save-layout", "load-layout"] {
+            let error = Cli::try_parse_from(["rini-cli", "execute", subcommand, "--saved"])
+                .err()
+                .unwrap_or_else(|| panic!("{subcommand} parsed"));
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand, "{subcommand}");
         }
     }
 

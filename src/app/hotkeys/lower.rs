@@ -122,12 +122,6 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
         Action::SpawnSh(command) => Lowered::Spawn(crate::app::startup::shell(&command)),
         Action::LoadConfigFile => Lowered::ReloadConfig,
         Action::Quit => reactor(R::SaveAndExit),
-        Action::SaveLayout(path) => reactor(R::SaveLayout { path: path.into() }),
-        Action::RestoreLayout { path, scope, source } => reactor(R::RestoreLayout {
-            path: path.into(),
-            scope,
-            source: source.unwrap_or_default(),
-        }),
         Action::RedistributeWindows => reactor(R::RedistributeWindows),
         Action::NextWindow { scope, filter } => switch(false, scope, filter),
         Action::PreviousWindow { scope, filter } => switch(true, scope, filter),

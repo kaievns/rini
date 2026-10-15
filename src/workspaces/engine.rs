@@ -30,7 +30,6 @@ mod commands;
 mod persistence;
 
 use persistence::PersistenceState;
-pub use persistence::{RestoreReport, RestoreRequest, RestoreScope, RestoreSource, RestoreWarning};
 pub use rini_ipc::protocol::LayoutCommand;
 
 /// One window as `WindowsOnScreenUpdated` describes it: id, title, AX role, AX subrole,

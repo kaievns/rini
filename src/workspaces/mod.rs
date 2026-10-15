@@ -15,5 +15,5 @@ pub use domain::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
 pub use domain::virtual_workspace::{VirtualWorkspace, VirtualWorkspaceId, WorkspaceStore};
 pub use domain::window_store::{WindowStore, WindowWorkspaceInfo};
 pub use domain::workspaces::WorkspaceLayouts;
-pub use engine::{EventResponse, LayoutCommand, LayoutEngine, LayoutEvent, RestoreRequest};
+pub use engine::{EventResponse, LayoutCommand, LayoutEngine, LayoutEvent};
 pub use rini_ipc::protocol::Direction;

@@ -282,12 +282,11 @@ impl LayoutEngine {
 
     /// Save a snapshot repeatedly and cheaply, without reshaping live layout state.
     ///
-    /// `save_current_layout` is the right call for an explicit, one-off "save my
-    /// layout": it normalizes floating-versus-tiled ownership, prunes duplicate tree
-    /// entries and rewrites stored floating frames. Those are mutations, and running
-    /// them on every layout change corrupts the running arrangement — it moved
-    /// floating windows out of tiling trees mid-session and dropped the frame a
-    /// window should be restored to when un-fullscreened.
+    /// `save_current_layout` is the quit save's call: it normalizes floating-versus-tiled
+    /// ownership, prunes duplicate tree entries and rewrites stored floating frames. Those are
+    /// mutations, and running them on every layout change corrupts the running arrangement — it
+    /// moved floating windows out of tiling trees mid-session and dropped the frame a window
+    /// should be restored to when un-fullscreened.
     ///
     /// Autosave therefore only refreshes fingerprints (needed so a window reopened
     /// after a restart can be matched back to its saved slot) and writes. Anything
@@ -317,8 +316,6 @@ impl LayoutEngine {
         active_space: Option<SpaceId>,
     ) -> std::io::Result<()> {
         self.refresh_window_fingerprints(window_store);
-        // Never write an origin hint that has no corresponding saved layout. A stale native-space
-        // observation is worse than no hint because it makes a portable file look unambiguous.
         self.persistence.set_saved_active_space(
             active_space.filter(|space| self.workspace_layouts.spaces().contains(space)),
         );
