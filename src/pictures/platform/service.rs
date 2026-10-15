@@ -134,7 +134,7 @@ fn forget_window(
     shared.learned.forget(WindowServerId::from(window));
 }
 
-/// Every picture of `window`, held, owed or delivered, and its focused look's last check, gone.
+/// Every picture of `window`, held, owed or delivered, and its focused face's last check, gone.
 /// What is known of it stays: a window pictured twice shares its server id with the managed one.
 fn forget_pictures(
     shared: &mut Shared,
@@ -503,7 +503,7 @@ impl Pictures {
 
     pub fn hint(&self, hint: Hint) { self.commands.send(Command::Hint(hint)) }
 
-    /// The picture `tag` was last delivered of `window` shows it focused: kept as its focused look.
+    /// The picture `tag` was last delivered of `window` shows it focused: kept as its focused face.
     pub fn keep_focused(&self, tag: Tag, window: WindowId) {
         self.commands.send(Command::KeepFocused(tag, window))
     }
@@ -568,7 +568,7 @@ impl Pictures {
         held.desktop = Some(desktop);
     }
 
-    /// `look` held as `window`'s focused look, as a delivery kept focused would hold it.
+    /// `look` held as `window`'s focused face, as a delivery kept focused would hold it.
     #[cfg(test)]
     pub fn hold_focused(&self, window: WindowId, look: Picture) {
         self.lock().cache.keep_focused(window, look)
@@ -668,7 +668,7 @@ struct Service<C: Capturer> {
     transitions: Arc<AtomicU64>,
     /// How many `Hold::Transition` this thread has applied, against `transitions` asked.
     applied_transitions: u64,
-    /// The focused look and the newer picture last compared for each window, by when each was taken:
+    /// The focused face and the newer picture last compared for each window, by when each was taken:
     /// a pair is compared once.
     looks_checked: HashMap<WindowId, (Instant, Instant)>,
     sinks: Vec<Sink>,
@@ -741,14 +741,14 @@ impl<C: Capturer> Service<C> {
         }
     }
 
-    /// What no transition holding the service allows: regions kept as copies, and focused looks
+    /// What no transition holding the service allows: regions kept as copies, and focused faces
     /// compared with what was captured since.
     fn at_rest(&mut self) {
         self.keep_copies();
         self.check_focused();
     }
 
-    /// Every region the cache holds, as a picture or a focused look, replaced by a copy of its own: a
+    /// Every region the cache holds, as a picture or a focused face, replaced by a copy of its own: a
     /// region keeps its whole composite alive. Copied off the lock, and put back only over the picture
     /// it was made of. Why a transition draws regions at all: "A region is drawn in a transition" in
     /// `src/pictures/docs/README.md`.
@@ -763,7 +763,7 @@ impl<C: Capturer> Service<C> {
             };
             (
                 regions(&mut shared.cache.iter()),
-                regions(&mut shared.cache.focused_looks()),
+                regions(&mut shared.cache.focused_faces()),
             )
         };
         for (window, region) in pictures {
@@ -786,14 +786,14 @@ impl<C: Capturer> Service<C> {
         }
     }
 
-    /// Drops each focused look a newer capture of its window shows different content than, below the
+    /// Drops each focused face a newer capture of its window shows different content than, below the
     /// band where focus shows. Compared off the lock, once per pair.
     fn check_focused(&mut self) {
         let pairs: Vec<(WindowId, Picture, Picture)> = {
             let shared = self.shared.lock().unwrap();
             shared
                 .cache
-                .focused_looks()
+                .focused_faces()
                 .filter_map(|(window, look)| {
                     let newer =
                         shared.cache.get(*window).filter(|newer| newer.taken > look.taken)?;
@@ -1841,11 +1841,11 @@ mod tests {
         }
     }
 
-    /// A client keeps as a window's focused look only a picture it was delivered under the tag it
-    /// names; the look stays through a newer capture of the same content, goes with one of different
+    /// A client keeps as a window's focused face only a picture it was delivered under the tag it
+    /// names; the face stays through a newer capture of the same content, goes with one of different
     /// content, and is judged only once no transition holds the service.
     #[test]
-    fn a_focused_look_is_kept_by_its_tag_and_dropped_when_newer_content_differs() {
+    fn a_focused_face_is_kept_by_its_tag_and_dropped_when_newer_content_differs() {
         let (mut service, shared) = detached_service();
         let start = Instant::now();
         shared.lock().unwrap().delivered.record(tag(2), wid(1), flat(0.5, start));
@@ -1887,7 +1887,7 @@ mod tests {
         );
     }
 
-    /// A window that is gone takes everything known of it: its pictures, its focused look, what it was
+    /// A window that is gone takes everything known of it: its pictures, its focused face, what it was
     /// delivered, and its knowledge, whose id may come back on another window.
     #[test]
     fn a_forgotten_window_leaves_nothing_behind() {
@@ -1910,9 +1910,9 @@ mod tests {
         );
     }
 
-    /// A focused look that is a region is kept as a copy at a release too.
+    /// A focused face that is a region is kept as a copy at a release too.
     #[test]
-    fn a_release_keeps_a_focused_look_that_is_a_region_as_a_copy() {
+    fn a_release_keeps_a_focused_face_that_is_a_region_as_a_copy() {
         let (mut service, shared) = detached_service();
         shared
             .lock()
@@ -2080,7 +2080,7 @@ mod tests {
     /// The reported shape of a click at rest: the picture held of a window is old and its band differs
     /// from the window's now, a title changed since; the refresh's first capture comes before the app
     /// repaints, and a later one shows the turn. Nothing is put while it polls, so the cache holds the
-    /// picture from before until the window's look settles, at a capture like the one before it, and
+    /// picture from before until the window's face settles, at a capture like the one before it, and
     /// then the capture it settled on, which every sink hears of once.
     #[test]
     fn a_refresh_puts_the_capture_its_window_settled_on_once_however_the_picture_held_before_differs()

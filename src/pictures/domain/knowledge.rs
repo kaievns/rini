@@ -69,7 +69,7 @@ pub enum Call {
 }
 
 /// How long after the window server reports a window focused a capture of it shows it active:
-/// past the slowest focused look of 316 measured presses, 158ms after the input
+/// past the slowest focused face of 316 measured presses, 158ms after the input
 /// (`docs/data/2026-10-03-focus`). A capture taken sooner can show the material still flat.
 pub const ACTIVE_SETTLED: Duration = Duration::from_millis(200);
 

@@ -432,7 +432,7 @@ impl Reactor {
         reported_space: SpaceId,
     ) -> anyhow::Result<EventOutcome> {
         // Every report, rini's own raise's included: it arms the pictures service's watch on a
-        // focus target's look.
+        // focus target's face.
         if let Some(pictures) = &self.communication_manager.pictures {
             pictures.hint(crate::pictures::domain::watch::Hint::Focused(window));
         }

@@ -164,7 +164,7 @@ destination for a window already moving.
 - A merged press MUST NOT lose a picture taken for an end its tile still has. Pictures are taken on
   their own thread and arrive while a press is merged, and none is taken twice.
 - A merged press MUST NOT replace a tile's picture with the cache's: the tile keeps frame zero's, a
-  focused look, or a picture the flight took.
+  focused face, or a picture the flight took.
 - A press merged before the flight moves MUST compose with it as one movement from frame zero: the
   strip, and on a switch every row and floating window, travel together as one piece. Composed window
   by window from where each tile starts to where the last press sends it, the pieces slid over one
@@ -207,11 +207,11 @@ destination for a window already moving.
   window that ends wholly on screen, and over each grow ending cut by the display's right edge, so
   the window server counts it visible. A grow ending cut by its left edge has no such point: the
   point sits just in from a window's left edge, off the display for that one. Covered wholly, a
-  terminal never reached its focused look within 450ms in 24 tries; with the point clear it did in
+  terminal never reached its focused face within 450ms in 24 tries; with the point clear it did in
   all 24. So MUST a decoration rini draws around one at rest (`decorations.md`): a point is left
   clear over its band too.
 - A floating window seen through a translucent one MUST show its live content while the flight runs,
-  kept fresh behind the strip once the window gaining focus has its look.
+  kept fresh behind the strip once the window gaining focus has its face.
 
 > **Reported 2026-10-03.** "the background window images are served stale constantly, it's not a
 > minor issue, because i can see changing content in the background windows during animation with
@@ -311,7 +311,7 @@ destination for a window already moving.
   keeps the look its picture from the press shows, the title bar and controls macOS draws focused or
   not, while its hairline, shadow, ring and border turn as any window's: a window that never settles,
   as one streaming output, and a window a resize only shrinks inside the picture it starts with,
-  turn their own look with the lift. A window MUST count as repainted at its new size only once two
+  turn their own face with the lift. A window MUST count as repainted at its new size only once two
   captures in a row show the same rendering, never because a capture differs from the picture it had before.
 
 > **Reported 2026-10-09.** Kai: "there are multiple issues during stacking/unstacking windows into
@@ -548,7 +548,7 @@ destination for a window already moving.
 > 9% of samples changed, so it was learned to have none, pictured alone, and flew grey. Reproduced
 > outside rini, 17:32-17:35, by turning Outlook inactive in place; that rini's own first reading was
 > inactive is inferred from the journal, whose first flight after the start had no focus. With its
-> pictures carrying no blur, nothing kept the focused look Outlook flew in with: kept as it lost
+> pictures carrying no blur, nothing kept the focused face Outlook flew in with: kept as it lost
 > focus, it was gone by the next flight to it, from 17:22 on (the journal; why it went is inferred
 > from the code, a capture at rest showing a different body). Messages reads 0.00 alone against the
 > screen active and inactive, and ScreenCaptureKit's capture of it equals SkyLight's over its
@@ -599,13 +599,13 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   the window gaining focus active, the window losing it inactive. The change MUST reach each tile while
   the flight still moves, so nothing changes at rest after the lift.
 - From the moment the window server reports the window gaining focus focused, it MUST be pictured
-  where it ends until its look changes, and the window losing focus with it, in the same rounds, until
-  its own look changes, if it ends wholly on a display and no pass opened or resized it: one a pass
-  opened or grew is pictured once it has repainted instead, its own look coming only with that
+  where it ends until its face changes, and the window losing focus with it, in the same rounds, until
+  its own face changes, if it ends wholly on a display and no pass opened or resized it: one a pass
+  opened or grew is pictured once it has repainted instead, its own face coming only with that
   picture, and one a pass only shrinks inside the picture it starts with keeps that picture, its
   hairline and its shadow turning once it has repainted, or just before the window gaining focus when
-  it loses focus, and its own look with the lift (Resizing). One a pass only shrinks that starts with
-  no picture covering its start turns with its repainted picture, as a grow does. A look a
+  it loses focus, and its own face with the lift (Resizing). One a pass only shrinks that starts with
+  no picture covering its start turns with its repainted picture, as a grow does. A face a
   window already had when it landed counts as changed. Each MUST be drawn with its turned picture as it comes in, its hairline and its
   shadow turning with it: the window losing focus unfocused, the window gaining focus focused. Its
   focus ring and its border wear where the flight ends from the show (`decorations.md`).
@@ -619,16 +619,16 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   gaining focus is drawn focused. If neither turn shows by the last capture before the lift, both MUST turn then all
   the same, old then new, while the flight still moves, but for one a pass only shrinks inside the
   picture it starts with, or one a pass opened, grew or shrank that has not repainted where it ends: it is
-  not pictured then, only its hairline and its shadow turn, and its own look turns with the lift. Until its turn the window losing focus MUST be
+  not pictured then, only its hairline and its shadow turn, and its own face turns with the lift. Until its turn the window losing focus MUST be
   drawn focused, as it was on screen when the flight began. Ending clipped by the display's edge, it
-  keeps its picture to the lift, only its hairline and its shadow turning unfocused, and its look turns at
+  keeps its picture to the lift, only its hairline and its shadow turning unfocused, and its face turns at
   rest, unless it has a material: then it keeps its blurred picture until a flight next pictures it on
   screen (below). SkyLight returns only its visible part, and the one ScreenCaptureKit capture below is
   the window gaining focus's.
 - A press moving focus back to a window already drawn unfocused, before the window it went to has
   turned, MUST leave it drawn unfocused, hairline and shadow with it, until its focused picture comes in,
   and MUST then turn it focused as any window gaining focus. A press moving focus on before then MUST
-  NOT turn it again. One starting off the display flies its focused look instead (below), drawn
+  NOT turn it again. One starting off the display flies its focused face instead (below), drawn
   focused again, and a press moving focus on MUST turn it unfocused again: no tile is left drawn
   focused beside the window gaining focus. A turned picture waiting for the old window's MUST be dropped when a press moves
   focus on, and one that no longer fits its tile MUST turn nothing: drawn focused over the picture
@@ -641,11 +641,11 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   merged into a flight included, unless that picture no longer fits it or a later picture shows its
   content changed. Its landing MUST NOT replace that picture before focus hands over: it is often taken
   before the window repaints focused, and would turn it unfocused and back.
-- A picture MUST be kept as a window's focused look only if it shows the window focused: its change
+- A picture MUST be kept as a window's focused face only if it shows the window focused: its change
   pictured as it gains focus, or frame zero's picture of the window focus leaves if that window was
   the key window as the press went out. A click's report has made its target key before the request it
   causes, and another application's panel taking the keys, Spotlight's or Raycast's, leaves the
-  layout's window drawn unfocused: kept, that picture flies the window in as its focused look looking
+  layout's window drawn unfocused: kept, that picture flies the window in as its focused face looking
   unfocused.
 - A window gaining focus that ends clipped by the display's edge MUST still be recaptured. SkyLight
   returns only its visible part, so it takes ScreenCaptureKit's one capture.
@@ -661,13 +661,13 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   move, or another application's panel taking the keys. With nothing flying both MUST be asked for at
   once; in flight, each one no picture of the flight showed after the change MUST be asked for at the
   quiet after the lift, the window losing focus that ends clipped or parked among them. A focus change
-  alters a window's look and never its size, and a picture that still fits was never taken again for
+  alters a window's face and never its size, and a picture that still fits was never taken again for
   its own sake, so a window kept the look it had until it was resized, and its tile turned at the lift.
 - Pictured again at rest, a window wholly on the overlay's display MUST be pictured with its blur and
-  with its look turned. Both windows of one change MUST be looked at together, and each MUST be
-  pictured once, with the look it settled on. A capture of the window alone has no blur, and a picture
-  with its blur is never replaced by one without, so a window with a material kept its old look until a
-  flight next pictured it on screen; a capture made as the change is reported shows the look from
+  with its face turned. Both windows of one change MUST be looked at together, and each MUST be
+  pictured once, with the face it settled on. A capture of the window alone has no blur, and a picture
+  with its blur is never replaced by one without, so a window with a material kept its old face until a
+  flight next pictured it on screen; a capture made as the change is reported shows the face from
   before the app repaints; the picture held from before can differ in its title band for reasons
   other than focus, so the turn is judged only from captures taken after the change; and a look has
   settled once two captures in a row, the later taken 70ms or more after the change, show the same
@@ -676,18 +676,18 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 - A capture at rest MUST NOT start from a press to the quiet after the lift, as no ScreenCaptureKit
   capture does: SkyLight serves one call at a time, and one already out delays the one the overlay
   waits for. A press MUST cancel the polling of a window being pictured again at rest, and the quiet
-  MUST ask again for each window the flight did not picture at least 70ms after its look turned: the
+  MUST ask again for each window the flight did not picture at least 70ms after its face turned: the
   app repaints up to 68ms after the change (p90), so a picture taken sooner, frame zero's among them,
   can show the look from before. A call already out when the press comes cannot be recalled, so at
   most one SkyLight call at rest MAY be ahead of a frame zero.
 - A window with a material that is not wholly on the overlay's display when it is pictured again at
-  rest, clipped, parked or on another display, keeps its blurred picture, and its look turns when a
+  rest, clipped, parked or on another display, keeps its blurred picture, and its face turns when a
   flight next pictures it on screen: ScreenCaptureKit's capture of it has no blur, and SkyLight's
   covers only what is on that display ("Known debt" in `src/pictures/docs/README.md`).
 - Once the overlay is up, a tile MUST change its picture only for one the flight took: frame zero's
   coming after the overlay went up without it, before any later picture of its window, as its window
   lands, as the window gaining focus
-  changes its look, as a floating window behind the strip is refreshed, or just before the lift. A
+  changes its face, as a floating window behind the strip is refreshed, or just before the lift. A
   capture made for anything else shows the window as it was, and cut in after the flight's own it
   would cut the tile back.
 - A picture the cache refuses MUST NOT reach a tile either. The flight would draw what the next one
@@ -698,7 +698,7 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 
 > **Reported 2026-10-05.** "i noticed that old window blur often animates _after_ the new window focus.
 > i understand that blur actually renders _before_ focus in macos itself." Only the window gaining
-> focus was watched in flight. The window losing focus kept its frame-zero picture, its focused look,
+> focus was watched in flight. The window losing focus kept its frame-zero picture, its focused face,
 > until a landing or the last capture before the lift showed it unfocused, so it turned after the
 > other. Both are now watched in the same rounds, and the turn of the window gaining focus waits up to
 > 15ms for the old window's.
@@ -713,7 +713,7 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 > **Reported 2026-10-05.** "why are you capturing each old/new window independently? seems like a
 > waste, could capture both at the same time as a group call, no? stop polling when both re-rendered."
 > Each round looked at one window, so a click's two ends took twice the rounds. Both are now captured
-> in one round, each dropping out once its look has settled, and the polling stops when both have.
+> in one round, each dropping out once its face has settled, and the polling stops when both have.
 
 > **Reported 2026-10-05.** "about focus refresh. are you pushing new images on every scan or only once
 > when they change?" Every capture of a refresh went to the cache and to every client, identical or

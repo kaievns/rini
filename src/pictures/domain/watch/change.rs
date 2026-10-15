@@ -34,10 +34,10 @@ pub(super) struct Turning {
     baseline: Option<Vec<u8>>,
     end: ScreenRect,
     left: u32,
-    /// Its look changed, its tries ran out, the cache refused its capture, it was handed to
+    /// Its face changed, its tries ran out, the cache refused its capture, it was handed to
     /// ScreenCaptureKit, or, the window losing focus, it was found clipped.
     done: bool,
-    /// Its look changed.
+    /// Its face changed.
     turned: bool,
     /// The last look found it not where it ends.
     missed: bool,
@@ -83,7 +83,7 @@ impl Turning {
     }
 
     /// A capture of it the cache took at `frame`, with band print `band`: done, delivered as its
-    /// focus change, once its look differs from its baseline; with nothing delivered to judge by,
+    /// focus change, once its face differs from its baseline; with nothing delivered to judge by,
     /// delivered as the window where it ends and judged from; else a try spent.
     fn judge(
         &mut self,
@@ -136,7 +136,7 @@ impl Change {
         }
     }
 
-    /// Its ends, the window losing focus first: its look turns first on screen.
+    /// Its ends, the window losing focus first: its face turns first on screen.
     fn ends(&self) -> impl Iterator<Item = &Turning> { self.losing.iter().chain([&self.target]) }
 
     fn end_of(&mut self, window: WindowId) -> Option<&mut Turning> {
@@ -284,7 +284,7 @@ mod tests {
     /// The focus target is captured only once its focus is reported; from then every 15ms, six times
     /// at most, stopping at the first change of its band print.
     #[test]
-    fn a_change_watch_captures_after_the_focus_report_until_the_look_changes() {
+    fn a_change_watch_captures_after_the_focus_report_until_the_face_changes() {
         let start = Instant::now();
         let mut watches = Watches::default();
         watches.ask(frame_zero(&[(1, LEFT)], &[]));
@@ -333,9 +333,9 @@ mod tests {
     }
 
     /// A window that was focused before it landed: its landing, looked at first in the same round,
-    /// delivers the focused look, and its change watch still sees it changed from frame zero's.
+    /// delivers the focused face, and its change watch still sees it changed from frame zero's.
     #[test]
-    fn a_change_watch_sees_the_look_a_landing_delivered_first() {
+    fn a_change_watch_sees_the_face_a_landing_delivered_first() {
         let start = Instant::now();
         let mut watches = Watches::default();
         watches.ask(frame_zero(&[(1, RIGHT)], &[]));
@@ -400,7 +400,7 @@ mod tests {
 
     /// A change capture the cache refuses finishes the watch, delivering nothing: every later capture
     /// of the window at that size is refused too. The windows behind the strip that wait on it refresh
-    /// at once, and nothing judges the window's look again, a retarget of it included.
+    /// at once, and nothing judges the window's face again, a retarget of it included.
     #[test]
     fn a_change_capture_the_cache_refuses_finishes_the_watch() {
         let start = Instant::now();
@@ -429,7 +429,7 @@ mod tests {
         assert_eq!(
             looked(&sets),
             vec![vec![wid(4)]],
-            "its look is never captured again"
+            "its face is never captured again"
         );
 
         let mut watches = Watches::default();
@@ -766,7 +766,7 @@ mod tests {
 
     /// A window losing focus given up on is reported lost again when a retarget carries it on under a
     /// new tag: the client may have dropped the report under the tag before. Under the same tag, or
-    /// once its look changed, it is not.
+    /// once its face changed, it is not.
     #[test]
     fn a_window_losing_focus_given_up_on_is_reported_lost_again_under_a_retargets_new_tag() {
         let start = Instant::now();
@@ -824,7 +824,7 @@ mod tests {
         )
         .unwrap();
         watches.retarget(WatchId(1), under(2, LEFT), later);
-        assert!(watches.expire(later).is_empty(), "its look changed");
+        assert!(watches.expire(later).is_empty(), "its face changed");
     }
 
     /// A retarget keeps each end's baseline, tries and finish while that end keeps its size.

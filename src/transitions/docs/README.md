@@ -18,7 +18,7 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **A switch's stack** | `domain/strip_stack.rs` — the stacked workspace strips a vertical switch scrolls through |
 | **Arriving mid-flight** | `domain/admission.rs` — a pass merging into a running flight, reserved entrances, how an opened window enters, and how each window's picture where it ends is waited for (`EndPicture`, one per window of a pass in its `Waits`) |
 | **A flight's score** | `domain/flight_score.rs` — `FlightScore`: the score the flight's look composes and bends, every edit it hands the renderer folded into it first, the accents waiting for the motion, the clock and the lift's settle read from it, when a tile's leg in two steps turns its corner (`corner_at`) and its leg added again as it plays (`again`) |
-| **A flight, composed** | `domain/running.rs` — `RunningAnimation`: what a flight composed, its tiles and the pictures they draw, its plan and score, the entrances waiting for a picture and the passes held (`Composed`, each with its `Shape`), and the rules over it: a later pass folded into frame zero or bent from the score (`take_pass`, `merge_pass`) and its entrances (`take_ends`), a reserved entrance joining with its first picture (`take_picture`, `join`), frame zero's pictures (`wear`) and frame zero posed again (`pose`), the motion starting (`start_moving`), a repaint held for its tile's corner and let go (`waits_for_corner`, `turn_corners`), the focus handover (`draw_focused`) and a parked target's focused look (`fly_focused_look`), what the coordinator is told of it (`stage`, `summary`), and how its tiles band (`restack`, `band_plan`, `bank`); `TileOf`, what a tile is made of beside where it flies and its picture (`TileOf::flying`); all of it over `TilePicture`, what the rules read of the picture a tile is drawn with |
+| **A flight, composed** | `domain/running.rs` — `RunningAnimation`: what a flight composed, its tiles and the pictures they draw, its plan and score, the entrances waiting for a picture and the passes held (`Composed`, each with its `Shape`), and the rules over it: a later pass folded into frame zero or bent from the score (`take_pass`, `merge_pass`) and its entrances (`take_ends`), a reserved entrance joining with its first picture (`take_picture`, `join`), frame zero's pictures (`wear`) and frame zero posed again (`pose`), the motion starting (`start_moving`), a repaint held for its tile's corner and let go (`waits_for_corner`, `turn_corners`), the focus handover (`draw_focused`) and a parked target's focused face (`fly_focused_face`), what the coordinator is told of it (`stage`, `summary`), and how its tiles band (`restack`, `band_plan`, `bank`); `TileOf`, what a tile is made of beside where it flies and its picture (`TileOf::flying`); all of it over `TilePicture`, what the rules read of the picture a tile is drawn with |
 | **What a flight is** | `domain/flight.rs` — the handover report, when a pass is worth an overlay |
 | **When** | `domain/timing.rs` — the tick, the coalesce window, the hold for a grow's repaint and for a window with no picture of its own, with its bound over a burst of passes merged before the motion, and how long a repaint watch waits for its window to arrive, the lift's grace and the quiet after it |
 | **The writes** | `domain/frame_writes.rs` — which final frames go out to the apps, and in what order |
@@ -49,8 +49,8 @@ merges only once that window has repainted ("Mid-flight passes" in `coordination
 **The reactor asks, and hears back only the frames.** It sends a layout pass (`Event::Animate`), a
 strip movement (`Event::AnimateSurface`), each naming the window focused as it began and the key
 window as it went out, a bounce, each of the three carrying its press (`Cause`: when the reactor
-took the event it answers, and what that was), the windows whose look each change of the key window
-turned (`Event::LooksTurned`), the display the overlay flies on, and whether the journal is written
+took the event it answers, and what that was), the windows whose face each change of the key window
+turned (`Event::FacesTurned`), the display the overlay flies on, and whether the journal is written
 and each lift's handover measured (`Event::Journal`). A pass, a movement and a bounce each name the
 `Look` a flight they begin moves by, and a movement and a bounce the press (`Cue`): the engine hands
 both to the look and matches on neither. The pictures service's sink, wired in `src/main.rs`, tells
@@ -120,12 +120,12 @@ from the begin to the lift.
 ## Known debt
 
 **A panel's keys are seen only as far as rini hears of them.** The window focus leaves is taken to
-look focused at frame zero when it was the key window as the request went out, and the key window is
+show its focused face at frame zero when it was the key window as the request went out, and the key window is
 the window server's report while the application in front owns it. A panel of another application
 that takes the keys is seen only if the report names it, and the report names the key-focus process's
 frontmost document window, or if its application comes to the front: neither is measured for
 Spotlight or Raycast. Unseen, the window under it is still taken as key and its frame-zero picture
-kept as its focused look. Seen, its tile is still drawn focused until its own turn or the target's,
+kept as its focused face. Seen, its tile is still drawn focused until its own turn or the target's,
 hairline and shadow over an unfocused picture.
 
 **The kinds' builders live in the reactor.** `start_strip_pan`, `start_strip_switch`,

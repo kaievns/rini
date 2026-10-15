@@ -51,7 +51,7 @@ pub(super) fn on_screen(
 }
 
 /// Each window at the size of `frame`: what the quiet warms, at the frame each ended at, and what a
-/// turned look is asked for at.
+/// turned face is asked for at.
 pub(super) fn sized_targets(windows: Vec<(WindowId, ScreenRect)>) -> Vec<PictureTarget> {
     windows.into_iter().map(|(window, frame)| target_at(window, frame)).collect()
 }
@@ -269,7 +269,7 @@ mod tests {
                 assert_eq!(*every, LIVE_EVERY);
                 assert_eq!(
                     *after, watches.change,
-                    "kept fresh once the focus target's look is in"
+                    "kept fresh once the focus target's face is in"
                 );
                 assert_eq!(*initial, Some(now + Duration::from_millis(30)));
             }

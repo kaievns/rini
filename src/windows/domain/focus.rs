@@ -103,9 +103,9 @@ pub fn activation_focus_target(
     Some(remembered)
 }
 
-/// The windows whose look turns when the key window goes from `before` to `after`: the one that
+/// The windows whose face turns when the key window goes from `before` to `after`: the one that
 /// became key, then the one that stopped being. Focus changes how a window is drawn, never its size.
-pub fn looks_turned(before: Option<WindowId>, after: Option<WindowId>) -> Vec<WindowId> {
+pub fn faces_turned(before: Option<WindowId>, after: Option<WindowId>) -> Vec<WindowId> {
     if before == after {
         return Vec::new();
     }
@@ -381,7 +381,7 @@ mod tests {
     mod key_window {
         use rini_core::ids::WindowId;
 
-        use super::super::{FocusEvent, MainWindowTracker, looks_turned};
+        use super::super::{FocusEvent, MainWindowTracker, faces_turned};
 
         fn wid(pid: rini_core::ids::pid_t, idx: u32) -> WindowId { WindowId::new(pid, idx) }
 
@@ -424,12 +424,12 @@ mod tests {
         }
 
         #[test]
-        fn a_change_of_key_window_turns_the_look_of_both_ends_and_no_change_turns_none() {
+        fn a_change_of_key_window_turns_the_face_of_both_ends_and_no_change_turns_none() {
             let (a, b) = (wid(1, 1), wid(1, 2));
-            assert_eq!(looks_turned(Some(a), Some(b)), vec![b, a]);
-            assert_eq!(looks_turned(None, Some(b)), vec![b]);
-            assert_eq!(looks_turned(Some(a), None), vec![a]);
-            assert!(looks_turned(Some(a), Some(a)).is_empty());
+            assert_eq!(faces_turned(Some(a), Some(b)), vec![b, a]);
+            assert_eq!(faces_turned(None, Some(b)), vec![b]);
+            assert_eq!(faces_turned(Some(a), None), vec![a]);
+            assert!(faces_turned(Some(a), Some(a)).is_empty());
         }
     }
 

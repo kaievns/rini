@@ -152,8 +152,8 @@ Frame zero's pictures that come after the overlay went up are swapped onto their
 the strip back. They were taken at the press, so each replaces only the cache's: one coming after a
 landing swapped onto its tile is not swapped, since it would put the press back over that landing, a
 grow's repaint the motion starts with included, while one coming after a kept shrink's landing, which
-was never swapped on, still is. The window losing focus keeps its own as its focused look either way,
-pictured while it was focused (`a_late_frame_zero_picture_after_a_landing_is_kept_as_the_focused_look_alone`).
+was never swapped on, still is. The window losing focus keeps its own as its focused face either way,
+pictured while it was focused (`a_late_frame_zero_picture_after_a_landing_is_kept_as_the_focused_face_alone`).
 Dropped, they would be lost for the flight: the service has started the client's prints from them, so
 a landing that looks the same is not delivered.
 
@@ -161,7 +161,7 @@ The end state is four watches, kept and retargeted from one generation to the ne
 engine): every end window, captured as soon as it is where it ends (`Settle::AsSoonAsThere`, watched for
 150ms); a window a layout pass resized or opened, or one it flies as a stand-in, captured once it has
 repainted there (`Settle::Repainted`), while a stand-in on a strip movement, which never holds, is an
-end window like any other; the focus target, from its focus report until its look changes (`Change`);
+end window like any other; the focus target, from its focus report until its face changes (`Change`);
 and the floating windows behind the strip, kept fresh once that change is in (`Live`). One more capture
 of every end window is asked 110ms before the clock ends and never in its first 40ms (`AskFinal`), but
 of a window resized or opened only once it has been pictured repainted where it ends: before that, a
@@ -177,7 +177,7 @@ composed, and it is never delivered again, since a retarget keeps a window lande
 and a change already seen. A window the merge sends somewhere new starts its print afresh in the
 service, so its landing there is delivered whatever it looks like. A tile takes a delivered
 picture as it comes, or the coordinator holds it to swap in later: the target's change waiting for
-the window losing focus to turn, or its landing held back over its focused look. The engine keeps a
+the window losing focus to turn, or its landing held back over its focused face. The engine keeps a
 delivery only while the coordinator holds it (`Coordinator::holds`), so never one a tile turned down,
 one that comes after the lift or one under a flight before: no tile takes those later, and the
 service's cache already holds them.
@@ -403,17 +403,17 @@ waits on screen is not measured yet.*
 
 A tile the pass retargets keeps the picture it has and how focus is drawn on it: a pass is composed
 from the cache, and copied over it erased frame zero's picture, a picture the flight took or a parked
-target's focused look, before the overlay was up as much as after. A pass moving focus on redraws which
+target's focused face, before the overlay was up as much as after. A pass moving focus on redraws which
 tiles are drawn focused, the window focus is drawn leaving kept as its own turn left it: focused until
 its changed picture turns it, unfocused after. A rapid switch back to it before the window it went to
 has turned finds it drawn unfocused, so focus moves to it as to any other window: watched, and drawn
 focused only with its focused picture. A switch on again before then does not turn it a second time.
-One starting off the display flies its focused look instead, drawn focused again, so a switch on turns
+One starting off the display flies its focused face instead, drawn focused again, so a switch on turns
 it unfocused again as focus leaves it.
 A target's changed picture held for the old window is dropped when focus moves on, and one that no
 longer fits its tile, a press having resized it, hands nothing over: its hairline turns with the next
 picture of it that fits, or as the final capture is asked. A new target parked off the display flies
-its focused look, as the first pass's does.
+its focused face, as the first pass's does.
 
 A pass merged once the overlay is up writes every final frame it changed, a parked window's included.
 Parked windows have no tile, so a tile-only check missed their moves and left them at the old park.
@@ -437,25 +437,25 @@ focus report the window server sends, rini's own raise's included, to the pictur
 and every request names the window the layout had focused as the event asking for it began
 (`focused_before`): the one focus leaves. A click, a cmd-` or an app activation is reported before the
 pass it causes, so the window last reported focused is the target by then; taken as the one focus
-leaves, it had focus move nowhere, and nothing watched the target's look. Frame zero pictures that
+leaves, it had focus move nowhere, and nothing watched the target's face. Frame zero pictures that
 window focused, and its tile is drawn focused; the focus target's tile is drawn unfocused, unless
-it flies its focused look (below). Frame zero's picture of it is kept as its focused look only if it
+it flies its focused face (below). Frame zero's picture of it is kept as its focused face only if it
 was the key window as the request went out (the request's `key`, from `MainWindowTracker::key_window`;
-`frame_zero_look`): a click's report has made its target key before the request it causes, and another
+`frame_zero_face`): a click's report has made its target key before the request it causes, and another
 application's panel taking the keys, Spotlight's or Raycast's, leaves the window drawn unfocused while
-the layout still has it focused. Kept, either picture flew the window in as its focused look looking
+the layout still has it focused. Kept, either picture flew the window in as its focused face looking
 unfocused. Its tile is still drawn focused until its turn ("Known debt" in `src/transitions/docs/README.md`).
 
 The target's `Change` watch, armed by its report (one remembered for a second arms a watch started
 after it), captures it where it ends every 15ms, six times at most, until its band print differs from
 what the engine was delivered of it as the watch started, frame zero's for a window on screen at the
 press. It is judged from that, not from the latest delivery: the landing watch is looked at first in a
-round, and a window focused before it landed delivered its focused look as its landing, which the
+round, and a window focused before it landed delivered its focused face as its landing, which the
 change watch then never saw change. The window losing focus is the watch's second end
 (`EndWatch::losing_focus`) when it ends wholly on screen and no pass resized or opened it. Either end
 resized or opened is watched only to repaint: a `Change` capture at its new size would show it half
 painted, and a band print taken at another width never matches, so the first capture there would
-count as its turn. Its macOS-drawn look turns with its repainted picture, or with the lift when none
+count as its turn. Its macOS-drawn face turns with its repainted picture, or with the lift when none
 settles or when the pass only shrank it inside the picture its tile starts with, which it keeps.
 The
 window losing focus, when watched, is captured in
@@ -471,7 +471,7 @@ picture waits for it, up to `CHANGE_EVERY` (15ms) checked on the flight's ticks,
 anyway; two in one round swap old, then new. The watch reports the old window `Lost` once it is done
 with no change, out of tries, refused or found clipped, and the target's picture waits no longer. A
 merge's retarget that carries it on reports it again under the new tag: the coordinator drops a report
-under the generation before. The target's changed picture is kept as its focused look,
+under the generation before. The target's changed picture is kept as its focused face,
 and its tile is drawn focused: focus hands over. Each tile's hairline and shadow turn with its own
 picture (`TileOverlay::set_tile_focused`); Kai, 2026-10-05: "i'd like them to be orchestrated
 independently whenever blur or focus are done switching." Its focus ring and border do not: each
@@ -482,7 +482,7 @@ again at once (`Render::Wear`): the overlay is up, and the merge's drain is the 
 end. A window losing focus whose turn has not shown when the
 target's does, one clipped, parked, never watched or out of tries, is drawn unfocused just before the
 target is drawn focused. One ending clipped by the display's edge keeps its frame-zero picture to the
-lift, only its hairline and shadow turning, and its look turns at rest, pictured again at the quiet,
+lift, only its hairline and shadow turning, and its face turns at rest, pictured again at the quiet,
 unless it has a material: then it keeps its blurred picture until a flight next pictures it on screen
 ("Known debt" in `src/pictures/docs/README.md`). SkyLight returns only its visible part, and the one
 ScreenCaptureKit capture a focus change lets through is the target's ("Decisions taken while Kai was away" in
@@ -491,7 +491,7 @@ delivering nothing: the cache refuses a picture without the blur in place of one
 size, and so every later capture there. The target is pictured again by the final capture too, if its
 change watch ran out first, and that hands focus over. If nothing has handed it over when the final
 capture is asked, both tiles turn then, old then new, while the flight still moves: the window is
-reported focused, and a look that never showed a change (one already focused when the watch started,
+reported focused, and a face that never showed a change (one already focused when the watch started,
 or an app whose title band looks the same either way) would otherwise turn at the lift. A target a
 layout pass opened, resized or flies as a stand-in hands over once it has repainted, watched with no
 second end, with its repainted picture, or, only shrunk, its hairline and shadow alone; a stand-in on a strip movement is pictured as it lands and hands over on its focus change
@@ -501,13 +501,13 @@ only one a focus change lets through: SkyLight returns only its visible sliver (
 needs ScreenCaptureKit, not SkyLight" in `src/pictures/docs/capture-research.md`). A flight that moves
 focus nowhere watches no change.
 
-**Looks turned with the key window.** Every change of the key window the reactor hears of, rini's own
-raise included, reaches the engine as the two windows whose look it turned, each at the frame the
-reactor has it at (`Event::LooksTurned`; the key window is `MainWindowTracker::key_window`, the window
+**Faces turned with the key window.** Every change of the key window the reactor hears of, rini's own
+raise included, reaches the engine as the two windows whose face it turned, each at the frame the
+reactor has it at (`Event::FacesTurned`; the key window is `MainWindowTracker::key_window`, the window
 server's report while the application in front owns it, so another application's panel taking the keys
 turns the window under it too). With nothing flying the coordinator asks for both at once
 (`Command::Refresh`): a warm drops a picture that fits and a focus change never changes a size, so a
-window kept the look it had until it was resized, in the switcher and in the next flight. In flight it
+window kept the face it had until it was resized, in the switcher and in the next flight. In flight it
 owes them to the quiet, and any picture the flight is delivered of one after the turn, a landing, its
 focus change or the final capture, pays that one off, since the cache holds it. What is left, the
 window losing focus that ends clipped or parked and either end whose change no capture saw, is asked for
@@ -527,17 +527,17 @@ landed at 0.82 to 1.16 of the flight (debug log 2026-09-28, two flights, 154ms a
 ask), and with four ScreenCaptureKit captures out the frame-zero capture took 92-97ms against 26-33.
 The watches capture through SkyLight, one call at a time, as the windows land.
 
-**A parked focus target flies its focused look.** A focus target that starts off the display, where
+**A parked focus target flies its focused face.** A focus target that starts off the display, where
 frame zero cannot picture it, flies the last picture the pictures service kept of it focused
 (`Pictures::focused`), drawn focused, when that picture fits where its tile starts; the service drops a
-look once a newer capture's body differs. So does a target a merged pass moves focus to. Its landing
-does not replace the look: it is often taken
+face once a newer capture's body differs. So does a target a merged pass moves focus to. Its landing
+does not replace the face: it is often taken
 before the window repaints focused (the prototype's medians, landed at 76.9ms and the focused picture
 at 104.9ms after the press, "Where a moving focus change spends its time" in
 `src/animation/docs/capture-overlay-research.md`), and cut in it would turn the window unfocused and
-back. The coordinator holds the latest landing back (`StageSummary::focused_look`) and swaps it in
+back. The coordinator holds the latest landing back (`StageSummary::focused_face`) and swaps it in
 only if focus hands over at the final capture's ask with nothing newer; a focus change or the final
-capture replaces the look as it hands over. Kai, 2026-10-03: "fcache doesn't bother me … windows
+capture replaces the face as it hands over. Kai, 2026-10-03: "fcache doesn't bother me … windows
 arrive in focus every single time".
 
 The engine's thread stalled mid-flight, so a press landed after the strip had stopped. Reading
@@ -582,7 +582,7 @@ found one by one, and that pass knew one window of 21, so the first switch
 still flew 8 of 16 windows with no picture. After the lift the owed captures wait for a quiet period
 (`SETTLE_BEFORE_CAPTURES`, 400ms; the coordinator's `Event::Quiet`), which warms every window the
 flight drew, across its merged passes, at the frame it last ended at, and asks afresh for every window
-whose look the key window turned that the flight did not picture since ("Looks turned with the key
+whose face the key window turned that the flight did not picture since ("Faces turned with the key
 window").
 They used to run the instant the overlay lifted and took 600-800ms (8-15
 window captures and the desktop render), so a press inside that window flew
@@ -925,7 +925,7 @@ anchors, that picture covers every frame of a shrink, so there is no ground to c
 its repainted landing nor the last capture is swapped onto it (`Flight::keeps`); on n1 each of 5
 shrinks had its repaint cut in 171-269ms after the press, and 2 flights cut the last capture in again
 at 325-350ms. Its landing still snaps the tile and hands focus over, its hairline and shadow turning;
-its macOS-drawn look turns with the lift. Only a window frame zero was asked for flies a picture from
+its macOS-drawn face turns with the lift. Only a window frame zero was asked for flies a picture from
 the press: one starting clipped or off the display flies the cache's, whatever its age and size, or
 for a merged pass the one its tile carries. It is judged at compose, where that picture is known
 (`EndPicture::of_request`): one fitting the start (`coverage::fits_frame`) covers every frame of the

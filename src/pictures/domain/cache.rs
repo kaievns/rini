@@ -1,4 +1,4 @@
-//! The picture cache and its rules: what an incoming capture replaces, each window's focused look,
+//! The picture cache and its rules: what an incoming capture replaces, each window's focused face,
 //! and what each client was last delivered. Generic over what it holds, so the rules are tested on
 //! plain sizes.
 
@@ -102,7 +102,7 @@ impl<T: HasCoverage + CarriesOver> PictureCache<T> {
         }
     }
 
-    /// A window that is gone: its picture and its focused look go with it.
+    /// A window that is gone: its picture and its focused face go with it.
     pub fn forget(&mut self, window: WindowId) {
         self.entries.remove(&window);
         self.focused.remove(&window);
@@ -114,10 +114,10 @@ impl<T: HasCoverage + CarriesOver> PictureCache<T> {
 
     pub fn focused(&self, window: WindowId) -> Option<&T> { self.focused.get(&window) }
 
-    /// Every focused look held.
-    pub fn focused_looks(&self) -> impl Iterator<Item = (&WindowId, &T)> { self.focused.iter() }
+    /// Every focused face held.
+    pub fn focused_faces(&self) -> impl Iterator<Item = (&WindowId, &T)> { self.focused.iter() }
 
-    /// Drops `window`'s focused look if it is still what `still` says: a newer capture showed
+    /// Drops `window`'s focused face if it is still what `still` says: a newer capture showed
     /// different content, which the look would fly over.
     pub fn drop_focused_if(&mut self, window: WindowId, still: impl FnOnce(&T) -> bool) -> bool {
         let stale = self.focused.get(&window).is_some_and(still);
@@ -127,7 +127,7 @@ impl<T: HasCoverage + CarriesOver> PictureCache<T> {
         stale
     }
 
-    /// Puts `with` in place of `window`'s focused look, if it is still what `still` says.
+    /// Puts `with` in place of `window`'s focused face, if it is still what `still` says.
     pub fn replace_focused_if(
         &mut self,
         window: WindowId,
@@ -283,9 +283,9 @@ mod tests {
         assert!(cache.get(wid(2)).is_none());
     }
 
-    /// The focused look is kept until it is dropped as stale or the window goes.
+    /// The focused face is kept until it is dropped as stale or the window goes.
     #[test]
-    fn a_focused_look_is_kept_until_stale_or_forgotten() {
+    fn a_focused_face_is_kept_until_stale_or_forgotten() {
         let mut cache = cache();
         let look = coverage((859.0, 1081.0), (859.0, 1081.0));
         cache.keep_focused(wid(1), look);
@@ -305,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn a_focused_looks_copy_replaces_only_the_look_it_was_made_of() {
+    fn a_focused_faces_copy_replaces_only_the_face_it_was_made_of() {
         let mut cache = cache();
         let look = coverage((859.0, 1081.0), (859.0, 1081.0));
         let copy = coverage((859.0, 1081.0), (859.5, 1081.0));

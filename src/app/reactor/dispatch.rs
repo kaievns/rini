@@ -98,7 +98,7 @@ impl Reactor {
     }
 
     /// The main-window tracker told of the focus report `event` carries, the flight engine told of
-    /// the looks it turned, and what the reducers are handed besides the event.
+    /// the faces it turned, and what the reducers are handed besides the event.
     fn take_focus_report(&mut self, event: &Event) -> Dispatch {
         let update_notifications = Self::should_update_notifications(event);
         let duplicate_global_activation = matches!(
@@ -111,7 +111,7 @@ impl Reactor {
             .focus_event()
             .map(|focus| self.recognise_panel(focus))
             .and_then(|focus| self.main_window_tracker.handle_event(focus));
-        self.tell_looks_turned(key_before);
+        self.tell_faces_turned(key_before);
         Dispatch {
             raised_window,
             update_notifications,

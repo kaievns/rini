@@ -61,7 +61,7 @@ pub(in crate::transitions) fn pan() -> StageSummary {
         focus: Some(w(2)),
         losing_focus: Some(w(1)),
         key: Some(w(1)),
-        focused_look: None,
+        focused_face: None,
         waits: Default::default(),
         start: Start::Immediate,
         duration: PLAYS,

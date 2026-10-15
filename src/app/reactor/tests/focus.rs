@@ -432,13 +432,13 @@ fn strip_navigation_stops_at_the_edge_rather_than_focusing_a_floating_window() {
 }
 
 /// Every focus report reaches the pictures service as a hint, rini's own raise's included: the hint
-/// arms the watch on the focus target's look, which is how a flight draws focus handing over. Every
-/// report that changes the key window tells the flight engine both windows whose look it turned, at
+/// arms the watch on the focus target's face, which is how a flight draws focus handing over. Every
+/// report that changes the key window tells the flight engine both windows whose face it turned, at
 /// their frames, so they are pictured again with nothing flying; a report of the window already key
 /// turns none. The reactor asks for no picture of either itself: the engine knows whether a flight
 /// will picture them.
 #[test]
-fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_whose_look_turned() {
+fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_whose_face_turned() {
     use crate::pictures::domain::schedule::Priority;
     use crate::pictures::domain::watch::Hint;
     use crate::pictures::platform::service::Command as Asked;
@@ -484,7 +484,7 @@ fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_who
     let frame = |window: WindowId| reactor.test_frame(window);
     let mut turned = Vec::new();
     while let Ok((_, event)) = transitions_rx.try_recv() {
-        if let Engine::LooksTurned(windows) = event {
+        if let Engine::FacesTurned(windows) = event {
             turned.push(windows);
         }
     }

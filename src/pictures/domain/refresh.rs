@@ -1,9 +1,9 @@
-//! Windows pictured afresh at rest once their look has turned: through SkyLight where the window
+//! Windows pictured afresh at rest once their face has turned: through SkyLight where the window
 //! server has them wholly on the display, and through ScreenCaptureKit anywhere else.
 //!
 //! Pure. Asks, holds and what each look came to go in with `now`; the windows to look at, the capture
 //! each settled on, and those owed a ScreenCaptureKit capture instead, come out. Every window due is
-//! looked at in one round, and each is pictured once, with the capture its look settled on. A press
+//! looked at in one round, and each is pictured once, with the capture its face settled on. A press
 //! cancels every refresh, and the release asks again for each its flight did not picture;
 //! `crate::pictures::domain::schedule` makes the looks before any ScreenCaptureKit call. The rules and
 //! why each holds: "The schedule" in `src/pictures/docs/README.md`.
@@ -19,7 +19,7 @@ use crate::pictures::domain::watch::{
     Accept, CHANGE_EVERY, CHANGE_TRIES, Capture, Look, Seen, Set,
 };
 
-/// How long after a look turns a picture of the window shows the turn: above the 68ms p90 repaint
+/// How long after a face turns a picture of the window shows the turn: above the 68ms p90 repaint
 /// after make-key ("Where a moving focus change spends its time" in
 /// `src/animation/docs/capture-overlay-research.md`).
 pub const REPAINT_SETTLED: Duration = Duration::from_millis(70);
@@ -48,7 +48,7 @@ struct Round {
 
 struct Refresh<C> {
     target: PictureTarget,
-    /// When its look turned, as far as the service heard it.
+    /// When its face turned, as far as the service heard it.
     asked: Instant,
     /// `None` once a press cancelled it, until the release asks again.
     poll: Option<Poll<C>>,
@@ -84,7 +84,7 @@ impl<C> Poll<C> {
 /// What a round came to.
 #[derive(Debug, PartialEq)]
 pub struct Refreshed<C> {
-    /// Each window done with a capture, the one its look settled on: put to the cache, once.
+    /// Each window done with a capture, the one its face settled on: put to the cache, once.
     pub settled: Vec<(WindowId, C)>,
     /// Each window owed a ScreenCaptureKit capture instead.
     pub elsewhere: Vec<PictureTarget>,
@@ -99,10 +99,10 @@ enum End {
 }
 
 impl<C> Refreshes<C> {
-    /// Owes each target a picture, its look turned at `asked` and looked at from `from` on, and holds
+    /// Owes each target a picture, its face turned at `asked` and looked at from `from` on, and holds
     /// every window already owed one until then too: a press that turns a look may start a flight,
     /// whose hold comes after it, and the windows of one change are looked at together. A window
-    /// already owed one is owed it afresh: its look has turned again.
+    /// already owed one is owed it afresh: its face has turned again.
     pub fn ask(&mut self, targets: Vec<PictureTarget>, asked: Instant, from: Instant) {
         for poll in self.windows.iter_mut().filter_map(|refresh| refresh.poll.as_mut()) {
             poll.next = poll.next.max(from);
@@ -117,7 +117,7 @@ impl<C> Refreshes<C> {
         }
     }
 
-    /// A press: every refresh stops, keeping only its window and when its look turned, its capture
+    /// A press: every refresh stops, keeping only its window and when its face turned, its capture
     /// held dropped. Nothing of it is looked at again before `release`.
     pub fn cancel(&mut self) {
         for refresh in &mut self.windows {
@@ -147,7 +147,7 @@ impl<C> Refreshes<C> {
     /// Every window due a look at `now`, in one round, each taken wholly on the display wherever it
     /// is, with nothing composited behind it but the desktop. `pictured` is when the picture held of a
     /// window was taken: a refresh asked again at a release is done before its first look if that is
-    /// `REPAINT_SETTLED` after its look turned. A picture taken sooner, frame zero's at the press among
+    /// `REPAINT_SETTLED` after its face turned. A picture taken sooner, frame zero's at the press among
     /// them, can predate the repaint.
     pub fn next(
         &mut self,
@@ -190,9 +190,9 @@ impl<C> Refreshes<C> {
     }
 
     /// What the window server and the captures said of the windows `next` handed out, on `display`,
-    /// with the capture of each `seen` has `Taken`, which the cache would take. A window's look has
+    /// with the capture of each `seen` has `Taken`, which the cache would take. A window's face has
     /// settled at a capture with the band print of the one before it, taken `REPAINT_SETTLED` after
-    /// its look turned; it is done then, or once its tries run out, with that capture or its latest,
+    /// its face turned; it is done then, or once its tries run out, with that capture or its latest,
     /// and settled windows drop out of the rounds after. One the cache would refuse is done with
     /// nothing: every later capture at that size is refused too. A capture that missed it wholly on
     /// the display spends a try. One the window server does not have wholly on the display, or one no
@@ -381,7 +381,7 @@ mod tests {
 
     /// An app repaints a while after its focus changes, and a picture held from before can differ in
     /// its band for other reasons: a window is judged by its own captures, settled at one with the
-    /// band print of the capture before it taken `REPAINT_SETTLED` after its look turned. That
+    /// band print of the capture before it taken `REPAINT_SETTLED` after its face turned. That
     /// capture is the one it is pictured with, and it drops out of the rounds after while the window
     /// beside it, repainting later, goes on. One whose band never settles is pictured with its last
     /// capture once its tries run out.
@@ -486,7 +486,7 @@ mod tests {
 
     /// A press that turns a look may also start a flight, whose hold reaches the service after the
     /// refresh: every window already being looked at waits for the new refresh's start too, and is
-    /// looked at in its round. A window whose look turns again is owed afresh, judged from its next
+    /// looked at in its round. A window whose face turns again is owed afresh, judged from its next
     /// captures, its capture held dropped; a forgotten one is owed nothing, and what its round saw is
     /// dropped.
     #[test]
@@ -568,7 +568,7 @@ mod tests {
     }
 
     /// Asked again at a release, a window is done unlooked at when the cache holds a picture of it
-    /// taken `REPAINT_SETTLED` after its look turned; one taken sooner, frame zero's at the press
+    /// taken `REPAINT_SETTLED` after its face turned; one taken sooner, frame zero's at the press
     /// among them, can predate the repaint. Only a refresh asked again is judged so, and only before
     /// its first look: after that its own captures judge it.
     #[test]
