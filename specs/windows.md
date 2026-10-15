@@ -141,7 +141,10 @@ as visible rather than absent. The reverse — an id the server does not report 
 admission, `src/windows/domain/catalogue.rs` the records, `src/windows/domain/ax_events.rs` the
 liveness rules, `src/windows/domain/frame_write.rs` which writes a frame takes,
 `src/windows/platform/app_actor.rs` the per-app thread, and `src/app/hotkeys/mod.rs` the controller
-that starts it. A window leaving rini's records goes through `src/app/reactor/events/window.rs`, which
+that starts it. That an application slow to answer while it launches is asked again is held by
+`an_application_too_busy_launching_to_answer_is_asked_again` and
+`an_application_that_never_answers_is_given_up_on_once_patience_runs_out` in `app_actor.rs`: the
+thread asks every 20ms, doubling to 1s, for up to 60s, and is the only part of rini that asks again. A window leaving rini's records goes through `src/app/reactor/events/window.rs`, which
 forgets its pictures, except at a new identity, whose old one `src/app/reactor/events/window_discovery.rs`
 forgets.
 

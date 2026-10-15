@@ -39,7 +39,9 @@ applications ask for attention.
 **One thread per application.** An AX call blocks on the owning app, so a hung
 application must not hang rini. Each app gets a thread with its own `CFRunLoop`, and
 the reactor talks to it through `Request`. An application slow to answer while it
-launches is asked again rather than given up on, and one that becomes frontmost
+launches is asked again rather than given up on, by the thread's launch loop alone:
+the observer hands an application too busy to answer back as an error, and asks
+nothing again itself. One that becomes frontmost
 without a thread is looked at again then (`launch-notifications.md`). The thread
 ends with the application: the reactor's `Terminate` at a quit, or the first request
 that fails because the application has gone, ends its task, and a raise queued or

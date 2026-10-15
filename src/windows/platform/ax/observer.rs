@@ -5,8 +5,6 @@ use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
 use std::sync::Arc;
 
-use dispatchr::queue;
-use dispatchr::time::Time;
 use objc2_application_services::{AXError, AXObserver, AXUIElement as RawAXUIElement};
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopMode, CFString, kCFRunLoopCommonModes,
@@ -14,7 +12,6 @@ use objc2_core_foundation::{
 
 use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
 use rini_core::ids::pid_t;
-use rini_runloop::dispatch::DispatchExt;
 
 /// An observer for accessibility events.
 pub struct Observer {
@@ -130,28 +127,6 @@ impl Clone for Callback {
     }
 }
 
-struct AddNotifRetryCtx {
-    observer: CFRetained<AXObserver>,
-    elem: AXUIElement,
-    notification: &'static str,
-    callback_ctx: Arc<SubscriptionContext>,
-}
-
-extern "C" fn add_notif_retry(ctx: *mut c_void) {
-    if ctx.is_null() {
-        return;
-    }
-    let ctx = unsafe { Box::from_raw(ctx as *mut AddNotifRetryCtx) };
-    let notification_cf = CFString::from_static_str(ctx.notification);
-    let _ = unsafe {
-        ctx.observer.add_notification(
-            ctx.elem.as_concrete_TypeRef(),
-            notification_cf.as_ref(),
-            Arc::as_ptr(&ctx.callback_ctx).cast_mut().cast(),
-        )
-    };
-}
-
 impl Observer {
     pub fn add_notification(
         &self,
@@ -180,35 +155,13 @@ impl Observer {
         let notification_cf = CFString::from_static_str(notification);
         let observer: &AXObserver = &self.observer;
         let callback_data = Arc::as_ptr(&callback_ctx).cast_mut().cast();
-        let first = unsafe {
+        make_result(unsafe {
             observer.add_notification(
                 elem.as_concrete_TypeRef(),
                 notification_cf.as_ref(),
                 callback_data,
             )
-        };
-        if make_result(first).is_ok() {
-            return Ok(());
-        }
-        if first == AXError::CannotComplete {
-            let retained_observer =
-                unsafe { CFRetained::retain(CFRetained::as_ptr(&self.observer)) };
-            let ctx = Box::new(AddNotifRetryCtx {
-                observer: retained_observer,
-                elem: elem.clone(),
-                notification,
-                callback_ctx,
-            });
-            unsafe {
-                queue::main().after_f(
-                    Time::NOW.new_after(10_000_000),
-                    Box::into_raw(ctx) as *mut c_void,
-                    add_notif_retry,
-                )
-            };
-            return Ok(());
-        }
-        make_result(first)
+        })
     }
 
     fn subscription_context(
@@ -283,5 +236,19 @@ fn make_result(err: AXError) -> Result<(), AxError> {
         Ok(())
     } else {
         Err(AxError::Ax(err))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_application_too_busy_to_answer_is_an_error_for_the_caller_to_ask_again() {
+        assert!(matches!(
+            make_result(AXError::CannotComplete),
+            Err(AxError::Ax(AXError::CannotComplete))
+        ));
+        assert!(make_result(AXError::Success).is_ok());
     }
 }
