@@ -490,20 +490,23 @@ fn a_path_through_a_module_is_named_only_whole() {
 
 #[test]
 fn the_app_actor_reaches_the_platform_only_through_its_world() {
-    let path = Path::new("src/windows/platform/app_actor.rs");
-    let source = fs::read_to_string(path).expect("readable source");
+    let mut files = vec![PathBuf::from("src/windows/platform/app_actor.rs")];
+    files.extend(rust_files(Path::new("src/windows/platform/app_actor")));
     let mut broken = Vec::new();
-    for (line, code) in production_lines_in(&source) {
-        for name in PAST_THE_WORLD {
-            if names_identifier(&code, name) {
-                broken.push(format!("{}:{line}: {name} in {}", slash(path), code.trim()));
+    for path in &files {
+        let source = fs::read_to_string(path).expect("readable source");
+        for (line, code) in production_lines_in(&source) {
+            for name in PAST_THE_WORLD {
+                if names_identifier(&code, name) {
+                    broken.push(format!("{}:{line}: {name} in {}", slash(path), code.trim()));
+                }
             }
         }
-    }
-    for (line, code) in code_lines_in(&source) {
-        for name in PAST_THE_WORLD {
-            if names_path_through(&code, name) {
-                broken.push(format!("{}:{line}: {name}:: in {}", slash(path), code.trim()));
+        for (line, code) in code_lines_in(&source) {
+            for name in PAST_THE_WORLD {
+                if names_path_through(&code, name) {
+                    broken.push(format!("{}:{line}: {name}:: in {}", slash(path), code.trim()));
+                }
             }
         }
     }
@@ -1108,7 +1111,7 @@ const FN_LIMIT: usize = 100;
 const FILE_LIMIT: usize = 1500;
 
 /// The functions over `FN_LIMIT`, each at its size now as its ceiling: file, name, ceiling.
-const LONG_FNS: [(&str, &str, usize); 40] = [
+const LONG_FNS: [(&str, &str, usize); 37] = [
     ("crates/rini-ipc/src/mach.rs", "mach_server_begin", 101),
     ("src/animation/domain/choreography/slide.rs", "retarget", 156),
     ("src/animation/domain/motion/plan.rs", "merge_plans", 202),
@@ -1159,9 +1162,6 @@ const LONG_FNS: [(&str, &str, usize); 40] = [
     ("src/transitions/platform/engine.rs", "merge_now", 120),
     ("src/transitions/platform/engine.rs", "start", 229),
     ("src/transitions/platform/engine.rs", "start_surface", 120),
-    ("src/windows/platform/app_actor.rs", "handle_notification", 148),
-    ("src/windows/platform/app_actor.rs", "handle_raise_request", 101),
-    ("src/windows/platform/app_actor.rs", "handle_request", 132),
     (
         "src/workspaces/domain/virtual_workspace.rs",
         "apply_app_rule_decision",

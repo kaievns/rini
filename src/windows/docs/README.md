@@ -31,12 +31,26 @@ Two questions about raising and admission that were closed on evidence rather th
 `admission-and-raise-findings.md`.
 
 `platform/` is the macOS side: `app_actor.rs` is the per-app Accessibility actor (one thread per
-application, observing and writing), `window_server.rs` the window server through SkyLight, behind
-the `WindowServer` port (below), `lifecycle.rs` the
-launch, quit and front-app listener over `carbon.rs`'s Carbon events, `app.rs` the activation-policy
-and finished-launching observers, `process.rs` the process-type check, `sub_level.rs` the SkyLight
+application, observing and writing; its jobs are below), `window_server.rs` the window server
+through SkyLight, behind the `WindowServer` port (below), `lifecycle.rs` the launch, quit and
+front-app listener over `carbon.rs`'s Carbon events, `app.rs` the activation-policy and
+finished-launching observers, `process.rs` the process-type check, `sub_level.rs` the SkyLight
 sub-level port, `attention.rs` the thread that reads from LaunchServices once a second which
 applications ask for attention.
+
+The per-app actor is `platform/app_actor.rs`, the thread's state and its loop, and a file per job
+under `platform/app_actor/`, each with the tests of what it does:
+
+| | |
+|---|---|
+| **Starting the thread** | `launch.rs` — refusing an XPC process, subscribing to the application while it launches, asking a busy one again until `LAUNCH_PATIENCE` runs out, and announcing it with the windows it already has |
+| **What it subscribes to** | `subscriptions.rs` — Accessibility's notification names, the application's and each window's, subscribed at registration and moved when a window is rebound |
+| **Taking a window on** | `registration.rs` — admission, the window's id and record, and the AXWindows refresh that takes on what is new and rebinds a known window to the element Accessibility hands back now |
+| **Finding a window** | `lookup.rs` — a tracked window of this application by id or element, `write_target` for a write, and what a failed Accessibility answer makes of one (`handle_ax_result`): retired, ignored or handed back |
+| **The reactor's requests** | `requests.rs` — frame writes, a workspace switch's positions, closes, refreshes, and raises handed to their own task |
+| **Notifications** | `notifications.rs` — windows created, destroyed, moved, miniaturized and retitled, the application hidden and shown, and a change of main window, a late one for an element a window no longer has ignored |
+| **Main window and activation** | `activation.rs` — the application's main window, and whether an activation is rini's own raise's, which then carries the raise's quiet |
+| **Raising** | `raise.rs` — a batch made key, waited on while the application comes to the front, and raised in order, one application's raise at a time across every thread |
 
 ## The shape that matters
 
@@ -122,7 +136,7 @@ was raised first instead of last and ended up behind the strip.
 ## Reading order
 
 `domain/info.rs` → `domain/catalogue.rs` → `domain/admissible.rs` → then
-`platform/app_actor.rs` for how the AX side drives it.
+`platform/app_actor.rs` and `platform/app_actor/requests.rs` for how the AX side drives it.
 
 ## Detail
 
