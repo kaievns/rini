@@ -16,6 +16,10 @@ pub struct AppInfo {
 }
 
 #[derive(Debug, Clone)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each is an attribute Accessibility reports on its own"
+)]
 pub struct WindowInfo {
     pub is_standard: bool,
     pub is_root: bool,

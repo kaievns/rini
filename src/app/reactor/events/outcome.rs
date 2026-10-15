@@ -35,6 +35,10 @@ pub(crate) struct TopologyReassignment {
 /// description small and concrete makes it possible to test policy without
 /// turning platform operations into a generic effect system.
 #[derive(Debug, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each asks for a follow-up of its own, any of them together"
+)]
 pub(crate) struct EventOutcome {
     pub(crate) window_server_updates: Vec<WindowServerInfo>,
     pub(crate) discoveries: Vec<WindowDiscoveryRequest>,

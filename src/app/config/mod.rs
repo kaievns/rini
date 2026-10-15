@@ -38,6 +38,10 @@ pub struct Config {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each is a switch the config file sets on its own"
+)]
 pub struct Settings {
     /// Layout changes, strip movements and workspace switches are drawn through the overlay
     /// (`src/transitions/docs/coordination.md`); off places windows at once.

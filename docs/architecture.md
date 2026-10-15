@@ -215,12 +215,16 @@ the new size, and an entry leaves the list once it is back under
 (`no_function_or_file_grows_past_its_limit`). Those lists are the record of how long each
 function and file is now; a doc that needs a size points at them.
 
-It keeps every function in `src/app` and `src/main.rs`, tests' included, under two `bool`
-parameters (`no_function_in_the_app_takes_two_bools`): a choice a call would spell `true, false` is
-an enum, or a struct naming each field. And no `use` in `src/app` gives a module another name
-(`no_module_in_the_app_is_imported_under_another_name`): `crate::workspaces` imported as `layout`
-beside a real `crate::layout` sent a reader to the wrong feature. A type may still be renamed to
-tell two `Event`s apart.
+No function in the workspace, tests' included, takes two `bool` parameters: clippy's
+`fn_params_excessive_bools` is denied in `[workspace.lints]` and `clippy.toml` sets
+`max-fn-params-bools = 1`, so a choice a call would spell `true, false` is an enum, or a struct
+naming each field. A struct with more than three `bool` fields fails `struct_excessive_bools`
+unless each flag stands on its own and its allow says so.
+
+No `use` in `src/app` gives a module another name
+(`no_module_in_the_app_is_imported_under_another_name`): `crate::workspaces` imported as
+`layout` beside a real `crate::layout` sent a reader to the wrong feature. A type may still be
+renamed to tell two `Event`s apart.
 
 `cargo test -p rini-geometry` still builds plain Rust instead of linking AppKit.
 `cargo test` on the application does link it, so the win is now "this module has

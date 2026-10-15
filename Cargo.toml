@@ -87,6 +87,8 @@ unused_macro_rules = "warn"
 
 [workspace.lints.clippy]
 allow_attributes_without_reason = "warn"
+fn_params_excessive_bools = "deny"
+struct_excessive_bools = "warn"
 
 [workspace.dependencies]
 dashmap = "6.1.0"

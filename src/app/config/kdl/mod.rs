@@ -56,6 +56,10 @@ pub struct ConfigPart {
 /// What the nodes that could not be decoded leave unknown. A check across nodes that needs it is
 /// skipped: run on what was there before, it would report problems the text does not have.
 #[derive(Debug, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each names a check across nodes that a failure skips on its own"
+)]
 pub struct Undecoded {
     /// An `input` failed or was written twice, so `Mod` may stand for another modifier.
     pub mod_key: bool,
