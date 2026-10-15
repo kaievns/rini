@@ -13,7 +13,7 @@ use crate::app::reactor::*;
 use crate::decorations::domain::paint::{Colour, Paint};
 use crate::decorations::domain::rest::{RestModel, RestWindow};
 use crate::decorations::domain::rules::{BandRule, DecorationRule};
-use crate::decorations::domain::style::Ring;
+use crate::decorations::domain::style::{Ring, Urgency};
 use crate::decorations::platform::rest::{Event as RestEvent, Receiver};
 use crate::windows::domain::attention::Attention;
 use crate::windows::domain::rules::RuleMatch;
@@ -533,8 +533,9 @@ fn an_application_asking_for_attention_is_sent_urgent_until_one_of_its_windows_h
     desk.reactor
         .handle_test_batch(vec![Event::AttentionChanged(Attention::of([ZEN]))]);
     let model = models(&mut desk.rest).pop().expect("the ask is sent");
-    let urgent =
-        |model: &RestModel| [901, 902, 903, 904].map(|wsid| sent(model, wsid).decoration.urgent);
+    let urgent = |model: &RestModel| {
+        [901, 902, 903, 904].map(|wsid| sent(model, wsid).decoration.urgency == Urgency::Urgent)
+    };
     assert_eq!(urgent(&model), [false, true, true, false]);
     let ring = desk.reactor.settings().decorations.focus_ring.band;
     assert_eq!(
@@ -560,12 +561,16 @@ fn a_pass_focusing_an_asking_application_carries_its_windows_calm() {
     desk.reactor
         .handle_test_batch(vec![Event::AttentionChanged(Attention::of([ZEN]))]);
     let rings = desk.reactor.layout_rings();
-    assert!(desk.reactor.worn(left_zen(), &rings).decoration.urgent);
+    assert_eq!(
+        desk.reactor.worn(left_zen(), &rings).decoration.urgency,
+        Urgency::Urgent
+    );
     desk.reactor.send_layout_event(LayoutEvent::WindowFocused(left, left_zen()));
     let rings = desk.reactor.layout_rings();
     for window in [left_zen(), WindowId::new(ZEN, 2)] {
-        assert!(
-            !desk.reactor.worn(window, &rings).decoration.urgent,
+        assert_eq!(
+            desk.reactor.worn(window, &rings).decoration.urgency,
+            Urgency::Calm,
             "{window:?}"
         );
     }

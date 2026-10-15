@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::decorations::domain::paint::Paint;
 use crate::decorations::domain::shape;
-use crate::decorations::domain::style::{Band, Decoration};
+use crate::decorations::domain::style::{Band, Decoration, Urgency};
 use crate::decorations::settings::{BandSetting, DecorationSettings};
 use crate::windows::domain::rules::{RuleMatch, RuleState, WindowRuleContext, applies};
 
@@ -87,7 +87,7 @@ pub fn fold(settings: &DecorationSettings, context: WindowRuleContext<'_>) -> De
         ring: ring.worn(),
         border: border.worn(),
         radius,
-        urgent: context.state.urgent,
+        urgency: Urgency::of(context.state.urgent),
     }
 }
 
@@ -543,13 +543,13 @@ mod tests {
             ..window("x")
         };
         let drawn = decoration(&settings, urgent);
-        assert!(drawn.urgent);
+        assert_eq!(drawn.urgency, Urgency::Urgent);
         assert_eq!(
             crate::decorations::domain::style::Style::of(false, Ring::None, &drawn).border,
             Some(RED)
         );
         let calm = decoration(&settings, window("x"));
-        assert!(!calm.urgent);
+        assert_eq!(calm.urgency, Urgency::Calm);
         assert_eq!(
             calm.border.map(|band| band.urgent),
             Some(settings.border.band.urgent),
