@@ -2207,14 +2207,8 @@ impl LayoutEngine {
             window_size: &impl Fn(WindowId) -> CGSize,
         ) {
             let existing = positions.get(&wid).copied();
-            let bundle_id = engine.get_app_bundle_id_for_window(wid);
             let visible = candidate.or(existing).filter(|rect| {
-                !engine.virtual_workspace_manager.is_hidden_position_multi(
-                    screen,
-                    rect,
-                    bundle_id.as_deref(),
-                    all_screens,
-                )
+                !crate::workspaces::HiddenWindowPlacement::is_hidden_among(*screen, *rect, all_screens)
                     // And enough of it left on screen to grab, which the test above does NOT catch:
                     // that one needs a sliver in BOTH axes, and a park shows nearly its full height.
                     && crate::workspaces::HiddenWindowPlacement::floating_frame_is_usable(
@@ -2256,11 +2250,10 @@ impl LayoutEngine {
                             } else {
                                 HideCorner::BottomRight
                             };
-                            self.virtual_workspace_manager.calculate_hidden_position_multi(
+                            crate::workspaces::HiddenWindowPlacement::calculate_among(
                                 screen,
                                 rect,
                                 corner,
-                                None,
                                 all_screens,
                             )
                         } else {
@@ -2361,12 +2354,10 @@ impl LayoutEngine {
             let reference_frame = original_frame.unwrap_or_else(|| {
                 CGRect::new(CGPoint::new(screen.origin.x, screen.origin.y), original_size)
             });
-            let app_bundle_id = self.get_app_bundle_id_for_window(wid);
-            let hidden_rect = self.virtual_workspace_manager.calculate_hidden_position_multi(
+            let hidden_rect = crate::workspaces::HiddenWindowPlacement::calculate_among(
                 screen,
                 reference_frame,
                 HideCorner::BottomRight,
-                app_bundle_id.as_deref(),
                 all_screens,
             );
             positions.insert(wid, hidden_rect);
@@ -2412,16 +2403,6 @@ impl LayoutEngine {
         }
 
         positions.into_iter().collect()
-    }
-
-    fn get_app_bundle_id_for_window(&self, _window_id: WindowId) -> Option<String> {
-        // The bundle ID is stored in the app info, which we can access via the PID
-        // Note: This would need to be available from the reactor state, but since
-        // we're in the layout engine, we don't have direct access to that.
-        // For now, we'll return None, but this could be improved by passing
-        // app information through the layout calculation or storing it separately.
-
-        None
     }
 
     #[cfg(test)]

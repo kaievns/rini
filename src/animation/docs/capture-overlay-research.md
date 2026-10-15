@@ -793,10 +793,10 @@ before the overlay existed:
   and every park and unpark would cost an application relayout. Moving a full-size
   window achieves the same 1pt result with neither.
 
-The park corner records which side the column was on, so `entry_frame` can bring it
+The park corner records which side the column was on, so `rini_geometry::park_entry_frame` can bring it
 back in from that edge. Without that, a window returning to the strip animates from
 its real frame and flies in diagonally from the bottom of the display.
-`calculate_hidden_position_multi` may flip the corner to keep the park off a second
+`HiddenWindowPlacement::calculate_among` may flip the corner to keep the park off a second
 display, and then the side is lost and the entry is guessed from the destination.
 
 A column with ANY part on screen keeps the position the layout gave it. Measured

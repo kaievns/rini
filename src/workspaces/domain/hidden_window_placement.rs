@@ -1,5 +1,5 @@
 use objc2_core_foundation::{CGPoint, CGRect};
-use rini_geometry::space::{FromCg, ScreenRect, ToCg};
+use rini_geometry::space::{FromCg, ScreenRect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HideCorner {
@@ -59,14 +59,28 @@ impl HiddenWindowPlacement {
         }
     }
 
+    /// `calculate` against every attached display, `screen` among them.
+    pub fn calculate_among(
+        screen: CGRect,
+        window: CGRect,
+        preferred_corner: HideCorner,
+        all_screens: &[CGRect],
+    ) -> CGRect {
+        Self::calculate(screen, window, preferred_corner, &Self::others(screen, all_screens))
+    }
+
+    /// `is_hidden` against every attached display, `screen` among them.
+    pub fn is_hidden_among(screen: CGRect, window: CGRect, all_screens: &[CGRect]) -> bool {
+        Self::is_hidden(screen, window, &Self::others(screen, all_screens))
+    }
+
+    fn others(screen: CGRect, all_screens: &[CGRect]) -> Vec<CGRect> {
+        all_screens.iter().copied().filter(|other| *other != screen).collect()
+    }
+
     /// `rini_geometry::is_off_screen`; see `src/layout/docs/strip.md` "Parking".
     pub fn is_off_screen(screen: CGRect, window: CGRect) -> bool {
         rini_geometry::is_off_screen(ScreenRect::from_cg(screen), ScreenRect::from_cg(window))
-    }
-
-    pub fn entry_frame(park: CGRect, destination: CGRect, display: CGRect) -> CGRect {
-        let at = |frame| ScreenRect::from_cg(frame);
-        rini_geometry::park_entry_frame(at(park), at(destination), at(display)).to_cg()
     }
 
     /// The least of a floating window that must show on each axis for its frame to be worth keeping.
@@ -236,42 +250,6 @@ mod tests {
         ));
     }
 
-    /// Parked windows come back the way they left. Without this the window flies up from the bottom corner,
-    /// because that is where its real frame is.
-    #[test]
-    fn a_window_parked_on_the_left_comes_back_from_the_left() {
-        let display = rect(0.0, 0.0, 1728.0, 1117.0);
-        let park = rect(-858.0, 1116.0, 859.0, 1081.0);
-        let destination = rect(4.0, 32.0, 859.0, 1081.0);
-        let entry = HiddenWindowPlacement::entry_frame(park, destination, display);
-        assert_eq!(entry.origin.x, -859.0, "just past the left edge");
-        assert_eq!(
-            entry.origin.y, 32.0,
-            "on its destination's row, not at the bottom"
-        );
-        assert_eq!(entry.size, destination.size);
-    }
-
-    #[test]
-    fn a_window_parked_on_the_right_comes_back_from_the_right() {
-        let display = rect(0.0, 0.0, 1728.0, 1117.0);
-        let park = rect(1727.0, 1116.0, 859.0, 1081.0);
-        let destination = rect(865.0, 32.0, 859.0, 1081.0);
-        let entry = HiddenWindowPlacement::entry_frame(park, destination, display);
-        assert_eq!(entry.origin.x, 1728.0, "just past the right edge");
-        assert_eq!(entry.origin.y, 32.0);
-    }
-
-    /// A display that is not at the origin: the edges are the display's own, not the global zero.
-    #[test]
-    fn entry_is_relative_to_the_display_it_happens_on() {
-        let display = rect(-670.0, -1692.0, 3008.0, 1692.0);
-        let park = rect(2337.0, -1.0, 859.0, 1081.0);
-        let destination = rect(-666.0, -1660.0, 859.0, 1081.0);
-        let entry = HiddenWindowPlacement::entry_frame(park, destination, display);
-        assert_eq!(entry.origin.x, 2338.0, "past the right edge of THAT display");
-    }
-
     #[test]
     fn anchors_to_requested_corner() {
         let hidden = HiddenWindowPlacement::calculate(
@@ -293,5 +271,34 @@ mod tests {
             &[rect(1000.0, 0.0, 1000.0, 800.0)],
         );
         assert_eq!(hidden.origin.x, -199.0);
+    }
+
+    #[test]
+    fn hidden_position_uses_corner_anchor_while_hiding_offscreen() {
+        let screen = rect(0.0, 0.0, 100.0, 100.0);
+        let frame = rect(20.0, 37.0, 30.0, 20.0);
+
+        let hidden =
+            HiddenWindowPlacement::calculate_among(screen, frame, HideCorner::BottomRight, &[screen]);
+
+        assert_eq!(hidden.origin.y, screen.max().y - 1.0);
+        assert_eq!(hidden.origin.x, screen.max().x - 1.0);
+    }
+
+    #[test]
+    fn hidden_position_flips_sides_to_avoid_neighboring_monitor_overlap() {
+        let primary = rect(0.0, 0.0, 100.0, 100.0);
+        let right_neighbor = rect(100.0, 0.0, 100.0, 100.0);
+        let frame = rect(20.0, 25.0, 30.0, 20.0);
+
+        let hidden = HiddenWindowPlacement::calculate_among(
+            primary,
+            frame,
+            HideCorner::BottomRight,
+            &[primary, right_neighbor],
+        );
+
+        assert_eq!(hidden.origin.y, primary.max().y - 1.0);
+        assert_eq!(hidden.origin.x, primary.origin.x - frame.size.width + 1.0);
     }
 }

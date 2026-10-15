@@ -1,4 +1,3 @@
-use objc2_core_foundation::CGRect;
 use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
 use tracing::{error, warn};
@@ -10,7 +9,6 @@ use crate::windows::domain::rules::AppRuleDecision;
 use crate::windows::domain::rules::{RuleMatch, WindowRule};
 use crate::workspaces::Direction;
 use crate::workspaces::domain::app_rules::{AppRuleEffects, AppRuleResult};
-use crate::workspaces::domain::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
 use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
 use crate::workspaces::{WindowStore, WindowWorkspaceInfo};
 use rini_core::ids::SpaceId;
@@ -606,50 +604,6 @@ impl WorkspaceStore {
             .find_map(|(wid, info)| (info.space == space && wid.idx.get() == idx).then_some(wid))
     }
 
-    pub fn calculate_hidden_position(
-        &self,
-        screen_frame: CGRect,
-        original_frame: CGRect,
-        corner: HideCorner,
-        _app_bundle_id: Option<&str>,
-    ) -> CGRect {
-        HiddenWindowPlacement::calculate(screen_frame, original_frame, corner, &[])
-    }
-
-    pub fn calculate_hidden_position_multi(
-        &self,
-        screen_frame: CGRect,
-        original_frame: CGRect,
-        corner: HideCorner,
-        _app_bundle_id: Option<&str>,
-        all_screens: &[CGRect],
-    ) -> CGRect {
-        let others: Vec<_> =
-            all_screens.iter().copied().filter(|screen| *screen != screen_frame).collect();
-        HiddenWindowPlacement::calculate(screen_frame, original_frame, corner, &others)
-    }
-
-    pub fn is_hidden_position(
-        &self,
-        screen_frame: &CGRect,
-        rect: &CGRect,
-        _app_bundle_id: Option<&str>,
-    ) -> bool {
-        HiddenWindowPlacement::is_hidden(*screen_frame, *rect, &[])
-    }
-
-    pub fn is_hidden_position_multi(
-        &self,
-        screen_frame: &CGRect,
-        rect: &CGRect,
-        _app_bundle_id: Option<&str>,
-        all_screens: &[CGRect],
-    ) -> bool {
-        let others: Vec<_> =
-            all_screens.iter().copied().filter(|screen| *screen != *screen_frame).collect();
-        HiddenWindowPlacement::is_hidden(*screen_frame, *rect, &others)
-    }
-
     pub fn set_last_focused_window(
         &mut self,
         space: SpaceId,
@@ -1101,8 +1055,6 @@ pub struct WorkspaceStats {
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::{CGPoint, CGSize};
-
     use super::*;
     use rini_core::ids::SpaceId;
     use rini_core::ids::WindowId;
@@ -1986,43 +1938,6 @@ mod tests {
         assert_eq!(bw2_initial_assignment.workspace_id, expected);
         assert_eq!(bw2_updated_assignment.workspace_id, expected);
         assert!(bw2_updated_assignment.floating);
-    }
-
-    #[test]
-    fn hidden_position_uses_corner_anchor_while_hiding_offscreen() {
-        let manager = WorkspaceStore::new();
-        let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(100.0, 100.0));
-        let frame = CGRect::new(CGPoint::new(20.0, 37.0), CGSize::new(30.0, 20.0));
-
-        let hidden = manager.calculate_hidden_position_multi(
-            screen,
-            frame,
-            HideCorner::BottomRight,
-            None,
-            &[screen],
-        );
-
-        assert_eq!(hidden.origin.y, screen.max().y - 1.0);
-        assert_eq!(hidden.origin.x, screen.max().x - 1.0);
-    }
-
-    #[test]
-    fn hidden_position_flips_sides_to_avoid_neighboring_monitor_overlap() {
-        let manager = WorkspaceStore::new();
-        let primary = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(100.0, 100.0));
-        let right_neighbor = CGRect::new(CGPoint::new(100.0, 0.0), CGSize::new(100.0, 100.0));
-        let frame = CGRect::new(CGPoint::new(20.0, 25.0), CGSize::new(30.0, 20.0));
-
-        let hidden = manager.calculate_hidden_position_multi(
-            primary,
-            frame,
-            HideCorner::BottomRight,
-            None,
-            &[primary, right_neighbor],
-        );
-
-        assert_eq!(hidden.origin.y, primary.max().y - 1.0);
-        assert_eq!(hidden.origin.x, primary.origin.x - frame.size.width + 1.0);
     }
 }
 

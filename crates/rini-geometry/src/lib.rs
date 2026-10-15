@@ -375,6 +375,15 @@ mod tests {
         assert_eq!(from_right.size.width, 800.0);
     }
 
+    /// The edges are the display's own, not the global zero.
+    #[test]
+    fn entry_is_relative_to_the_display_it_happens_on() {
+        let display = screen(-670.0, -1692.0, 3008.0, 1692.0);
+        let park = screen(2337.0, -1.0, 859.0, 1081.0);
+        let destination = screen(-666.0, -1660.0, 859.0, 1081.0);
+        assert_eq!(park_entry_frame(park, destination, display).origin.x, 2338.0);
+    }
+
     #[test]
     fn centering_puts_a_smaller_frame_in_the_middle() {
         let centered = centered_in(rect(0.0, 0.0, 400.0, 300.0), rect(100.0, 200.0, 1000.0, 800.0));
