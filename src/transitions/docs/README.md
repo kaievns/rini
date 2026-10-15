@@ -18,6 +18,7 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **A switch's stack** | `domain/strip_stack.rs` — the stacked workspace strips a vertical switch scrolls through |
 | **Arriving mid-flight** | `domain/admission.rs` — a pass merging into a running flight, reserved entrances, how an opened window enters, and how each window's picture where it ends is waited for (`EndPicture`) |
 | **A flight's score** | `domain/flight_score.rs` — `FlightScore`: the score the flight's look composes and bends, every edit it hands the renderer folded into it first, the accents waiting for the motion, the clock and the lift's settle read from it, when a tile's leg in two steps turns its corner (`corner_at`) and its leg added again as it plays (`again`) |
+| **A flight, composed** | `domain/running.rs` — `RunningAnimation`: what a flight composed, its tiles and the pictures they draw, its plan and score, the entrances waiting for a picture and the passes held (`Composed`, each with its `Shape`), and the rules over it: a later pass folded into frame zero or bent from the score (`take_pass`, `merge_pass`) and its entrances (`take_ends`), a reserved entrance joining with its first picture (`take_picture`, `join`), frame zero's pictures (`wear`) and frame zero posed again (`pose`), the motion starting (`start_moving`), a repaint held for its tile's corner and let go (`waits_for_corner`, `turn_corners`), the focus handover (`draw_focused`) and a parked target's focused look (`fly_focused_look`), what the coordinator is told of it (`stage`, `summary`), and how its tiles band (`restack`, `band_plan`, `bank`); `TileOf`, what a tile is made of beside where it flies and its picture (`TileOf::flying`); all of it over `TilePicture`, what the rules read of the picture a tile is drawn with |
 | **What a flight is** | `domain/flight.rs` — the handover report, when a pass is worth an overlay |
 | **When** | `domain/timing.rs` — the tick, the coalesce window, the hold for a grow's repaint and for a window with no picture of its own, with its bound over a burst of passes merged before the motion, and how long a repaint watch waits for its window to arrive, the lift's grace and the quiet after it |
 | **The writes** | `domain/frame_writes.rs` — which final frames go out to the apps, and in what order |
@@ -25,6 +26,10 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **What waits for the screen** | `domain/drawn.rs` — `Drawn`: the batches of render commands handed to the renderer by number, the last it committed, and what waits for one (`Owed`): the real frames for the `Show`'s, the bar's picture and the quiet for the `Lift`'s, by the flight that owes it; a new flight's hold drops the last lift's, an undrawn batch releases what waited for it, and an abandoned flight's own are dropped |
 | **The journal** | `domain/journal.rs` — `Journalled`: the coordinator with its journal, the press each request answers, every command it gives, every event it takes but a picture and frame zero, a tick only by the first `at_rest` and `landed` it reads in a generation, every delivery of pictures to it, every drain the renderer commits, each picture a tile takes, each held lift's hide and handover and each turn of the main thread over a frame a mark in a ring of 8192, and the burst due once a transition settles; the JSON lines a burst is written as; and which lifts are held for the overlay's own picture (`measures`) and when one hides (`Journalled::heard`) |
 | **The engine** | `platform/engine.rs` — `FlightEngine`, the actor on the `transitions` thread, made there from `Parts`: it holds the coordinator with its journal (`Journalled`), stages each request and merges each pass, and carries out what the coordinator says on the renderer, each event's render commands one batch sent through `Draw` and its commit heard as `Event::Rendered`, and on the pictures service, placing the real windows through the reactor once the overlay covering them is drawn; every instant it reads is its clock's, and every track begins on the renderer's media clock; while the handover is measured, it holds each lift's hide for the overlay's own picture until the journal says it hides, and the bar's picture and the quiet with it |
+| **A request, composed** | `platform/engine/compose.rs` — `FlightEngine::start`, a layout pass composed request by request, each window's tile on the picture it has or the stand-in (`compose_tile`) and, with neither, its entrance from where it opened or its reservation (`compose_entrance`); `FlightEngine::start_surface`, a strip movement, each window on its picture or the stand-in (`surface_tiles`) |
+| **A tile, read** | `platform/engine/tiles.rs` — `Stacking`: every window's depth and corner radius read in one query a pass; where the window server has each window (`frames_of`), and a real frame only (`live_frame`); `TilePicture` for `Picture` |
+| **What it asks for** | `platform/engine/asks.rs` — the windows on screen at a moment of a flight, under the engine's tag and each where it is expected (`on_screen`), each window at the size it is asked at (`sized_targets`), and `EndWatches`: the end state's watches, one slot a kind, retargeted from one generation to the next |
+| **The engine's log** | `platform/engine/logged.rs` — `Whole`: a frame, point, vector or size as the engine's log gives it, to the point, a frame as its origin then its size; what a merge changed of a flight, the containers it retargeted and the members it moved between them (`merged`), and what the overlay was dressed with (`dressed`) |
 | **The journal's writer** | `platform/journal.rs` — `Writer`: the `journal` thread, which appends each burst to `~/Library/Logs/rini/transitions.jsonl` and starts it afresh past 50MB |
 | **Settings** | `settings.rs` — `JournalSettings`: whether the journal is written and the handover measured (`animations › journal`) |
 
@@ -94,9 +99,11 @@ from the begin to the lift.
 ## Reading order
 
 `domain/request.rs` → `domain/pass.rs` → `domain/travel.rs` → `domain/admission.rs` →
-`domain/flight.rs` → `domain/flight_score.rs` → `domain/timing.rs` → `domain/lifecycle.rs` (`Kind`,
-then `StageSummary`, then `Coordinator::on`) → `domain/journal.rs` (`Journalled::drive`) →
-`domain/drawn.rs` → `platform/engine.rs`, the actor and the largest file → `platform/journal.rs`.
+`domain/flight.rs` → `domain/flight_score.rs` → `domain/running.rs` → `domain/timing.rs` →
+`domain/lifecycle.rs` (`Kind`, then `StageSummary`, then `Coordinator::on`) → `domain/journal.rs`
+(`Journalled::drive`) → `domain/drawn.rs` → `platform/engine.rs`, the actor →
+`platform/engine/compose.rs` (`start`, `start_surface`) → `platform/engine/tiles.rs` →
+`platform/engine/asks.rs` → `platform/engine/logged.rs` → `platform/journal.rs`.
 
 ## Detail
 
@@ -111,15 +118,6 @@ then `StageSummary`, then `Coordinator::on`) → `domain/journal.rs` (`Journalle
   a flight moves once it runs
 
 ## Known debt
-
-**Some pure rules are still the engine's.** How a later pass merges into a flight's tiles, how a
-reserved entrance joins, what frame zero's pictures and a focus handover change, which tiles the
-coordinator is told of, how tiles band and which focused
-look a parked target flies are methods on `RunningAnimation` and functions over
-`OverlayTile` and `Picture`, and both carry a platform `Picture`. They and their tests
-(`platform/engine.rs`, grouped by unit) move to `domain/` once a tile holds a picture handle instead.
-`summary`, which assembles the coordinator's `StageSummary` from them and from what the pictures
-service knows, is the actor's glue rather than a rule.
 
 **A panel's keys are seen only as far as rini hears of them.** The window focus leaves is taken to
 look focused at frame zero when it was the key window as the request went out, and the key window is

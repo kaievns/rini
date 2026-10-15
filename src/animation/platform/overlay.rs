@@ -70,37 +70,8 @@ define_class!(
     }
 );
 
-/// One window's picture inside the overlay, and where it should be drawn.
-#[derive(Clone)]
-pub struct OverlayTile {
-    pub window: WindowId,
-    /// Where the window starts.
-    pub from: OverlayRect,
-    /// Where the window ends up.
-    pub to: OverlayRect,
-    pub snapshot: Picture,
-    /// The picture its leg in two steps flies from the corner on (`tile::two_steps`): a repaint
-    /// held for the corner, `snapshot` flown up to it. None on any other leg.
-    pub from_corner: Option<Picture>,
-    /// In the other z-order band from the tiled windows. See `crate::animation::domain::motion::z_group`.
-    pub floating: bool,
-    /// The window server's front-to-back position, 0 frontmost; `None` when unreported.
-    pub server_order: Option<usize>,
-    /// Front-to-back position in the overlay, 0 frontmost; derived once per flight by the engine.
-    pub depth: usize,
-    /// Whether the tile is drawn focused, which deepens its shadow and brightens its hairline; it
-    /// turns with the window's picture.
-    pub focused: bool,
-    /// What the window wears through the flight, and where it ends the ring it wears and whether it
-    /// holds focus, which its ring and border show from the flight's show.
-    pub worn: Worn,
-    /// The window's corner radius in points, as the window server reports it; `None` when it reports
-    /// none.
-    pub radius: Option<f64>,
-    /// Whether the overlay clips the tile's picture to its corner: a picture whose corners carry
-    /// what was behind its window, or the stand-in, which has no corners of its own.
-    pub clipped: bool,
-}
+/// A tile drawn on a captured picture.
+pub type OverlayTile = tile::OverlayTile<Picture>;
 
 /// Above every tile; tiles sit at `-depth`, never above zero.
 const BAR_Z: f64 = 10_000.0;

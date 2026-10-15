@@ -229,17 +229,6 @@ mod tests {
         .fold(0.0f64, |worst, d| worst.max(d.abs()))
     }
 
-    /// Where `plan` lands `window`.
-    fn destination(plan: &FlightPlan, window: WindowId) -> OverlayRect {
-        match plan.member(window).expect("in the plan") {
-            Member::Rigid { key, rel } => overlay_of(rel, plan.position_of(key)),
-            Member::Changing { to, .. } | Member::Entrance { to, .. } => {
-                overlay_of(to, plan.position_of(GroupKey::Loose))
-            }
-            Member::Floating { to, .. } => overlay_of(to, plan.position_of(GroupKey::Floating)),
-        }
-    }
-
     /// One flight of a look, every edit it answers folded into its score.
     struct Flight {
         choreography: Box<dyn Choreography>,
@@ -366,7 +355,7 @@ mod tests {
                 assert!(flight.score.settled(end), "{look:?} run {run}");
                 for &window in &flight.drawn {
                     let drawn = flight.score.drawn(window, end).expect("drawn");
-                    let lands = destination(&flight.plan, window);
+                    let lands = flight.plan.destination(window).expect("in the plan");
                     assert!(
                         edges_apart(drawn, lands) <= 1.0,
                         "{look:?} run {run} {accents:?}: {window:?} at {drawn:?}, lands at {lands:?}"
