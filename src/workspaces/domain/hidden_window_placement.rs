@@ -1,4 +1,5 @@
 use objc2_core_foundation::{CGPoint, CGRect};
+use rini_geometry::CGRectExt;
 use rini_geometry::space::{FromCg, ScreenRect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -32,12 +33,6 @@ impl HiddenWindowPlacement {
         CGRect::new(CGPoint::new(x, screen.max().y - Self::REVEAL_PX), window.size)
     }
 
-    pub fn intersection_area(a: CGRect, b: CGRect) -> f64 {
-        let width = (a.max().x.min(b.max().x) - a.origin.x.max(b.origin.x)).max(0.0);
-        let height = (a.max().y.min(b.max().y) - a.origin.y.max(b.origin.y)).max(0.0);
-        width * height
-    }
-
     pub fn calculate(
         screen: CGRect,
         window: CGRect,
@@ -46,10 +41,10 @@ impl HiddenWindowPlacement {
     ) -> CGRect {
         let preferred = Self::rect_for_corner(screen, window, preferred_corner);
         let alternate = Self::rect_for_corner(screen, window, preferred_corner.opposite());
-        let overlap = |candidate| {
+        let overlap = |candidate: CGRect| {
             other_screens
                 .iter()
-                .map(|other| Self::intersection_area(candidate, *other))
+                .map(|other| candidate.intersection(other).area())
                 .sum::<f64>()
         };
         if overlap(alternate) < overlap(preferred) {

@@ -8,7 +8,6 @@ use rini_geometry::CGRectExt;
 use rini_geometry::space::{FromCg, ScreenRect, ToCg};
 
 use crate::pictures::domain::backdrop::{is_bar_layer, is_desktop_layer};
-use crate::windows::domain::listing::overlaps;
 use crate::windows::platform::window_server::{on_screen_windows, owner_name};
 
 /// The windows making up the desktop backdrop, which of them are the wallpaper, and the rect they
@@ -35,7 +34,7 @@ pub fn desktop_backdrop_windows(display: ScreenRect) -> DesktopBackdrop {
     let mut wallpaper = Vec::new();
     let mut union: Option<CGRect> = None;
     for window in on_screen_windows(true) {
-        if !is_desktop_layer(window.level as i64) || !overlaps(window.bounds, display) {
+        if !is_desktop_layer(window.level as i64) || !window.bounds.overlaps(&display) {
             continue;
         }
         // Owner "Wallpaper" (wallpaper agent) or owner "Dock" with name "Wallpaper-<uuid>".
@@ -68,7 +67,7 @@ pub fn bar_strip(display: ScreenRect) -> BarStrip {
     let mut windows: Vec<WindowServerId> = Vec::new();
     let mut bounds: Option<CGRect> = None;
     for window in on_screen_windows(false) {
-        if !is_bar_layer(window.level as i64) || !overlaps(window.bounds, display) {
+        if !is_bar_layer(window.level as i64) || !window.bounds.overlaps(&display) {
             continue;
         }
         bounds = Some(match bounds {

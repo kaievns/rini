@@ -10,7 +10,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use serde::{Deserialize, Serialize};
 
 use rini_core::ids::{ScreenId, SpaceId};
-use rini_geometry::CGRectDef;
+use rini_geometry::{CGRectDef, CGRectExt};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScreenInfo {
@@ -80,15 +80,6 @@ pub fn top_inset(menu_bar_inset: f64, band: f64) -> f64 {
     menu_bar_inset.max(band)
 }
 
-pub fn rects_intersect(a: &CGRect, b: &CGRect) -> bool {
-    let ax2 = a.origin.x + a.size.width;
-    let ay2 = a.origin.y + a.size.height;
-    let bx2 = b.origin.x + b.size.width;
-    let by2 = b.origin.y + b.size.height;
-
-    !(ax2 <= b.origin.x || bx2 <= a.origin.x || ay2 <= b.origin.y || by2 <= a.origin.y)
-}
-
 /// Which edge of the screen the Dock is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DockEdge {
@@ -114,7 +105,7 @@ pub fn usable_frame(raw: CGRect, menu_bar_inset: f64, dock: Option<(CGRect, Dock
         frame.origin.y += menu_bar_inset;
         frame.size.height = (frame.size.height - menu_bar_inset).max(0.0);
     }
-    let Some((dock, edge)) = dock.filter(|(dock, _)| rects_intersect(&frame, dock)) else {
+    let Some((dock, edge)) = dock.filter(|(dock, _)| frame.overlaps(dock)) else {
         return frame;
     };
     let edge = match edge {
@@ -325,15 +316,6 @@ mod tests {
                 .convert_rect(CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)))
                 .is_none()
         );
-    }
-
-    #[test]
-    fn rects_touching_at_an_edge_do_not_intersect() {
-        let a = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(10.0, 10.0));
-        let b = CGRect::new(CGPoint::new(10.0, 0.0), CGSize::new(10.0, 10.0));
-        let c = CGRect::new(CGPoint::new(9.0, 9.0), CGSize::new(10.0, 10.0));
-        assert!(!rects_intersect(&a, &b));
-        assert!(rects_intersect(&a, &c));
     }
 
     #[test]

@@ -7,7 +7,7 @@ interface speaks. Pure, and the only crate that tests without linking AppKit:
 
 ## What it owns
 
-`CGRectExt` (`intersection`, `union`, `area`, `contains`, `contains_rect`), `Round`
+`CGRectExt` (`intersection`, `union`, `area`, `contains`, `contains_rect`, `overlaps`), `Round`
 (`rounded`), `SameAs` and `IsWithin` for float comparison, on CG values and typed
 ones alike, `centered_in` on CG, `is_off_screen`, `shows_on` and `park_entry_frame` in any one
 space, and `to_overlay_space` and `from_overlay_space`, a window server rect on the

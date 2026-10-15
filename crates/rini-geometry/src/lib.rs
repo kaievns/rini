@@ -83,6 +83,8 @@ pub trait CGRectExt {
     fn union(&self, other: &Self) -> Self;
     fn contains(&self, point: ic::CGPoint) -> bool;
     fn contains_rect(&self, other: Self) -> bool;
+    /// Whether the two share an area, edges that merely touch excluded.
+    fn overlaps(&self, other: &Self) -> bool;
     fn area(&self) -> f64;
 }
 
@@ -119,6 +121,13 @@ impl CGRectExt for ic::CGRect {
             && self.min().y <= other.min().y
             && self.max().x >= other.max().x
             && self.max().y >= other.max().y
+    }
+
+    fn overlaps(&self, other: &Self) -> bool {
+        self.min().x < other.max().x
+            && other.min().x < self.max().x
+            && self.min().y < other.max().y
+            && other.min().y < self.max().y
     }
 
     fn area(&self) -> f64 {
@@ -304,6 +313,47 @@ mod tests {
         assert!(!r.contains(ic::CGPoint::new(10.1, 10.0)));
         assert!(r.contains_rect(r));
         assert!(!r.contains_rect(rect(0.0, 0.0, 10.0, 10.1)));
+    }
+
+    #[test]
+    fn overlapping_rects_overlap() {
+        assert!(rect(0.0, 0.0, 100.0, 100.0).overlaps(&rect(50.0, 50.0, 100.0, 100.0)));
+    }
+
+    #[test]
+    fn a_window_fully_inside_a_display_overlaps_it() {
+        let display = rect(0.0, 32.0, 1728.0, 1085.0);
+        assert!(rect(865.0, 32.0, 859.0, 1081.0).overlaps(&display));
+    }
+
+    #[test]
+    fn a_window_scrolled_entirely_off_the_left_does_not_overlap() {
+        // Real measured geometry: off-strip columns sit at x = -1680 with width 1720, so their right
+        // edge lands at 40 and they DO still touch the display. A window fully clear of it must not.
+        let display = rect(0.0, 32.0, 1728.0, 1085.0);
+        assert!(!rect(-2000.0, 32.0, 859.0, 1081.0).overlaps(&display));
+    }
+
+    #[test]
+    fn a_window_overlapping_by_its_parked_sliver_still_counts_as_overlapping() {
+        // The parked case, which the caller filters on size rather than on overlap.
+        let display = rect(0.0, 32.0, 1728.0, 1085.0);
+        assert!(rect(-1680.0, 32.0, 1720.0, 1081.0).overlaps(&display));
+    }
+
+    #[test]
+    fn a_window_on_the_next_display_does_not_overlap_this_one() {
+        let display = rect(0.0, 32.0, 1728.0, 1085.0);
+        assert!(!rect(1728.0, 32.0, 859.0, 1081.0).overlaps(&display));
+    }
+
+    #[test]
+    fn merely_touching_edges_does_not_count_as_overlap() {
+        // Exclusive comparison, so a window whose right edge is exactly the display's left edge
+        // contributes no visible pixels and is excluded.
+        let display = rect(0.0, 0.0, 100.0, 100.0);
+        assert!(!rect(-50.0, 0.0, 50.0, 100.0).overlaps(&display));
+        assert!(!rect(0.0, 100.0, 100.0, 50.0).overlaps(&display));
     }
 
     #[test]

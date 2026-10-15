@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use objc2_core_foundation::{CGPoint, CGRect};
+use objc2_core_foundation::CGRect;
 
 use crate::input::settings::WindowSnappingSettings;
 use rini_core::ids::WindowId;
@@ -73,7 +73,7 @@ impl DragManager {
 
         let stick_fraction = (self.config.drag_swap_fraction * STICK_RATIO)
             .clamp(0.0, self.config.drag_swap_fraction);
-        let dragged_center = Self::rect_center(new_frame);
+        let dragged_center = new_frame.mid();
         let dragged_diag =
             f64::hypot(new_frame.size.width, new_frame.size.height).max(f64::EPSILON);
 
@@ -100,7 +100,7 @@ impl DragManager {
                 continue;
             }
 
-            let other_center = Self::rect_center(*other_frame);
+            let other_center = other_frame.mid();
             let distance = f64::hypot(
                 dragged_center.x - other_center.x,
                 dragged_center.y - other_center.y,
@@ -176,13 +176,6 @@ impl DragManager {
 
     pub fn update_config(&mut self, config: WindowSnappingSettings) {
         self.config = config;
-    }
-
-    fn rect_center(rect: CGRect) -> CGPoint {
-        CGPoint::new(
-            rect.origin.x + rect.size.width * 0.5,
-            rect.origin.y + rect.size.height * 0.5,
-        )
     }
 }
 
