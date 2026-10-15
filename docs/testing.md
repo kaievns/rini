@@ -27,7 +27,11 @@ without checking. Both are in `docs/implementation-audit.md` under 4.4 and 4.4.1
 The test for it: if the thing behind the `#[cfg]` is a QUERY — something the operating system
 answers — a fake is fine, and it belongs at the boundary with the other fakes. If it is a RULE —
 something rini decides — inject what the rule reads and let the test name it. `SpaceKinds` and
-`LiveDisplays` in `src/displays/platform/spaces.rs` are what that looks like.
+`LiveDisplays` in `src/displays/platform/spaces.rs` are what that looks like. A rule about the
+order AppKit or Core Animation calls go in is a rule too: the domain returns the calls as a plan
+and the platform replays it, so a test reads the order. `rest::plan_draw` in
+`src/decorations/domain/rest.rs` and `placement::frames` in `src/bar/domain/placement.rs` are what
+that looks like.
 
 ## A unit test must not read the live window server
 

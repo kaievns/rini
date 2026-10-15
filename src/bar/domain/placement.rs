@@ -8,7 +8,7 @@
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use super::layout::{
-    GLYPH_CENTRE, HAIRLINE_HEIGHT, HAIRLINE_TOP, HEIGHT, NUMERAL_BASELINE, Piece, Span,
+    GLYPH_CENTRE, HAIRLINE_HEIGHT, HAIRLINE_TOP, HEIGHT, NUMERAL_BASELINE, Piece, Scene, Span,
     TEXT_BASELINE, UNDERLINE_HEIGHT,
 };
 use crate::displays::domain::screen::CoordinateConverter;
@@ -135,6 +135,85 @@ pub fn tray_window(left: f64, chevron: Span, scale: f64) -> CGRect {
 pub fn tray_bounds(open: bool, window: CGRect) -> CGRect {
     let shift = if open { 0.0 } else { -window.size.width };
     CGRect::new(CGPoint::new(shift, 0.0), window.size)
+}
+
+/// What a piece is drawn with, as far as where it goes: a string's picture, a menu extra's picture
+/// of `size` with its ink from `ink.0` to `ink.1`, or a hairline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Mark {
+    Text(Sheet),
+    Extra { size: CGSize, ink: (f64, f64) },
+    Rule,
+}
+
+impl Mark {
+    /// How wide its ink is, which `layout` spaces it by.
+    pub fn ink(&self) -> f64 {
+        match self {
+            Mark::Text(sheet) => sheet.ink.size.width,
+            Mark::Extra { ink, .. } => ink.1 - ink.0,
+            Mark::Rule => RULE_WIDTH,
+        }
+    }
+}
+
+/// Where everything in a scene goes, in points from the bar's top-left.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Frames {
+    /// Each piece with a mark, in the scene's order. A tray extra's is in the tray's own
+    /// coordinates, from its window's left edge, since its layer is the tray's.
+    pub pieces: Vec<(Piece, CGRect)>,
+    /// The tray's window (`tray_window`) and whether it is open: none without a tray extra or the
+    /// chevron.
+    pub tray: Option<(CGRect, bool)>,
+    pub underline: Option<CGRect>,
+}
+
+/// Where each piece of `scene` with a mark (`marks`) goes, the tray's window, and the underline.
+pub fn frames(
+    scene: &Scene,
+    marks: impl Fn(Piece) -> Option<Mark>,
+    tray_open: bool,
+    scale: f64,
+) -> Frames {
+    let placed: Vec<(Piece, CGRect)> = scene
+        .pieces
+        .iter()
+        .filter_map(|(piece, span)| {
+            let frame = match marks(*piece)? {
+                Mark::Text(sheet) => text_frame(&sheet, *span, anchor(*piece), scale),
+                Mark::Extra { size, ink } => extra_frame(size, ink.0, *span, scale),
+                Mark::Rule => rule_frame(*span, scale),
+            };
+            Some((*piece, frame))
+        })
+        .collect();
+    let tray_left = placed
+        .iter()
+        .filter(|(piece, _)| matches!(piece, Piece::Tray(_)))
+        .map(|(_, frame)| frame.origin.x)
+        .reduce(f64::min);
+    let tray = tray_left
+        .zip(scene.span(Piece::Chevron))
+        .map(|(left, chevron)| (tray_window(left, chevron, scale), tray_open));
+    let pieces = placed
+        .into_iter()
+        .map(|(piece, frame)| match (piece, tray) {
+            (Piece::Tray(_), Some((window, _))) => (
+                piece,
+                CGRect::new(
+                    CGPoint::new(frame.origin.x - window.origin.x, frame.origin.y),
+                    frame.size,
+                ),
+            ),
+            _ => (piece, frame),
+        })
+        .collect();
+    Frames {
+        pieces,
+        tray,
+        underline: scene.underline.map(|span| underline_frame(span, scale)),
+    }
 }
 
 /// A bar's frame in CoreGraphics coordinates: the top strip of its display.
@@ -453,5 +532,95 @@ mod tests {
             ),
             Reframe::Stay
         );
+    }
+
+    const TRAY_ICON: Mark = Mark::Extra {
+        size: CGSize { width: 24.0, height: 33.0 },
+        ink: (3.0, 19.0),
+    };
+
+    fn scene(pieces: Vec<(Piece, Span)>) -> Scene { Scene { pieces, ..Scene::default() } }
+
+    fn tray_scene() -> Scene {
+        scene(vec![
+            (Piece::Tray(0), span(1000.0, 16.0)),
+            (Piece::Tray(1), span(1031.0, 16.0)),
+            (Piece::Chevron, span(1063.0, 8.0)),
+        ])
+    }
+
+    fn tray_marks(piece: Piece) -> Option<Mark> {
+        match piece {
+            Piece::Tray(_) => Some(TRAY_ICON),
+            _ => Some(Mark::Text(sheet(GY, SCALE))),
+        }
+    }
+
+    #[test]
+    fn a_tray_extra_is_placed_from_the_tray_windows_left_edge_and_the_chevron_on_the_bar() {
+        let frames = frames(&tray_scene(), tray_marks, true, SCALE);
+        let window = rect(997.0, 0.0, 66.0, HEIGHT);
+        assert_eq!(frames.tray, Some((window, true)));
+        let chevron = text_frame(
+            &sheet(GY, SCALE),
+            span(1063.0, 8.0),
+            anchor(Piece::Chevron),
+            SCALE,
+        );
+        assert_eq!(frames.pieces, vec![
+            (Piece::Tray(0), rect(0.0, -0.5, 24.0, 33.0)),
+            (Piece::Tray(1), rect(31.0, -0.5, 24.0, 33.0)),
+            (Piece::Chevron, chevron),
+        ]);
+        assert_eq!(
+            frames.pieces[1].1.origin.x + window.origin.x,
+            extra_frame(CGSize::new(24.0, 33.0), 3.0, span(1031.0, 16.0), SCALE).origin.x,
+            "on the bar where its ink starts on its span"
+        );
+    }
+
+    #[test]
+    fn without_the_chevron_there_is_no_tray_window_and_a_tray_extra_stays_on_the_bar() {
+        let closed = frames(&tray_scene(), tray_marks, false, SCALE);
+        assert_eq!(closed.tray.map(|(_, open)| open), Some(false));
+        let mut scene = tray_scene();
+        scene.pieces.retain(|(piece, _)| *piece != Piece::Chevron);
+        let frames = frames(&scene, tray_marks, true, SCALE);
+        assert_eq!(frames.tray, None);
+        assert_eq!(frames.pieces[0], (Piece::Tray(0), rect(997.0, -0.5, 24.0, 33.0)));
+    }
+
+    #[test]
+    fn a_piece_with_no_mark_has_no_frame_and_the_rest_keep_the_scenes_order() {
+        let scene = Scene {
+            underline: Some(span(18.0, 7.0)),
+            ..scene(vec![
+                (Piece::Numeral(0), span(18.0, 4.0)),
+                (Piece::Glyph(0), span(30.0, 11.0)),
+                (Piece::PlaceDivider, span(60.0, RULE_WIDTH)),
+                (Piece::FocusApp, span(80.0, 30.0)),
+            ])
+        };
+        let marks = |piece| match piece {
+            Piece::Glyph(_) => None,
+            Piece::PlaceDivider => Some(Mark::Rule),
+            _ => Some(Mark::Text(sheet(ONE, SCALE))),
+        };
+        let frames = frames(&scene, marks, false, SCALE);
+        let text = |piece, span| text_frame(&sheet(ONE, SCALE), span, anchor(piece), SCALE);
+        assert_eq!(frames.pieces, vec![
+            (Piece::Numeral(0), text(Piece::Numeral(0), span(18.0, 4.0))),
+            (Piece::PlaceDivider, rule_frame(span(60.0, RULE_WIDTH), SCALE)),
+            (Piece::FocusApp, text(Piece::FocusApp, span(80.0, 30.0))),
+        ]);
+        assert_eq!(frames.tray, None);
+        assert_eq!(frames.underline, Some(underline_frame(span(18.0, 7.0), SCALE)));
+    }
+
+    #[test]
+    fn a_marks_ink_is_what_layout_spaces_it_by() {
+        assert_eq!(Mark::Text(sheet(TWO, SCALE)).ink(), TWO.width);
+        assert_eq!(TRAY_ICON.ink(), 16.0);
+        assert_eq!(Mark::Rule.ink(), RULE_WIDTH);
     }
 }

@@ -4,7 +4,8 @@
 //! named, what waits from a flight's begin for its place ahead of the lift, how many rest windows
 //! rini keeps, by the fullest workspace on each display, which of them draws each and what each
 //! changes to draw it, which are ordered above their windows again and when one takes its window's
-//! level, and that none is kept and nothing taken while they are off. See "At rest" in `src/decorations/docs/README.md`.
+//! level, the order every call of a draw goes in, and that none is kept and nothing taken while
+//! they are off. See "At rest" in `src/decorations/docs/README.md`.
 
 use std::time::{Duration, Instant};
 
@@ -249,8 +250,8 @@ struct Covered {
 /// and a park's patience draw nothing; the reactor's next model turns it on.
 #[derive(Clone, Debug, Default)]
 pub struct Rest {
-    pub model: RestModel,
-    pub windows: HashMap<WindowServerId, Tracked>,
+    model: RestModel,
+    windows: HashMap<WindowServerId, Tracked>,
     /// Each window asked of the window server and not yet known: none until its introduction comes
     /// back, then it, with each frame and order since, until the model naming it is taken.
     introducing: HashMap<WindowServerId, Option<Introduction>>,
@@ -653,6 +654,59 @@ impl Rest {
         most.values().sum::<usize>() + self.model.displays.len()
     }
 
+    /// What the rest window on `target` draws now: its bands as its window wears them where the
+    /// window server has it, or none when they show nothing.
+    pub fn look_of(&self, target: WindowServerId) -> Option<Look> {
+        let window = self.model.windows.iter().find(|w| w.window == target)?;
+        let tracked = self.windows.get(&target)?;
+        let frame = tracked.frame?;
+        let displays = &self.model.displays;
+        let parked = tracked.parking.parked;
+        if !shown(window, parked, tracked.ordered_out, Some(frame), displays) {
+            return None;
+        }
+        Look::of(window, frame, tracked.radius, display_of(frame, displays)?)
+    }
+
+    /// The level and sub-level `window` was last read at.
+    pub fn level_of(&self, window: WindowServerId) -> Option<StackLevel> {
+        self.windows.get(&window).map(|tracked| tracked.level)
+    }
+
+    /// One batch of what the rest windows heard, taken at `now` as one turn: turned off by the
+    /// latest word, it takes nothing else. Otherwise a flight's begin first, then each window the
+    /// latest model names first asked, and the turn (`turn`), the pool grown to what the model wants
+    /// first when a model or a lift came and the turn draws.
+    pub fn take(&mut self, batch: Batch, now: Instant) -> Taken {
+        let Batch {
+            flight,
+            word,
+            intros,
+            frames,
+            orders,
+            lifted,
+        } = batch;
+        let model = match word {
+            Some(Word::Off) => {
+                self.off();
+                return Taken::Off;
+            }
+            Some(Word::Model(model)) => Some(model),
+            None => None,
+        };
+        if let Some((display, pressed)) = flight {
+            self.fly(display, pressed, now);
+        }
+        let ask = model.as_ref().map(|model| self.ask(model)).unwrap_or_default();
+        let grows = lifted || model.is_some();
+        let draw = self.turn(model, &intros, &frames, orders, now);
+        Taken::On {
+            ask,
+            grow: grows && draw.is_some(),
+            draw,
+        }
+    }
+
     /// Every window whose bands show now, in the model's order.
     pub fn wanted(&self) -> Vec<WindowServerId> {
         let displays = &self.model.displays;
@@ -840,6 +894,198 @@ pub fn to_reorder(
         }
     }
     reorder
+}
+
+/// The reactor's latest word: a model, or that no window can wear a band.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Word {
+    Model(RestModel),
+    Off,
+}
+
+/// One thing the rest windows heard, in the domain's spaces.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Heard {
+    /// A flight over this display, its whole bounds, for the press at `pressed`.
+    Flight {
+        display: ScreenRect,
+        pressed: Instant,
+    },
+    Word(Word),
+    Frames(Vec<(WindowServerId, ScreenRect)>),
+    Order(ServerOrder),
+    Intro(WindowServerId, Introduction),
+    Lifted,
+}
+
+/// Everything heard since the last turn, folded: the latest flight and the latest word, every
+/// introduction, frame and order in the order they came, and whether the overlay lifted.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Batch {
+    pub flight: Option<(ScreenRect, Instant)>,
+    pub word: Option<Word>,
+    pub intros: Vec<(WindowServerId, Introduction)>,
+    pub frames: Vec<(WindowServerId, ScreenRect)>,
+    pub orders: Vec<ServerOrder>,
+    pub lifted: bool,
+}
+
+impl Batch {
+    pub fn of(heard: impl IntoIterator<Item = Heard>) -> Batch {
+        let mut batch = Batch::default();
+        for heard in heard {
+            match heard {
+                Heard::Flight { display, pressed } => batch.flight = Some((display, pressed)),
+                Heard::Word(word) => batch.word = Some(word),
+                Heard::Frames(frames) => batch.frames.extend(frames),
+                Heard::Order(order) => batch.orders.push(order),
+                Heard::Intro(window, intro) => batch.intros.push((window, intro)),
+                Heard::Lifted => batch.lifted = true,
+            }
+        }
+        batch
+    }
+}
+
+/// What a batch asks of the platform (`Rest::take`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Taken {
+    /// Every rest window closed.
+    Off,
+    /// Each window to ask of the window server, whether the pool grows to `Rest::pool_size` before
+    /// the draw, and what the turn draws, if anything.
+    On {
+        ask: Vec<WindowServerId>,
+        grow: bool,
+        draw: Option<Draw>,
+    },
+}
+
+/// A rest window as a draw finds it: the window it draws, if any, the window whose look it last
+/// drew, and that look.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PanelState {
+    pub target: Option<WindowServerId>,
+    pub drew: Option<WindowServerId>,
+    pub look: Option<Look>,
+}
+
+/// One call of a draw, on the rest window at `at` in the pool or on the Core Animation transaction
+/// the layers are laid in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PanelOp {
+    /// Given `window` to draw, or none: released.
+    Target {
+        at: usize,
+        window: Option<WindowServerId>,
+    },
+    /// Directly above `window`, taking `level` first when it holds another (`stack_change`).
+    Order {
+        at: usize,
+        window: WindowServerId,
+        level: StackLevel,
+    },
+    /// To alpha 0, the layers and the frame kept.
+    Hide {
+        at: usize,
+    },
+    /// A transaction with implicit actions off.
+    Begin,
+    Lay {
+        at: usize,
+        look: Look,
+    },
+    /// At the look's frame and alpha 1, each set only where it differs from what it drew (`delta`).
+    Reveal {
+        at: usize,
+        look: Look,
+    },
+    /// The transaction committed and flushed.
+    Commit,
+}
+
+/// The calls that draw `draw` on `panels`, in order: one rest window for each window whose band
+/// shows (`assign`), each given a window or whose window focus came to or the window server
+/// reordered ordered above it (`to_reorder`), and each one's look drawn where it changed (`delta`),
+/// the layers in one transaction opened only when one is laid. A released rest window is hidden
+/// inside that transaction. One showing a window afresh (`afresh`) is hidden before any is ordered,
+/// and takes its frame, alpha 1 and its place in the stack only after the commit.
+pub fn plan_draw(rest: &Rest, panels: &[PanelState], draw: &Draw) -> Vec<PanelOp> {
+    let wanted = rest.wanted();
+    let mut targets: Vec<Option<WindowServerId>> =
+        panels.iter().map(|panel| panel.target).collect();
+    let drew: Vec<Option<WindowServerId>> = panels.iter().map(|panel| panel.drew).collect();
+    let mut also: Vec<usize> = draw
+        .focus
+        .and_then(|focus| targets.iter().position(|target| *target == Some(focus)))
+        .into_iter()
+        .collect();
+    let assignment = assign(&targets, &drew, &wanted);
+    let mut ops = Vec::new();
+    let mut given = Vec::new();
+    for (at, window) in assignment.retargeted {
+        targets[at] = Some(window);
+        given.push(at);
+        ops.push(PanelOp::Target { at, window: Some(window) });
+    }
+    also.extend(&given);
+    let before: Vec<(Option<WindowServerId>, bool)> = targets
+        .iter()
+        .zip(panels)
+        .map(|(target, panel)| (*target, panel.look.is_some_and(|look| look.shown)))
+        .collect();
+    let afresh = afresh(&before, &given, &wanted);
+    for at in to_reorder(&draw.orders, &targets, &also) {
+        if !afresh.contains(&at) {
+            ops.extend(order(rest, at, targets[at]));
+        }
+    }
+    ops.extend(afresh.iter().map(|at| PanelOp::Hide { at: *at }));
+    for at in &assignment.released {
+        targets[*at] = None;
+        ops.push(PanelOp::Target { at: *at, window: None });
+    }
+    let looks: Vec<Option<Look>> = targets.iter().map(|target| rest.look_of((*target)?)).collect();
+    let lays = |at: usize| looks[at].is_some_and(|look| delta(panels[at].look, look).layers);
+    let laying = (0..panels.len()).any(lays);
+    if laying {
+        ops.push(PanelOp::Begin);
+    }
+    ops.extend(assignment.released.iter().map(|at| PanelOp::Hide { at: *at }));
+    let mut revealed = Vec::new();
+    for (at, target) in targets.iter().enumerate() {
+        if target.is_none() {
+            continue;
+        }
+        let Some(look) = looks[at] else {
+            ops.push(PanelOp::Hide { at });
+            continue;
+        };
+        if lays(at) {
+            ops.push(PanelOp::Lay { at, look });
+        }
+        if afresh.contains(&at) {
+            revealed.push((at, look));
+        } else {
+            ops.push(PanelOp::Reveal { at, look });
+        }
+    }
+    if laying {
+        ops.push(PanelOp::Commit);
+    }
+    for (at, look) in revealed {
+        ops.push(PanelOp::Reveal { at, look });
+        ops.extend(order(rest, at, targets[at]));
+    }
+    ops
+}
+
+/// The rest window at `at` ordered above `target` at its level, when it has a window and the window
+/// server has told its level.
+fn order(rest: &Rest, at: usize, target: Option<WindowServerId>) -> Option<PanelOp> {
+    let window = target?;
+    let level = rest.level_of(window)?;
+    Some(PanelOp::Order { at, window, level })
 }
 
 #[cfg(test)]
@@ -2374,5 +2620,259 @@ mod tests {
         assert_eq!(display_of(rect(1500.0, 35.0, 859.0, 1079.0), &two), Some(two[1]));
         assert_eq!(display_of(rect(1000.0, 35.0, 859.0, 1079.0), &two), Some(two[0]));
         assert_eq!(display_of(rect(4000.0, 35.0, 859.0, 1079.0), &two), None);
+    }
+
+    /// A rest window drawing `window` as `rest` has it now.
+    fn drawing(rest: &Rest, window: u32) -> PanelState {
+        PanelState {
+            target: Some(ws(window)),
+            drew: Some(ws(window)),
+            look: rest.look_of(ws(window)),
+        }
+    }
+
+    fn order_op(at: usize, window: u32) -> PanelOp {
+        PanelOp::Order {
+            at,
+            window: ws(window),
+            level: LEVEL,
+        }
+    }
+
+    /// AppKit sends a frame and an alpha at once and the layers go at the commit: a rest window
+    /// that took its frame first could show another window's band in this one's place.
+    #[test]
+    fn a_rest_window_given_a_window_is_hidden_first_and_shown_and_ordered_only_after_its_layers_commit()
+     {
+        let rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        let look = rest.look_of(ws(1)).expect("shown");
+        assert_eq!(
+            plan_draw(&rest, &[PanelState::default()], &Draw::default()),
+            vec![
+                PanelOp::Target { at: 0, window: Some(ws(1)) },
+                PanelOp::Hide { at: 0 },
+                PanelOp::Begin,
+                PanelOp::Lay { at: 0, look },
+                PanelOp::Commit,
+                PanelOp::Reveal { at: 0, look },
+                order_op(0, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_released_rest_window_is_hidden_inside_the_transaction_the_new_one_is_laid_in() {
+        let rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        let look = rest.look_of(ws(1)).expect("shown");
+        let gone = PanelState {
+            target: Some(ws(9)),
+            drew: Some(ws(9)),
+            look: Some(look),
+        };
+        assert_eq!(
+            plan_draw(&rest, &[gone, PanelState::default()], &Draw::default()),
+            vec![
+                PanelOp::Target { at: 1, window: Some(ws(1)) },
+                PanelOp::Hide { at: 1 },
+                PanelOp::Target { at: 0, window: None },
+                PanelOp::Begin,
+                PanelOp::Hide { at: 0 },
+                PanelOp::Lay { at: 1, look },
+                PanelOp::Commit,
+                PanelOp::Reveal { at: 1, look },
+                order_op(1, 1),
+            ],
+            "the rest window that drew nothing is given the window, and the one that drew 9 kept"
+        );
+    }
+
+    #[test]
+    fn a_turn_that_lays_nothing_opens_no_transaction() {
+        let rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        let look = rest.look_of(ws(1)).expect("shown");
+        let gone = PanelState {
+            target: Some(ws(9)),
+            drew: Some(ws(9)),
+            look: Some(look),
+        };
+        assert_eq!(
+            plan_draw(&rest, &[drawing(&rest, 1), gone], &Draw::default()),
+            vec![
+                PanelOp::Target { at: 1, window: None },
+                PanelOp::Hide { at: 1 },
+                PanelOp::Reveal { at: 0, look },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rest_window_whose_window_was_reordered_or_took_focus_is_ordered_once_before_anything_is_drawn()
+     {
+        let rest = rest_with(
+            vec![at(1, true, false), at(2, false, false)],
+            SLOT,
+            Instant::now(),
+        );
+        let draw = Draw {
+            orders: vec![reorder(1), reorder(2), reorder(1)],
+            focus: Some(ws(1)),
+        };
+        let looks = [1, 2].map(|window| rest.look_of(ws(window)).expect("shown"));
+        assert_eq!(
+            plan_draw(&rest, &[drawing(&rest, 1), drawing(&rest, 2)], &draw),
+            vec![
+                order_op(0, 1),
+                order_op(1, 2),
+                PanelOp::Reveal { at: 0, look: looks[0] },
+                PanelOp::Reveal { at: 1, look: looks[1] },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_band_shown_again_where_it_hid_is_hidden_first_and_ordered_after_it_shows_laying_nothing() {
+        let rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        let look = rest.look_of(ws(1)).expect("shown");
+        let hid = PanelState {
+            look: Some(look.hidden()),
+            ..drawing(&rest, 1)
+        };
+        assert_eq!(plan_draw(&rest, &[hid], &Draw::default()), vec![
+            PanelOp::Hide { at: 0 },
+            PanelOp::Reveal { at: 0, look },
+            order_op(0, 1),
+        ]);
+    }
+
+    #[test]
+    fn a_resized_window_is_laid_and_shown_inside_one_transaction_ordering_nothing() {
+        let rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        let look = rest.look_of(ws(1)).expect("shown");
+        let smaller = PanelState {
+            look: Some(look_at(&at(1, true, false), CLEAR)),
+            ..drawing(&rest, 1)
+        };
+        assert_eq!(plan_draw(&rest, &[smaller], &Draw::default()), vec![
+            PanelOp::Begin,
+            PanelOp::Lay { at: 0, look },
+            PanelOp::Reveal { at: 0, look },
+            PanelOp::Commit,
+        ]);
+    }
+
+    #[test]
+    fn a_window_that_shows_nothing_has_no_look_and_its_rest_window_is_released() {
+        let mut rest = rest_with(vec![at(1, true, false)], SLOT, Instant::now());
+        rest.take_orders(&[ServerOrder {
+            window: ws(1),
+            change: OrderChange::Hidden,
+            level: None,
+        }]);
+        assert_eq!(rest.look_of(ws(1)), None, "ordered out");
+        assert_eq!(rest.look_of(ws(7)), None, "never named");
+        assert_eq!(
+            plan_draw(&rest, &[drawing(&Rest::default(), 1)], &Draw::default()),
+            vec![PanelOp::Target { at: 0, window: None }, PanelOp::Hide {
+                at: 0
+            }],
+        );
+    }
+
+    fn model_of(windows: Vec<RestWindow>) -> Heard { Heard::Word(Word::Model(model(windows))) }
+
+    #[test]
+    fn in_a_batch_the_latest_word_and_flight_win_and_what_the_window_server_read_keeps_its_order() {
+        let now = Instant::now();
+        let frames = |id: u32| Heard::Frames(vec![(ws(id), SLOT)]);
+        let batch = Batch::of([
+            model_of(vec![at(1, true, false)]),
+            frames(1),
+            Heard::Flight {
+                display: display()[0].bounds,
+                pressed: now,
+            },
+            Heard::Order(reorder(2)),
+            Heard::Word(Word::Off),
+            frames(2),
+            Heard::Intro(ws(3), intro(SLOT)),
+            Heard::Order(reorder(1)),
+            Heard::Flight {
+                display: CLEAR,
+                pressed: now + ms(1),
+            },
+        ]);
+        assert_eq!(batch, Batch {
+            flight: Some((CLEAR, now + ms(1))),
+            word: Some(Word::Off),
+            intros: vec![(ws(3), intro(SLOT))],
+            frames: vec![(ws(1), SLOT), (ws(2), SLOT)],
+            orders: vec![reorder(2), reorder(1)],
+            lifted: false,
+        });
+        assert_eq!(
+            Batch::of([Heard::Word(Word::Off), model_of(vec![]), Heard::Lifted]).word,
+            Some(Word::Model(model(vec![]))),
+            "a model after the off turns it back on"
+        );
+    }
+
+    #[test]
+    fn a_batch_ending_in_off_closes_every_rest_window_and_takes_nothing_else() {
+        let now = Instant::now();
+        let mut rest = rest_with(vec![at(1, true, false)], SLOT, now);
+        let batch = Batch::of([
+            Heard::Flight {
+                display: display()[0].bounds,
+                pressed: now,
+            },
+            model_of(vec![at(1, true, false), at(2, false, false)]),
+            Heard::Word(Word::Off),
+        ]);
+        assert_eq!(rest.take(batch, now), Taken::Off);
+        assert!(!rest.on() && !rest.covered() && rest.windows.is_empty());
+    }
+
+    #[test]
+    fn a_batch_asks_each_window_first_named_and_grows_the_pool_for_a_model_or_a_lift_it_draws() {
+        let now = Instant::now();
+        let mut rest = Rest::default();
+        let named = Batch::of([model_of(vec![at(1, true, false)])]);
+        assert_eq!(rest.take(named, now), Taken::On {
+            ask: vec![ws(1)],
+            grow: true,
+            draw: Some(Draw {
+                orders: vec![],
+                focus: Some(ws(1)),
+            }),
+        });
+        let lift = Batch::of([Heard::Intro(ws(1), intro(SLOT)), Heard::Lifted]);
+        assert_eq!(rest.take(lift, now), Taken::On {
+            ask: vec![],
+            grow: true,
+            draw: Some(Draw::default()),
+        });
+        assert!(rest.look_of(ws(1)).is_some(), "introduced");
+        let frames = Batch::of([Heard::Frames(vec![(ws(1), CLEAR)])]);
+        assert_eq!(rest.take(frames, now), Taken::On {
+            ask: vec![],
+            grow: false,
+            draw: Some(Draw::default()),
+        });
+        let covered = Batch::of([
+            Heard::Flight {
+                display: display()[0].bounds,
+                pressed: now,
+            },
+            model_of(vec![at(1, true, false), at(2, false, false)]),
+        ]);
+        assert_eq!(
+            rest.take(covered, now),
+            Taken::On {
+                ask: vec![ws(2)],
+                grow: false,
+                draw: None,
+            },
+            "under a flight it asks, but draws and grows nothing"
+        );
     }
 }

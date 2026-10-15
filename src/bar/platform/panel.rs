@@ -38,7 +38,7 @@ use crate::bar::domain::model::DisplayBar;
 use crate::bar::domain::motion::{self, FADE_SECONDS, Fade, SLIDE_SECONDS};
 use crate::bar::domain::palette::{self, Colour};
 use crate::bar::domain::pieces::{self, Context};
-use crate::bar::domain::placement::{self, RULE_WIDTH, Reframe};
+use crate::bar::domain::placement::{self, Mark, Reframe};
 use crate::bar::domain::style;
 use crate::bar::platform::ground::Ground;
 use crate::bar::platform::menu_extras::{Extra, Extras};
@@ -134,11 +134,14 @@ enum Look<'a> {
 }
 
 impl Look<'_> {
-    fn ink(&self) -> f64 {
+    fn mark(&self) -> Mark {
         match self {
-            Look::Text(picture) => picture.sheet.ink.size.width,
-            Look::Extra(extra) => extra.ink.1 - extra.ink.0,
-            Look::Rule(_) => RULE_WIDTH,
+            Look::Text(picture) => Mark::Text(picture.sheet),
+            Look::Extra(extra) => Mark::Extra {
+                size: picture_size(extra),
+                ink: extra.ink,
+            },
+            Look::Rule(_) => Mark::Rule,
         }
     }
 }
@@ -348,53 +351,25 @@ impl BarPanel {
                 looks.insert(piece, look);
             }
         }
+        let marks: HashMap<Piece, Mark> =
+            looks.iter().map(|(piece, look)| (*piece, look.mark())).collect();
         let scene = layout::lay_out(width, bar, context.fold, &right, |piece| {
-            looks.get(&piece).map(Look::ink)
+            marks.get(&piece).map(Mark::ink)
         });
-
-        let placed: Vec<(Piece, &Look, CGRect)> = scene
-            .pieces
-            .iter()
-            .filter_map(|(piece, span)| {
-                let look = looks.get(piece)?;
-                let frame = match look {
-                    Look::Text(picture) => placement::text_frame(
-                        &picture.sheet,
-                        *span,
-                        placement::anchor(*piece),
-                        SCALE,
-                    ),
-                    Look::Extra(extra) => {
-                        placement::extra_frame(picture_size(extra), extra.ink.0, *span, SCALE)
-                    }
-                    Look::Rule(_) => placement::rule_frame(*span, SCALE),
-                };
-                Some((*piece, look, frame))
-            })
-            .collect();
-
-        let tray_left = placed
-            .iter()
-            .filter(|(piece, ..)| matches!(piece, Piece::Tray(_)))
-            .map(|(.., frame)| frame.origin.x)
-            .reduce(f64::min);
-        let tray = tray_left.zip(scene.span(Piece::Chevron)).map(|(left, chevron)| {
-            (placement::tray_window(left, chevron, SCALE), context.tray_open)
-        });
-        self.put_tray(tray);
-        self.put_underline(scene.underline.map(|span| placement::underline_frame(span, SCALE)));
-
+        let frames = placement::frames(
+            &scene,
+            |piece| marks.get(&piece).copied(),
+            context.tray_open,
+            SCALE,
+        );
+        self.put_tray(frames.tray);
+        self.put_underline(frames.underline);
         let mut drawn = HashSet::new();
-        for (piece, look, frame) in placed {
-            let frame = match (piece, tray) {
-                (Piece::Tray(_), Some((window, _))) => CGRect::new(
-                    CGPoint::new(frame.origin.x - window.origin.x, frame.origin.y),
-                    frame.size,
-                ),
-                _ => frame,
-            };
-            self.put(piece, look, frame);
-            drawn.insert(piece);
+        for (piece, frame) in frames.pieces {
+            if let Some(look) = looks.get(&piece) {
+                self.put(piece, look, frame);
+                drawn.insert(piece);
+            }
         }
         for (piece, drawn_piece) in self.layers.iter_mut() {
             if drawn_piece.shown && !drawn.contains(piece) {

@@ -10,7 +10,7 @@ the Okibi 燠火 design system. The requirements are in `specs/bar.md`.
 | | |
 |---|---|
 | **What each bar shows** | `domain/model.rs`: `BarInput` in from the reactor, `BarModel` out, `Action` back |
-| **Where each piece goes** | `domain/layout.rs`: spans by ink, the underline, and the hit test; `domain/placement.rs`: where each picture goes so its ink lands on its span |
+| **Where each piece goes** | `domain/layout.rs`: spans by ink, the underline, and the hit test; `domain/placement.rs`: where each picture goes so its ink lands on its span, and every frame of a scene, the tray's window and its extras inside it included (`frames`) |
 | **What each piece says, and what a click does** | `domain/pieces.rs` |
 | **How each piece is set** | `domain/style.rs` and `domain/palette.rs` |
 | **The two movements** | `domain/motion.rs`: the fold's states and the fades' timing |
@@ -114,8 +114,10 @@ root         n1 at 0.88, the ground until the first picture of it arrives
 ```
 
 `domain/pieces.rs` says what each piece shows, `domain/placement.rs` where its picture goes, and
-`domain/motion.rs` how the two movements run. `platform/panel.rs` sets the layers and
-`platform/text.rs` draws the words.
+`domain/motion.rs` how the two movements run. `placement::frames` gives every frame of a draw,
+each tray extra's from the tray window's left edge, since its layer is the tray's. `platform/panel.rs`
+sets the layers, hiding each piece it drew before and not now, and `platform/text.rs` draws the
+words.
 
 **The ground is a still picture.** The thread that pictures the menu extras also pictures the
 wallpaper behind each bar: the wallpaper window alone, so the desktop's icons and widgets stay out,
