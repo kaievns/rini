@@ -44,7 +44,7 @@ Rules for keeping this honest:
 | [`windows.md`](windows.md) | Which windows rini takes on, and which it refuses |
 | [`strip.md`](strip.md) | The one scrolling layout: columns, widths, folding, maximising |
 | [`workspaces.md`](workspaces.md) | The vertical stack of workspaces, and what belongs to one |
-| [`displays.md`](displays.md) | More than one screen, and surviving a replug |
+| [`displays.md`](displays.md) | More than one screen, surviving a replug, and leaving the native Space switch to macOS |
 | [`focus.md`](focus.md) | Who has focus, and what is in front of what |
 | [`switcher.md`](switcher.md) | Every window, by application or one by one, in the order they were last used |
 | [`input.md`](input.md) | Bindings, modifiers, and the event tap |

@@ -1488,9 +1488,6 @@ impl Reactor {
                 let saved = self.save_layout_before_exit(rini_core::paths::restore_file());
                 return command_workflow::handle_command_reactor_save_and_exit(saved);
             }
-            Event::Command(Command::Reactor(ReactorCommand::SwitchSpace(direction))) => {
-                return command_workflow::handle_switch_native_space(direction);
-            }
             Event::Command(Command::Reactor(ReactorCommand::RedistributeWindows)) => {
                 return Ok(self.redistribute_windows());
             }
@@ -1724,10 +1721,6 @@ impl Reactor {
         // report with no layout change (a click) is judged too: macOS raised only the clicked window.
         if layout_changed || focus_landed {
             self.regroup_after_layout();
-        }
-
-        if let Some(direction) = outcome.switch_native_space {
-            unsafe { crate::displays::platform::space_switch::switch_space(direction) };
         }
 
         for (pid, window) in outcome.make_key_windows {

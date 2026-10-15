@@ -202,11 +202,6 @@ impl From<CliResizeOrientation> for rini_ipc::protocol::ResizeOrientation {
 enum SpaceCommands {
     /// Toggle whether rini manages the current macOS space
     ToggleActivated,
-    /// Switch to an adjacent macOS space (Mission Control spaces, not virtual workspaces)
-    Switch {
-        /// Direction to switch (left, right, up, down)
-        direction: String,
-    },
 }
 
 #[derive(Subcommand)]
@@ -397,7 +392,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::Layout { layout_cmd } => map_layout_command(layout_cmd)?,
         ExecuteCommands::Config { config_cmd } => return Ok(map_config_command(config_cmd)),
         ExecuteCommands::Display { display_cmd } => map_display_command(display_cmd)?,
-        ExecuteCommands::Space { space_cmd } => map_space_command(space_cmd)?,
+        ExecuteCommands::Space { space_cmd } => map_space_command(space_cmd),
         ExecuteCommands::SaveAndExit => RiniCommand::Reactor(reactor::ReactorCommand::SaveAndExit),
         ExecuteCommands::Redistribute => {
             RiniCommand::Reactor(reactor::ReactorCommand::RedistributeWindows)
@@ -544,15 +539,12 @@ fn map_config_command(cmd: ConfigCommands) -> RiniRequest {
     RiniRequest::ExecuteCommand { command: RiniCommand::Config(command) }
 }
 
-fn map_space_command(cmd: SpaceCommands) -> Result<RiniCommand, String> {
-    let command = match cmd {
-        SpaceCommands::ToggleActivated => reactor::ReactorCommand::ToggleSpaceActivated,
-        SpaceCommands::Switch { direction } => {
-            reactor::ReactorCommand::SwitchSpace(parse_direction(&direction)?)
+fn map_space_command(cmd: SpaceCommands) -> RiniCommand {
+    match cmd {
+        SpaceCommands::ToggleActivated => {
+            RiniCommand::Reactor(reactor::ReactorCommand::ToggleSpaceActivated)
         }
-    };
-
-    Ok(RiniCommand::Reactor(command))
+    }
 }
 
 fn map_display_command(cmd: DisplayCommands) -> Result<RiniCommand, String> {
@@ -742,6 +734,15 @@ mod tests {
                 .unwrap_or_else(|| panic!("{subcommand} parsed"));
             assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand, "{subcommand}");
         }
+    }
+
+    /// Kai deleted the native Space switch on 2026-10-15 (`specs/displays.md`).
+    #[test]
+    fn no_subcommand_switches_the_native_space() {
+        let error = Cli::try_parse_from(["rini-cli", "execute", "space", "switch", "left"])
+            .err()
+            .expect("space switch parsed");
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
     }
 
     /// Every window subcommand has to map to a DISTINCT wire command. The arms are 33 lines of

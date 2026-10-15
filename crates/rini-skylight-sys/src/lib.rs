@@ -196,14 +196,6 @@ impl fmt::Display for KnownCGSEvent {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub enum CGEventTapLocation {
-    HID,
-    Session,
-    AnnotatedSession,
-}
-
 bitflags! {
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
     #[repr(transparent)]
@@ -229,7 +221,6 @@ unsafe extern "C" {
 
     pub fn CGEventCreate(source: *mut CFType) -> *mut CFType;
     pub fn CGEventSourceCreate(state: CGEventSourceStateID) -> *mut CFType;
-    pub fn CGEventPost(tapLocation: CGEventTapLocation, event: *mut CFType);
     pub fn CGWarpMouseCursorPosition(point: CGPoint) -> CGError;
 
     /// Physical size of a display in millimetres. Used to map a cursor crossing by real-world

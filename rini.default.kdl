@@ -366,7 +366,6 @@ binds {
     //   focus-monitor-left/-right/-up/-down/-next, focus-monitor MONITOR
     //   move-window-to-monitor-left/-right/-up/-down/-next, move-window-to-monitor MONITOR
     //   move-mouse-to-monitor-left/-right/-up/-down/-next, move-mouse-to-monitor MONITOR
-    //   switch-space-left / switch-space-right        the native macOS Space
     //   toggle-space-activated                        start or stop managing this macOS Space
     //   close-window
     //   spawn "program" "arg" ...                     run a program; each argument in its own string

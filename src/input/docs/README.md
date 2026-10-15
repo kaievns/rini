@@ -42,11 +42,10 @@ answer.
 
 The press carries the event's own time, its timestamp read as
 `mach_absolute_time` ticks (`pointer::event_age`). Core Graphics documents the
-timestamp as nanoseconds, and `pointer::admits_move` reads it that way, while
-`displays/platform/space_switch.rs` treats it as ticks. Which it is on Apple
-silicon is not measured. For the press it does not matter: nanoseconds run ahead
-of the tick count there, so the age comes out as none, and the press is timed
-when the tap saw it, which is still before the app could.
+timestamp as nanoseconds, and `pointer::admits_move` reads it that way. Which it
+is on Apple silicon is not measured. For the press it does not matter:
+nanoseconds run ahead of the tick count there, so the age comes out as none, and
+the press is timed when the tap saw it, which is still before the app could.
 
 **Rules are separable from the tap.** Every pointer and drag decision is a pure function
 (`domain/pointer.rs`, `domain/drag_swap.rs`), so it can be exercised without a mouse.

@@ -113,8 +113,6 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
         Action::MoveMouseToMonitor(monitor) => {
             reactor(R::MoveMouseToDisplay(monitor_selector(monitor)))
         }
-        Action::SwitchSpaceLeft => reactor(R::SwitchSpace(Direction::Left)),
-        Action::SwitchSpaceRight => reactor(R::SwitchSpace(Direction::Right)),
         Action::ToggleSpaceActivated => reactor(R::ToggleSpaceActivated),
         // No window server id: a hotkey means the focused window, and the reactor resolves that.
         Action::CloseWindow => reactor(R::CloseWindow { window_server_id: None }),

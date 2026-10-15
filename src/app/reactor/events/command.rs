@@ -164,12 +164,6 @@ fn store_current_floating_positions(state: &RiniState, layout: &mut LayoutManage
     }
 }
 
-pub fn handle_switch_native_space(
-    direction: crate::workspaces::Direction,
-) -> anyhow::Result<EventOutcome> {
-    Ok(EventOutcome::no_change().with_native_space_switch(direction))
-}
-
 pub fn handle_close_window(
     window_server_id: Option<WindowServerId>,
 ) -> anyhow::Result<EventOutcome> {

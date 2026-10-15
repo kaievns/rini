@@ -57,7 +57,6 @@ pub enum LayoutCommand {
 #[strum(serialize_all = "snake_case")]
 pub enum ReactorCommand {
     SaveAndExit,
-    SwitchSpace(Direction),
     ToggleSpaceActivated,
     /// Spread each display's windows back across workspaces by their recorded affinity.
     ///
@@ -170,6 +169,13 @@ mod tests {
         let mut names = Names(&[]);
         let _ = T::deserialize(&mut names);
         names.0
+    }
+
+    /// Kai deleted the native Space switch on 2026-10-15 (`specs/displays.md`).
+    #[test]
+    fn no_wire_command_switches_the_native_space() {
+        let sent = serde_json::json!({ "switch_space": "left" });
+        assert!(serde_json::from_value::<ReactorCommand>(sent).is_err());
     }
 
     #[test]

@@ -90,9 +90,6 @@ pub enum Action {
     MoveMouseToMonitorDown,
     MoveMouseToMonitorNext,
     MoveMouseToMonitor(#[knus(argument)] MonitorReference),
-    /// The native macOS Space.
-    SwitchSpaceLeft,
-    SwitchSpaceRight,
     ToggleSpaceActivated,
     CloseWindow,
     /// A program and its arguments, one string each, interpreting nothing.
@@ -315,7 +312,7 @@ mod tests {
 
     #[test]
     fn every_action_name_is_kebab_case_and_counted() {
-        assert_eq!(Action::VARIANTS.len(), 58);
+        assert_eq!(Action::VARIANTS.len(), 56);
         for name in Action::VARIANTS {
             assert!(
                 name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),

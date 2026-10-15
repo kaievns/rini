@@ -6,7 +6,7 @@ use crate::app::hotkeys::WmEvent;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::raise as raise_manager;
 use crate::windows::domain::request::Request;
-use crate::workspaces::{Direction, EventResponse, LayoutEvent};
+use crate::workspaces::{EventResponse, LayoutEvent};
 
 #[derive(Debug)]
 pub(crate) struct WindowDiscoveryRequest {
@@ -42,7 +42,6 @@ pub(crate) struct EventOutcome {
     pub(crate) repair_spaces_after_mission_control: bool,
     pub(crate) refresh_after_mission_control: bool,
     pub(crate) force_refresh_all_windows: bool,
-    pub(crate) switch_native_space: Option<Direction>,
     pub(crate) wm_events: Vec<WmEvent>,
     pub(crate) app_requests: Vec<(pid_t, Request)>,
     pub(crate) topology_reassignments: Vec<TopologyReassignment>,
@@ -129,7 +128,6 @@ impl EventOutcome {
             repair_spaces_after_mission_control,
             refresh_after_mission_control,
             force_refresh_all_windows,
-            switch_native_space,
             mut wm_events,
             mut app_requests,
             mut topology_reassignments,
@@ -161,7 +159,6 @@ impl EventOutcome {
         self.repair_spaces_after_mission_control |= repair_spaces_after_mission_control;
         self.refresh_after_mission_control |= refresh_after_mission_control;
         self.force_refresh_all_windows |= force_refresh_all_windows;
-        self.switch_native_space = switch_native_space.or(self.switch_native_space);
         self.wm_events.append(&mut wm_events);
         self.app_requests.append(&mut app_requests);
         self.topology_reassignments.append(&mut topology_reassignments);
@@ -209,7 +206,6 @@ impl EventOutcome {
             repair_spaces_after_mission_control: false,
             refresh_after_mission_control: false,
             force_refresh_all_windows: false,
-            switch_native_space: None,
             wm_events: Vec::new(),
             app_requests: Vec::new(),
             topology_reassignments: Vec::new(),
@@ -325,11 +321,6 @@ impl EventOutcome {
 
     pub(crate) fn with_discovery(mut self, request: WindowDiscoveryRequest) -> Self {
         self.discoveries.push(request);
-        self
-    }
-
-    pub(crate) fn with_native_space_switch(mut self, direction: Direction) -> Self {
-        self.switch_native_space = Some(direction);
         self
     }
 

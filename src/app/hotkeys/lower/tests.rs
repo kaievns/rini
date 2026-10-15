@@ -165,8 +165,6 @@ fn table() -> Vec<(Action, Lowered)> {
             Action::MoveMouseToMonitor(MonitorReference::Index(1)),
             reactor(R::MoveMouseToDisplay(DisplaySelector::Index(0))),
         ),
-        (Action::SwitchSpaceLeft, reactor(R::SwitchSpace(Left))),
-        (Action::SwitchSpaceRight, reactor(R::SwitchSpace(Right))),
         (Action::ToggleSpaceActivated, reactor(R::ToggleSpaceActivated)),
         (
             Action::CloseWindow,
@@ -203,8 +201,8 @@ fn every_action_lowers_to_its_wire_command() {
     }
 }
 
-/// Every action lowers to something distinct. Sixty-seven near-identical arms is where a copy-paste
-/// sends two bindings to one command and nothing notices.
+/// Every action lowers to something distinct. An arm per action, each near-identical, is where a
+/// copy-paste sends two bindings to one command and nothing notices.
 #[test]
 fn no_two_actions_lower_to_the_same_thing() {
     let mut seen: Vec<(Action, Lowered)> = Vec::new();

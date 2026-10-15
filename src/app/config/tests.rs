@@ -1108,6 +1108,15 @@ fn no_action_saves_or_restores_a_layout_file() {
     }
 }
 
+/// Kai deleted the native Space switch on 2026-10-15 ("Native Spaces" in `specs/displays.md`).
+#[test]
+fn no_action_switches_the_native_space() {
+    for name in ["switch-space-left", "switch-space-right"] {
+        let report = refused(&format!("binds {{\n    Mod+J {{ {name}; }}\n}}\n"));
+        assert!(report.contains(&format!("unknown action `{name}`")), "{name}: {report}");
+    }
+}
+
 /// Every action decodes from its name, with the arguments it needs.
 #[test]
 fn every_action_name_decodes() {

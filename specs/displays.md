@@ -130,6 +130,12 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > written but not enforced: the guard declined, and the next step assigned the window anyway because it
 > asked a resolver that knew nothing about user spaces. Reachable whenever the screen locks.
 
+## Native Spaces
+
+- rini MUST offer no action, wire command or CLI subcommand that switches the native macOS Space;
+  macOS's own keys do that, and rini follows the Space shown. Kai, deleting `switch-space-left` and
+  `-right` on 2026-10-15: "generally happy to delete", then "delete".
+
 ## Where it lives
 
 `src/displays/platform/spaces.rs` is the authority, `src/displays/domain/topology.rs` the snapshot

@@ -110,8 +110,8 @@ rini-only actions keep rini's own words: `move-window-left` and `-right` (a lone
 columns, a stacked one leaves as a new column, which niri's `move-column-left` never does),
 `toggle-fold-left` and `-right` (niri's `consume-or-expel-window-left` never round-tripped:
 `src/layout/docs/strip.md`), `toggle-stack`, `cycle-visible-windows`, `snap-strip`,
-`move-mouse-to-monitor-…`, `switch-space-left` and `-right`, and `toggle-space-activated`. Every
-action and the wire command it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
+`move-mouse-to-monitor-…` and `toggle-space-activated`. Every action and the wire command it
+lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
 
 ## What went with the TOML
 

@@ -13,7 +13,7 @@ windows are on this space" is a window-server query over window ids.
 | `domain/frames.rs` | `latest`: which windows a burst of move and resize notifications names, each once, in the order to read their frames |
 | `domain/space_activation.rs` | Which spaces rini manages, and how activation transfers when macOS mints a new space id |
 | `platform/spaces.rs` | The spaces actor: the only thing that turns macOS lifecycle signals into a snapshot |
-| `platform/space_switch.rs`, `space_query.rs` | Switching to a space, and asking what one is |
+| `platform/space_query.rs` | Asking what a space is |
 | `platform/display_churn.rs`, `cgs_notify.rs` | Display reconfiguration and the CGS notification streams |
 | `platform/window_notify.rs` | The actor over those streams: space events to the spaces actor, focus edges coalesced into `WindowServerFocusChanged`, and one `window-frames` thread that reads the window server for the application, in the order it was asked through `Following`'s queue (`ToRead`): every tracked window's moves and resizes, as `ServerFrame`s, each reorder, hide, unhide and close, as a `ServerOrder` with the level and sub-level read after a reorder or an unhide (`StackLevel`), and each window the application introduces, whole, as a `ServerIntro`, all handed to its `OnServerRead` callbacks, only while the application is `Following` them ("Live frames" in `live-frames.md`) |
 | `platform/cursor_warp.rs` | Carrying the pointer across the edge between two stacked displays, over their whole bounds |
