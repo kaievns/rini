@@ -145,6 +145,31 @@ pub unsafe fn mach_server_begin(
     context: *mut c_void,
     handler: mach_handler,
 ) -> bool {
+    if !claim_port(mach_server) {
+        return false;
+    }
+
+    mach_server.handler = Some(handler);
+    mach_server.context = context;
+    mach_server.is_running = true;
+
+    if !add_to_main_run_loop(mach_server) {
+        return false;
+    }
+
+    info!(
+        "mach_server_begin: registered '{}' in current bootstrap domain (port={}, bs_port={})",
+        bs_name().to_string_lossy(),
+        mach_server.port,
+        mach_server.bs_port
+    );
+
+    true
+}
+
+/// A receive port with a send right of its own, registered under `bs_name()` with the large queue
+/// limit.
+unsafe fn claim_port(mach_server: &mut mach_server) -> bool {
     mach_server.task = mach_task_self();
 
     if task_get_special_port(mach_server.task, TASK_BOOTSTRAP_PORT, &mut mach_server.bs_port)
@@ -178,21 +203,7 @@ pub unsafe fn mach_server_begin(
 
     let rr = bootstrap_register(mach_server.bs_port, service_name.as_ptr(), mach_server.port);
     if rr != KERN_SUCCESS {
-        match rr {
-            BOOTSTRAP_NAME_IN_USE => error!(
-                "mach_server_begin: bootstrap_register: name in use: {}.",
-                service_name.to_string_lossy()
-            ),
-            BOOTSTRAP_NOT_PRIVILEGED => error!(
-                "mach_server_begin: bootstrap_register: not privileged for domain (kr={}).",
-                rr
-            ),
-            _ => error!(
-                "mach_server_begin: bootstrap_register failed (kr={}) for {}",
-                rr,
-                service_name.to_string_lossy()
-            ),
-        }
+        error!("{}", register_failure(rr, &service_name.to_string_lossy()));
         return false;
     }
 
@@ -206,11 +217,24 @@ pub unsafe fn mach_server_begin(
         &limits as *const _ as *const c_void,
         MACH_PORT_LIMITS_INFO_COUNT,
     );
+    true
+}
 
-    mach_server.handler = Some(handler);
-    mach_server.context = context;
-    mach_server.is_running = true;
+/// What a failed `bootstrap_register` of `name` returning `kr` is logged as.
+fn register_failure(kr: kern_return_t, name: &str) -> String {
+    match kr {
+        BOOTSTRAP_NAME_IN_USE => {
+            format!("mach_server_begin: bootstrap_register: name in use: {name}.")
+        }
+        BOOTSTRAP_NOT_PRIVILEGED => {
+            format!("mach_server_begin: bootstrap_register: not privileged for domain (kr={kr}).")
+        }
+        _ => format!("mach_server_begin: bootstrap_register failed (kr={kr}) for {name}"),
+    }
+}
 
+/// The port's messages delivered to `mach_message_callback` on the main run loop.
+unsafe fn add_to_main_run_loop(mach_server: &mut mach_server) -> bool {
     let cf_context = CFMachPortContext {
         version: 0,
         info: mach_server as *mut _ as *mut c_void,
@@ -241,14 +265,6 @@ pub unsafe fn mach_server_begin(
     CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopDefaultMode);
     CFRelease(source);
     CFRelease(cf_mach_port);
-
-    info!(
-        "mach_server_begin: registered '{}' in current bootstrap domain (port={}, bs_port={})",
-        bs_name().to_string_lossy(),
-        mach_server.port,
-        mach_server.bs_port
-    );
-
     true
 }
 pub unsafe fn send_mach_reply(
@@ -371,4 +387,25 @@ pub unsafe fn mach_server_run(context: *mut c_void, handler: mach_handler) -> bo
     );
     CFRunLoopRun();
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_registration_names_the_service_or_the_code_bootstrap_gave() {
+        assert_eq!(
+            register_failure(BOOTSTRAP_NAME_IN_USE, "git.kaievns.rini"),
+            "mach_server_begin: bootstrap_register: name in use: git.kaievns.rini."
+        );
+        assert_eq!(
+            register_failure(BOOTSTRAP_NOT_PRIVILEGED, "git.kaievns.rini"),
+            "mach_server_begin: bootstrap_register: not privileged for domain (kr=1100)."
+        );
+        assert_eq!(
+            register_failure(5, "git.kaievns.rini"),
+            "mach_server_begin: bootstrap_register failed (kr=5) for git.kaievns.rini"
+        );
+    }
 }

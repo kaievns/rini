@@ -137,131 +137,139 @@ pub fn cg_keycode_to_keycode(code: u16) -> Option<KeyCode> {
     CG_KEYCODE_TABLE.get(code as usize).copied().flatten()
 }
 
+/// The virtual key codes of HIToolbox's `Events.h` (`kVK_*`) and the key each one is.
+const CG_KEYCODES: [(u16, KeyCode); 121] = [
+    (0x00, KeyCode::KeyA),
+    (0x01, KeyCode::KeyS),
+    (0x02, KeyCode::KeyD),
+    (0x03, KeyCode::KeyF),
+    (0x04, KeyCode::KeyH),
+    (0x05, KeyCode::KeyG),
+    (0x06, KeyCode::KeyZ),
+    (0x07, KeyCode::KeyX),
+    (0x08, KeyCode::KeyC),
+    (0x09, KeyCode::KeyV),
+    (0x0A, KeyCode::IntlBackslash),
+    (0x0B, KeyCode::KeyB),
+    (0x0C, KeyCode::KeyQ),
+    (0x0D, KeyCode::KeyW),
+    (0x0E, KeyCode::KeyE),
+    (0x0F, KeyCode::KeyR),
+    (0x10, KeyCode::KeyY),
+    (0x11, KeyCode::KeyT),
+    (0x12, KeyCode::Digit1),
+    (0x13, KeyCode::Digit2),
+    (0x14, KeyCode::Digit3),
+    (0x15, KeyCode::Digit4),
+    (0x16, KeyCode::Digit6),
+    (0x17, KeyCode::Digit5),
+    (0x18, KeyCode::Equal),
+    (0x19, KeyCode::Digit9),
+    (0x1A, KeyCode::Digit7),
+    (0x1B, KeyCode::Minus),
+    (0x1C, KeyCode::Digit8),
+    (0x1D, KeyCode::Digit0),
+    (0x1E, KeyCode::BracketRight),
+    (0x1F, KeyCode::KeyO),
+    (0x20, KeyCode::KeyU),
+    (0x21, KeyCode::BracketLeft),
+    (0x22, KeyCode::KeyI),
+    (0x23, KeyCode::KeyP),
+    (0x24, KeyCode::Enter),
+    (0x25, KeyCode::KeyL),
+    (0x26, KeyCode::KeyJ),
+    (0x27, KeyCode::Quote),
+    (0x28, KeyCode::KeyK),
+    (0x29, KeyCode::Semicolon),
+    (0x2A, KeyCode::Backslash),
+    (0x2B, KeyCode::Comma),
+    (0x2C, KeyCode::Slash),
+    (0x2D, KeyCode::KeyN),
+    (0x2E, KeyCode::KeyM),
+    (0x2F, KeyCode::Period),
+    (0x30, KeyCode::Tab),
+    (0x31, KeyCode::Space),
+    (0x32, KeyCode::Backquote),
+    (0x33, KeyCode::Backspace),
+    (0x34, KeyCode::NumpadEnter),
+    (0x35, KeyCode::Escape),
+    (0x36, KeyCode::MetaRight),
+    (0x37, KeyCode::MetaLeft),
+    (0x38, KeyCode::ShiftLeft),
+    (0x39, KeyCode::CapsLock),
+    (0x3A, KeyCode::AltLeft),
+    (0x3B, KeyCode::ControlLeft),
+    (0x3C, KeyCode::ShiftRight),
+    (0x3D, KeyCode::AltRight),
+    (0x3E, KeyCode::ControlRight),
+    (0x3F, KeyCode::Fn),
+    (0x40, KeyCode::F17),
+    (0x41, KeyCode::NumpadDecimal),
+    (0x43, KeyCode::NumpadMultiply),
+    (0x45, KeyCode::NumpadAdd),
+    (0x47, KeyCode::NumLock),
+    (0x48, KeyCode::AudioVolumeUp),
+    (0x49, KeyCode::AudioVolumeDown),
+    (0x4A, KeyCode::AudioVolumeMute),
+    (0x4B, KeyCode::NumpadDivide),
+    (0x4C, KeyCode::NumpadEnter),
+    (0x4E, KeyCode::NumpadSubtract),
+    (0x4F, KeyCode::F18),
+    (0x50, KeyCode::F19),
+    (0x51, KeyCode::NumpadEqual),
+    (0x52, KeyCode::Numpad0),
+    (0x53, KeyCode::Numpad1),
+    (0x54, KeyCode::Numpad2),
+    (0x55, KeyCode::Numpad3),
+    (0x56, KeyCode::Numpad4),
+    (0x57, KeyCode::Numpad5),
+    (0x58, KeyCode::Numpad6),
+    (0x59, KeyCode::Numpad7),
+    (0x5A, KeyCode::F20),
+    (0x5B, KeyCode::Numpad8),
+    (0x5C, KeyCode::Numpad9),
+    (0x5D, KeyCode::IntlYen),
+    (0x5E, KeyCode::IntlRo),
+    (0x5F, KeyCode::NumpadComma),
+    (0x60, KeyCode::F5),
+    (0x61, KeyCode::F6),
+    (0x62, KeyCode::F7),
+    (0x63, KeyCode::F3),
+    (0x64, KeyCode::F8),
+    (0x65, KeyCode::F9),
+    (0x66, KeyCode::Lang2),
+    (0x67, KeyCode::F11),
+    (0x68, KeyCode::Lang1),
+    (0x69, KeyCode::F13),
+    (0x6A, KeyCode::F16),
+    (0x6B, KeyCode::F14),
+    (0x6D, KeyCode::F10),
+    (0x6E, KeyCode::ContextMenu),
+    (0x6F, KeyCode::F12),
+    (0x71, KeyCode::F15),
+    (0x72, KeyCode::Insert),
+    (0x73, KeyCode::Home),
+    (0x74, KeyCode::PageUp),
+    (0x75, KeyCode::Delete),
+    (0x76, KeyCode::F4),
+    (0x77, KeyCode::End),
+    (0x78, KeyCode::F2),
+    (0x79, KeyCode::PageDown),
+    (0x7A, KeyCode::F1),
+    (0x7B, KeyCode::ArrowLeft),
+    (0x7C, KeyCode::ArrowRight),
+    (0x7D, KeyCode::ArrowDown),
+    (0x7E, KeyCode::ArrowUp),
+];
+
 const fn build_cg_keycode_table() -> [Option<KeyCode>; 0x80] {
     let mut t: [Option<KeyCode>; 0x80] = [None; 0x80];
-
-    t[0x00] = Some(KeyCode::KeyA);
-    t[0x01] = Some(KeyCode::KeyS);
-    t[0x02] = Some(KeyCode::KeyD);
-    t[0x03] = Some(KeyCode::KeyF);
-    t[0x04] = Some(KeyCode::KeyH);
-    t[0x05] = Some(KeyCode::KeyG);
-    t[0x06] = Some(KeyCode::KeyZ);
-    t[0x07] = Some(KeyCode::KeyX);
-    t[0x08] = Some(KeyCode::KeyC);
-    t[0x09] = Some(KeyCode::KeyV);
-    t[0x0A] = Some(KeyCode::IntlBackslash);
-    t[0x0B] = Some(KeyCode::KeyB);
-    t[0x0C] = Some(KeyCode::KeyQ);
-    t[0x0D] = Some(KeyCode::KeyW);
-    t[0x0E] = Some(KeyCode::KeyE);
-    t[0x0F] = Some(KeyCode::KeyR);
-    t[0x10] = Some(KeyCode::KeyY);
-    t[0x11] = Some(KeyCode::KeyT);
-    t[0x12] = Some(KeyCode::Digit1);
-    t[0x13] = Some(KeyCode::Digit2);
-    t[0x14] = Some(KeyCode::Digit3);
-    t[0x15] = Some(KeyCode::Digit4);
-    t[0x16] = Some(KeyCode::Digit6);
-    t[0x17] = Some(KeyCode::Digit5);
-    t[0x18] = Some(KeyCode::Equal);
-    t[0x19] = Some(KeyCode::Digit9);
-    t[0x1A] = Some(KeyCode::Digit7);
-    t[0x1B] = Some(KeyCode::Minus);
-    t[0x1C] = Some(KeyCode::Digit8);
-    t[0x1D] = Some(KeyCode::Digit0);
-    t[0x1E] = Some(KeyCode::BracketRight);
-    t[0x1F] = Some(KeyCode::KeyO);
-    t[0x20] = Some(KeyCode::KeyU);
-    t[0x21] = Some(KeyCode::BracketLeft);
-    t[0x22] = Some(KeyCode::KeyI);
-    t[0x23] = Some(KeyCode::KeyP);
-    t[0x24] = Some(KeyCode::Enter);
-    t[0x25] = Some(KeyCode::KeyL);
-    t[0x26] = Some(KeyCode::KeyJ);
-    t[0x27] = Some(KeyCode::Quote);
-    t[0x28] = Some(KeyCode::KeyK);
-    t[0x29] = Some(KeyCode::Semicolon);
-    t[0x2A] = Some(KeyCode::Backslash);
-    t[0x2B] = Some(KeyCode::Comma);
-    t[0x2C] = Some(KeyCode::Slash);
-    t[0x2D] = Some(KeyCode::KeyN);
-    t[0x2E] = Some(KeyCode::KeyM);
-    t[0x2F] = Some(KeyCode::Period);
-    t[0x30] = Some(KeyCode::Tab);
-    t[0x31] = Some(KeyCode::Space);
-    t[0x32] = Some(KeyCode::Backquote);
-    t[0x33] = Some(KeyCode::Backspace);
-    t[0x34] = Some(KeyCode::NumpadEnter);
-    t[0x35] = Some(KeyCode::Escape);
-    t[0x36] = Some(KeyCode::MetaRight);
-    t[0x37] = Some(KeyCode::MetaLeft);
-    t[0x38] = Some(KeyCode::ShiftLeft);
-    t[0x39] = Some(KeyCode::CapsLock);
-    t[0x3A] = Some(KeyCode::AltLeft);
-    t[0x3B] = Some(KeyCode::ControlLeft);
-    t[0x3C] = Some(KeyCode::ShiftRight);
-    t[0x3D] = Some(KeyCode::AltRight);
-    t[0x3E] = Some(KeyCode::ControlRight);
-    t[0x3F] = Some(KeyCode::Fn);
-    t[0x40] = Some(KeyCode::F17);
-    t[0x41] = Some(KeyCode::NumpadDecimal);
-    t[0x43] = Some(KeyCode::NumpadMultiply);
-    t[0x45] = Some(KeyCode::NumpadAdd);
-    t[0x47] = Some(KeyCode::NumLock);
-    t[0x48] = Some(KeyCode::AudioVolumeUp);
-    t[0x49] = Some(KeyCode::AudioVolumeDown);
-    t[0x4A] = Some(KeyCode::AudioVolumeMute);
-    t[0x4B] = Some(KeyCode::NumpadDivide);
-    t[0x4C] = Some(KeyCode::NumpadEnter);
-    t[0x4E] = Some(KeyCode::NumpadSubtract);
-    t[0x4F] = Some(KeyCode::F18);
-    t[0x50] = Some(KeyCode::F19);
-    t[0x51] = Some(KeyCode::NumpadEqual);
-    t[0x52] = Some(KeyCode::Numpad0);
-    t[0x53] = Some(KeyCode::Numpad1);
-    t[0x54] = Some(KeyCode::Numpad2);
-    t[0x55] = Some(KeyCode::Numpad3);
-    t[0x56] = Some(KeyCode::Numpad4);
-    t[0x57] = Some(KeyCode::Numpad5);
-    t[0x58] = Some(KeyCode::Numpad6);
-    t[0x59] = Some(KeyCode::Numpad7);
-    t[0x5A] = Some(KeyCode::F20);
-    t[0x5B] = Some(KeyCode::Numpad8);
-    t[0x5C] = Some(KeyCode::Numpad9);
-    t[0x5D] = Some(KeyCode::IntlYen);
-    t[0x5E] = Some(KeyCode::IntlRo);
-    t[0x5F] = Some(KeyCode::NumpadComma);
-    t[0x60] = Some(KeyCode::F5);
-    t[0x61] = Some(KeyCode::F6);
-    t[0x62] = Some(KeyCode::F7);
-    t[0x63] = Some(KeyCode::F3);
-    t[0x64] = Some(KeyCode::F8);
-    t[0x65] = Some(KeyCode::F9);
-    t[0x66] = Some(KeyCode::Lang2);
-    t[0x67] = Some(KeyCode::F11);
-    t[0x68] = Some(KeyCode::Lang1);
-    t[0x69] = Some(KeyCode::F13);
-    t[0x6A] = Some(KeyCode::F16);
-    t[0x6B] = Some(KeyCode::F14);
-    t[0x6D] = Some(KeyCode::F10);
-    t[0x6E] = Some(KeyCode::ContextMenu);
-    t[0x6F] = Some(KeyCode::F12);
-    t[0x71] = Some(KeyCode::F15);
-    t[0x72] = Some(KeyCode::Insert);
-    t[0x73] = Some(KeyCode::Home);
-    t[0x74] = Some(KeyCode::PageUp);
-    t[0x75] = Some(KeyCode::Delete);
-    t[0x76] = Some(KeyCode::F4);
-    t[0x77] = Some(KeyCode::End);
-    t[0x78] = Some(KeyCode::F2);
-    t[0x79] = Some(KeyCode::PageDown);
-    t[0x7A] = Some(KeyCode::F1);
-    t[0x7B] = Some(KeyCode::ArrowLeft);
-    t[0x7C] = Some(KeyCode::ArrowRight);
-    t[0x7D] = Some(KeyCode::ArrowDown);
-    t[0x7E] = Some(KeyCode::ArrowUp);
-
+    let mut i = 0;
+    while i < CG_KEYCODES.len() {
+        let (code, key) = CG_KEYCODES[i];
+        t[code as usize] = Some(key);
+        i += 1;
+    }
     t
 }
 
@@ -432,6 +440,22 @@ fn fallback_keycode_from_char(ch: &str) -> Option<KeyCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_virtual_key_code_is_the_key_its_table_row_names_and_an_unlisted_one_is_none() {
+        for (code, key) in CG_KEYCODES {
+            assert_eq!(cg_keycode_to_keycode(code), Some(key), "{code:#04x}");
+        }
+        assert_eq!(cg_keycode_to_keycode(0x00), Some(KeyCode::KeyA));
+        assert_eq!(cg_keycode_to_keycode(0x34), Some(KeyCode::NumpadEnter));
+        assert_eq!(cg_keycode_to_keycode(0x4C), Some(KeyCode::NumpadEnter));
+        assert_eq!(cg_keycode_to_keycode(0x7E), Some(KeyCode::ArrowUp));
+        for unlisted in [0x42, 0x44, 0x46, 0x4D, 0x6C, 0x70, 0x7F, 0x80, 0xFFFF] {
+            assert_eq!(cg_keycode_to_keycode(unlisted), None, "{unlisted:#04x}");
+        }
+        let listed = (0..0x80u16).filter(|&c| cg_keycode_to_keycode(c).is_some()).count();
+        assert_eq!(listed, CG_KEYCODES.len());
+    }
 
     #[test]
     fn test_virtual_keymap_generation() {

@@ -95,27 +95,12 @@ impl<S: System> ScreenCache<S> {
         }
 
         let dirty = self.pending_generation != self.processed_generation;
-        let should_rebuild = self.state.is_none() || dirty;
-
-        if !should_rebuild {
+        if self.state.is_some() && !dirty {
             // Even when displays are unchanged, the active space per display can change.
             // Recompute spaces against cached UUIDs to avoid stale space ids.
-            let spaces: Vec<Option<SpaceId>> =
-                self.uuids.iter().map(|uuid| self.system.current_space(uuid)).collect();
-
-            if let Some(state) = self.state.clone() {
-                let screens = state
-                    .screens
-                    .into_iter()
-                    .zip(spaces)
-                    .map(|(mut screen, space)| {
-                        screen.space = space;
-                        screen
-                    })
-                    .collect();
-                return Some(ScreenState { screens, ..state });
-            }
-            return None;
+            let state = self.state.clone()?;
+            let screens = self.with_spaces(state.screens, &self.uuids);
+            return Some(ScreenState { screens, ..state });
         }
 
         let ns_screens = self.system.ns_screens();
@@ -134,21 +119,7 @@ impl<S: System> ScreenCache<S> {
             return Some(state);
         }
 
-        cg_screens.sort_by(|a, b| {
-            let x_order = a.bounds.origin.x.total_cmp(&b.bounds.origin.x);
-            if x_order == Ordering::Equal {
-                a.bounds.origin.y.total_cmp(&b.bounds.origin.y)
-            } else {
-                x_order
-            }
-        });
-
-        let main_id = self.system.main_display();
-        if let Some(main_screen_idx) = cg_screens.iter().position(|s| s.cg_id.as_u32() == main_id) {
-            cg_screens.swap(0, main_screen_idx);
-        } else {
-            warn!("Could not find main screen. cg_screens={cg_screens:?}");
-        }
+        main_first(&mut cg_screens, self.system.main_display());
 
         let uuids: Vec<CFRetained<CFString>> =
             cg_screens.iter().map(|screen| self.system.display_uuid(screen)).collect();
@@ -163,51 +134,83 @@ impl<S: System> ScreenCache<S> {
 
         let screens: Vec<ScreenInfo> = cg_screens
             .iter()
-            .enumerate()
-            .map(|(idx, &CGScreenInfo { cg_id, bounds })| {
-                let did = cg_id.as_u32();
-                let menu_bar = menu_bar_inset(
-                    chrome.menu_bar_hidden,
-                    self.system.menu_bar_height(did),
-                    self.system.notch_height(did),
-                );
-                let frame = chrome.frame_on(did, bounds, top_inset(menu_bar, self.top_band));
-                let display_uuid =
-                    uuid_strings.get(idx).cloned().filter(|uuid| !uuid.is_empty()).unwrap_or_else(
-                        || {
-                            warn!("Missing cached UUID for {:?}; using fallback", cg_id);
-                            format!("cgdisplay-{}", cg_id.as_u32())
-                        },
-                    );
-                let ns_screen = ns_screens.iter().find(|s| s.cg_id == cg_id);
-                ScreenInfo {
-                    id: cg_id,
-                    frame,
-                    bounds,
-                    display_uuid,
-                    name: ns_screen.and_then(|s| s.name.clone()),
-                    space: None,
-                    is_builtin: self.system.is_builtin(did),
-                    scale: ns_screen.map_or(ASSUMED_SCALE, |s| s.scale),
-                }
-            })
+            .zip(&uuid_strings)
+            .map(|(screen, uuid)| self.screen_info(screen, uuid, &chrome, &ns_screens))
             .collect();
-
-        let spaces: Vec<Option<SpaceId>> =
-            uuids.iter().map(|uuid| self.system.current_space(uuid)).collect();
+        let screens = self.with_spaces(screens, &uuids);
 
         self.uuids = uuids;
         self.processed_generation = self.pending_generation;
-        let screens = screens
+        self.state = Some(ScreenState { screens, converter });
+        self.state.clone()
+    }
+
+    fn screen_info(
+        &self,
+        &CGScreenInfo { cg_id, bounds }: &CGScreenInfo,
+        uuid: &str,
+        chrome: &Chrome,
+        ns_screens: &[NSScreenInfo],
+    ) -> ScreenInfo {
+        let did = cg_id.as_u32();
+        let menu_bar = menu_bar_inset(
+            chrome.menu_bar_hidden,
+            self.system.menu_bar_height(did),
+            self.system.notch_height(did),
+        );
+        let frame = chrome.frame_on(did, bounds, top_inset(menu_bar, self.top_band));
+        let display_uuid = if uuid.is_empty() {
+            warn!("Missing cached UUID for {:?}; using fallback", cg_id);
+            format!("cgdisplay-{}", cg_id.as_u32())
+        } else {
+            uuid.to_owned()
+        };
+        let ns_screen = ns_screens.iter().find(|s| s.cg_id == cg_id);
+        ScreenInfo {
+            id: cg_id,
+            frame,
+            bounds,
+            display_uuid,
+            name: ns_screen.and_then(|s| s.name.clone()),
+            space: None,
+            is_builtin: self.system.is_builtin(did),
+            scale: ns_screen.map_or(ASSUMED_SCALE, |s| s.scale),
+        }
+    }
+
+    /// `screens` each with the space its display, `uuids` in the same order, shows now.
+    fn with_spaces(
+        &self,
+        screens: Vec<ScreenInfo>,
+        uuids: &[CFRetained<CFString>],
+    ) -> Vec<ScreenInfo> {
+        let spaces: Vec<Option<SpaceId>> =
+            uuids.iter().map(|uuid| self.system.current_space(uuid)).collect();
+        screens
             .into_iter()
             .zip(spaces)
             .map(|(mut screen, space)| {
                 screen.space = space;
                 screen
             })
-            .collect();
-        self.state = Some(ScreenState { screens, converter });
-        self.state.clone()
+            .collect()
+    }
+}
+
+/// Left to right, then top to bottom, with the main display swapped to the front.
+fn main_first(cg_screens: &mut [CGScreenInfo], main_id: u32) {
+    cg_screens.sort_by(|a, b| {
+        let x_order = a.bounds.origin.x.total_cmp(&b.bounds.origin.x);
+        if x_order == Ordering::Equal {
+            a.bounds.origin.y.total_cmp(&b.bounds.origin.y)
+        } else {
+            x_order
+        }
+    });
+    if let Some(main_screen_idx) = cg_screens.iter().position(|s| s.cg_id.as_u32() == main_id) {
+        cg_screens.swap(0, main_screen_idx);
+    } else {
+        warn!("Could not find main screen. cg_screens={cg_screens:?}");
     }
 }
 
@@ -595,6 +598,7 @@ mod test {
 
     use super::{
         CGScreenInfo, Chrome, Dock, DockEdge, NSScreenInfo, ScreenCache, ScreenId, SpaceId, System,
+        main_first,
     };
 
     /// What a stub machine answers beside its screens: the menu bar hidden, no Dock shown, no
@@ -765,6 +769,26 @@ mod test {
             ScreenId::new(2),
             ScreenId::new(1)
         ]);
+    }
+
+    /// Sorted left to right and then top to bottom, the main display swapped to the front; with
+    /// no main among them, sorted alone.
+    #[test]
+    fn displays_run_left_to_right_then_top_to_bottom_with_the_main_one_swapped_first() {
+        let ids =
+            |screens: &[CGScreenInfo]| screens.iter().map(|s| s.cg_id.as_u32()).collect::<Vec<_>>();
+        let unsorted = vec![
+            cg(1, rect(1440.0, 0.0, 1440.0, 900.0)),
+            cg(2, rect(0.0, 900.0, 1440.0, 900.0)),
+            cg(3, rect(0.0, 0.0, 1440.0, 900.0)),
+        ];
+        let mut screens = unsorted.clone();
+        main_first(&mut screens, 1);
+        assert_eq!(ids(&screens), [1, 2, 3]);
+
+        let mut screens = unsorted;
+        main_first(&mut screens, 9);
+        assert_eq!(ids(&screens), [3, 2, 1]);
     }
 
     /// A refresh with nothing dirty rebuilds no screen but still asks which space each shows.
