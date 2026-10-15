@@ -1,11 +1,10 @@
-use std::ffi::{CString, c_void};
+use std::ffi::c_void;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
-use dispatchr::data::dispatch_release;
 use dispatchr::qos::QoS;
 use dispatchr::queue;
 use dispatchr::queue::Unmanaged;
@@ -24,45 +23,6 @@ use std::collections::HashMap;
 
 const DISPATCH_PROC_EXIT: usize = 0x8000_0000;
 
-struct NamedQueueHandle {
-    queue: *mut Unmanaged,
-    _label: CString,
-}
-
-unsafe impl Send for NamedQueueHandle {}
-unsafe impl Sync for NamedQueueHandle {}
-
-impl Drop for NamedQueueHandle {
-    fn drop(&mut self) {
-        unsafe { dispatch_release(self.queue as *const c_void) };
-    }
-}
-
-static NAMED_QUEUES: OnceCell<Mutex<Vec<Box<NamedQueueHandle>>>> = OnceCell::new();
-fn named_queue_registry() -> &'static Mutex<Vec<Box<NamedQueueHandle>>> {
-    NAMED_QUEUES.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-pub trait NamedQueueExt {
-    fn named(label: &str) -> Option<&'static Unmanaged>;
-}
-
-impl NamedQueueExt for Unmanaged {
-    fn named(label: &str) -> Option<&'static Unmanaged> {
-        let cname = CString::new(label).ok()?;
-        let queue = unsafe { dispatch_queue_create(cname.as_ptr(), std::ptr::null_mut()) };
-        if queue.is_null() {
-            return None;
-        }
-
-        let queue_ref = unsafe { &*queue };
-        named_queue_registry()
-            .lock()
-            .push(Box::new(NamedQueueHandle { queue, _label: cname }));
-        Some(queue_ref)
-    }
-}
-
 static Q_REAPER: OnceCell<&'static queue::Unmanaged> = OnceCell::new();
 fn reaper_queue() -> &'static queue::Unmanaged {
     Q_REAPER.get_or_init(|| queue::global(QoS::Utility).unwrap_or_else(|| queue::main()))
@@ -75,7 +35,6 @@ fn sources_map() -> &'static Mutex<HashMap<pid_t, DSource>> {
 
 unsafe extern "C" {
     static _dispatch_source_type_proc: c_void;
-    static _dispatch_source_type_timer: c_void;
 
     fn dispatch_after_f(
         when: Time,
@@ -85,10 +44,6 @@ unsafe extern "C" {
     );
 
     fn dispatch_set_context(object: *mut c_void, context: *mut c_void);
-
-    fn dispatch_source_set_timer(source: *mut c_void, start: Time, interval: i64, leeway: i64);
-
-    fn dispatch_queue_create(label: *const i8, attr: *mut c_void) -> *mut Unmanaged;
 }
 
 #[inline]
@@ -105,10 +60,6 @@ pub trait DispatchExt {
     /// `context` must stay valid for `work` until the queue runs it.
     unsafe fn after_f(&self, when: Time, context: *mut c_void, work: extern "C" fn(*mut c_void));
     fn after_f_s<T>(&self, when: Time, context: T, work: fn(T));
-    /// # Safety
-    /// `context` must stay valid for every handler that reads it until the object is released.
-    unsafe fn set_context(&self, context: *mut c_void);
-    fn set_timer(&self, start: Time, interval: i64, leeway: i64);
 }
 
 impl DispatchExt for Unmanaged {
@@ -124,49 +75,6 @@ impl DispatchExt for Unmanaged {
         }
         let ctx = Box::into_raw(Box::new((context, work))) as *mut c_void;
         unsafe { self.after_f(when, ctx, trampoline::<T>) };
-    }
-
-    unsafe fn set_context(&self, context: *mut c_void) {
-        unsafe { dispatch_set_context(self as *const _ as *mut c_void, context) }
-    }
-
-    fn set_timer(&self, start: Time, interval: i64, leeway: i64) {
-        unsafe {
-            dispatch_source_set_timer(self as *const _ as *mut c_void, start, interval, leeway)
-        }
-    }
-}
-
-impl DispatchExt for DSource {
-    unsafe fn after_f(&self, when: Time, context: *mut c_void, work: extern "C" fn(*mut c_void)) {
-        unsafe {
-            dispatch_after_f(when, self.deref() as *const _ as *const Unmanaged, context, work)
-        }
-    }
-
-    fn after_f_s<T>(&self, when: Time, context: T, work: fn(T)) {
-        extern "C" fn trampoline<T>(ctx: *mut c_void) {
-            let ctx = unsafe { Box::from_raw(ctx as *mut (T, fn(T))) };
-            let (context, work) = *ctx;
-            work(context);
-        }
-        let ctx = Box::into_raw(Box::new((context, work))) as *mut c_void;
-        unsafe { self.after_f(when, ctx, trampoline::<T>) };
-    }
-
-    unsafe fn set_context(&self, context: *mut c_void) {
-        unsafe { dispatch_set_context(self.deref() as *const _ as *mut c_void, context) }
-    }
-
-    fn set_timer(&self, start: Time, interval: i64, leeway: i64) {
-        unsafe {
-            dispatch_source_set_timer(
-                self.deref() as *const _ as *mut c_void,
-                start,
-                interval,
-                leeway,
-            )
-        }
     }
 }
 
@@ -210,6 +118,12 @@ pub fn block_on<T: 'static>(
     }
 }
 
+/// # Safety
+/// `context` must stay valid for every handler that reads it until `source` is released.
+unsafe fn set_context(source: &DSource, context: *mut c_void) {
+    unsafe { dispatch_set_context(source.deref() as *const _ as *mut c_void, context) }
+}
+
 pub fn reap_on_exit_proc(pid: pid_t) {
     if pid <= 0 {
         return;
@@ -234,7 +148,7 @@ pub fn reap_on_exit_proc(pid: pid_t) {
         }
     }
 
-    unsafe { src.set_context(ctx) };
+    unsafe { set_context(&src, ctx) };
     src.set_event_handler_f(proc_event_handler);
     src.resume();
     sources_map().lock().insert(pid, src);

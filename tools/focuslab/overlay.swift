@@ -1,4 +1,4 @@
-// overlay <out.jsonl> <label> <rini-pid> <code> [code...]: per Ctrl+<code> press, rini's windows and their alpha in the
+// overlay <out.jsonl> <label> <rini-pid> <code> [code...]: per Option+<code> press, rini's windows and their alpha in the
 // window list, polled every 1ms, and one JSON line appended to <out.jsonl>: when a rini window not showing at the press
 // came up (up_ms) and went back (lift_ms), ms after the press was posted.
 import Cocoa
@@ -19,8 +19,8 @@ func riniWindows() -> [(Int, CGRect, Double, Int)] {
 }
 func press(_ code: CGKeyCode) {
     let src = CGEventSource(stateID: .hidSystemState)
-    let d = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true)!; d.flags = .maskControl
-    let u = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false)!; u.flags = .maskControl
+    let d = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true)!; d.flags = .maskAlternate
+    let u = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false)!; u.flags = .maskAlternate
     d.post(tap: .cghidEventTap); usleep(12000); u.post(tap: .cghidEventTap)
 }
 if !FileManager.default.fileExists(atPath: outPath) { FileManager.default.createFile(atPath: outPath, contents: nil) }

@@ -413,5 +413,37 @@ class Setup(unittest.TestCase):
             os.unlink(file.name)
 
 
+class Quiet(unittest.TestCase):
+    def test_a_screen_test_starts_after_300s_idle_or_with_no_input_since_the_last_mark(self):
+        self.assertTrue(battery.quiet_enough(300, 1000, None))
+        self.assertFalse(battery.quiet_enough(299, 1000, None))
+        self.assertTrue(battery.quiet_enough(20, 1000, 975))
+        self.assertFalse(battery.quiet_enough(20, 1000, 970))
+
+    def test_a_mark_is_read_back_and_a_missing_or_garbled_one_reads_as_none(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "lab", ".quiet_since")
+            self.assertIsNone(battery.marked_at(path))
+            battery.mark(1234, path)
+            self.assertEqual(battery.marked_at(path), 1234)
+            with open(path, "w") as file:
+                file.write("x\n")
+            self.assertIsNone(battery.marked_at(path))
+
+    def test_every_screen_test_reads_and_marks_the_one_mark_wherever_its_out_points(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        scripts = {}
+        for name in sorted(os.listdir(here)):
+            if name.endswith(".sh"):
+                with open(os.path.join(here, name)) as file:
+                    scripts[name] = file.read()
+        for name, text in scripts.items():
+            self.assertNotIn(".quiet_since", text, name)
+        for name in ("battery.sh", "screenrec.sh"):
+            self.assertIn('battery.py" quiet "$idle"', scripts[name], name)
+        for name in ("battery.sh", "screenrec.sh", "measure.sh"):
+            self.assertIn('battery.py" mark', scripts[name], name)
+
+
 if __name__ == "__main__":
     unittest.main()

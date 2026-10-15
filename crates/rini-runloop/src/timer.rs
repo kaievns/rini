@@ -40,7 +40,7 @@ impl Timer {
         Self::new(fire_time, 0.0)
     }
     /// Fires after `initial_delay`, then every `interval`.
-    pub fn repeating(initial_delay: Duration, interval: Duration) -> Self {
+    fn repeating(initial_delay: Duration, interval: Duration) -> Self {
         let fire_time = CFAbsoluteTimeGetCurrent() + initial_delay.as_secs_f64();
         Self::new(fire_time, interval.as_secs_f64())
     }
@@ -51,7 +51,7 @@ impl Timer {
         Self::repeating(Duration::MAX, Duration::MAX)
     }
     /// `interval` of 0.0 makes a one-shot timer.
-    pub fn new(fire_date: CFAbsoluteTime, interval: CFTimeInterval) -> Self {
+    fn new(fire_date: CFAbsoluteTime, interval: CFTimeInterval) -> Self {
         let inner = Arc::new(Mutex::new(TimerState {
             cf_timer: None,
             waker: None,

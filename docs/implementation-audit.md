@@ -21,8 +21,8 @@ Method: normalised function bodies hashed for exact duplicates (1794 functions,
 7 groups), `difflib` similarity over 918 production functions ≥10 lines for near
 duplicates, caller counts per public method, and per-file code-to-test ratios.
 The duplicate-detection pass over FFI declaration blocks produces false positives
-(`crates/rini-mach-sys`, `crates/rini-skylight-sys`, `crates/rini-ipc/src/client.rs`); those are
-`extern "C"` bodies the parser mis-frames and are excluded throughout.
+(`crates/rini-mach-sys`, `crates/rini-skylight-sys`); those are `extern "C"` bodies the parser
+mis-frames and are excluded throughout.
 
 ## 1. Duplicate and parallel implementations
 

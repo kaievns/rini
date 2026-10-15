@@ -2,7 +2,6 @@
 name = "rini"
 version = "0.1.0"
 edition = "2024"
-build = "build.rs"
 description = "A scrollable-tiling window manager for macOS. The daemon: the features, the reactor that orchestrates them, and the rini binary."
 license = "Apache-2.0"
 publish = false
@@ -20,25 +19,19 @@ test = false
 [dependencies]
 anyhow = { workspace = true }
 arc-swap = "1"
-ascii_tree = "0.1.1"
-bitflags = { workspace = true }
 block2 = { workspace = true }
 clap = { workspace = true }
 continue = { workspace = true }
 csscolorparser = "0.8"
-crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
-dirs = { workspace = true }
 dispatchr = { workspace = true }
 embed_plist = "1.2.2"
-futures-task = { workspace = true }
 knus = { workspace = true }
 libc = { workspace = true }
 miette = { workspace = true }
 nix = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-mini = { workspace = true }
-num_enum = { workspace = true }
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true }
 objc2-application-services = { workspace = true }
@@ -70,7 +63,6 @@ static_assertions = { workspace = true }
 strum = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
-tokio-stream = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -113,15 +105,10 @@ dispatchr = { git = "https://github.com/drewcrawford/dispatchr" }
 nix = { version = "0.30.1", features = ["process", "user"] }
 objc2 = { version = "0.6.2", default-features = false, features = ["exception"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
-	"NSAlert",
 	"NSAppearance",
 	"NSApplication",
 	"NSAttributedString",
-	"NSButton",
 	"NSColor",
-	"NSControl",
-	"NSCell",
-	"NSCursor",
 	"NSEvent",
 	"NSFont",
 	# NSFont::monospacedSystemFontOfSize_weight and the weight constants, the bar's stand-in face.
@@ -131,25 +118,16 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
 	"NSImage",
 	# Enables NSImage::CGImageForProposedRect, which turns an app icon into pixels a layer can draw.
 	"NSImageRep",
-	"NSMenu",
-	"NSMenuItem",
-	"NSOpenPanel",
 	"NSPanel",
 	# The switcher popup's blurred backing. HUDWindow material behind the window.
 	"NSGlassEffectView",
 	"NSStringDrawing",
 	"NSResponder",
 	"NSRunningApplication",
-	"NSSavePanel",
 	"NSScreen",
-	"NSStatusBar",
-	"NSStatusBarButton",
-	"NSStatusItem",
 	"NSView",
 	"NSWindow",
 	"NSWorkspace",
-	"NSTextField",
-	"NSText",
 	"libc",
 	"objc2-core-foundation",
 	"objc2-core-graphics",
@@ -164,7 +142,6 @@ objc2-application-services = { version = "0.3.2", default-features = false, feat
 ]}
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
 	"CFArray",
-	"CFAttributedString",
 	"CFMachPort",
 	"CFNumber",
 	"CFRunLoop",
@@ -206,7 +183,6 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
 	"NSNotification",
 	"NSError",
 	"NSProcessInfo",
-	"NSURL",
 	"NSValue",
 	"objc2-core-foundation"
 ]}
@@ -225,7 +201,6 @@ tracing-subscriber = { version = "0.3.18", features = ["std", "tracing", "env-fi
 tracing-timing = "0.7.0"
 tracing-tree = { version = "0.4.0", features = ["time"], default-features = false }
 futures-task = { version = "0.3.31", features = ["alloc"], default-features = false }
-num_enum = "0.7.4"
 rustc-hash = "2.1.1"
 rini-geometry = { path = "crates/rini-geometry" }
 rini-core = { path = "crates/rini-core" }
@@ -274,17 +249,12 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
 	"CAShapeLayer",
 	"CAAnimation",
 	"CABase",
-	"CAEAGLLayer",
-	"CAEDRMetadata",
 	"CAGradientLayer",
 	"CAMediaTimingFunction",
-	"CAOpenGLLayer",
-	"CARenderer",
 	"CATextLayer",
 	"CATransaction",
 	"objc2-core-foundation",
-	"objc2-core-graphics",
-	"objc2-metal"
+	"objc2-core-graphics"
 ]}
 
 [profile.dev]
@@ -305,15 +275,3 @@ panic = "unwind"
 incremental = false
 lto = "thin"
 strip = true
-
-[profile.release-fast]
-inherits = "release"
-opt-level = 2
-codegen-units = 16
-incremental = true
-lto = "off"
-strip = false
-
-[profile.profiling]
-inherits = "release"
-strip = false

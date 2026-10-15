@@ -91,10 +91,6 @@ impl<U> FromCg<ic::CGSize> for Size<U> {
     fn from_cg(cg: ic::CGSize) -> Self { Size::new(cg.width, cg.height) }
 }
 
-impl<U> FromCg<ic::CGPoint> for Vector<U> {
-    fn from_cg(cg: ic::CGPoint) -> Self { Vector::new(cg.x, cg.y) }
-}
-
 impl<U> ToCg for Rect<U> {
     type Cg = ic::CGRect;
     fn to_cg(self) -> ic::CGRect { ic::CGRect::new(self.origin.to_cg(), self.size.to_cg()) }
@@ -110,11 +106,6 @@ impl<U> ToCg for Size<U> {
     fn to_cg(self) -> ic::CGSize { ic::CGSize::new(self.width, self.height) }
 }
 
-impl<U> ToCg for Vector<U> {
-    type Cg = ic::CGPoint;
-    fn to_cg(self) -> ic::CGPoint { ic::CGPoint::new(self.x, self.y) }
-}
-
 impl<U> Round for Rect<U> {
     fn rounded(&self) -> Self {
         let min = self.min().rounded();
@@ -125,10 +116,6 @@ impl<U> Round for Rect<U> {
 
 impl<U> Round for Point<U> {
     fn rounded(&self) -> Self { Point::new(self.x.round(), self.y.round()) }
-}
-
-impl<U> Round for Size<U> {
-    fn rounded(&self) -> Self { Size::new(self.width.round(), self.height.round()) }
 }
 
 impl<U> IsWithin for Rect<U> {
@@ -149,16 +136,9 @@ impl<U> IsWithin for Size<U> {
     }
 }
 
-impl<U> IsWithin for Vector<U> {
-    fn is_within(&self, how_much: f64, other: Self) -> bool {
-        self.x.is_within(how_much, other.x) && self.y.is_within(how_much, other.y)
-    }
-}
-
 impl<U> SameAs for Rect<U> {}
 impl<U> SameAs for Point<U> {}
 impl<U> SameAs for Size<U> {}
-impl<U> SameAs for Vector<U> {}
 
 #[cfg(test)]
 mod tests {
@@ -220,10 +200,6 @@ mod tests {
         assert_eq!(ScreenPoint::from_cg(point).to_cg(), point);
         let size = ic::CGSize::new(1728.0, 1116.5);
         assert_eq!(ScreenSize::from_cg(size).to_cg(), size);
-        let displacement = ic::CGPoint::new(-4000.0, 0.25);
-        let vector = Vector::<Overlay>::from_cg(displacement);
-        assert_eq!((vector.x, vector.y), (-4000.0, 0.25));
-        assert_eq!(vector.to_cg(), displacement);
     }
 
     #[test]
@@ -249,7 +225,6 @@ mod tests {
         assert_eq!((rounded.size.width, rounded.size.height), (859.0, 1081.0), "both edges snap");
         assert_eq!(cg(-860.5, 31.5, 859.0, 1081.0).rounded(), rounded.to_cg());
         assert_eq!(ScreenPoint::new(-0.5, 0.5).rounded(), Point::new(-1.0, 1.0));
-        assert_eq!(ScreenSize::new(858.5, 1080.5).rounded(), Size::new(859.0, 1081.0));
     }
 
     trait NoInherentRound {

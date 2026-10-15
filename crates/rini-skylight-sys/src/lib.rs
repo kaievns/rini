@@ -10,7 +10,6 @@ use std::fmt;
 use std::num::NonZeroU32;
 
 use bitflags::bitflags;
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 use objc2_application_services::{AXError, AXUIElement};
 use objc2_core_foundation::{
     CFArray, CFData, CFDictionary, CFNumber, CFString, CFType, CGPoint, CGRect, CGSize,
@@ -169,95 +168,43 @@ bitflags! {
     }
 }
 
+/// The notify-proc events rini registers or matches on. Every number, with what is known of its
+/// payload, is in `docs/README.md`.
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KnownCGSEvent {
-    DisplayWillSleep = 102,
-    DisplayDidWake = 103,
-    WindowUpdated = 723,
-    // maybe loginwindow active? kCGSEventNotificationSystemDefined = 724,
     WindowClosed = 804,
-    WindowDisplayChanged = 805,
     WindowMoved = 806,
     WindowResized = 807,
     WindowReordered = 808,
     WindowLevelChanged = 811,
     WindowUnhidden = 815,
     WindowHidden = 816,
-    MissionControlEntered = 1204,
-    /// Named in `_WSLogStringForNotifyType`; observed when the active display /
-    /// status-bar space changes, including current-space and capability updates.
-    PackagesStatusBarSpaceChanged = 1308,
-    WindowTitleChanged = 1322,
     SpaceWindowCreated = 1325,
     SpaceWindowDestroyed = 1326,
     SpaceCreated = 1327,
     SpaceDestroyed = 1328,
-    /// Posted by `managed_display_set_current_space` through
-    /// `post_space_lifecycle_notification`; likely carries the new current
-    /// space id for a display transition.
     SpaceCurrentChanged = 1329,
-    /// Local WM notification posted during activating-click ordering; payload is
-    /// believed to be window/order metadata, but the exact layout is still
-    /// under investigation.
     WindowManagerActivatingClickOrdering = 1333,
-    /// Local notification posted when the front connection for the current
-    /// space changes.
     WindowManagerSpaceFrontConnectionChanged = 1334,
-    /// Local notification posted when the global front connection changes.
     WindowManagerGlobalFrontConnectionChanged = 1335,
-    /// Posted from `finish_order_windows`; observed payload is 3 x u32.
     WindowOrderingGroupChanged = 1336,
-    /// Posted by `-[PKGSpaceWindowManager_commitTransaction]`; useful as a
-    /// transaction boundary even when per-window membership notifications race.
-    SpaceWindowTransactionCommitted = 1338,
-    /// Posted from `finishBatchReassociateWindows`; observed payload starts with
-    /// a u64 key/space followed by a u32 count and repeated window ids.
     SpaceWindowBatchReassociated = 1339,
-    /// Posted via `__XSetSpaceWindowManagementCapabilities`; likely tied to
-    /// space/window-management mode changes for a display or space.
     SpaceWindowManagementCapabilitiesChanged = 1340,
-    /// Posted from `_WSWindowSetParent` and related reassociation paths.
     WindowParentChanged = 1341,
-    /// Local notification from `managed_space_update_membership`; likely marks
-    /// a completed space-membership mutation and may carry space/window ids.
     ManagedSpaceMembershipUpdated = 1342,
-    WorkspaceWillChange = 1400,
     WorkspaceDidChange = 1401,
-    WorkspaceWindowIsViewable = 1402,
-    WorkspaceWindowIsNotViewable = 1403,
-    WorkspaceWindowDidMove = 1404,
-    WorkspacePrefsDidChange = 1405,
-    WorkspacesWindowDragDidStart = 1411,
-    WorkspacesWindowDragDidEnd = 1412,
-    WorkspacesWindowDragWillEnd = 1413,
-    WorkspacesShowSpaceForProcess = 1414,
-    WorkspacesWindowDidOrderInOnNonCurrentManagedSpacesOnly = 1415,
-    WorkspacesWindowDidOrderOutOnNonCurrentManagedSpaces = 1416,
-    FrontmostApplicationChanged = 1508,
-    TransitionDidFinish = 1700,
-    All = 0xFFFF_FFFF,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CGSEventType {
     Known(KnownCGSEvent),
-    Unknown(u32),
 }
 
-impl From<u32> for CGSEventType {
-    fn from(v: u32) -> Self {
-        match KnownCGSEvent::try_from(v) {
-            Ok(k) => Self::Known(k),
-            Err(_) => Self::Unknown(v),
-        }
-    }
-}
 impl From<CGSEventType> for u32 {
     fn from(k: CGSEventType) -> u32 {
         match k {
             CGSEventType::Known(k) => k as u32,
-            CGSEventType::Unknown(v) => v,
         }
     }
 }
@@ -273,7 +220,6 @@ impl fmt::Display for CGSEventType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CGSEventType::Known(k) => write!(f, "{k}"),
-            CGSEventType::Unknown(v) => write!(f, "Unknown({v})"),
         }
     }
 }
@@ -330,7 +276,6 @@ bitflags! {
 }
 
 unsafe extern "C" {
-    #[allow(clashing_extern_declarations)]
     pub fn CFRelease(cf: *mut CFType);
 
     pub fn _AXUIElementGetWindow(elem: *mut AXUIElement, wid: *mut CGWindowID) -> AXError;
@@ -386,8 +331,6 @@ unsafe extern "C" {
     pub fn SLSNewConnection(zero: c_int, cid: *mut cid_t) -> CGError;
     pub fn SLSServerPort(zero: *mut c_void) -> u32;
     pub fn SLSWindowManagementBridgeSetDelegate(delegate: *mut c_void) -> CGError;
-    pub safe fn SLSDisableUpdate(cid: cid_t) -> i32;
-    pub safe fn SLSReenableUpdate(cid: cid_t) -> i32;
     pub fn _SLPSSetFrontProcessWithOptions(
         psn: *const ProcessSerialNumber,
         wid: u32,

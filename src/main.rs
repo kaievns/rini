@@ -566,7 +566,6 @@ fn main() {
 #[cfg(panic = "unwind")]
 fn install_panic_hook() {
     // Abort on panic instead of propagating panics to the main thread.
-    // See Cargo.toml for why we don't use panic=abort everywhere.
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         original_hook(info);

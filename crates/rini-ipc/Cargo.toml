@@ -14,7 +14,6 @@ rini-core = { workspace = true }
 rini-mach-sys = { workspace = true }
 thiserror = { workspace = true }
 rini-runloop = { workspace = true }
-continue = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 nix = { workspace = true }
@@ -22,8 +21,4 @@ parking_lot = { workspace = true }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true }
 strum = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true }
-
-[dev-dependencies]
-ctrlc = "3.5.2"

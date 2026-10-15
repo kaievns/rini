@@ -22,24 +22,16 @@ export PYTHONDONTWRITEBYTECODE=1
 die() { echo "screenrec: $*" >&2; exit 2; }
 
 FLAG=$ROOT/.input.flag
-QUIET=$ROOT/.quiet_since
 JDIR=$HOME/Library/Logs/rini
 J=$JDIR/transitions.jsonl
 MOV=$OUT/$NAME.mov
 [ -e "$MOV" ] && die "$MOV exists; pick another name"
 [ -f "$J" ] || die "no journal at $J: turn on animations { journal } in rini's config"
 idle=$(ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {printf "%d", $NF/1e9; exit}')
-if [ "$idle" -lt 300 ]; then
-  ok=0
-  if [ -f "$QUIET" ]; then
-    since=$(( $(date +%s) - $(cat "$QUIET") ))
-    [ "$idle" -ge $(( since - 5 )) ] && ok=1
-  fi
-  [ $ok = 1 ] || die "HID idle ${idle}s < 300s and input came since the last session: Kai may be here"
-fi
+python3 "$HERE/battery.py" quiet "$idle" || die "HID idle ${idle}s < 300s and input came since the last session: Kai may be here"
 
 BIN=${XDG_CACHE_HOME:-$HOME/Library/Caches}/rini-focuslab
-mkdir -p "$BIN" "$OUT"
+mkdir -p "$BIN" "$ROOT" "$OUT"
 for tool in screenrec inputwatch; do
   if [ ! "$BIN/$tool" -nt "$HERE/$tool.swift" ]; then
     swiftc -O "$HERE/$tool.swift" -o "$BIN/$tool" || die "swiftc $tool.swift failed"
@@ -54,10 +46,17 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do grep -q listening "$OUT/$NAME.inputwatch
 grep -q listening "$OUT/$NAME.inputwatch.out" || { kill $WATCH 2>/dev/null; die "inputwatch did not start"; }
 
 INODE=$(stat -f %i "$J"); L0=$(wc -l < "$J" | tr -d ' ')
+RESTORED=0
+restore() {
+  [ $RESTORED = 1 ] && return; RESTORED=1
+  [ -n "$FOCUS_ID" ] && { "$CLI" execute window focus --window-id "$FOCUS_ID" > /dev/null 2>&1 || echo "screenrec: restore focus failed" >&2; }
+  sleep 1
+  kill $WATCH 2>/dev/null; wait $WATCH 2>/dev/null
+  [ -e "$FLAG" ] || python3 "$HERE/battery.py" mark
+}
+trap 'restore; exit 3' INT TERM
 "$BIN/screenrec" "$MOV" $TAIL "$FLAG" "$@"; rc=$?
-[ -n "$FOCUS_ID" ] && { "$CLI" execute window focus --window-id "$FOCUS_ID" > /dev/null 2>&1 || echo "screenrec: restore focus failed" >&2; }
-sleep 1
-kill $WATCH 2>/dev/null; wait $WATCH 2>/dev/null
+restore
 if [ "$(stat -f %i "$J")" = "$INODE" ]; then
   tail -n +$((L0 + 1)) "$J" > "$OUT/$NAME.journal.jsonl"
 else
@@ -67,5 +66,4 @@ if [ -e "$FLAG" ]; then
   echo "screenrec: stopped by input: $(cat "$FLAG")" >&2
   exit 3
 fi
-date +%s > "$QUIET"
 exit $rc

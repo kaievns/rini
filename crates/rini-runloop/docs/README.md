@@ -12,12 +12,12 @@ that machinery, and nothing else: no window, no workspace, no layout.
 | `turns.rs` | a turn's time, folded: each actor's polls (`timed`), the time outside them, and the window changes noted (`changed`) from 50ms before it; a turn over 8ms is a `MainTurn` |
 | `timer.rs` | `Timer`: an awaitable `CFRunLoopTimer` |
 | `channel.rs` | An unbounded mpsc that carries the sender's tracing span with each message |
-| `dispatch.rs` | The `libdispatch` declarations the timers need |
+| `dispatch.rs` | `DispatchExt::after_f`/`after_f_s` (run work on a dispatch queue after a delay), `block_on`, and `reap_on_exit_proc`, which reaps a spawned child when it exits |
 
 ## The shape that matters
 
 **`tokio::time` panics here** and took the whole window manager down twice. There is no
-tokio reactor, only a `CFRunLoop`. Use `run_loop::sleep` or `RepeatingTimer`.
+tokio reactor, only a `CFRunLoop`. Use `executor::sleep` or `RepeatingTimer`.
 
 **Channels are unbounded on purpose.** A bounded channel between threads that also
 service run loops would deadlock the main thread on backpressure.
