@@ -95,8 +95,8 @@ impl Reactor {
         }
 
         // A floating window has no swap semantics: it is not in the tiling strip, so there
-        // is nothing for it to trade places with. Returning before the fall-through at the
-        // end of this function is the point — that path clears
+        // is nothing for it to trade places with. Returning before `track_swap_target` is the
+        // point — its fall-through clears
         // `skip_layout_for_window`, and clearing it MID-GESTURE lets the next layout pass
         // reassert the window's stored frame while the user is still holding the mouse.
         //
@@ -113,20 +113,33 @@ impl Reactor {
             return;
         }
 
-        let server_id = {
-            let Some(window) = self.state.windows.window(wid) else {
-                return;
-            };
-            window.info.sys_id
-        };
-
-        let Some(space) = self
-            .get_active_drag_session()
-            .and_then(|session| session.settled_space)
-            .or_else(|| self.affinity().best_space_for_window(&new_frame, server_id))
-        else {
+        let Some((space, origin_space_hint)) = self.drag_spaces(wid, new_frame) else {
             return;
         };
+        if let Some(origin_space) = origin_space_hint
+            && origin_space != space
+        {
+            self.reset_swap_after_space_change(wid, origin_space, space);
+            return;
+        }
+        if !self
+            .layout_engine
+            .is_window_in_active_workspace(&self.state.windows, space, wid)
+        {
+            return;
+        }
+
+        self.track_swap_target(wid, new_frame, space);
+    }
+
+    /// The space a dragged window is over, the drag session's settled one first, and the space it
+    /// started from.
+    fn drag_spaces(&self, wid: WindowId, new_frame: CGRect) -> Option<(SpaceId, Option<SpaceId>)> {
+        let server_id = self.state.windows.window(wid)?.info.sys_id;
+        let space = self
+            .get_active_drag_session()
+            .and_then(|session| session.settled_space)
+            .or_else(|| self.affinity().best_space_for_window(&new_frame, server_id))?;
 
         let origin_space_hint = self
             .get_active_drag_session()
@@ -137,38 +150,41 @@ impl Reactor {
                     .and_then(|frame| self.affinity().best_space_for_window(&frame, server_id))
             });
 
-        if let Some(origin_space) = origin_space_hint
-            && origin_space != space
+        Some((space, origin_space_hint))
+    }
+
+    /// A dragged window entering another space than the one it started from: its pending swap
+    /// dropped and the swap tracking reset.
+    fn reset_swap_after_space_change(
+        &mut self,
+        wid: WindowId,
+        origin_space: SpaceId,
+        space: SpaceId,
+    ) {
+        if let Some((pending_wid, pending_target)) = self.get_pending_drag_swap()
+            && pending_wid == wid
         {
-            if let Some((pending_wid, pending_target)) = self.get_pending_drag_swap()
-                && pending_wid == wid
-            {
-                trace!(
-                    ?wid,
-                    ?pending_target,
-                    ?origin_space,
-                    ?space,
-                    "Clearing pending drag swap; dragged window entered new space"
-                );
-                self.drag_manager.drag_state = DragState::Inactive;
-            }
             trace!(
                 ?wid,
+                ?pending_target,
                 ?origin_space,
                 ?space,
-                "Resetting drag swap tracking after space change"
+                "Clearing pending drag swap; dragged window entered new space"
             );
-            self.drag_manager.drag_swap_manager.reset();
-            return;
+            self.drag_manager.drag_state = DragState::Inactive;
         }
+        trace!(
+            ?wid,
+            ?origin_space,
+            ?space,
+            "Resetting drag swap tracking after space change"
+        );
+        self.drag_manager.drag_swap_manager.reset();
+    }
 
-        if !self
-            .layout_engine
-            .is_window_in_active_workspace(&self.state.windows, space, wid)
-        {
-            return;
-        }
-
+    /// The swap target the dragged window is over, deferred to the mouse-up as a pending swap, or
+    /// a pending swap dropped once the overlap ends.
+    fn track_swap_target(&mut self, wid: WindowId, new_frame: CGRect, space: SpaceId) {
         let candidates = self.collect_drag_swap_candidates(wid, space);
 
         let previous_pending = self.get_pending_drag_swap();

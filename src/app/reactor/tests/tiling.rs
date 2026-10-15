@@ -633,6 +633,40 @@ fn dragging_a_floating_window_keeps_the_layout_skip_for_the_whole_gesture() {
     }
 }
 
+/// A tiled window dragged over another holds a swap with it until the mouse comes up, and lets go
+/// of it when the overlap ends.
+#[test]
+fn a_drag_over_a_column_holds_a_swap_until_the_overlap_ends() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let space = SpaceId::new(1);
+    let dragged = WindowId::new(1, 1);
+    let target = WindowId::new(1, 2);
+    set_space_membership(&reactor, &[(space, &[1, 2])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspace = reactor.test_workspace(space, 0);
+    for (window, wsid) in [(dragged, 1), (target, 2)] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+    let start = CGRect::new(CGPoint::new(0., 0.), CGSize::new(500., 1000.));
+    let over = CGRect::new(CGPoint::new(500., 0.), CGSize::new(500., 1000.));
+    for (window, frame) in [(dragged, start), (target, over)] {
+        reactor.state.windows.window_mut(window).unwrap().frame_monotonic = frame;
+    }
+
+    reactor.ensure_active_drag(dragged, &start);
+    reactor.maybe_swap_on_drag_for_test(dragged, over);
+    assert_eq!(reactor.get_pending_drag_swap(), Some((dragged, target)));
+    assert_eq!(reactor.drag_manager.skip_layout_for_window, Some(dragged));
+
+    reactor.maybe_swap_on_drag_for_test(dragged, start);
+    assert_eq!(reactor.get_pending_drag_swap(), None, "the overlap ended");
+    assert!(reactor.is_in_drag(), "the drag goes on without the swap");
+}
+
 /// A window owned by a space but absent from its layout tree must be reported.
 ///
 /// That combination is invisible to the strip while remaining cmd-tab reachable, which is
