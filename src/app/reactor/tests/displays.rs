@@ -6,7 +6,7 @@ use rini_geometry::CGRectExt;
 use test_log::test;
 
 use super::fixtures::*;
-use crate::app::reactor::managers::{Churn, RefreshQuarantineState, Session, Wake};
+use crate::app::reactor::managers::{Churn, RefreshQuarantineState, Session, VisibleRefresh, Wake};
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
@@ -1097,14 +1097,44 @@ fn window_events_pass_once_the_churn_ends_and_refreshes_once_its_snapshot_is_inc
     );
 }
 
-/// A settled churn's snapshot comes ahead of its `DisplayChurnEnd`, so the snapshot itself ends the
-/// churn before it is incorporated, and the end that follows changes nothing.
+/// A settled churn's snapshot, which carries the churn's window delta, comes ahead of its
+/// `DisplayChurnEnd`, so the snapshot itself ends the churn before it is incorporated: display
+/// affinity is observed again, a closed window's home forgotten, and the end that follows changes
+/// nothing.
 #[test]
-fn a_settled_churn_s_snapshot_ends_the_churn_ahead_of_its_end() {
+fn a_settled_churn_s_snapshot_ends_the_churn_before_it_is_incorporated() {
     let mut reactor = test_reactor();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let space = SpaceId::new(1);
+    let closed = WindowId::new(1, 1);
+    set_space_membership(&reactor, &[(space, &[901])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspace = reactor.test_workspace(space, 0);
+    reactor.add_test_window(closed, WindowServerId::new(901), Some(space), screen);
+    assert!(reactor.assign_test_window_to_workspace(space, closed, workspace));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(space, closed));
+    reactor.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(closed));
+    reactor.windows_mut().remove_window(closed);
+    set_space_membership(&reactor, &[(space, &[])]);
+    assert_eq!(
+        reactor.display_affinity().window_home(closed),
+        Some("test-display-0")
+    );
+
     reactor.handle_event(Event::DisplayChurnBegin);
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
+    reactor.handle_event(space_state_event_with(
+        vec![screen],
+        vec![Some(space)],
+        |state| {
+            state.topology_window_delta = Some(Default::default());
+        },
+    ));
+    assert_eq!(
+        reactor.display_affinity().window_home(closed),
+        None,
+        "the settled snapshot observes display affinity again"
+    );
     assert_eq!(reactor.quarantine().churn(), Churn::Steady);
     reactor.handle_event(Event::DisplayChurnEnd);
     assert_eq!(reactor.quarantine().churn(), Churn::Steady);
@@ -1187,14 +1217,11 @@ fn each_quarantine_event_sets_its_quarantine_flag_and_moves_no_focus() {
         RefreshQuarantineState::Sleeping
     );
 
-    assert_eq!(reactor.quarantine().owed(), None);
     reactor.handle_event(Event::SystemWoke);
     assert_eq!(reactor.quarantine().wake(), Wake::AwaitingSnapshot);
-    assert!(reactor.quarantine().owed().is_some());
 
     reactor.handle_event(Event::SessionDidBecomeActive);
     assert_eq!(reactor.quarantine().session(), Session::AwaitingSnapshot);
-    assert!(reactor.quarantine().owed().is_some());
 
     assert_eq!(reactor.focus_tracker().key_window(), Some(focused));
     assert_eq!(test_layout(&mut reactor, space, screen), layout);
@@ -1202,6 +1229,19 @@ fn each_quarantine_event_sets_its_quarantine_flag_and_moves_no_focus() {
         !apps.requests().iter().any(|request| matches!(request, Request::Raise { .. })),
         "a quarantine event is not a focus edge, so nothing is raised"
     );
+}
+
+/// Each on a reactor that owes nothing, so neither can pass on the other's debt.
+#[test]
+fn waking_and_unlocking_the_reactor_each_owe_a_refresh_tracking_mission_control() {
+    let tracked = VisibleRefresh { tracks_mission_control: true };
+    for event in [Event::SystemWoke, Event::SessionDidBecomeActive] {
+        let name = format!("{event:?}");
+        let mut reactor = test_reactor();
+        assert_eq!(reactor.quarantine().owed(), None);
+        reactor.handle_event(event);
+        assert_eq!(reactor.quarantine().owed(), Some(tracked), "{name}");
+    }
 }
 
 #[test]
