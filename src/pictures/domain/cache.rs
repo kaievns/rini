@@ -59,8 +59,6 @@ impl<T: HasCoverage> Default for PictureCache<T> {
 }
 
 impl<T: HasCoverage + CarriesOver> PictureCache<T> {
-    pub fn new() -> Self { Self::default() }
-
     /// Whether `insert` would hold `picture` as `window`'s: [`should_replace`], and what the one held
     /// keeps over it ([`CarriesOver`]).
     pub fn takes(&self, window: WindowId, picture: &T) -> bool {
@@ -220,7 +218,7 @@ mod tests {
         }
     }
 
-    fn cache() -> PictureCache<Coverage> { PictureCache::new() }
+    fn cache() -> PictureCache<Coverage> { PictureCache::default() }
 
     #[test]
     fn cache_applies_the_no_downgrade_rule() {

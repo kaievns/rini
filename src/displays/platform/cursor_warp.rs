@@ -125,7 +125,6 @@ pub enum Request {
     /// Where the lower display's top edge sits on the upper display's height, measured from the
     /// upper display's bottom.
     SetLowerTopAt(f64),
-    Stop,
 }
 
 pub type Sender = channel::Sender<Request>;
@@ -166,9 +165,7 @@ impl CursorWarp {
                 tokio::select! {
                     request = self.rx.recv() => {
                         match request {
-                            Some((_span, request)) => {
-                                if !self.handle(request) { return }
-                            }
+                            Some((_span, request)) => self.handle(request),
                             None => return,
                         }
                     }
@@ -176,19 +173,14 @@ impl CursorWarp {
                 }
             } else {
                 match self.rx.recv().await {
-                    Some((_span, request)) => {
-                        if !self.handle(request) {
-                            return;
-                        }
-                    }
+                    Some((_span, request)) => self.handle(request),
                     None => return,
                 }
             }
         }
     }
 
-    /// Returns false when the actor should stop.
-    fn handle(&mut self, request: Request) -> bool {
+    fn handle(&mut self, request: Request) {
         match request {
             Request::ScreensChanged(screens) => {
                 debug!(count = screens.len(), "cursor warp screens updated");
@@ -212,9 +204,7 @@ impl CursorWarp {
                 }
                 self.upper_side = side;
             }
-            Request::Stop => return false,
         }
-        true
     }
 
     fn tick(&mut self) {

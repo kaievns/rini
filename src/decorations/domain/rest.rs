@@ -291,6 +291,7 @@ impl Rest {
         covered.until = None;
     }
 
+    #[cfg(test)]
     pub fn covered(&self) -> bool { self.covered.is_some() }
 
     /// One turn at `now`: the reactor's word if one came, the window server's introductions, its

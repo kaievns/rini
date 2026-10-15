@@ -63,7 +63,8 @@ layout mode, and adding one is out of scope rather than unimplemented.
 
 rini MUST meet every requirement here with nothing but itself and macOS. It MUST NOT need another
 application's tool to look or behave as specified, and it MUST NOT carry code that exists only to
-accommodate such a tool running beside it. What rini needs drawn, it draws. rini's own IPC and
+accommodate such a tool running beside it, with one exception: with rini's bar off, a flight keeps
+the bar another application draws visible (`bar.md`, "Showing it"). What rini needs drawn, it draws. rini's own IPC and
 `rini-cli`, which other tools call (the sketchybar `subscribe` hooks), are rini's interface, not
 such code; nor is a look rini keeps from a setup it replaced, as the bar keeps sketchybar's, nor the
 niri config format.
@@ -75,8 +76,3 @@ niri config format.
 > 1.9 makes its window 2·(w+8)pt larger than the one it borders, 19pt at a 1.5pt border. Once rini
 > draws borders of its own, they would have matched rini's own border windows and flown pictures of
 > them over the borders rini draws on the tiles.
-
-Not yet met: with rini's bar off, a flight still pictures what another application draws between the
-desktop and the windows as the bar, a path that exists for sketchybar. The two requirements it
-serves in `animation.md`, the bar's picture never showing the overlay and the handover measure
-counting the bar's picture from the hide, say so.

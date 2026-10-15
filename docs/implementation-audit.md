@@ -397,7 +397,7 @@ reached the reactor as a display's space.
 wires the window server in `AuthorityState::runtime()`; a test names its own. Two rules
 moved to `displays::domain::topology` on the way out — `snapshot_is_committable` and
 `snapshot_spaces_are_coherent` — because they were static methods calling a platform
-predicate, plus `buffered_snapshot` for the five-case buffering decision. 14 tests.
+predicate. 9 tests.
 
 Also consolidated: `should_buffer_topology_updates` and
 `should_quarantine_window_space_event` had different names and byte-identical bodies. Now

@@ -44,8 +44,6 @@ fn idle() -> Duration {
 /// One extra's picture.
 #[derive(Clone)]
 pub struct Extra {
-    /// The status window's id, stable for as long as the extra is.
-    pub window: u32,
     /// `Kind::Vital` or `Kind::Tray`, never `Kind::Skip`.
     pub kind: Kind,
     /// At `scale` pixels per point, with a transparent ground.
@@ -301,7 +299,7 @@ fn cut(image: &CGImage, composite: Composite, chosen: &[(Placed, Kind)]) -> Opti
             continue;
         };
         stamps.push(Stamp { window, kind, hash: extras::fingerprint(pixels, stride, rect) });
-        items.push(Extra { window, kind, image: picture, scale: composite.scale, ink });
+        items.push(Extra { kind, image: picture, scale: composite.scale, ink });
     }
     Some((Extras { items }, stamps))
 }

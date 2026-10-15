@@ -416,6 +416,7 @@ impl Score {
     }
 
     /// When the last of `node`'s tracks ends; none with no tracks.
+    #[cfg(test)]
     pub fn ends(&self, node: Node) -> Option<f64> {
         self.tracks(node).map(Track::ends).reduce(f64::max)
     }

@@ -6,7 +6,6 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 ///
 /// driven by raw input:
 /// - current screen -> (space, display_uuid) snapshots
-/// - login window activation state
 /// - configuration flags (default_disable, one_space)
 /// - user "toggle" commands (target space/display context)
 #[derive(Debug, Default)]
@@ -23,8 +22,6 @@ pub struct SpaceActivationPolicy {
 
     last_known_space_by_screen: HashMap<ScreenId, SpaceId>,
     last_known_display_by_screen: HashMap<ScreenId, String>,
-
-    pub login_window_active: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -50,20 +47,13 @@ impl SpaceActivationPolicy {
             starting_space: None,
             last_known_space_by_screen: HashMap::default(),
             last_known_display_by_screen: HashMap::default(),
-            login_window_active: false,
         }
     }
 
-    pub fn set_login_window_active(&mut self, active: bool) {
-        self.login_window_active = active;
-    }
-
-    #[allow(dead_code)]
     pub fn on_space_created(&mut self, space: SpaceId) {
         self.known_user_spaces.insert(space);
     }
 
-    #[allow(dead_code)]
     pub fn on_space_destroyed(&mut self, space: SpaceId) {
         self.known_user_spaces.remove(&space);
     }
@@ -210,7 +200,6 @@ impl SpaceActivationPolicy {
 
             // this is the core logic for deciding whats what
             let enabled = match *space_opt {
-                _ if self.login_window_active => false,
                 Some(space) if cfg.one_space && Some(space) != self.starting_space => false,
                 Some(space) if self.disabled_spaces.contains(&space) => false,
                 _ if display_disabled => false,
@@ -472,25 +461,6 @@ mod tests {
         );
 
         assert_eq!(active, vec![Some(SpaceId::new(2))]);
-    }
-
-    #[test]
-    fn login_window_disables_all_spaces() {
-        let mut policy = SpaceActivationPolicy::new();
-        policy.set_login_window_active(true);
-        let cfg = SpaceActivationConfig {
-            default_disable: false,
-            one_space: false,
-        };
-
-        policy.on_spaces_updated(cfg, &[input(1, Some(1), Some("display-a"))]);
-        let active = policy.compute_active_spaces(
-            cfg,
-            &[Some(SpaceId::new(1))],
-            &[Some("display-a".to_string())],
-        );
-
-        assert_eq!(active, vec![None]);
     }
 
     #[test]

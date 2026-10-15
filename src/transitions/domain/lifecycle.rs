@@ -664,6 +664,7 @@ impl Coordinator {
     }
 
     /// Whether the motion clock runs.
+    #[cfg(test)]
     pub fn is_moving(&self) -> bool {
         matches!(&self.state, State::Flying(f) if f.clock.is_some())
     }

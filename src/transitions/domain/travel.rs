@@ -134,8 +134,8 @@ pub fn neighbour_travel(
 /// Is a request's start a deliberate fiction rather than drift to correct?
 ///
 /// A window already sitting at its destination has no drift, so a request that still asks for
-/// motion can only be a synthetic start (the debug slide, which invents one). Overriding it with
-/// the real frame made `from` equal `to`, which silently killed the whole movement.
+/// motion from elsewhere names a start of its own. Overriding it with the real frame makes `from`
+/// equal `to`, and nothing moves.
 pub fn start_is_synthetic(real: ScreenRect, from: ScreenRect, to: ScreenRect) -> bool {
     real.same_as(to) && !from.same_as(to)
 }
@@ -296,8 +296,8 @@ mod tests {
     use crate::animation::domain::motion::plan::entrance_from;
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
 
-    /// The debug slide invents a start for a window already at rest; correcting that "drift" from
-    /// the window server made from equal to and silently killed the whole movement.
+    /// A start asked for a window already at rest is kept: correcting that "drift" from the window
+    /// server makes from equal to, and nothing moves.
     #[test]
     fn an_invented_start_for_a_window_at_rest_is_honoured() {
         let at_rest = rect(4.0, 32.0, 859.0, 1081.0);

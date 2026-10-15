@@ -234,32 +234,6 @@ pub enum CGEventTapLocation {
 bitflags! {
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
     #[repr(transparent)]
-    pub struct CGSSpaceMask: c_int {
-        const INCLUDE_CURRENT = 1 << 0;
-        const INCLUDE_OTHERS  = 1 << 1;
-
-        const INCLUDE_USER    = 1 << 2;
-        const INCLUDE_OS      = 1 << 3;
-
-        const VISIBLE         = 1 << 16;
-
-        const CURRENT_SPACES = Self::INCLUDE_USER.bits() | Self::INCLUDE_CURRENT.bits();
-        const OTHER_SPACES = Self::INCLUDE_USER.bits() | Self::INCLUDE_OTHERS.bits();
-        const ALL_SPACES =
-            Self::INCLUDE_USER.bits() | Self::INCLUDE_OTHERS.bits() | Self::INCLUDE_CURRENT.bits();
-
-        const ALL_VISIBLE_SPACES = Self::ALL_SPACES.bits() | Self::VISIBLE.bits();
-
-        const CURRENT_OS_SPACES = Self::INCLUDE_OS.bits() | Self::INCLUDE_CURRENT.bits();
-        const OTHER_OS_SPACES = Self::INCLUDE_OS.bits() | Self::INCLUDE_OTHERS.bits();
-        const ALL_OS_SPACES =
-            Self::INCLUDE_OS.bits() | Self::INCLUDE_OTHERS.bits() | Self::INCLUDE_CURRENT.bits();
-    }
-}
-
-bitflags! {
-    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-    #[repr(transparent)]
     pub struct DisplayReconfigFlags: u32 {
         const BEGIN_CONFIGURATION        = 0x0000_0001;
         const MOVED                      = 0x0000_0002;
@@ -297,10 +271,7 @@ unsafe extern "C" {
 
     /// The frame the window server has for a window, answered without asking the app.
     pub fn SLSGetWindowBounds(cid: cid_t, wid: u32, frame: *mut CGRect) -> i32;
-    // this does not work and we should not rely on it
     pub fn CGSGetActiveSpace(cid: c_int) -> u64;
-    pub fn CGSCopySpaces(cid: c_int, mask: CGSSpaceMask) -> *mut CFArray;
-    pub fn CGSCopyManagedDisplays(cid: c_int) -> *mut CFArray;
     pub fn CGSCopyManagedDisplaySpaces(cid: c_int) -> *mut NSArray;
     pub fn SLSGetSpaceManagementMode(cid: cid_t) -> c_int;
     pub fn CGSManagedDisplayGetCurrentSpace(cid: c_int, uuid: *mut CFString) -> u64;

@@ -14,8 +14,8 @@ use crate::pictures::platform::picture::Picture;
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// The cache took this picture of `window`. The only kind a client may draw.
-    Taken { window: WindowId, picture: Picture },
+    /// The cache took a picture of `window`.
+    Taken { window: WindowId },
     /// Pictures `tag` asked for or watched, each with the server frame it was taken at; all of them
     /// pictures the cache took. A frame-zero delivery comes even with none. `sent` is when the service
     /// decided it, once the captures behind it were done: from a picture's `taken` to `sent` is the

@@ -24,7 +24,8 @@ scrolling only. A second layout mode is out of scope, not unbuilt (`specs/README
 **Batteries included.** rini must meet every requirement with nothing but itself and macOS, and
 carry no code that exists only to accommodate another app's tool (`specs/README.md`, decided
 2026-10-06). What it needs drawn, it draws: the menu bar, the focus ring and border, the window
-switcher and every animation. One path still breaks the rule, listed in `roadmap.md`.
+switcher and every animation. One exception, decided 2026-10-15: with rini's bar off, a flight keeps
+another app's bar visible (`specs/bar.md`).
 
 **A Mac that feels like niri.** niri's config format and names, niri's focus ring and border, and
 every layout change drawn as motion. Where rini differs from niri, `docs/config.md` says where and

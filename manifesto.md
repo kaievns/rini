@@ -25,7 +25,8 @@ users, not a hedge.
 
 **Batteries included.** rini must meet every requirement with nothing but itself and
 macOS. What it needs drawn, it draws, and it carries no code that exists only to
-accommodate another app's tool (`specs/README.md`, decided 2026-10-06).
+accommodate another app's tool (`specs/README.md`, decided 2026-10-06). The one exception
+keeps another app's bar visible through a flight while rini's bar is off (`specs/bar.md`).
 
 **Diagnosability.** State that cannot be inspected cannot be reasoned about. Every
 subsystem holding non-obvious state should be dumpable, hence

@@ -85,6 +85,7 @@ impl Reveal {
         std::mem::take(&mut self.state) == State::Shown
     }
 
+    #[cfg(test)]
     pub fn is_shown(&self) -> bool {
         self.state == State::Shown
     }

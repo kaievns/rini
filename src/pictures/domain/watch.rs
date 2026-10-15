@@ -166,8 +166,6 @@ pub enum Watch {
 pub enum Hint {
     /// The window server reports the window focused.
     Focused(WindowId),
-    /// A frame was written to the window: read where it is now, rather than at the next poll.
-    Placed(WindowId),
 }
 
 /// What a window must be, where the window server has it, to be captured.
@@ -547,41 +545,18 @@ impl Watches {
     }
 
     pub fn hint(&mut self, hint: Hint, now: Instant) {
-        match hint {
-            Hint::Focused(window) => {
-                self.focused.retain(|(held, at)| {
-                    *held != window && now.saturating_duration_since(*at) <= FOCUS_REMEMBERED
-                });
-                self.focused.push((window, now));
-                for (_, watching) in &mut self.watches {
-                    if let Watching::Change(change) = watching
-                        && change.target.target.window == window
-                        && !change.armed
-                    {
-                        change.armed = true;
-                        change.next = now;
-                    }
-                }
-            }
-            Hint::Placed(window) => {
-                for (_, watching) in &mut self.watches {
-                    match watching {
-                        Watching::Landing(landing)
-                            if landing.windows.iter().any(|l| {
-                                l.target.window == window && l.state == Arrival::Pending
-                            }) =>
-                        {
-                            landing.poll = now;
-                        }
-                        Watching::Change(change)
-                            if change.armed
-                                && change.ends().any(|end| end.target.window == window && !end.done) =>
-                        {
-                            change.next = change.next.min(now);
-                        }
-                        _ => {}
-                    }
-                }
+        let Hint::Focused(window) = hint;
+        self.focused.retain(|(held, at)| {
+            *held != window && now.saturating_duration_since(*at) <= FOCUS_REMEMBERED
+        });
+        self.focused.push((window, now));
+        for (_, watching) in &mut self.watches {
+            if let Watching::Change(change) = watching
+                && change.target.target.window == window
+                && !change.armed
+            {
+                change.armed = true;
+                change.next = now;
             }
         }
     }
@@ -1583,25 +1558,6 @@ mod tests {
         assert!(watches.next(start + ms(151)).is_none(), "and looked at no more");
     }
 
-    /// A frame written to a window sends the next look at once instead of at the next poll.
-    #[test]
-    fn a_placed_window_is_looked_at_at_once() {
-        let start = Instant::now();
-        let mut watches = Watches::default();
-        watches.watch(
-            WatchId(1),
-            landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)),
-            start,
-        );
-        round(&mut watches, start + ms(10), |_| Some(PARKED), |_| Some(7)).unwrap();
-        assert!(watches.next(start + ms(10)).is_none());
-        watches.hint(Hint::Placed(wid(1)), start + ms(10));
-        assert_eq!(
-            looked(&watches.next(start + ms(10)).unwrap()),
-            vec![vec![wid(1)]]
-        );
-    }
-
     /// A window the flight holds for is captured every 8ms once there, until two prints in a row match,
     /// and that one is delivered whatever its band print.
     #[test]
@@ -2420,30 +2376,6 @@ mod tests {
         let seen = start + CHANGE_EVERY + Duration::from_micros(200);
         watches.seen(seen, &[Seen { window: wid(2), frame: Some(RIGHT), capture: taken(1) }], Some(LAPTOP));
         assert_eq!(looked(&watches.next(seen).unwrap()), vec![vec![wid(1), wid(2)]], "the round, both ends");
-    }
-
-    /// A frame written to either end not done brings the watch's round forward; to an end done, or
-    /// to a window it does not watch, it does not.
-    #[test]
-    fn a_window_placed_brings_its_change_watchs_round_forward() {
-        let start = Instant::now();
-        let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
-        let placed = |window: u32, done: bool| {
-            let mut watches = Watches::default();
-            watches.ask(frame_zero(&[(1, LEFT), (2, RIGHT)], &[]));
-            round(&mut watches, start, at, |_| Some(1)).unwrap();
-            watches.hint(Hint::Focused(wid(2)), start);
-            watches.watch(WatchId(1), changing(LEFT), start);
-            round(&mut watches, start, at, |w| Some(if done && w == wid(1) { 2 } else { 1 })).unwrap();
-            let later = start + ms(2);
-            assert!(watches.next(later).is_none());
-            watches.hint(Hint::Placed(wid(window)), later);
-            watches.next(later).map(|sets| looked(&sets))
-        };
-        assert_eq!(placed(1, false), Some(vec![vec![wid(1), wid(2)]]), "the old window placed");
-        assert_eq!(placed(2, false), Some(vec![vec![wid(1), wid(2)]]));
-        assert_eq!(placed(1, true), None, "its change seen");
-        assert_eq!(placed(5, false), None);
     }
 
     /// A stopped change watch holds the background up no longer.

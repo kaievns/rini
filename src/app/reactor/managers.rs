@@ -9,7 +9,6 @@ use crate::app::reactor::Reactor;
 use crate::app::reactor::animation::AnimationManager;
 use crate::app::{channels, hotkeys as wm_controller};
 use crate::displays::domain::topology::ForwardedSpaceState;
-use crate::displays::platform::window_notify;
 use crate::input::domain::drag_swap::DragManager as DragSwapManager;
 use crate::input::platform::input_tap as event_tap;
 use crate::input::settings::WindowSnappingSettings;
@@ -63,7 +62,6 @@ impl DragManager {
 /// Manages window notifications
 pub struct NotificationManager {
     pub last_sls_notification_ids: Vec<u32>,
-    pub _window_notify_tx: Option<window_notify::Sender>,
 }
 
 impl NotificationManager {
@@ -485,7 +483,6 @@ mod tests {
     fn manager(last: &[u32]) -> NotificationManager {
         NotificationManager {
             last_sls_notification_ids: last.to_vec(),
-            _window_notify_tx: None,
         }
     }
 

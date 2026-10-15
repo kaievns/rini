@@ -37,6 +37,7 @@ impl Bounce {
     }
 
     /// The displacement `elapsed` into the bounce.
+    #[cfg(test)]
     pub fn at(&self, elapsed: Duration) -> OverlayVector {
         let total = self.duration.as_secs_f64();
         let t = if total > 0.0 {

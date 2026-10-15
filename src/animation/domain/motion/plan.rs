@@ -141,11 +141,13 @@ impl ReflowPlan {
     }
 
     /// The group `window` rides, if it is a rigid member.
+    #[cfg(test)]
     pub fn group_of(&self, window: WindowId) -> Option<&RigidGroup> {
         self.groups.iter().find(|g| g.members.iter().any(|m| m.window == window))
     }
 
     /// How `window` takes part, or `None` when the plan does not name it.
+    #[cfg(test)]
     pub fn member(&self, window: WindowId) -> Option<Member> {
         member_in(
             &self.groups,
@@ -157,6 +159,7 @@ impl ReflowPlan {
     }
 
     /// Every window the plan names, in plan order: groups, changing, entrances, floating.
+    #[cfg(test)]
     pub fn windows(&self) -> Vec<WindowId> {
         windows_in(&self.groups, &self.changing, &self.entrances, &self.floating)
     }
@@ -191,6 +194,7 @@ fn member_in(
 }
 
 /// Every window in the lists, in plan order.
+#[cfg(test)]
 fn windows_in(
     groups: &[RigidGroup],
     changing: &[(WindowId, GroupRect, GroupRect)],
@@ -222,6 +226,7 @@ pub struct FlightPlan {
 
 impl FlightPlan {
     /// A flight with nothing in it: the still group only.
+    #[cfg(test)]
     pub fn empty() -> Self {
         FlightPlan::from(ReflowPlan::empty())
     }
@@ -238,6 +243,7 @@ impl FlightPlan {
     }
 
     /// Every window the flight names.
+    #[cfg(test)]
     pub fn windows(&self) -> Vec<WindowId> {
         windows_in(&self.groups, &self.changing, &self.entrances, &self.floating)
     }

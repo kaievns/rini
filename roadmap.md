@@ -24,8 +24,6 @@ requirement itself; this list only collects them.
 - **The session tap still makes synchronous SkyLight calls.** The hit tests in its callback are what
   stalled when a Screen Recording grant was revoked and froze all input. The re-arm fix removed the
   amplifier, not the trigger (`docs/permissions-and-the-launch-agent.md`).
-- **With rini's bar off, a flight still pictures another app's bar.** That path exists for
-  sketchybar and breaks the batteries-included rule (`specs/README.md`).
 - **A window that opens or resizes mid-step stops the step.** When a window moves along the strip,
   the whole strip steps aside; a window opening or resizing then leaves the step where it is drawn,
   unfinished (`specs/animation.md`, "Moving a window along the strip").
@@ -34,6 +32,12 @@ requirement itself; this list only collects them.
   materials").
 - **Urgency that changes mid-flight turns at the lift.** A tile keeps the urgency its pass gave it
   (`specs/decorations.md`, "Urgent").
+- **Which space `CGSGetActiveSpace` answers with two displays needs checking.** The focus
+  resolver looks for the key window on that space (`src/displays/platform/window_notify.rs`). With
+  one display it answered that display's current space (probed 2026-10-15). A comment inherited
+  from rift said it "does not work", with no case recorded. If it answers another display's space,
+  focus changes on the focused display are lost or misreported. One read with focus on the second
+  display settles it.
 - **A restart once restored a layout mirrored.** After a deploy restart on 2026-10-10 the columns
   came back in reverse order, with one window stacked that had stood alone. Seen once, not
   reproduced; the cause is not known.
@@ -103,7 +107,8 @@ The things most likely to look like obvious next steps. The values behind some o
 - **More layout modes.** There is one, deliberately.
 - **Relying on another app's tooling.** No border tool, no status bar, no companion code for one.
   `rini-cli` and `subscribe` are rini's interface for others to call, not a dependency
-  (`specs/README.md`).
+  (`specs/README.md`). The one exception keeps another app's bar visible through a flight with
+  rini's bar off (`specs/bar.md`).
 - **Settings beyond niri's.** Where rini and niri share a concept, rini takes niri's settings and
   names. Where they differ, rini decides. No configuration GUI.
 - **Config stability.** Keys change when a better design needs them. The layout file promises only

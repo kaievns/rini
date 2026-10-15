@@ -12,7 +12,7 @@ use crate::displays::domain::topology::ForwardedSpaceState;
 use crate::displays::platform::spaces::SpaceKinds;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
-use crate::windows::domain::transaction::Requested;
+use crate::windows::domain::transaction::{Requested, WindowTxStore};
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::{LayoutCommand, LayoutEngine};
 
@@ -29,7 +29,7 @@ impl Reactor {
             DisplayMemory::default(),
             record,
             broadcast_tx,
-            None,
+            WindowTxStore::new(),
             false,
         );
         // Never let the suite write to the real layout file. Almost every test drives

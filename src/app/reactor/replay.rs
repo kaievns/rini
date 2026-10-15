@@ -11,6 +11,7 @@ use super::{Event, Reactor};
 use crate::app::channels::{self};
 use crate::app::config::Config;
 use crate::windows::domain::request::{AppThreadHandle, Request};
+use crate::windows::domain::transaction::WindowTxStore;
 use crate::workspaces::LayoutEngine;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 
@@ -93,7 +94,7 @@ pub fn replay(
         memory,
         Record::new(None),
         broadcast_tx,
-        None,
+        WindowTxStore::new(),
         false,
     );
     std::thread::spawn(move || {
