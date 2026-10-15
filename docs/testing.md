@@ -115,10 +115,42 @@ ways:
 The tests that hold this: `a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag` and
 `display_churn_waits_for_a_quiet_window_server_as_its_reader_reports_it`.
 
-## The test suite runs single-threaded on purpose
+## The suite runs in parallel, and a Core Animation read-back holds its lock
 
-Several tests reach macOS frameworks that initialise lazily, and initialising
-them from more than one thread at once aborts the whole process:
+`cargo test` runs on libtest's default threads, one per core: `.cargo/config.toml` sets no
+`RUST_TEST_THREADS`. On 2026-10-15, on 12 cores, the lib suite's 2770 tests took 8.9s to 9.7s
+in each of 20 consecutive `cargo test --workspace` runs, all green, where one thread took 54.7s.
+
+One kind of test is serialised: a test that installs an animation on a layer and reads it back.
+A probe installed one animation 300 times per row and read each back 50 times, while a second
+thread did the row's work:
+
+| the second thread | lost | lost, holding `CATransaction::lock` |
+|---|---|---|
+| nothing | 0 | 0 |
+| commits a `CATransaction` that changes another layer | 300 | 0 |
+| changes another layer, then `CATransaction::flush` | 300 | 0 |
+| a thread that changes a layer and exits | 300 | 0 |
+| a thread that makes a layer, changes nothing and exits | 0 | 0 |
+
+A commit on any thread, the implicit one a thread commits as it exits included, drops every
+animation from a layer that no render context holds, whatever its begin time. An explicit
+transaction around the install and the read-back kept nothing either (300 lost);
+`removedOnCompletion = false` keeps it. So a `CATransaction` nests per thread, but what its commit
+drops is not per thread. A test's layers are in no render context, and every test that changes a
+layer commits when its thread ends, so a read-back beside one found nothing: 11 to 15 failures per
+parallel run, "nothing under {key}", in `animation::platform::overlay` and
+`decorations::platform::layers`.
+
+`decorations::platform::layers::hold_core_animation` takes Core Animation's own lock for the
+test's lifetime. No commit landed while the probe held it, so a commit elsewhere waits for the
+read-back instead of landing inside it. Every read-back helper calls `assert_core_animation_held`, so a test
+that reads back without the hold fails on its first run, not on an unlucky one. 22 tests hold it;
+`a_commit_on_another_thread_drops_a_test_layers_animation_once_the_hold_is_let_go` holds the
+behaviour it rests on.
+
+The suite used to run on one thread for another reason, an abort while macOS frameworks start up
+lazily on two threads at once:
 
 ```
 objc[75992]: Cannot form weak reference to instance of class
@@ -126,19 +158,10 @@ SLSWindowManagementFallbackBridge. It is possible that this object was
 over-released, or is in the process of deallocation.
 ```
 
-Measured rates, 40 parallel runs each: none at all before the overlay work, and
-a few percent after it. Narrowing it was misleading, because skipping a test
-changes timing as well as coverage, so two different "confirmed" causes both
-turned out to be sampling noise. Single-threaded runs never reproduced it across
-88 runs.
-
-`RUST_TEST_THREADS = "1"` in `.cargo/config.toml` settles it, at a cost. On
-2026-10-10 the lib suite's 2687 tests took 60.0s on one thread and 11.5s on 8,
-and two 8-thread runs failed besides: 8 and then 9 of the Core Animation tests
-in `animation::platform::overlay` and `decorations::platform::layers`, which are
-not safe in parallel either, for a reason not looked into. The tests
-that build capture fixtures also avoid `IOSurface` entirely for the same reason
-and use a CPU bitmap instead.
+On 2026-10-10 it took a few percent of 40 parallel runs. It took none of the 47 parallel runs
+on 2026-10-15, with nothing changed that it was traced to; if it comes back the message names it.
+The tests that build capture fixtures still avoid `IOSurface` for that reason, and use a CPU
+bitmap instead.
 
 ## What a flight costs is measured on the screen, by the timing battery
 

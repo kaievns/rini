@@ -588,6 +588,43 @@ pub fn shadow_mask_path(size: TileSize, corner: f64) -> CFRetained<CGMutablePath
     path
 }
 
+/// Core Animation's process-wide lock, held by a test from its first line until it has read back
+/// what it installed. A commit on any thread drops the animations of every layer outside a render
+/// context, which a test's layers are, and every commit takes this lock. See docs/testing.md.
+#[cfg(test)]
+pub(crate) struct HeldCoreAnimation(std::marker::PhantomData<*const ()>);
+
+#[cfg(test)]
+thread_local! {
+    static CORE_ANIMATION_HELD: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn hold_core_animation() -> HeldCoreAnimation {
+    // SAFETY: released by the guard's `Drop`, on this thread, which the guard cannot leave.
+    unsafe { objc2_quartz_core::CATransaction::lock() };
+    CORE_ANIMATION_HELD.set(CORE_ANIMATION_HELD.get() + 1);
+    HeldCoreAnimation(std::marker::PhantomData)
+}
+
+#[cfg(test)]
+impl Drop for HeldCoreAnimation {
+    fn drop(&mut self) {
+        CORE_ANIMATION_HELD.set(CORE_ANIMATION_HELD.get() - 1);
+        // SAFETY: taken by `hold_core_animation` on this thread.
+        unsafe { objc2_quartz_core::CATransaction::unlock() };
+    }
+}
+
+/// Called by every test helper that reads an animation back off a layer.
+#[cfg(test)]
+pub(crate) fn assert_core_animation_held() {
+    assert!(
+        CORE_ANIMATION_HELD.get() > 0,
+        "a test that reads back an animation holds hold_core_animation() from its first line"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use objc2_quartz_core::{CABasicAnimation, kCACornerCurveCircular};
@@ -649,6 +686,7 @@ mod tests {
 
     /// Each animation on `layer` as its key and the key path it animates, sorted by key.
     fn installed(layer: &CALayer) -> Vec<(String, String)> {
+        assert_core_animation_held();
         let mut keys: Vec<(String, String)> = layer
             .animationKeys()
             .map(|keys| keys.iter().map(|key| key.to_string()).collect::<Vec<_>>())
@@ -1003,8 +1041,46 @@ mod tests {
         layers
     }
 
+    /// What `hold_core_animation` is for: another thread's commit drops the animation off a layer
+    /// that no render context holds, and waits while a test holds Core Animation's lock.
+    #[test]
+    fn a_commit_on_another_thread_drops_a_test_layers_animation_once_the_hold_is_let_go() {
+        let layer = CALayer::layer();
+        let key = NSString::from_str("rini.test");
+        let held = hold_core_animation();
+        layer.addAnimation_forKey(&bare("opacity"), Some(&key));
+        let (started, commits) = std::sync::mpsc::channel();
+        let committer = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            objc2_quartz_core::CATransaction::begin();
+            CALayer::layer().setOpacity(0.5);
+            objc2_quartz_core::CATransaction::commit();
+        });
+        commits.recv().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        // SAFETY: a read of the layer's own animation.
+        assert!(
+            unsafe { layer.animationForKey(&key) }.is_some(),
+            "the commit waits for the hold"
+        );
+        drop(held);
+        committer.join().unwrap();
+        // SAFETY: as above.
+        assert!(
+            unsafe { layer.animationForKey(&key) }.is_none(),
+            "then drops the animation"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "holds hold_core_animation()")]
+    fn a_read_back_without_the_hold_fails_whatever_runs_beside_it() {
+        installed(&CALayer::layer());
+    }
+
     #[test]
     fn taking_every_animation_away_clears_every_decoration_layer() {
+        let _core_animation = hold_core_animation();
         let layers = graded();
         layers.install_resize(&Between(
             TileSize::new(0.0, 1081.0),
@@ -1033,6 +1109,7 @@ mod tests {
     /// the corner, and takes away the one an earlier resize animated.
     #[test]
     fn a_resize_installs_each_decoration_under_its_own_key() {
+        let _core_animation = hold_core_animation();
         let layers = banded();
         layers.install_resize(&Between(
             TileSize::new(0.0, 1081.0),
@@ -1084,6 +1161,7 @@ mod tests {
     /// Only the resize's own keys go: what the overlay installs on the frame layers stays.
     #[test]
     fn taking_a_resize_away_leaves_no_decoration_animation() {
+        let _core_animation = hold_core_animation();
         let layers = graded();
         layers.install_resize(&Between(
             TileSize::new(0.0, 1081.0),
@@ -1180,6 +1258,7 @@ mod tests {
 
     #[test]
     fn a_gradient_at_an_angle_rides_its_axis_through_a_resize() {
+        let _core_animation = hold_core_animation();
         let mut layers = DecorationLayers::new(&CALayer::layer());
         let graded = |angle| Decoration { border: Some(crate::decorations::domain::style::Band { active: sunset(angle), ..RING }), ..Decoration::default() };
         let resize = Between(TileSize::new(1200.0, 1081.0), TileSize::new(859.0, 1081.0));
@@ -1203,6 +1282,7 @@ mod tests {
     /// and the mask takes the resize its band plays; a colour taking over leaves it bare again.
     #[test]
     fn a_mask_attached_mid_resize_rides_its_bands_resize() {
+        let _core_animation = hold_core_animation();
         let mut layers = DecorationLayers::new(&CALayer::layer());
         let graded = Decoration { ring: Some(crate::decorations::domain::style::Band { active: sunset(45.0), ..RING }), ..Decoration::default() };
         layers.wear(&graded, 2.0);

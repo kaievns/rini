@@ -199,8 +199,8 @@ from the start.
 Other flags: `--no-restore` (start from a clean layout), `--no-animate`, `--config PATH`. The agent
 logs to `/tmp/rini_<user>.out.log` and `/tmp/rini_<user>.err.log`.
 
-`cargo test` runs on one thread on purpose: concurrent framework start-up aborts the process
-(`docs/testing.md`). Formatting needs nightly, because `rustfmt.toml` enables unstable options;
+`cargo test` runs in parallel; a test that reads an animation back off a layer holds Core
+Animation's lock while it does (`docs/testing.md`). Formatting needs nightly, because `rustfmt.toml` enables unstable options;
 stable `cargo fmt` ignores them and reflows every file.
 
 ```sh
