@@ -15,6 +15,15 @@ use crate::transitions::domain::request::SurfaceWindow;
 use crate::windows::domain::request::{Request, SuppressEnhancedUi};
 use crate::workspaces::Direction;
 
+/// Where the active workspace's strip has each window: every window at its strip frame, a parked
+/// one where the strip has it rather than at its park.
+#[derive(Debug, Default)]
+pub(crate) struct StripLayout {
+    /// At the last pass that looked; `None` on the first look at a workspace.
+    pub(crate) before: Option<Vec<(WindowId, CGRect)>>,
+    pub(crate) now: Vec<(WindowId, CGRect)>,
+}
+
 impl Reactor {
     /// Places windows at their final frames immediately, with no animation.
     ///
@@ -578,15 +587,9 @@ impl Reactor {
         Some(CGPoint::new(now - before.unwrap_or(now), 0.0))
     }
 
-    /// Where the ACTIVE workspace's strip had each window the last time a pass looked, `None` on the
-    /// first look at a workspace, and where it has them now, which it remembers: every window at its
-    /// strip frame, a parked one where the strip has it rather than at its park. Neither when
-    /// `space` has no active workspace or screen.
-    #[allow(clippy::type_complexity, reason = "P4.1")]
-    pub(crate) fn take_strip_layout(
-        &mut self,
-        space: SpaceId,
-    ) -> Option<(Option<Vec<(WindowId, CGRect)>>, Vec<(WindowId, CGRect)>)> {
+    /// The ACTIVE workspace's strip layout, now and at the last pass, remembering now's for the
+    /// next; `None` when `space` has no active workspace or screen.
+    pub(crate) fn take_strip_layout(&mut self, space: SpaceId) -> Option<StripLayout> {
         let workspace = self.layout_engine.active_workspace(space)?;
         let (screen, gaps) = self.strip_screen(space)?;
         let now = self.layout_engine.calculate_layout_for_workspace(
@@ -596,10 +599,10 @@ impl Reactor {
             screen.frame,
             &gaps,
         );
-        Some((
-            self.last_strip_layout.insert((space, workspace), now.clone()),
+        Some(StripLayout {
+            before: self.last_strip_layout.insert((space, workspace), now.clone()),
             now,
-        ))
+        })
     }
 
     /// The screen `space` is laid out on, the first one when it is on none, and its gaps.

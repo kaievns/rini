@@ -1913,8 +1913,8 @@ fn a_switch_claims_the_destination_strip_s_layout() {
 
     reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
 
-    let (claimed, now) = reactor.take_strip_layout(space).expect("a strip");
-    let claimed = claimed.expect("the switch drew the destination");
+    let strip = reactor.take_strip_layout(space).expect("a strip");
+    let (claimed, now) = (strip.before.expect("the switch drew the destination"), strip.now);
     assert!(
         claimed.iter().any(|(window, _)| *window == WindowId::new(1, 2)),
         "{claimed:?}"

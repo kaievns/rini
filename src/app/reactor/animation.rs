@@ -10,6 +10,7 @@ use tracing::{debug, trace};
 
 use crate::app::reactor::Reactor;
 use crate::app::reactor::present::{Present, instant_requests};
+use crate::app::reactor::strip_motion::StripLayout;
 use crate::pictures::domain::schedule::{Ask, Priority};
 use crate::pictures::domain::target::PictureTarget;
 use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
@@ -97,8 +98,9 @@ impl Reactor {
         // the offset and the strip's layout stay current; the move with it, so it reaches one pass
         // only.
         let strip_movement = self.take_strip_movement(space);
-        let (strip_before, strip_now) = self.take_strip_layout(space).unwrap_or_default();
-        let strip_before = strip_before.unwrap_or_default();
+        let StripLayout { before, now: strip_now } =
+            self.take_strip_layout(space).unwrap_or_default();
+        let strip_before = before.unwrap_or_default();
         let moved = self.take_move_in(layout);
 
         let placements = self.commit_pass_moves(&plan.moves);
