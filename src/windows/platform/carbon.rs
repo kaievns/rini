@@ -43,7 +43,6 @@ unsafe extern "C" {
 
     fn RemoveEventHandler(handler: EventHandlerRef) -> OSStatus;
 
-    fn GetEventClass(event: EventRef) -> u32;
     fn GetEventKind(event: EventRef) -> u32;
 
     fn GetEventParameter(
@@ -60,7 +59,6 @@ unsafe extern "C" {
 #[derive(Debug, Clone, Copy)]
 pub struct Event {
     pub raw: EventRef,
-    pub class: u32,
     pub kind: u32,
 }
 
@@ -82,75 +80,8 @@ impl Event {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum Target {
-    Application,
-    Raw(EventTargetRef),
-}
-
-impl Target {
-    fn resolve(self) -> Result<EventTargetRef, String> {
-        match self {
-            Target::Application => {
-                let t = unsafe { GetApplicationEventTarget() };
-                if t.is_null() {
-                    Err("GetApplicationEventTarget returned null".to_string())
-                } else {
-                    Ok(t)
-                }
-            }
-            Target::Raw(t) => {
-                if t.is_null() {
-                    Err("Target::Raw was null".to_string())
-                } else {
-                    Ok(t)
-                }
-            }
-        }
-    }
-}
-
-trait CallbackErased: Send {
-    fn call(&mut self, ev: Event) -> OSStatus;
-}
-
-struct CbOnly<F>
-where
-    F: FnMut(Event) -> OSStatus + Send + 'static,
-{
-    f: F,
-}
-
-impl<F> CallbackErased for CbOnly<F>
-where
-    F: FnMut(Event) -> OSStatus + Send + 'static,
-{
-    fn call(&mut self, ev: Event) -> OSStatus {
-        (self.f)(ev)
-    }
-}
-
-struct CbWithState<F, T>
-where
-    F: FnMut(Event, &mut T) -> OSStatus + Send + 'static,
-    T: Send + 'static,
-{
-    f: F,
-    t: T,
-}
-
-impl<F, T> CallbackErased for CbWithState<F, T>
-where
-    F: FnMut(Event, &mut T) -> OSStatus + Send + 'static,
-    T: Send + 'static,
-{
-    fn call(&mut self, ev: Event) -> OSStatus {
-        (self.f)(ev, &mut self.t)
-    }
-}
-
 struct CallbackCtx {
-    inner: Box<dyn CallbackErased>,
+    callback: Box<dyn FnMut(Event) -> OSStatus + Send>,
 }
 
 unsafe extern "C" fn trampoline(
@@ -161,10 +92,9 @@ unsafe extern "C" fn trampoline(
     let ctx = unsafe { &mut *(user_data as *mut CallbackCtx) };
     let ev = Event {
         raw: event,
-        class: unsafe { GetEventClass(event) },
         kind: unsafe { GetEventKind(event) },
     };
-    ctx.inner.call(ev)
+    (ctx.callback)(ev)
 }
 
 pub struct CarbonListener {
@@ -184,53 +114,17 @@ impl std::fmt::Debug for CarbonListener {
 }
 
 impl CarbonListener {
-    pub fn new<F>(target: Target, types: &[EventType], mut callback: F) -> Result<Self, String>
-    where
-        F: FnMut(Event) -> OSStatus + Send + 'static,
-    {
-        Self::install_impl(target, types, Box::new(CbOnly { f: move |e| (callback)(e) }))
-    }
-
-    pub fn with_state<F, T>(
-        target: Target,
-        types: &[EventType],
-        state: T,
-        callback: F,
-    ) -> Result<Self, String>
-    where
-        F: FnMut(Event, &mut T) -> OSStatus + Send + 'static,
-        T: Send + 'static,
-    {
-        Self::install_impl(target, types, Box::new(CbWithState { f: callback, t: state }))
-    }
-
     pub fn application<F>(types: &[EventType], callback: F) -> Result<Self, String>
     where
         F: FnMut(Event) -> OSStatus + Send + 'static,
     {
-        Self::new(Target::Application, types, callback)
-    }
+        let target = unsafe { GetApplicationEventTarget() };
+        if target.is_null() {
+            return Err("GetApplicationEventTarget returned null".to_string());
+        }
 
-    pub fn application_with_state<F, T>(
-        types: &[EventType],
-        state: T,
-        callback: F,
-    ) -> Result<Self, String>
-    where
-        F: FnMut(Event, &mut T) -> OSStatus + Send + 'static,
-        T: Send + 'static,
-    {
-        Self::with_state(Target::Application, types, state, callback)
-    }
-
-    fn install_impl(
-        target: Target,
-        types: &[EventType],
-        inner: Box<dyn CallbackErased>,
-    ) -> Result<Self, String> {
-        let target = target.resolve()?;
-
-        let ctx = Box::into_raw(Box::new(CallbackCtx { inner })) as *mut c_void;
+        let ctx =
+            Box::into_raw(Box::new(CallbackCtx { callback: Box::new(callback) })) as *mut c_void;
 
         let mut handler_ref: EventHandlerRef = ptr::null_mut();
         let status = unsafe {
