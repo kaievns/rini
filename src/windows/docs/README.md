@@ -99,8 +99,9 @@ Callers not yet handed a port call the free functions of the same names in `wind
 `platform/window_server/shim.rs` answers from `LiveWindowServer` in production and from a
 thread-local `FakeWindowServer` in a test build, stated through the old `set_*_override` setters.
 That shim is temporary: once the reactor, the app actor and the spaces actor are handed a port, as
-the flight engine is (`the_flight_engine_reads_the_window_server_only_through_its_port`), it goes. Through the shim, a window no test stated
-is at the origin, 800x600, which the tests written against it expect; on the port it is unknown.
+the flight engine is (`the_flight_engine_reads_the_window_server_only_through_its_port`), it goes.
+Through the shim, a window no test stated is at the origin, 800x600, which the tests written against
+it expect; on the port it is unknown.
 
 **A raise list is a z-order.** Raising is last-wins, so the order of the list IS the
 stacking it produces. `domain/raise_order.rs` exists because that order kept being

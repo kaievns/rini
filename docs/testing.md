@@ -65,8 +65,8 @@ A caller not yet handed a `WindowServer` calls the free functions of the same na
 `window_server`, answered in a test build by a thread-local `FakeWindowServer` the `set_*_override`
 setters state answers into. That shim is temporary, and nothing new is written against it: the
 reactor, the app actor and the spaces actor move onto a port and it goes. The flight engine is on
-it already: its `Parts` hand it the `WindowServer` it reads every frame, depth and corner radius
-through and the `Capture` it takes a window that just opened with, and its tests state both
+the port already: its `Parts` hand it the `WindowServer` it reads every frame, depth and corner
+radius through and the `Capture` it takes a window that just opened with, and its tests state both
 (`the_flight_engine_reads_the_window_server_only_through_its_port`).
 
 ## A unit test must not read the live window server

@@ -41,23 +41,22 @@ while a flight runs merges into it instead of starting another, which is how a b
 as one movement; one growing a window past the picture its tile carries once the flight moves
 merges only once that window has repainted ("Mid-flight passes" in `coordination.md`).
 
-**The reactor asks, and hears back only the frames.** It sends a layout pass (`Event::Animate`), a strip
-movement (`Event::AnimateSurface`), each naming the window focused as it began and the key window as
-it went out, a bounce, each of the three carrying its press (`Cause`: when the reactor took the event
-it answers, and what that was), the windows whose look each change of the key window turned
-(`Event::LooksTurned`), the display the overlay flies on, and whether the journal is written and each
-lift's handover measured (`Event::Journal`). A pass, a movement and a bounce each name
-the `Look` a flight they begin moves by, and a movement and a bounce the press (`Cue`): the engine
-hands both to the look and matches on neither. The pictures service's sink, wired in
-`src/main.rs`, tells the engine what it delivered under the engine's tag, which watched windows'
-pictures will not come, and a handover check's overlay picture taken and its measure; the main
-thread's run-loop observer, wired there too, tells it each turn over a frame (`Event::MainTurn`), for
-the journal alone. The engine answers through
-what `src/main.rs` hands it in `Parts`: the frames to write (`PlaceFrames`, back to the reactor),
-whether a flight is up (`OnFlight`, to the bar), and each batch to draw (`Draw`, to the renderer,
-whose answer comes back as `Event::Rendered`); and it reads through `Parts` too, every frame, depth
-and corner radius from the `WindowServer` port, and the one capture of a window that just opened from
-`Capture`. The reactor never learns more of a flight than the
+**The reactor asks, and hears back only the frames.** It sends a layout pass (`Event::Animate`), a
+strip movement (`Event::AnimateSurface`), each naming the window focused as it began and the key
+window as it went out, a bounce, each of the three carrying its press (`Cause`: when the reactor
+took the event it answers, and what that was), the windows whose look each change of the key window
+turned (`Event::LooksTurned`), the display the overlay flies on, and whether the journal is written
+and each lift's handover measured (`Event::Journal`). A pass, a movement and a bounce each name the
+`Look` a flight they begin moves by, and a movement and a bounce the press (`Cue`): the engine hands
+both to the look and matches on neither. The pictures service's sink, wired in `src/main.rs`, tells
+the engine what it delivered under the engine's tag, which watched windows' pictures will not come,
+and a handover check's overlay picture taken and its measure; the main thread's run-loop observer,
+wired there too, tells it each turn over a frame (`Event::MainTurn`), for the journal alone. The
+engine answers through what `src/main.rs` hands it in `Parts`: the frames to write (`PlaceFrames`,
+back to the reactor), whether a flight is up (`OnFlight`, to the bar), and each batch to draw
+(`Draw`, to the renderer, whose answer comes back as `Event::Rendered`); and it reads through
+`Parts` too, every frame, depth and corner radius from the `WindowServer` port, and the one capture
+of a window that just opened from `Capture`. The reactor never learns more of a flight than the
 frames.
 
 **The decisions are pure and the actor is not.** What `domain/` decides is tested over plain rects
