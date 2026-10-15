@@ -4542,6 +4542,8 @@ mod tests {
             .virtual_workspace_manager
             .update_settings(&VirtualWorkspaceSettings::default(), &LayoutSettings::default());
         engine.virtual_workspace_manager.workspaces.clear();
+        memory.affinity.set_display_space("display-a", space);
+        engine.floating.add_floating(wid);
 
         let _ = engine.handle_event(
             &mut window_store,
@@ -4549,11 +4551,8 @@ mod tests {
             LayoutEvent::WindowAdded(space, wid),
         );
 
-        assert_eq!(engine.virtual_workspace_manager.active_workspace(space), None);
-        assert_eq!(
-            engine.virtual_workspace_manager.workspace_for_window(&window_store, space, wid),
-            None
-        );
+        assert!(!engine.floating.active_flat(space).contains(&wid));
+        assert_eq!(memory.affinity.window_home(wid), None);
     }
 
     #[test]
