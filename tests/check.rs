@@ -321,3 +321,24 @@ fn every_file_wide_allow_is_named_in_docs_testing() {
         "the file table in docs/testing.md against the files that allow"
     );
 }
+
+/// A long parameter list, a tangled type or a run of `bool` parameters is named as a struct or an
+/// enum rather than allowed.
+#[test]
+fn no_long_parameter_list_tangled_type_or_bool_run_is_allowed() {
+    let lints = [
+        "too_many_arguments",
+        "type_complexity",
+        "fn_params_excessive_bools",
+    ];
+    let allowed: Vec<String> = rust_sources()
+        .iter()
+        .flat_map(|(path, source)| {
+            lints
+                .iter()
+                .filter(|lint| source.contains(&format!("clippy::{lint}")))
+                .map(move |lint| format!("{path}: {lint}"))
+        })
+        .collect();
+    assert!(allowed.is_empty(), "name the parameters instead: {allowed:#?}");
+}

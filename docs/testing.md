@@ -262,7 +262,9 @@ id (`reason = "P5.1"`) and sits on the one item it covers, and only when that ta
 takes the lint away: splitting a function or a file leaves its parameter lists as long. One allowed
 for good names what makes it right, such as a C name, a reference count Core Foundation drives too,
 a `RefMut` dropped before the await clippy counts it across, or a struct whose `bool` fields each
-stand on their own. A long parameter list is grouped into a struct rather than allowed.
+stand on their own. A long parameter list, a tangled type or a run of `bool` parameters is named
+as a struct or an enum rather than allowed
+(`no_long_parameter_list_tangled_type_or_bool_run_is_allowed`).
 
 An allow over a whole crate or file, `#![allow]`, is one of these, held by
 `every_file_wide_allow_is_named_in_docs_testing`:
