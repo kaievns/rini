@@ -203,7 +203,7 @@ impl LayoutEngine {
         was_floating: bool,
         result: AppRuleResult,
         app_rule_outcome: &mut AppRuleOutcome,
-        windows_by_workspace: &mut HashMap<VirtualWorkspaceId, Vec<WindowId>>,
+        tiled_by_workspace: &mut HashMap<VirtualWorkspaceId, Vec<WindowId>>,
     ) -> Option<(WindowId, VirtualWorkspaceId)> {
         let AppRuleResult::Managed(effects) = result else {
             return None;
@@ -223,7 +223,7 @@ impl LayoutEngine {
         }
 
         if !should_float {
-            windows_by_workspace.entry(effects.workspace_id).or_default().push(window);
+            tiled_by_workspace.entry(effects.workspace_id).or_default().push(window);
         }
 
         self.virtual_workspace_manager_mut().set_last_rule_decision(

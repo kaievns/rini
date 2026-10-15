@@ -225,7 +225,7 @@ the memory again.
 Schema 5 nests the memory under its own key and `LoadedLayout` reads it BEFORE anything is
 validated. A file older than schema 6 is refused, its memory read only in the current shape.
 
-Its methods past the function limit are the ones `tests/architecture.rs` names in `LONG_FNS`.
+No method of `LayoutEngine` is past the function limit; `tests/architecture.rs` holds it there.
 
 ### 3.2 `Reactor` holds every store and 41 event variants
 

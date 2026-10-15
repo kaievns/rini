@@ -83,8 +83,9 @@ tested in `workspaces/engine/frames.rs`, and `op_space` collapsed to
 
 `on_windows_on_screen_updated` sequences store mutations on `was_floating` branches, which is
 orchestration; its one rule, whether a window's new constraints change a layout, is
-`constraints_change_layout` in `workspaces/engine/discovery.rs`. `move_window_to_space` and
-`move_window_to_workspace` share `take_window` and `place_window` with `toggle_window_floating`,
+`constraints_change_layout` in `workspaces/engine/discovery.rs`. `move_window_to_space`,
+`move_window_to_workspace` and `toggle_window_floating` share `detach` and `attach`; the two moves
+to a workspace add `take_window` and `place_window`, which also reassign the window's workspace,
 and the target-workspace fallback of `move_window_to_space` is `ensure_active_workspace_info`.
 
 ## 2. `windows/platform/app_actor.rs` — 1,369 lines, 0 tests
