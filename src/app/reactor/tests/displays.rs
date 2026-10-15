@@ -714,7 +714,7 @@ fn it_preserves_layout_after_login_screen() {
     make_active_app_with_count(&mut apps, &mut reactor, 1, 3, Some(WindowId::new(1, 1)));
     let default = test_layout(&mut reactor, space, full_screen);
 
-    assert!(reactor.layout_manager.layout_engine.selected_window(space).is_some());
+    assert!(selected_window(&reactor, space).is_some());
     // Was MoveNode(Up), a tree operation. In a scrolling strip of single-window columns
     // there is nothing above a window, so that command is a no-op and the layout never
     // changed — the assert_ne below then failed for the wrong reason. Moving a column

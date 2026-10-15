@@ -670,7 +670,14 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
 
     let gaps = LayoutSettings::default().gaps.effective_for_display(None);
     let tiling = compute_tiling_area(screen, &gaps);
-    let frames = engine.calculate_layout(space, screen, &gaps);
+    let frames = engine.calculate_layout_with_virtual_workspaces(
+        &window_store,
+        space,
+        screen,
+        &gaps,
+        |_| None,
+        &[screen],
+    );
     let frame = frames.iter().find(|(wid, _)| *wid == after_relaunch).expect("laid out").1;
     assert_eq!(
         (frame.origin.x, frame.size.width),
