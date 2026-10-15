@@ -760,9 +760,15 @@ impl LayoutEngine {
                     Ok(workspace_id) => workspace_id,
                     Err(e) => {
                         warn!("Failed to auto-assign window to workspace: {:?}", e);
-                        self.virtual_workspace_manager
-                            .active_workspace(space)
-                            .expect("No active workspace available")
+                        let Some(active) = self.virtual_workspace_manager.active_workspace(space)
+                        else {
+                            warn!(
+                                "No active workspace on space {:?}; window {:?} not added",
+                                space, wid
+                            );
+                            return false;
+                        };
+                        active
                     }
                 },
             };
@@ -1836,14 +1842,17 @@ impl LayoutEngine {
         };
         if is_floating {
             if let Some(space) = space {
-                let assigned_workspace = self
+                let Some(assigned_workspace) = self
                     .virtual_workspace_manager
                     .workspace_for_window(window_store, space, wid)
-                    .unwrap_or_else(|| {
-                        self.virtual_workspace_manager
-                            .active_workspace(space)
-                            .expect("No active workspace available")
-                    });
+                    .or_else(|| self.virtual_workspace_manager.active_workspace(space))
+                else {
+                    warn!(
+                        "No workspace on space {:?} to tile floating window {:?} into",
+                        space, wid
+                    );
+                    return EventResponse::default();
+                };
 
                 if let Some(layout) = self.workspace_layouts.active(space, assigned_workspace) {
                     self.workspace_tree_mut(assigned_workspace)
@@ -4519,6 +4528,86 @@ mod tests {
 
         assert!(!engine.add_window_to_layout(&mut window_store, &mut memory, space, wid));
         assert_eq!(engine.calculate_layout(space, screen, &gaps,), before);
+    }
+
+    #[test]
+    fn window_added_with_auto_assign_failing_and_no_active_workspace_adds_nothing() {
+        let mut window_store = WindowStore::default();
+        let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
+        let space = SpaceId::new(95);
+        let wid = WindowId::new(5153, 1);
+
+        engine
+            .virtual_workspace_manager
+            .update_settings(&VirtualWorkspaceSettings::default(), &LayoutSettings::default());
+        engine.virtual_workspace_manager.workspaces.clear();
+        memory.affinity.set_display_space("display-a", space);
+        engine.floating.add_floating(wid);
+
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::WindowAdded(space, wid),
+        );
+
+        assert!(!engine.floating.active_flat(space).contains(&wid));
+        assert_eq!(memory.affinity.window_home(wid), None);
+    }
+
+    #[test]
+    fn toggle_floating_on_a_space_with_no_active_workspace_leaves_the_window_floating() {
+        let mut window_store = WindowStore::default();
+        let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
+        let home = SpaceId::new(96);
+        let uninitialised = SpaceId::new(97);
+        let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
+        let pid: pid_t = 5154;
+        let wid = WindowId::new(pid, 1);
+
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::SpaceExposed(home, screen.size),
+        );
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::WindowsOnScreenUpdated(
+                home,
+                pid,
+                vec![(
+                    wid,
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    CGSize::new(500.0, 500.0),
+                    None,
+                    None,
+                )],
+                None,
+            ),
+        );
+        engine.remove_window_from_all_tiling_trees(wid);
+        engine.floating.add_floating(wid);
+        engine.floating.add_active(home, pid, wid);
+        engine.focused_window = Some(wid);
+
+        let response = engine.handle_command(
+            &mut window_store,
+            &mut memory,
+            Some(uninitialised),
+            &[home],
+            &HashMap::default(),
+            LayoutCommand::ToggleWindowFloating,
+        );
+
+        assert_eq!(response.focus_window, None);
+        assert!(engine.floating.is_floating(wid));
+        assert_eq!(engine.virtual_workspace_manager.active_workspace(uninitialised), None);
     }
 
     #[test]
