@@ -1,4 +1,4 @@
-//! CGEventTaps, Carbon hotkeys and the cursor.
+//! The event tap, the keyboard layout read through Carbon's input sources, and the cursor.
 
 pub mod cursor;
 pub mod input_tap;

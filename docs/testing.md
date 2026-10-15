@@ -27,7 +27,9 @@ without checking. Both are in `docs/implementation-audit.md` under 4.4 and 4.4.1
 The test for it: if the thing behind the `#[cfg]` is a QUERY — something the operating system
 answers — a fake is fine, and it belongs at the boundary with the other fakes. If it is a RULE —
 something rini decides — inject what the rule reads and let the test name it. `SpaceKinds` and
-`LiveDisplays` in `src/displays/platform/spaces.rs` are what that looks like.
+`LiveDisplays` in `src/displays/platform/spaces.rs` are what that looks like, and so is `KeyRouter`
+in `src/input/domain/router.rs`: the tap reads each CGEvent into a `Keystroke`, and a test builds
+one by hand.
 
 ## A unit test must not read the live window server
 
@@ -236,7 +238,6 @@ table to the ids the allows cite, both ways, so a row goes with the last allow t
 
 | Id | Task | Done when |
 |---|---|---|
-| P2.9 | Pure `KeyRouter` in `input/domain` | `handle_keyboard_event` under 25 lines; 10+ router tests; no `RefCell<State>` in the tap |
 | P3.8 | `EngineFixture` over the production layout fn; delete the `cfg(test)` `calculate_layout` and the test-only `create_workspace`/`test_app_rules` | engine test average under 30 lines; `virtual_workspace.rs` has one `cfg(test)` |
 | P4.1 | Named structs for positional tuples: the `OnScreenEntry` 9-tuple, `Request::SetWindowFrame(.., bool)`, `Event::WindowFrameChanged`, `ReactorParts` for an 11-parameter `spawn` | no tuple over 3 in an enum variant or pub fn type at these sites |
 | P4.8 | Small enums: `Pass` for `update_layout(bool, bool, ..)`, `Press`, `Axis`, the repaint subsets in `StageSummary`/`Flight` | no fn with 2+ bool parameters (`clippy::fn_params_excessive_bools` denied) |

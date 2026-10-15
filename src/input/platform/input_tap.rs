@@ -1,26 +1,19 @@
-//! Input processing via a CGEventTap on a dedicated thread.
+//! The session tap, on a thread of its own.
 //!
-//! The `EventTap` (aka input processor) owns a `Default`-mode CGEventTap and
-//! runs its own CFRunLoop on a dedicated thread (`input` thread). This isolates
-//! keyboard/mouse input processing from main-thread stalls (layout computation,
-//! animation, WindowServer IPC).
-//!
-//! Shared state between the input thread and the main thread uses lock-free
-//! `Arc<ArcSwap<T>>` primitives:
-//! - `SharedHotkeyTable`: hotkey bindings, written by the input thread on
-//!   config/layout changes, read by the callback.
-//!
-//! Requests from the main thread arrive via the actor channel (`Receiver`).
+//! `InputTap` owns a `Default`-mode CGEventTap and runs its own CFRunLoop on the `input` thread, so
+//! a main-thread stall (layout, animation, window-server IPC) never holds an event in the tap.
+//! Everything it holds stays on that thread: the tap's callback and the main thread's requests,
+//! which arrive on the actor channel (`Receiver`), take turns on its run loop. The callback reads
+//! each key event into a `Keystroke` and does what `KeyRouter` decides.
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::Instant;
 
-use arc_swap::ArcSwap;
 use objc2_core_foundation::CGPoint;
 use objc2_core_graphics::{
-    CGEvent, CGEventField, CGEventFlags, CGEventMask, CGEventSource, CGEventSourceStateID,
+    CGEvent, CGEventField, CGEventMask, CGEventSource, CGEventSourceStateID,
     CGEventTapOptions as CGTapOpt, CGEventTapProxy, CGEventType,
 };
 use rini_core::ids::WindowServerId;
@@ -28,19 +21,17 @@ use rini_runloop::channel;
 use tracing::{debug, error, trace, warn};
 
 use crate::input::domain::binding::Bind;
-use crate::input::domain::held_keys::HeldKeys;
-use crate::input::domain::hotkey::HotkeyTable;
-use crate::input::domain::key::{Hotkey, KeyCode};
+use crate::input::domain::key::Hotkey;
 use crate::input::domain::pointer;
-use crate::input::domain::switch_session::{
-    KeyEvent as SwitchKeyEvent, KeyEventKind, SwitchKeys, SwitchSession,
-};
+use crate::input::domain::router::{KeyRouter, Keystroke};
+use crate::input::domain::switch_session::{KeyEventKind, Signal, SwitchKeys};
 use crate::input::event::{Event, EventSink, LeftPress, OnLeftPress};
-use crate::input::platform::keyboard::{key_code_from_event, modifiers_from_flags_with_keys};
+use crate::input::platform::keyboard::key_code_from_event;
 use crate::input::platform::{cursor, tap};
 use crate::input::settings::InputSettings;
-use crate::windows::platform::mouse::{MouseState, set_mouse_state};
+use crate::windows::platform::mouse::{MouseState, is_rini_synthetic_event, set_mouse_state};
 use crate::windows::platform::window_server;
+
 const MOUSE_MOVE_MIN_INTERVAL_NS_NORMAL: u64 = 8_000_000; // 8ms ~= 125 Hz
 const MOUSE_MOVE_MIN_INTERVAL_NS_LOW_POWER: u64 = 16_000_000; // 16ms ~= 62 Hz
 
@@ -65,15 +56,16 @@ pub struct InputTap {
     on_left_press: Option<OnLeftPress>,
     timebase: pointer::Timebase,
     requests_rx: Option<Receiver>,
-    state: RefCell<State>,
+    mouse: Cell<MouseSettings>,
+    /// The callback and the request loop share the tap through an `Rc`, so the router sits in a
+    /// cell, borrowed for one call at a time.
+    router: RefCell<KeyRouter>,
     event_mask: Cell<CGEventMask>,
     mouse_move_last_timestamp: Cell<Option<u64>>,
     mouse_move_min_interval_ns: Cell<u64>,
     mouse_window: Cell<pointer::PointerCache>,
     tap: RefCell<Option<tap::EventTap>>,
     tap_generation: Cell<u64>,
-    hotkey_specs: RefCell<Vec<Bind>>,
-    hotkeys: SharedHotkeyTable,
 }
 
 // SAFETY: InputTap is constructed on the input thread and all access occurs on
@@ -82,27 +74,21 @@ pub struct InputTap {
 // the thread::spawn boundary.
 unsafe impl Send for InputTap {}
 
-struct State {
+#[derive(Debug, Clone, Copy)]
+struct MouseSettings {
     focus_follows_mouse_config_enabled: bool,
     event_processing_enabled: bool,
     focus_follows_mouse_enabled: bool,
     low_power_mode: bool,
-    held: HeldKeys,
-    current_flags: CGEventFlags,
-    /// Whether a switcher session is open, and what it answers to.
-    switch: SwitchSession,
 }
 
-impl Default for State {
+impl Default for MouseSettings {
     fn default() -> Self {
         Self {
             focus_follows_mouse_config_enabled: false,
             event_processing_enabled: false,
             focus_follows_mouse_enabled: true,
             low_power_mode: false,
-            held: HeldKeys::default(),
-            current_flags: CGEventFlags::empty(),
-            switch: SwitchSession::default(),
         }
     }
 }
@@ -110,10 +96,8 @@ impl Default for State {
 pub type Sender = channel::Sender<Request>;
 pub type Receiver = channel::Receiver<Request>;
 
-pub type SharedHotkeyTable = Arc<ArcSwap<HotkeyTable>>;
-
 struct CallbackCtx {
-    this: Arc<InputTap>,
+    this: Rc<InputTap>,
     recovery_tx: tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     tap_generation: u64,
 }
@@ -125,15 +109,15 @@ unsafe fn drop_mouse_ctx(ptr: *mut std::ffi::c_void) {
 impl InputTap {
     #[inline]
     fn keyboard_handlers_enabled(&self) -> bool {
-        pointer::wants_keyboard_events(self.hotkeys.load().len())
+        pointer::wants_keyboard_events(self.router.borrow().hotkey_count())
     }
 
     fn mouse_move_handlers_enabled(&self) -> bool {
-        let state = self.state.borrow();
+        let mouse = self.mouse.get();
         pointer::wants_mouse_move_events(
-            state.event_processing_enabled,
-            state.focus_follows_mouse_config_enabled,
-            state.focus_follows_mouse_enabled,
+            mouse.event_processing_enabled,
+            mouse.focus_follows_mouse_config_enabled,
+            mouse.focus_follows_mouse_enabled,
         )
     }
 
@@ -145,13 +129,13 @@ impl InputTap {
     }
 
     fn create_tap_with_mask(
-        self: &Arc<Self>,
+        self: &Rc<Self>,
         mask: CGEventMask,
         recovery_tx: tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) -> Option<tap::EventTap> {
         let generation = self.tap_generation.get().wrapping_add(1);
         let ctx = Box::new(CallbackCtx {
-            this: Arc::clone(self),
+            this: Rc::clone(self),
             recovery_tx,
             tap_generation: generation,
         });
@@ -188,7 +172,7 @@ impl InputTap {
     }
 
     fn rebuild_event_tap_mask_if_needed(
-        self: &Arc<Self>,
+        self: &Rc<Self>,
         recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
         let next_mask = self.desired_event_mask();
@@ -203,11 +187,12 @@ impl InputTap {
         let old_tap = self.tap.borrow_mut().replace(new_tap);
         drop(old_tap);
         self.event_mask.set(next_mask);
-        self.abandon_switch_session();
+        let signal = self.router.borrow_mut().tap_replaced();
+        self.abandon_switch(signal);
     }
 
     fn rebuild_invalidated_event_tap(
-        self: &Arc<Self>,
+        self: &Rc<Self>,
         generation: u64,
         recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
@@ -235,34 +220,33 @@ impl InputTap {
         events: Box<dyn EventSink>,
         requests_rx: Receiver,
     ) -> Self {
-        let state = State {
+        let mouse = MouseSettings {
             low_power_mode,
             focus_follows_mouse_config_enabled: settings.focus_follows_mouse,
-            ..State::default()
+            ..MouseSettings::default()
         };
         let event_mask = build_event_mask(
             pointer::wants_keyboard_events(0),
             pointer::wants_mouse_move_events(
-                state.event_processing_enabled,
-                state.focus_follows_mouse_config_enabled,
-                state.focus_follows_mouse_enabled,
+                mouse.event_processing_enabled,
+                mouse.focus_follows_mouse_config_enabled,
+                mouse.focus_follows_mouse_enabled,
             ),
         );
-        let mouse_move_min_interval_ns = mouse_move_sampling_profile(state.low_power_mode);
+        let mouse_move_min_interval_ns = mouse_move_sampling_profile(mouse.low_power_mode);
         InputTap {
             events,
             on_left_press: None,
             timebase: mach_timebase(),
             requests_rx: Some(requests_rx),
-            state: RefCell::new(state),
+            mouse: Cell::new(mouse),
+            router: RefCell::new(KeyRouter::default()),
             event_mask: Cell::new(event_mask),
             mouse_move_last_timestamp: Cell::new(None),
             mouse_move_min_interval_ns: Cell::new(mouse_move_min_interval_ns),
             mouse_window: Cell::new(pointer::PointerCache::default()),
             tap: RefCell::new(None),
             tap_generation: Cell::new(0),
-            hotkey_specs: RefCell::new(Vec::new()),
-            hotkeys: Arc::new(ArcSwap::from_pointee(HotkeyTable::default())),
         }
     }
 
@@ -275,8 +259,7 @@ impl InputTap {
         let mut requests_rx = self.requests_rx.take().unwrap();
         let (recovery_tx, mut recovery_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        #[allow(clippy::arc_with_non_send_sync, reason = "P2.9")]
-        let this = Arc::new(self);
+        let this = Rc::new(self);
 
         let mask = this.event_mask.get();
         let tap = this.create_tap_with_mask(mask, recovery_tx.clone());
@@ -335,7 +318,7 @@ impl InputTap {
 
     /// Re-arms a disabled tap, falling back to recreation when the port is dead.
     fn re_enable_tap(
-        self: &Arc<Self>,
+        self: &Rc<Self>,
         generation: u64,
         recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
@@ -350,12 +333,12 @@ impl InputTap {
     }
 
     fn on_request(
-        self: &Arc<Self>,
+        self: &Rc<Self>,
         request: Request,
         recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
         let mut should_rebuild_mask = false;
-        let mut state = self.state.borrow_mut();
+        let mut mouse = self.mouse.get();
         match request {
             Request::Warp(point) => {
                 self.reset_mouse_window();
@@ -364,7 +347,7 @@ impl InputTap {
                 }
             }
             Request::SetEventProcessing(enabled) => {
-                state.event_processing_enabled = enabled;
+                mouse.event_processing_enabled = enabled;
                 if enabled {
                     self.reset_mouse_move_sampling();
                     self.reset_mouse_window();
@@ -376,55 +359,50 @@ impl InputTap {
                     "focus_follows_mouse temporarily {}",
                     if enabled { "enabled" } else { "disabled" }
                 );
-                state.focus_follows_mouse_enabled = enabled;
+                mouse.focus_follows_mouse_enabled = enabled;
                 if enabled {
                     self.reset_mouse_move_sampling();
                     self.reset_mouse_window();
                 }
                 should_rebuild_mask = true;
             }
-            Request::SetHotkeys(bindings) => {
-                *self.hotkey_specs.borrow_mut() = bindings;
-                self.rebuild_hotkeys_for_current_layout();
+            Request::SetHotkeys(binds) => {
+                let unresolved = self.router.borrow_mut().set_binds(binds, resolve_hotkey);
+                self.note_hotkeys(unresolved);
                 should_rebuild_mask = true;
             }
             Request::SetSwitchKeys(keys) => {
-                // Through the `state` this function already holds: `on_request` takes one
-                // `borrow_mut` for the whole match, and a second borrow panics, which aborts rini.
-                //
-                // A session in progress is ended rather than left running: the keys it was watching
-                // for may no longer exist, so nothing would be left to close it.
-                if let Some(signal) = state.switch.set_keys(keys) {
-                    self.events.send(Event::Switch(signal));
-                }
+                let signal = self.router.borrow_mut().set_switch_keys(keys);
+                self.send_switch(signal);
             }
             Request::EndSwitchSession => {
-                if state.switch.close() {
+                if self.router.borrow_mut().close_switch() {
                     debug!("switcher session ended by a commit from outside the tap");
                 }
             }
             Request::KeyboardLayoutChanged => {
-                self.rebuild_hotkeys_for_current_layout();
+                let unresolved = self.router.borrow_mut().resolve_binds(resolve_hotkey);
+                self.note_hotkeys(unresolved);
                 should_rebuild_mask = true;
             }
             Request::SettingsUpdated(settings) => {
-                if state.focus_follows_mouse_config_enabled != settings.focus_follows_mouse {
-                    state.focus_follows_mouse_config_enabled = settings.focus_follows_mouse;
+                if mouse.focus_follows_mouse_config_enabled != settings.focus_follows_mouse {
+                    mouse.focus_follows_mouse_config_enabled = settings.focus_follows_mouse;
                     self.reset_mouse_move_sampling();
                     self.reset_mouse_window();
                 }
                 should_rebuild_mask = true;
             }
             Request::SetLowPowerMode(enabled) => {
-                if state.low_power_mode != enabled {
+                if mouse.low_power_mode != enabled {
                     debug!("low_power_mode changed in event tap: {}", enabled);
-                    state.low_power_mode = enabled;
+                    mouse.low_power_mode = enabled;
                     self.mouse_move_min_interval_ns.set(mouse_move_sampling_profile(enabled));
                     self.reset_mouse_move_sampling();
                 }
             }
         }
-        drop(state);
+        self.mouse.set(mouse);
 
         if should_rebuild_mask {
             self.rebuild_event_tap_mask_if_needed(recovery_tx);
@@ -438,50 +416,43 @@ impl InputTap {
     fn reset_mouse_window(&self) { self.mouse_window.set(pointer::PointerCache::default()); }
 
     fn reconcile_after_tap_reenabled(&self) {
-        let mut state = self.state.borrow_mut();
         let flags = CGEventSource::flags_state(CGEventSourceStateID::HIDSystemState);
         debug!(?flags, "Event tap was re-enabled; reconciling pressed keys");
-        state.reconcile_after_event_tap_reenabled(flags);
-        drop(state);
-        self.abandon_switch_session();
+        let signal = self.router.borrow_mut().tap_re_enabled(flags.bits());
+        self.abandon_switch(signal);
     }
 
-    /// End any switcher session, because the tap can no longer be trusted about what is held.
-    ///
-    /// Called from BOTH paths that replace the tap. Only the invalidation path reconciles the held-key
-    /// cache, and the mask rebuild — which a config reload takes — used to leave the state untouched, so
-    /// a session would cross it still believing its modifier was down and keep swallowing the arrows
-    /// with nothing left to release it.
-    ///
-    /// Commits rather than cancels: the user pressed the key meaning to go somewhere, and rini losing
-    /// the keyboard underneath them is not a reason to pretend they did not.
-    fn abandon_switch_session(&self) {
-        let signal = self.state.borrow_mut().switch.abandon();
-        if let Some(signal) = signal {
+    fn abandon_switch(&self, signal: Option<Signal>) {
+        if signal.is_some() {
             debug!("abandoning a switcher session: the tap was replaced");
+        }
+        self.send_switch(signal);
+    }
+
+    fn send_switch(&self, signal: Option<Signal>) {
+        if let Some(signal) = signal {
             self.events.send(Event::Switch(signal));
         }
     }
 
-    fn on_event(self: &Arc<Self>, event_type: CGEventType, event: &CGEvent) -> bool {
+    fn note_hotkeys(&self, unresolved: Vec<String>) {
+        for spec in unresolved {
+            warn!(%spec, "Skipping hotkey that no longer resolves for current keyboard layout");
+        }
+        trace!(
+            "Updated hotkey bindings for current keyboard layout: {}",
+            self.router.borrow().hotkey_count()
+        );
+    }
+
+    fn on_event(&self, event_type: CGEventType, event: &CGEvent) -> bool {
         if event_type == CGEventType::MouseMoved {
             return self.on_mouse_moved(event);
         }
-
-        let mut state = self.state.borrow_mut();
-
-        if !matches!(
-            event_type,
-            CGEventType::KeyDown | CGEventType::KeyUp | CGEventType::FlagsChanged
-        ) {
-            // Keep modifier-only hotkey state in sync even when macOS drops a
-            // key-up/flags-changed event (common after system UI interruptions).
-            let flags = CGEvent::flags(Some(event));
-            if flags != state.current_flags {
-                state.current_flags = flags;
-                state.reconcile_modifier_keys();
-            }
+        if let Some(kind) = key_event_kind(event_type) {
+            return self.handle_keyboard_event(kind, event);
         }
+        self.router.borrow_mut().on_mouse_flags(CGEvent::flags(Some(event)).bits());
 
         match event_type {
             CGEventType::LeftMouseDown | CGEventType::RightMouseDown => {
@@ -494,19 +465,7 @@ impl InputTap {
             _ => {}
         }
 
-        if matches!(
-            event_type,
-            CGEventType::KeyDown | CGEventType::KeyUp | CGEventType::FlagsChanged
-        ) {
-            // App-directed shortcuts generated by rini must reach the application instead of
-            // being interpreted as rini hotkeys again.
-            if crate::windows::platform::mouse::is_rini_synthetic_event(event) {
-                return true;
-            }
-            return self.handle_keyboard_event(event_type, event, &mut state);
-        }
-
-        if !state.event_processing_enabled {
+        if !self.mouse.get().event_processing_enabled {
             trace!("Mouse event processing disabled, ignoring {:?}", event_type);
             return true;
         }
@@ -548,8 +507,8 @@ impl InputTap {
     /// In particular, do not read CGEvent flags for every hardware event: the
     /// keyboard and flags-changed events already maintain modifier state.
     fn on_mouse_moved(&self, event: &CGEvent) -> bool {
-        let state = self.state.borrow();
-        if !state.event_processing_enabled {
+        let mouse = self.mouse.get();
+        if !mouse.event_processing_enabled {
             return true;
         }
         let loc = CGEvent::location(Some(event));
@@ -557,7 +516,7 @@ impl InputTap {
         // Resolve and deduplicate the window on the input thread. The application
         // only needs to see transitions; it must not receive a message for
         // every sampled point while the cursor remains in one window.
-        if state.focus_follows_mouse_config_enabled && state.focus_follows_mouse_enabled {
+        if mouse.focus_follows_mouse_config_enabled && mouse.focus_follows_mouse_enabled {
             let hint = mouse_window_hint(event);
             let previous = self.mouse_window.get();
             let window = Self::resolve_mouse_window(hint, loc, previous);
@@ -616,94 +575,35 @@ impl InputTap {
         true
     }
 
-    fn handle_keyboard_event(
-        &self,
-        event_type: CGEventType,
-        event: &CGEvent,
-        state: &mut State,
-    ) -> bool {
-        let key_code_opt = key_code_from_event(event);
-
-        // FlagsChanged must be interpreted using the flags from this event,
-        // rather than the previous event's modifier state.
-        let flags = CGEvent::flags(Some(event));
-        state.current_flags = flags;
-
-        if let Some(key_code) = key_code_opt {
-            match event_type {
-                CGEventType::KeyDown => state.note_key_down(key_code),
-                CGEventType::KeyUp => state.note_key_up(key_code),
-                CGEventType::FlagsChanged => state.note_flags_changed(key_code),
-                _ => {}
-            }
+    fn handle_keyboard_event(&self, kind: KeyEventKind, event: &CGEvent) -> bool {
+        let autorepeat =
+            CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventAutorepeat);
+        let verdict = self.router.borrow_mut().on_key(Keystroke {
+            kind,
+            key: key_code_from_event(event),
+            flags: CGEvent::flags(Some(event)).bits(),
+            repeat: autorepeat != 0,
+            synthetic: is_rini_synthetic_event(event),
+            at: Instant::now(),
+        });
+        self.send_switch(verdict.signal);
+        if let Some(action) = verdict.action {
+            self.events.send(Event::Action(action));
         }
-
-        // The switcher session, BEFORE the hotkey table.
-        //
-        // Ordering rather than relaxing: the table swallows a held key's repeats unless its bind asks
-        // for them, because a repeat re-fired real commands (workspace back-and-forth toggled on
-        // every one). A session that needs repeats to advance the selection gets them by being asked
-        // first, leaving that rule exactly as it was.
-        if let Some(key_code) = key_code_opt {
-            let kind = match event_type {
-                CGEventType::KeyDown => Some(KeyEventKind::Down),
-                CGEventType::KeyUp => Some(KeyEventKind::Up),
-                CGEventType::FlagsChanged => Some(KeyEventKind::FlagsChanged),
-                _ => None,
-            };
-            if let Some(kind) = kind {
-                let verdict = state.switch.on_key(SwitchKeyEvent {
-                    kind,
-                    key: key_code,
-                    modifiers: modifiers_from_flags_with_keys(
-                        state.current_flags,
-                        state.held.pressed(),
-                    ),
-                    at: Instant::now(),
-                });
-                if let Some(signal) = verdict.signal {
-                    self.events.send(Event::Switch(signal));
-                }
-                if verdict.swallow {
-                    return false;
-                }
-            }
-        }
-
-        if event_type == CGEventType::KeyDown
-            && let Some(key_code) = key_code_opt
-        {
-            let hotkey = Hotkey::new(
-                modifiers_from_flags_with_keys(state.current_flags, state.held.pressed()),
-                key_code,
-            );
-            let is_repeat =
-                CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventAutorepeat)
-                    != 0;
-            if let Some(fired) = self.hotkeys.load().press(&hotkey, is_repeat) {
-                if let Some(action) = fired {
-                    self.events.send(Event::Action(action));
-                }
-                return false;
-            }
-        }
-
-        true
-    }
-
-    fn rebuild_hotkeys_for_current_layout(&self) {
-        let (table, unresolved) =
-            HotkeyTable::build(&self.hotkey_specs.borrow(), |spec| Hotkey::from_str(spec).ok());
-        for spec in unresolved {
-            warn!(%spec, "Skipping hotkey that no longer resolves for current keyboard layout");
-        }
-        trace!(
-            "Updated hotkey bindings for current keyboard layout: {}",
-            table.len()
-        );
-        self.hotkeys.store(Arc::new(table));
+        !verdict.swallow
     }
 }
+
+fn key_event_kind(event_type: CGEventType) -> Option<KeyEventKind> {
+    match event_type {
+        CGEventType::KeyDown => Some(KeyEventKind::Down),
+        CGEventType::KeyUp => Some(KeyEventKind::Up),
+        CGEventType::FlagsChanged => Some(KeyEventKind::FlagsChanged),
+        _ => None,
+    }
+}
+
+fn resolve_hotkey(spec: &str) -> Option<Hotkey> { Hotkey::from_str(spec).ok() }
 
 unsafe extern "C-unwind" fn mouse_callback(
     _proxy: CGEventTapProxy,
@@ -742,26 +642,6 @@ unsafe extern "C-unwind" fn event_tap_invalidated(user_info: *mut std::ffi::c_vo
     }
     let ctx = unsafe { &*(user_info as *const CallbackCtx) };
     let _ = ctx.recovery_tx.send(tap::Recovery::TapInvalidated(ctx.tap_generation));
-}
-
-impl State {
-    fn note_key_down(&mut self, key_code: KeyCode) { self.held.key_down(key_code); }
-
-    fn note_key_up(&mut self, key_code: KeyCode) { self.held.key_up(key_code); }
-
-    fn note_flags_changed(&mut self, key_code: KeyCode) {
-        self.held.flags_changed(self.current_flags.bits(), key_code);
-    }
-
-    fn reconcile_modifier_keys(&mut self) {
-        self.held.observe_flags(self.current_flags.bits());
-        self.held.reconcile_modifiers();
-    }
-
-    fn reconcile_after_event_tap_reenabled(&mut self, flags: CGEventFlags) {
-        self.current_flags = flags;
-        self.held.tap_re_enabled(flags.bits());
-    }
 }
 
 #[inline]
@@ -911,18 +791,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn tap_recovery_discards_cached_keys_and_uses_live_flags() {
-        let mut state = State::default();
-        state.held.key_down(KeyCode::ShiftLeft);
-        state.held.key_down(KeyCode::KeyA);
-
-        let live_flags = CGEventFlags::MaskShift | CGEventFlags::MaskCommand;
-        state.reconcile_after_event_tap_reenabled(live_flags);
-
-        assert!(state.held.pressed().is_empty());
-        assert_eq!(state.current_flags, live_flags);
     }
 }
