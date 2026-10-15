@@ -85,5 +85,6 @@ all assembled.
 
 ## Known debt
 
-`reactor/mod.rs` is the largest file in `src/app/`, with four functions over 250 lines,
-tracked in [`docs/implementation-audit.md`](../../../docs/implementation-audit.md).
+`reactor/mod.rs` is the largest file in `src/app/`. It and its functions past the size
+limits are held at their sizes in `LONG_FILES` and `LONG_FNS` in `tests/architecture.rs`;
+what each of them is, is in [`docs/implementation-audit.md`](../../../docs/implementation-audit.md).
