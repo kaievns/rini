@@ -102,6 +102,8 @@ impl Watcher {
         let _ = self.commands.send(Message::Extras(Command::Pause(paused)));
     }
 
+    pub fn is_paused(&self) -> bool { self.paused.load(Ordering::Relaxed) }
+
     /// Picture now rather than at the next tick, the grounds too.
     pub fn refresh(&self) { let _ = self.commands.send(Message::Extras(Command::Refresh)); }
 

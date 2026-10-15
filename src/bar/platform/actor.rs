@@ -73,7 +73,6 @@ pub struct BarActor {
     panels: HashMap<DisplayUuid, BarPanel>,
     text: Text,
     watcher: Option<Watcher>,
-    paused: bool,
     /// Whether the one failure to make a panel has been logged.
     warned: bool,
 }
@@ -108,7 +107,6 @@ impl BarActor {
             panels: HashMap::default(),
             text: Text::new(SCALE),
             watcher: None,
-            paused: false,
             warned: false,
         }
     }
@@ -175,7 +173,8 @@ impl BarActor {
                 self.pause_watcher();
             }
             Event::ClockChanged => {
-                if let Some(watcher) = self.watcher.as_ref().filter(|_| !self.paused) {
+                if let Some(watcher) = self.watcher.as_ref().filter(|watcher| !watcher.is_paused())
+                {
                     watcher.refresh();
                 }
             }
@@ -289,7 +288,6 @@ impl BarActor {
             extras: Box::new(move |pictured| extras.send(Event::Extras(pictured))),
             ground: Box::new(move |pictured| ground.send(Event::Ground(pictured))),
         }));
-        self.paused = false;
     }
 
     /// Tells the watcher which displays' grounds to picture, when that changed.
@@ -315,9 +313,8 @@ impl BarActor {
             return;
         };
         let paused = pictures_paused(self.flight, self.model.displays.len());
-        if paused != self.paused {
+        if paused != watcher.is_paused() {
             watcher.set_paused(paused);
-            self.paused = paused;
         }
     }
 }
