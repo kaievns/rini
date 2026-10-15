@@ -19,6 +19,25 @@ use crate::transitions::domain::travel::changes_visibly;
 use crate::windows::domain::request::{AppThreadHandle, Request, SuppressEnhancedUi};
 use crate::windows::domain::transaction::TransactionId;
 
+/// A committed move's frame for its window, and the app thread that writes it.
+struct Placement {
+    handle: AppThreadHandle,
+    window: WindowId,
+    frame: CGRect,
+    txid: TransactionId,
+}
+
+impl Placement {
+    fn request(&self) -> Request {
+        Request::SetWindowFrame {
+            window: self.window,
+            frame: self.frame,
+            txid: self.txid,
+            enhanced_ui: SuppressEnhancedUi::Yes,
+        }
+    }
+}
+
 impl Reactor {
     /// One `PassWindow` per window the pass touches, read from the reactor's stores.
     fn pass_windows(
@@ -165,7 +184,7 @@ impl Reactor {
         };
         let pan_delta = pan_delta(change, strip_movement);
         let moves: Vec<(WindowId, CGRect)> =
-            placements.iter().map(|&(_, window, frame, _)| (window, frame)).collect();
+            placements.iter().map(|placement| (placement.window, placement.frame)).collect();
         if use_overlay
             && let Some(delta) = pan_delta
             && self.start_strip_pan(space, active_ws, StripPan {
@@ -188,13 +207,8 @@ impl Reactor {
             // Nothing flies: the windows go straight to their frames. When the overlay flies, the
             // real windows are placed by Event::ApplyOverlayFrames once it covers them; placing them
             // now let them visibly jump into position before the overlay appeared.
-            for (handle, wid, frame, txid) in placements {
-                _ = handle.send(Request::SetWindowFrame {
-                    window: wid,
-                    frame,
-                    txid,
-                    enhanced_ui: SuppressEnhancedUi::Yes,
-                });
+            for placement in placements {
+                _ = placement.handle.send(placement.request());
             }
         }
 
@@ -240,28 +254,25 @@ impl Reactor {
 
     /// Each of a pass's moves committed; the visible ones returned to wait for the flight
     /// decision, the hidden ones sent straight to their app.
-    fn commit_pass_moves(
-        &mut self,
-        moves: &[Move],
-    ) -> Vec<(AppThreadHandle, WindowId, CGRect, TransactionId)> {
+    fn commit_pass_moves(&mut self, moves: &[Move]) -> Vec<Placement> {
         let mut placements = Vec::new();
         for m in moves {
             let txid = self.commit_move(m);
             let Some(handle) = self.apps.get(&m.window.pid).map(|a| a.handle.clone()) else {
                 continue;
             };
+            let placement = Placement {
+                handle,
+                window: m.window,
+                frame: m.to.to_cg(),
+                txid,
+            };
             if m.in_active_workspace {
                 trace!(window = ?m.window, from = ?m.from, to = ?m.to, "Animating visible window");
-                placements.push((handle, m.window, m.to.to_cg(), txid));
+                placements.push(placement);
             } else {
                 trace!(window = ?m.window, from = ?m.from, to = ?m.to, "Direct positioning hidden window");
-                let request = Request::SetWindowFrame {
-                    window: m.window,
-                    frame: m.to.to_cg(),
-                    txid,
-                    enhanced_ui: SuppressEnhancedUi::Yes,
-                };
-                if let Err(e) = handle.send(request) {
+                if let Err(e) = placement.handle.send(placement.request()) {
                     debug!(window = ?m.window, ?e, "Failed to send frame request for hidden window");
                 }
             }
