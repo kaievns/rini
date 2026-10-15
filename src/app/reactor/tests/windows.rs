@@ -186,9 +186,7 @@ fn stale_cleanup_uses_ordered_state_instead_of_cached_visibility() {
 
     let snapshot = |suitable, ordered_in| window_discovery::StaleCleanupSnapshot {
         pending_refresh: false,
-        suppressed: false,
-        mission_control_active: false,
-        drag_active: false,
+        mid_change: None,
         inactive_windows: Default::default(),
         server_observations: [(wsid, window_discovery::StaleWindowObservation {
             info: Some(info),

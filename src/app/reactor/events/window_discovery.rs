@@ -159,11 +159,18 @@ fn sync_window_server_id_mapping(
 #[derive(Debug)]
 pub(crate) struct StaleCleanupSnapshot {
     pub(crate) pending_refresh: bool,
-    pub(crate) suppressed: bool,
-    pub(crate) mission_control_active: bool,
-    pub(crate) drag_active: bool,
+    pub(crate) mid_change: Option<MidChange>,
     pub(crate) inactive_windows: HashSet<WindowId>,
     pub(crate) server_observations: HashMap<WindowServerId, StaleWindowObservation>,
+}
+
+/// Why the world is mid-change, which holds the stale cleanup back until it settles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidChange {
+    /// A refocus suppressed the cleanup.
+    Suppressed,
+    MissionControl,
+    Drag,
 }
 
 #[derive(Debug)]
@@ -186,9 +193,7 @@ pub(crate) fn identify_stale_windows(
         .windows
         .iter_visible_window_server_ids()
         .any(|wsid| state.windows.tracked_window_id(wsid).is_some_and(|wid| wid.pid == pid));
-    let skip_stale_cleanup = snapshot.suppressed
-        || snapshot.mission_control_active
-        || snapshot.drag_active
+    let skip_stale_cleanup = snapshot.mid_change.is_some()
         || (known_visible_set.is_empty() && !has_visible_window_server_ids);
 
     if skip_stale_cleanup {
@@ -751,9 +756,7 @@ mod tests {
     fn snapshot(observations: Vec<(u32, StaleWindowObservation)>) -> StaleCleanupSnapshot {
         StaleCleanupSnapshot {
             pending_refresh: false,
-            suppressed: false,
-            mission_control_active: false,
-            drag_active: false,
+            mid_change: None,
             inactive_windows: HashSet::default(),
             server_observations: observations
                 .into_iter()
@@ -835,13 +838,13 @@ mod tests {
     #[test]
     fn cleanup_is_skipped_whenever_the_world_is_mid_change() {
         let state = state_with(1, 1);
-        for mutate in [
-            (|s: &mut StaleCleanupSnapshot| s.suppressed = true) as fn(&mut StaleCleanupSnapshot),
-            |s| s.mission_control_active = true,
-            |s| s.drag_active = true,
+        for change in [
+            MidChange::Suppressed,
+            MidChange::MissionControl,
+            MidChange::Drag,
         ] {
             let mut snap = snapshot(vec![(1, gone(1))]);
-            mutate(&mut snap);
+            snap.mid_change = Some(change);
             let (stale, _) = identify_stale_windows(&state, 1, &[], &snap);
             assert!(stale.is_empty(), "{snap:?} should skip cleanup entirely");
         }
@@ -863,7 +866,7 @@ mod tests {
         let state = state_with(1, 1);
         let mut snap = snapshot(vec![(1, gone(1))]);
         snap.pending_refresh = true;
-        snap.mission_control_active = true;
+        snap.mid_change = Some(MidChange::MissionControl);
         let (stale, pending) = identify_stale_windows(&state, 1, &[], &snap);
         assert!(stale.is_empty());
         assert!(!pending, "the pid must stay queued for a retry");

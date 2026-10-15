@@ -210,14 +210,25 @@ impl Reactor {
                 .mission_control_manager
                 .pending_mission_control_refresh
                 .contains(&pid),
-            suppressed: matches!(
-                self.refocus_manager.stale_cleanup_state,
-                StaleCleanupState::Suppressed
-            ),
-            mission_control_active: self.is_mission_control_active(),
-            drag_active: self.is_in_drag(),
+            mid_change: self.mid_change(),
             inactive_windows,
             server_observations,
+        }
+    }
+
+    /// The first change under way that holds the stale cleanup back, if any.
+    fn mid_change(&self) -> Option<window_discovery::MidChange> {
+        if matches!(
+            self.refocus_manager.stale_cleanup_state,
+            StaleCleanupState::Suppressed
+        ) {
+            Some(window_discovery::MidChange::Suppressed)
+        } else if self.is_mission_control_active() {
+            Some(window_discovery::MidChange::MissionControl)
+        } else if self.is_in_drag() {
+            Some(window_discovery::MidChange::Drag)
+        } else {
+            None
         }
     }
 
