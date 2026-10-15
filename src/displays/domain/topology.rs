@@ -54,10 +54,6 @@ impl ForwardedSpaceState {
         self.screens.iter().filter_map(|screen| screen.space)
     }
 
-    pub fn first_known_space(&self) -> Option<SpaceId> {
-        self.iter_known_spaces().next()
-    }
-
     pub fn screen_for_point(&self, point: CGPoint) -> Option<&ScreenInfo> {
         self.screens.iter().find(|screen| screen.frame.contains(point))
     }
