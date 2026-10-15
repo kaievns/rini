@@ -183,7 +183,7 @@ checked individually; they describe current behaviour and its history, not dead
 branches.
 
 Test scaffolding sits behind `#[cfg(test)]` in every case found
-(`reactor/testing.rs`, `replay.rs:41`, `spaces.rs:173`, `workspaces.rs:279`,
+(`reactor/testing.rs`, `spaces.rs:173`, `workspaces.rs:279`,
 `focus.rs:113`, `mod.rs:3673`). Nothing ships in the release binary.
 
 **Corrected.** Two of those were not scaffolding. `spaces.rs` had `#[cfg(test)]`

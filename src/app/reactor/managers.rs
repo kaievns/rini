@@ -3,7 +3,6 @@ use rini_core::ids::{SpaceId, WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use tracing::trace;
 
-use super::replay::Record;
 use super::{AppState, Event, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 use crate::app::reactor::Reactor;
 use crate::app::reactor::animation::AnimationManager;
@@ -170,11 +169,6 @@ pub struct CommunicationManager {
     pub event_broadcaster: BroadcastSender,
     pub wm_sender: Option<wm_controller::Sender>,
     pub events_tx: Option<channels::Sender<Event>>,
-}
-
-/// Manages recording state
-pub struct RecordingManager {
-    pub record: Record,
 }
 
 /// Manages layout engine state

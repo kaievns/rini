@@ -1,13 +1,12 @@
 //! Frame-write bookkeeping. Every frame the reactor asks for carries a `TransactionId`; the app
 //! actor stamps the AX echo with it, so a `WindowFrameChanged` can be told from a user move
 //! (`Requested`). `WindowTxStore` is the per-window-server-id table both sides read.
-use serde::{Deserialize, Serialize};
 
-#[derive(Default, Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, PartialEq)]
 pub struct TransactionId(u32);
 
 /// Whether a frame change is the echo of a frame rini asked for, or the user's doing.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Requested(pub bool);
 
 impl TransactionId {

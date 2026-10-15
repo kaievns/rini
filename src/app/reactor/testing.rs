@@ -5,7 +5,7 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::SameAs;
 use tracing::debug;
 
-use super::{Event, EventOutcome, Reactor, Record, ScreenInfo, TransactionId};
+use super::{Event, EventOutcome, Reactor, ScreenInfo, TransactionId};
 use crate::app::channels;
 use crate::app::config::Config;
 use crate::displays::domain::topology::ForwardedSpaceState;
@@ -21,13 +21,11 @@ impl Reactor {
         let mut config = Config::default();
         config.settings.default_disable = false;
         config.settings.animate = false;
-        let record = Record::new_for_test(tempfile::NamedTempFile::new().unwrap());
         let (broadcast_tx, _) = channels::channel();
         let mut reactor = Reactor::new(
             config,
             layout,
             DisplayMemory::default(),
-            record,
             broadcast_tx,
             None,
             false,
@@ -508,28 +506,6 @@ pub fn fullscreen_startup_space_state(
         .insert(state.screens[0].display_uuid.clone(), user_space);
     Event::SpaceStateChanged(state)
 }
-
-/*impl Drop for Reactor {
-    fn drop(&mut self) {
-        if std::thread::panicking() {
-            return;
-        }
-
-        if let Some(temp) = self.record.temp() {
-            temp.as_file().flush().unwrap();
-            // Attempt to run the replay tool if available; ignore if it's not present
-            let replay_attempt = std::panic::catch_unwind(|| {
-                let mut cmd = test_bin::get_test_bin("examples/devtool");
-                cmd.arg("replay").arg(temp.path());
-                println!("Replaying recorded data:\n{cmd:?}");
-                cmd.spawn().unwrap().wait().unwrap().success()
-            });
-            if let Ok(false) = replay_attempt {
-                // Tool executed but returned error; still ignore in tests
-            }
-        }
-    }
-}*/
 
 pub fn make_window(idx: usize) -> WindowInfo {
     let window = make_window_info(

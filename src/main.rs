@@ -67,11 +67,6 @@ struct Cli {
     #[arg(long)]
     no_restore: bool,
 
-    /// Record reactor events to the specified file path. Overwrites the file if
-    /// exists.
-    #[arg(long)]
-    record: Option<PathBuf>,
-
     /// Path to the config file (KDL) to use instead of ~/.config/rini/config.kdl.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
@@ -280,7 +275,6 @@ fn main() {
         config.clone(),
         layout,
         display_memory,
-        reactor::Record::new(opt.record.as_deref()),
         event_tap_tx.clone(),
         broadcast_tx.clone(),
         Some(cursor_warp_tx.clone()),

@@ -14,7 +14,6 @@ mod managers;
 mod observations;
 mod present;
 mod query;
-mod replay;
 mod space_affinity;
 mod space_resolution;
 pub mod state;
@@ -79,10 +78,7 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_geometry::space::{
     FromCg, ScreenPoint, ScreenRect, ScreenSize, SurfacePoint, SurfaceRect, ToCg,
 };
-pub use replay::{Record, replay};
 use rini_ipc::protocol::SwitchScope;
-use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
 use space_affinity::SpaceAffinity;
 use tracing::{debug, info, instrument, trace, warn};
 
@@ -112,7 +108,6 @@ use crate::workspaces::{self as layout, Direction, LayoutEngine, LayoutEvent};
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowServerId;
 use rini_core::ids::{WindowId, pid_t};
-use rini_geometry::CGRectDef;
 use rini_runloop::executor::Executor;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeMap;
@@ -175,8 +170,7 @@ impl std::ops::Deref for ReactorHandle {
     }
 }
 
-#[serde_as]
-#[derive(Serialize, Deserialize, Debug, strum::IntoStaticStr)]
+#[derive(Debug, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum Event {
     /// Place these windows at these frames now, with no animation.
@@ -184,11 +178,8 @@ pub enum Event {
     /// Sent by the flight engine once its flight is far enough along that the real
     /// windows are safely hidden behind it. Applying them any earlier let the windows visibly jump
     /// into place BEFORE the overlay appeared, so a switch read as a flicker followed by a slide.
-    #[serde(skip)]
     ApplyOverlayFrames(Vec<(WindowId, CGRect)>),
-    #[serde(skip)]
     SpaceStateChanged(ForwardedSpaceState),
-    #[serde(skip)]
     ActiveDisplayChanged {
         menu_bar_space: Option<SpaceId>,
         command_space: Option<SpaceId>,
@@ -209,7 +200,6 @@ pub enum Event {
     ApplicationLaunched {
         pid: pid_t,
         info: AppInfo,
-        #[serde(skip, default = "replay::deserialize_app_thread_handle")]
         handle: AppThreadHandle,
         is_frontmost: bool,
         main_window: Option<WindowId>,
@@ -225,7 +215,6 @@ pub enum Event {
     ApplicationMainWindowChanged(pid_t, Option<WindowId>, Quiet),
     /// Authoritative focus resolved from WindowServer's key-focus process and
     /// the z-ordered windows on the active native space.
-    #[serde(skip)]
     WindowServerFocusChanged(WindowId, SpaceId),
 
     WindowsDiscovered {
@@ -240,19 +229,15 @@ pub enum Event {
         Option<MouseState>,
     ),
     WindowDestroyed(WindowId),
-    #[serde(skip)]
     WindowServerDestroyed(rini_core::ids::WindowServerId, SpaceId, SpaceEventKind),
-    #[serde(skip)]
     WindowServerAppeared(rini_core::ids::WindowServerId, SpaceId, SpaceEventKind),
-    #[serde(skip)]
     SpaceCreated(SpaceId),
-    #[serde(skip)]
     SpaceDestroyed(SpaceId),
     WindowMinimized(WindowId),
     WindowDeminiaturized(WindowId),
     WindowFrameChanged(
         WindowId,
-        #[serde(with = "CGRectDef")] CGRect,
+        CGRect,
         Option<TransactionId>,
         Requested,
         Option<MouseState>,
@@ -276,14 +261,12 @@ pub enum Event {
     /// The left button went down. Straight from the input thread, so it is handled before any frame
     /// report the app sends in answer; see [`Event::left_press_sink`]. A double-click on a column's
     /// title bar is the evidence that the resize after it is the app zooming the window.
-    #[serde(skip)]
     LeftMouseDown(crate::input::event::LeftPress),
     /// A switcher session opened, moved, committed or was cancelled.
     Switch(crate::input::domain::switch_session::Signal),
     /// A row of the switcher popup was clicked: select that window and commit.
     SwitchPicked(WindowId),
     /// Something on a bar was clicked.
-    #[serde(skip)]
     BarAction(crate::bar::domain::model::Action),
     /// Sent by the event tap only when the cursor enters a different window.
     /// Window resolution and transition deduplication stay on the input
@@ -298,21 +281,14 @@ pub enum Event {
     SystemWoke,
     /// The system clock was set, or the time zone changed.
     ClockChanged,
-    #[serde(skip)]
     SystemWillSleep,
-    #[serde(skip)]
     SessionDidResignActive,
-    #[serde(skip)]
     SessionDidBecomeActive,
 
-    #[serde(skip)]
     DisplayChurnBegin,
-    #[serde(skip)]
     DisplayChurnEnd,
 
-    #[serde(skip)]
     MissionControlNativeEntered,
-    #[serde(skip)]
     MissionControlNativeExited,
 
     /// A raise request completed. Used by the raise manager to track when
@@ -336,19 +312,15 @@ pub enum Event {
     /// The applications asking for attention changed.
     AttentionChanged(crate::windows::domain::attention::Attention),
 
-    #[serde(skip)]
     Query(query::QueryRequest),
 
     Command(Command),
 
-    #[serde(skip)]
     RegisterWmSender(crate::app::hotkeys::Sender),
 
-    #[serde(skip)]
     ConfigUpdated(Config),
 
     /// The config file was read, and whether it could be used. While it cannot, every bar is marked.
-    #[serde(skip)]
     ConfigFileRead { usable: bool },
 }
 
@@ -550,7 +522,6 @@ pub struct Reactor {
     regroup_raised: Vec<WindowId>,
     drag_manager: managers::DragManager,
     workspace_switch_manager: managers::WorkspaceSwitchManager,
-    recording_manager: managers::RecordingManager,
     communication_manager: managers::CommunicationManager,
     /// The workspace each space's last layout pass drew, where its next switch slides from.
     drawn_workspace: HashMap<SpaceId, crate::workspaces::VirtualWorkspaceId>,
@@ -584,7 +555,6 @@ impl Reactor {
         config: Config,
         layout_engine: LayoutEngine,
         display_memory: DisplayMemory,
-        record: Record,
         event_tap_tx: event_tap::Sender,
         broadcast_tx: BroadcastSender,
         cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
@@ -602,7 +572,6 @@ impl Reactor {
             config,
             layout_engine,
             display_memory,
-            record,
             broadcast_tx,
             window_notify,
             one_space,
@@ -632,7 +601,6 @@ impl Reactor {
         config: Config,
         layout_engine: LayoutEngine,
         display_memory: DisplayMemory,
-        mut record: Record,
         broadcast_tx: BroadcastSender,
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
         one_space: bool,
@@ -640,7 +608,6 @@ impl Reactor {
         // Apps that are no longer running were already dropped from the restored state, at load
         // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
         // window server id is gone AND whose bundle is not running.
-        record.start(&layout_engine, &display_memory);
         let (raise_manager_tx, _rx) = channels::channel();
         let (window_notify_tx, window_tx_store) = match window_notify {
             Some((tx, store)) => (Some(tx), store),
@@ -687,7 +654,6 @@ impl Reactor {
                 pending_workspace_switch_origin: None,
                 pending_workspace_mouse_warp: None,
             },
-            recording_manager: managers::RecordingManager { record },
             drawn_workspace: HashMap::default(),
             communication_manager: managers::CommunicationManager {
                 event_tap_tx: None,
@@ -1366,7 +1332,6 @@ impl Reactor {
     fn dispatch_workflow(&mut self, event: Event) -> anyhow::Result<EventOutcome> {
         self.live_spaces.clear();
         self.log_event(&event);
-        self.recording_manager.record.on_event(&event);
 
         if let Some(outcome) = self.on_quarantine_event(&event) {
             return outcome;

@@ -6,9 +6,7 @@ Two things look alike and are not.
 
 **A fake at the boundary is right.** `window_server.rs` answers its queries from thread-local
 overrides under `cfg(test)`, because the alternative is a test that depends on the windows the
-developer happens to have open. The section below records the two tests that flapped that way. The
-same goes for a `#[cfg(test)]` field like `Record::temp`: there is no field to read in production, so
-the accessor has no choice.
+developer happens to have open. The section below records the two tests that flapped that way.
 
 **A `#[cfg(test)]` branch inside a rule is wrong,** and it is not a style question. It makes the
 suite a test of a different program, and the divergence is invisible at every call site. Four were

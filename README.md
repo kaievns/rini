@@ -196,7 +196,7 @@ target/release/rini service restart
 from the start.
 
 Other flags: `--one` (this Space only), `--no-restore` (start from a clean layout), `--config PATH`,
-`--default-disable`, `--record PATH`. The agent logs to `/tmp/rini_<user>.out.log` and
+`--default-disable`. The agent logs to `/tmp/rini_<user>.out.log` and
 `/tmp/rini_<user>.err.log`.
 
 `cargo test` runs on one thread on purpose: concurrent framework start-up aborts the process

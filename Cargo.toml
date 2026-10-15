@@ -81,7 +81,6 @@ tracing-tree = { workspace = true }
 pretty_assertions = "1.4.0"
 tempfile = { workspace = true }
 test-log = { version = "0.2.16", default-features = false }
-test_bin = "0.5.0"
 tokio = { workspace = true, features = ["sync", "macros"] }
 
 [workspace]

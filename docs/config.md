@@ -133,6 +133,3 @@ wire command it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
 | `config save` | it rewrote the file without its comments and could not write `focus_follows_mouse_disable_hotkey` back. The file is the config |
 | the typed `config set-…` setters and the JSON-path `config set` | `config set '<KDL>'` applies a fragment through the same code as the file |
 | the legacy bare `resize_window_grow` migration | it existed for TOML, and made every parse error lose its span |
-
-A recording (`rini --record`) no longer carries the config, since a config has no written form but
-its file; `replay` takes one.
