@@ -1523,6 +1523,133 @@ mod tests {
     assert_eq!(total, 12);
 }
 
+/// Where no function takes two `bool` parameters: a call reading `true, false` says neither.
+const NO_TWO_BOOLS: [&str; 2] = ["src/app", "src/main.rs"];
+
+/// The parameter list of the `fn` whose name ends at `column` of `lines[index]`, from its `(` to
+/// the `)` closing it, with any generics before it skipped.
+fn parameter_list(lines: &[&str], index: usize, column: usize) -> String {
+    let text: String = lines[index][column..]
+        .chars()
+        .chain(lines[index + 1..].iter().flat_map(|line| line.chars().chain(['\n'])))
+        .collect();
+    let mut angle = 0i32;
+    let mut paren = 0i32;
+    let mut list = String::new();
+    for c in text.chars() {
+        match c {
+            '<' if paren == 0 => angle += 1,
+            '>' if paren == 0 => angle -= 1,
+            '(' if angle == 0 => {
+                paren += 1;
+                if paren == 1 {
+                    continue;
+                }
+            }
+            ')' if angle == 0 && paren == 1 => return list,
+            ')' if angle == 0 => paren -= 1,
+            _ => {}
+        }
+        if paren > 0 {
+            list.push(c);
+        }
+    }
+    list
+}
+
+/// How many of `list`'s parameters are a `bool`, by value or by reference.
+fn bool_parameters(list: &str) -> usize {
+    let mut depth = 0i32;
+    let mut params = vec![String::new()];
+    let mut before = ' ';
+    for c in list.chars() {
+        let arrow = before == '-';
+        before = c;
+        match c {
+            '(' | '[' | '<' | '{' => depth += 1,
+            '>' if arrow => {}
+            ')' | ']' | '>' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                params.push(String::new());
+                continue;
+            }
+            _ => {}
+        }
+        params.last_mut().expect("one parameter at least").push(c);
+    }
+    params
+        .iter()
+        .filter_map(|param| {
+            param.split_once(':').map(|(_, ty)| ty.split_whitespace().collect::<String>())
+        })
+        .filter(|ty| matches!(ty.as_str(), "bool" | "&bool" | "&mutbool"))
+        .count()
+}
+
+/// Each function of `source` taking two `bool` parameters or more, as `line: name`.
+fn two_bool_fns(source: &str) -> Vec<String> {
+    let blanked = blank_comments(source, true);
+    let lines: Vec<&str> = blanked.lines().collect();
+    let mut found = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        for (name, column) in fns_declared(line) {
+            if bool_parameters(&parameter_list(&lines, index, column)) >= 2 {
+                found.push(format!("{}: {name}", index + 1));
+            }
+        }
+    }
+    found
+}
+
+/// No function in `NO_TWO_BOOLS` takes two `bool` parameters, tests' included: the choices they
+/// make are an enum or a struct with named fields.
+#[test]
+fn no_function_in_the_app_takes_two_bools() {
+    let broken: Vec<String> = NO_TWO_BOOLS
+        .iter()
+        .flat_map(|root| {
+            let root = Path::new(root);
+            if root.is_dir() {
+                rust_files(root)
+            } else {
+                vec![root.to_path_buf()]
+            }
+        })
+        .flat_map(|path| {
+            let source = fs::read_to_string(&path).expect("readable source");
+            two_bool_fns(&source)
+                .into_iter()
+                .map(move |found| format!("{}:{found}", slash(&path)))
+        })
+        .collect();
+    assert!(
+        broken.is_empty(),
+        "name the choices with an enum or a struct rather than bool parameters:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn two_bool_parameters_are_found_across_lines_and_generics_and_nothing_else_is() {
+    let source = r#"fn one(a: bool, b: u8) {}
+pub(crate) fn two<F: Fn(bool, bool)>(
+    &mut self,
+    a: bool,
+    b: &mut bool,
+) {}
+fn tuple(pair: (bool, bool), map: HashMap<bool, bool>) {}
+fn closure(f: impl Fn(bool) -> bool, x: bool) {}
+fn arrow_then_two(f: fn() -> u8, a: bool, b: bool) {}
+// fn commented(a: bool, b: bool) {}
+fn by_ref(a: &bool, b: &'static str, c: bool) {}
+"#;
+    assert_eq!(two_bool_fns(source), vec![
+        "2: two",
+        "9: arrow_then_two",
+        "11: by_ref"
+    ]);
+}
+
 /// Whether `text` names `path` whole, not as the tail of a longer path or name.
 fn names_path(text: &str, path: &str) -> bool {
     let part = |c: char| c.is_alphanumeric() || c == '_' || c == '/';

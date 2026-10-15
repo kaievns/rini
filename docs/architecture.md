@@ -213,6 +213,10 @@ the new size, and an entry leaves the list once it is back under
 (`no_function_or_file_grows_past_its_limit`). Those lists are the record of how long each
 function and file is now; a doc that needs a size points at them.
 
+It keeps every function in `src/app` and `src/main.rs`, tests' included, under two `bool`
+parameters (`no_function_in_the_app_takes_two_bools`): a choice a call would spell `true, false` is
+an enum, or a struct naming each field.
+
 `cargo test -p rini-geometry` still builds plain Rust instead of linking AppKit.
 `cargo test` on the application does link it, so the win is now "this module has
 no macOS in it, provably" rather than "this crate cannot link AppKit".
