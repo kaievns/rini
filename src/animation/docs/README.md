@@ -10,6 +10,7 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 
 | | |
 |---|---|
+| `domain/motion.rs` | The root of `motion`: how a transition moves, as pure functions over rects, its modules below |
 | `domain/motion/plan.rs` | `FlightPlan`, rigid groups, `reflow_plan` and `surface_plan`, `merge_plans` for a pass arriving mid-flight, a frame in its container and back (`group_relative`, `overlay_of`, and `installed` for a fresh plan), the containers an edge bounce or a nudge carries, and an entrance's shape |
 | `domain/motion/surface.rs` | How a strip movement carries a surface: what the viewport at an offset shows (`viewport`), `surface_travel`, `pan_travel`, and what a window on the surface has to say (`SurfaceGeometry`) |
 | `domain/motion/glide.rs` | `Leg`: a container's movement over time; `Leg::toward`, the spring a merge bends it on, from where the score has its movement (`Score::along`) and as fast as its leg is going |

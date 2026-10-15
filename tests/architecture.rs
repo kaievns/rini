@@ -1357,3 +1357,57 @@ mod tests {
     assert_eq!(total, 12);
 }
 
+/// Whether `text` names `path` whole, not as the tail of a longer path or name.
+fn names_path(text: &str, path: &str) -> bool {
+    let part = |c: char| c.is_alphanumeric() || c == '_' || c == '/';
+    text.match_indices(path).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(part)
+            && !text[at + path.len()..].chars().next().is_some_and(part)
+    })
+}
+
+/// Every module of a feature's `domain/`, and of the reactor and its `events/`, has a line in the
+/// README beside it, named by its path from the feature's root.
+#[test]
+fn every_domain_and_reactor_module_is_named_in_its_readme() {
+    let mut layers: Vec<(PathBuf, PathBuf)> = FEATURES
+        .iter()
+        .map(|feature| (Path::new("src").join(feature), PathBuf::from("domain")))
+        .collect();
+    layers.push((PathBuf::from("src/app"), PathBuf::from("reactor")));
+    layers.push((PathBuf::from("src/app"), PathBuf::from("reactor/events")));
+    let mut missing = Vec::new();
+    for (root, layer) in layers {
+        let Ok(entries) = fs::read_dir(root.join(&layer)) else { continue };
+        let readme_path = root.join("docs/README.md");
+        let readme = fs::read_to_string(&readme_path).expect("every feature has a README");
+        let mut files: Vec<PathBuf> = entries
+            .map(|entry| entry.expect("readable entry").path())
+            .filter(|path| path.extension().is_some_and(|e| e == "rs"))
+            .filter(|path| path.file_name().is_some_and(|name| name != "mod.rs"))
+            .collect();
+        files.sort();
+        for path in files {
+            let relative = slash(path.strip_prefix(&root).expect("under its root"));
+            if !names_path(&readme, &relative) {
+                missing.push(format!("{}: `{relative}`", slash(&readme_path)));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "each of these modules wants a row in its README's \"What it owns\", by its path from the \
+         feature's root:\n{}",
+        missing.join("\n")
+    );
+}
+
+#[test]
+fn a_path_is_named_only_whole() {
+    let readme = "| `domain/app_rules.rs` | rules |\nsee src/x/domain/zoom.rs and domain/raise.rs.";
+    assert!(names_path(readme, "domain/app_rules.rs"));
+    assert!(names_path(readme, "domain/raise.rs"));
+    assert!(!names_path(readme, "domain/rules.rs"));
+    assert!(!names_path(readme, "domain/zoom.rs"));
+    assert!(!names_path(readme, "domain/raise_order.rs"));
+}

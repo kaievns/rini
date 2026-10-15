@@ -254,8 +254,11 @@ Code points at the doc by path when a reader would otherwise be stuck. When code
 its docs move with it — and since a feature's docs now live inside the feature, moving a
 folder moves both.
 
-Three tests in `tests/architecture.rs` hold this rather than good intentions:
+Four tests in `tests/architecture.rs` hold this rather than good intentions:
 `every_feature_and_crate_documents_itself` requires the READMEs to exist,
+`every_domain_and_reactor_module_is_named_in_its_readme` requires each one to name, by its path
+from the feature's root, every module of its `domain/` (and `src/app/docs/README.md` every module
+of `reactor/` and `reactor/events/`),
 `every_documented_path_resolves` fails on any path into `src/`, `crates/`, `tests/`, `docs/`,
 `specs/` or `tools/` that the docs, the code or the tools mention and that no longer exists, and
 `every_spec_is_listed_in_the_index` stops a spec nothing links to. A stale sentence reads exactly like
