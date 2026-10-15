@@ -9,6 +9,7 @@ use rini_geometry::space::{FromCg, GroupRect, Respace, ScreenRect, SurfacePoint}
 use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
 use tracing::debug;
 
+use super::logged::Whole;
 use super::tiles::Stacking;
 use super::{Composed, FlightEngine, Shape, frames_of, live_frame, restack};
 use crate::animation::domain::choreography::{Cue, Look};
@@ -28,7 +29,6 @@ use crate::transitions::domain::flight::worth_flying;
 use crate::transitions::domain::lifecycle::{Kind, Start, TileSummary, drawn_focused};
 use crate::transitions::domain::request::{AnimationRequest, SurfaceWindow};
 use crate::transitions::domain::travel::{TilePath, is_moving, tile_path};
-use crate::transitions::platform::logged::Whole;
 
 /// What every request of a layout pass is composed against: the display and its scale, the focus
 /// its tiles are drawn with and the window drawn losing it, and the window server's depths and

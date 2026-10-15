@@ -89,4 +89,9 @@ mod tests {
         assert_eq!(Whole(OverlayVector::new(24.6, 0.0)).to_string(), "25,0");
         assert_eq!(Whole(ScreenSize::new(1727.7, 40.2)).to_string(), "1728x40");
     }
+
+    #[test]
+    fn a_merge_logs_under_the_engines_target() {
+        assert!(module_path!().starts_with("rini::transitions::platform::engine::"));
+    }
 }

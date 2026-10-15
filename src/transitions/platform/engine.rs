@@ -65,11 +65,11 @@ use crate::transitions::domain::lifecycle::{
 use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
 use crate::transitions::domain::timing::*;
 use crate::transitions::platform::journal::Writer;
-use crate::transitions::platform::logged::{self, Whole};
 use crate::transitions::settings::JournalSettings;
 use crate::windows::platform::window_server::WindowServer;
 
 mod compose;
+mod logged;
 mod tiles;
 
 use tiles::entrance_tile;
@@ -1937,7 +1937,7 @@ impl FlightEngine {
         let remaining = running.score.remaining(at);
         self.play(edits);
         debug!(
-            overshoot = %Whole(overshoot),
+            overshoot = %logged::Whole(overshoot),
             "edge bounce"
         );
         self.drive(lifecycle::Event::Extend(remaining));
@@ -2180,15 +2180,15 @@ fn log_dressing(
         backdrop = dressing
             .desktop
             .as_ref()
-            .map(|b| format!("{} {:?}", Whole(b.coverage.covered), b.source))
+            .map(|b| format!("{} {:?}", logged::Whole(b.coverage.covered), b.source))
             .unwrap_or_else(|| "NONE".to_string()),
         bar = dressing
             .bar
             .as_ref()
-            .map(|b| Whole(b.coverage.covered).to_string())
+            .map(|b| logged::Whole(b.coverage.covered).to_string())
             .unwrap_or_else(|| "NONE".to_string()),
         strip = strip
-            .map(|strip| Whole(strip).to_string())
+            .map(|strip| logged::Whole(strip).to_string())
             .unwrap_or_else(|| "none".to_string()),
         "overlay dressed"
     );
