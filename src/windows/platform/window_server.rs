@@ -1164,12 +1164,13 @@ pub fn looks_gone(
     suitable == Some(false) || info.layer != 0 || too_small || ordered_in == Some(false)
 }
 
-/// A window's place in the window server's stack: its frame, level and sub-level.
+/// A window's place in the window server's stack: its frame, level and sub-level, each none where
+/// the window server gave no answer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StackPlace {
     pub frame: CGRect,
     pub level: Option<NSWindowLevel>,
-    pub sub_level: c_int,
+    pub sub_level: Option<c_int>,
 }
 
 impl StackPlace {
@@ -1179,23 +1180,38 @@ impl StackPlace {
     }
 }
 
-/// A window's level, none when the window server reports none, and its sub-level.
-pub fn stack_level(wsid: WindowServerId) -> (Option<NSWindowLevel>, c_int) {
+/// A window's level and sub-level, each none when the window server reports none.
+pub fn stack_level(wsid: WindowServerId) -> (Option<NSWindowLevel>, Option<c_int>) {
     let id = wsid.as_u32();
     (window_level(id), window_sub_level(id))
 }
 
 /// Puts `own`, a window of rini's own connection, at another window's `level` and `sub_level`, the
-/// normal level when it has none: the window server levels only a connection's own windows, and
-/// AppKit orders one directly above another process's window only once the two share both
-/// ("Ordering a rest window" in `src/decorations/docs/README.md`).
-pub fn take_stack_place(own: WindowServerId, level: Option<NSWindowLevel>, sub_level: c_int) {
-    let level = level.unwrap_or(NSNormalWindowLevel) as c_int;
+/// normal level when it has none, its sub-level left as it is when that has none: the window server
+/// levels only a connection's own windows, and AppKit orders one directly above another process's
+/// window only once the two share both ("Ordering a rest window" in
+/// `src/decorations/docs/README.md`).
+pub fn take_stack_place(
+    own: WindowServerId,
+    level: Option<NSWindowLevel>,
+    sub_level: Option<c_int>,
+) {
+    let (level, sub_level) = stack_place_writes(level, sub_level);
     // SAFETY: plain calls on rini's own connection and one of its own windows.
     unsafe {
         SLSSetWindowLevel(*G_CONNECTION, own.as_u32(), level);
-        SLSSetWindowSubLevel(*G_CONNECTION, own.as_u32(), sub_level);
+        if let Some(sub_level) = sub_level {
+            SLSSetWindowSubLevel(*G_CONNECTION, own.as_u32(), sub_level);
+        }
     }
+}
+
+/// The level and the sub-level `take_stack_place` writes: no sub-level when none was read.
+fn stack_place_writes(
+    level: Option<NSWindowLevel>,
+    sub_level: Option<c_int>,
+) -> (c_int, Option<c_int>) {
+    (level.unwrap_or(NSNormalWindowLevel) as c_int, sub_level)
 }
 
 /// Whether one of the windows stacked above `candidate` sits wholly inside its frame at the same
@@ -1208,7 +1224,7 @@ pub fn covered_by_peer_above(
     above.into_iter().any(|peer| {
         candidate.frame.contains_rect(peer.frame)
             && candidate.level.zip(peer.level).is_some_and(|(c, p)| c == p)
-            && candidate.sub_level == peer.sub_level
+            && candidate.sub_level.zip(peer.sub_level).is_some_and(|(c, p)| c == p)
     })
 }
 
@@ -1218,7 +1234,12 @@ mod stack_tests {
 
     use super::*;
 
-    fn place(x: f64, w: f64, level: Option<NSWindowLevel>, sub_level: c_int) -> StackPlace {
+    fn place(
+        x: f64,
+        w: f64,
+        level: Option<NSWindowLevel>,
+        sub_level: Option<c_int>,
+    ) -> StackPlace {
         StackPlace {
             frame: CGRect::new(CGPoint::new(x, 0.0), CGSize::new(w, 100.0)),
             level,
@@ -1228,29 +1249,54 @@ mod stack_tests {
 
     #[test]
     fn a_peer_wholly_inside_at_the_same_level_covers() {
-        let candidate = place(0.0, 1000.0, Some(0), 0);
+        let candidate = place(0.0, 1000.0, Some(0), Some(0));
         assert!(covered_by_peer_above(
             candidate,
-            [place(100.0, 200.0, Some(0), 0)]
+            [place(100.0, 200.0, Some(0), Some(0))]
         ));
     }
 
     #[test]
     fn a_peer_at_another_level_or_sub_level_or_overhanging_does_not() {
-        let candidate = place(0.0, 1000.0, Some(0), 0);
+        let candidate = place(0.0, 1000.0, Some(0), Some(0));
         assert!(!covered_by_peer_above(
             candidate,
-            [place(100.0, 200.0, Some(3), 0)]
+            [place(100.0, 200.0, Some(3), Some(0))]
         ));
         assert!(!covered_by_peer_above(
             candidate,
-            [place(100.0, 200.0, Some(0), 1)]
+            [place(100.0, 200.0, Some(0), Some(1))]
         ));
         assert!(
-            !covered_by_peer_above(candidate, [place(900.0, 200.0, Some(0), 0)]),
+            !covered_by_peer_above(candidate, [place(900.0, 200.0, Some(0), Some(0))]),
             "overhangs the edge"
         );
         assert!(!covered_by_peer_above(candidate, []));
+    }
+
+    #[test]
+    fn an_unanswered_sub_level_is_no_evidence_of_a_shared_one() {
+        let candidate = place(0.0, 1000.0, Some(0), Some(0));
+        assert!(!covered_by_peer_above(
+            candidate,
+            [place(100.0, 200.0, Some(0), None)]
+        ));
+        assert!(!covered_by_peer_above(
+            place(0.0, 1000.0, Some(0), None),
+            [place(100.0, 200.0, Some(0), Some(0))]
+        ));
+        assert!(!covered_by_peer_above(
+            place(0.0, 1000.0, Some(0), None),
+            [place(100.0, 200.0, Some(0), None)]
+        ));
+    }
+
+    #[test]
+    fn an_unanswered_sub_level_is_not_written() {
+        assert_eq!(stack_place_writes(Some(3), Some(1)), (3, Some(1)));
+        assert_eq!(stack_place_writes(Some(3), Some(0)), (3, Some(0)));
+        assert_eq!(stack_place_writes(Some(3), None), (3, None));
+        assert_eq!(stack_place_writes(None, None), (NSNormalWindowLevel as c_int, None));
     }
 
     fn info(layer: i32, w: f64, h: f64) -> WindowServerInfo {
@@ -1372,7 +1418,7 @@ mod stack_tests {
 
     #[test]
     fn an_unknown_level_never_covers() {
-        let candidate = place(0.0, 1000.0, None, 0);
-        assert!(!covered_by_peer_above(candidate, [place(100.0, 200.0, None, 0)]));
+        let candidate = place(0.0, 1000.0, None, Some(0));
+        assert!(!covered_by_peer_above(candidate, [place(100.0, 200.0, None, Some(0))]));
     }
 }

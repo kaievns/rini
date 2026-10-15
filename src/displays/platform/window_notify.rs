@@ -335,7 +335,7 @@ mod tests {
     fn ws(id: u32) -> WindowServerId { WindowServerId::new(id) }
 
     const AT: CGRect = CGRect::new(CGPoint::new(10., 20.), CGSize::new(300., 400.));
-    const LEVEL: StackLevel = StackLevel { level: Some(3), sub_level: 1 };
+    const LEVEL: StackLevel = StackLevel { level: Some(3), sub_level: Some(1) };
 
     fn bounds(_: WindowServerId) -> Option<CGRect> { Some(AT) }
     fn level(_: WindowServerId) -> StackLevel { LEVEL }

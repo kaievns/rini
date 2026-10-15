@@ -104,7 +104,9 @@ query asked with flag bit 0), and its owner's name from its application
 | `SLSCopySpacesForWindows`, `SLSSpaceGetType`, `SLSGetSpaceManagementMode`, `SLSManagedDisplaysCopyRoleWindows`, `SLSCopyActiveMenuBarDisplayIdentifier`, and the `CGS*` spaces and managed-display calls, checked under their `SLS` names | wait on nothing: the window-management bridge or a port message |
 
 The sub-level read (`src/windows/platform/sub_level.rs`) is a Mach message to a connection server
-port of its own, and takes no connection's lock.
+port of its own, and takes no connection's lock. The port is made once, and again after a failed
+attempt; the reactor and frames threads share it. A failed receive or an unexpected reply answers
+none, not sub-level 0, and each of the two is logged once.
 
 ## CGWindowList, replaced
 
