@@ -16,8 +16,6 @@ pub struct InputPart {
     #[knus(child)]
     pub warp_mouse_to_focus: Option<Flag>,
     #[knus(child)]
-    pub workspace_auto_back_and_forth: Option<Flag>,
-    #[knus(child)]
     pub warp_mouse_across_stacked_outputs: Option<StackedWarpPart>,
     #[knus(children(name = "ignore-app-activation"), unwrap(argument))]
     pub ignore_app_activation: Vec<String>,

@@ -25,9 +25,6 @@ input {
     // When focus changes, move the mouse to the focused window. Off unless written.
     // warp-mouse-to-focus
 
-    // Switching to the workspace that is already shown goes back to the previous one instead.
-    // workspace-auto-back-and-forth
-
     // With displays arranged VERTICALLY, pushing the pointer off a left or right edge crosses to the
     // display above or below, as if they sat side by side. Off unless written. It only makes sense
     // for the stacked arrangement the scrolling layout needs: off-strip columns park at negative x,

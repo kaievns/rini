@@ -35,7 +35,6 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
         "mod-key",
         "focus-follows-mouse",
         "warp-mouse-to-focus",
-        "workspace-auto-back-and-forth",
         "warp-mouse-across-stacked-outputs",
         "ignore-app-activation",
     ]),

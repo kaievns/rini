@@ -8,7 +8,6 @@ pub const MAX_WORKSPACES: usize = 128;
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct VirtualWorkspaceSettings {
-    pub workspace_auto_back_and_forth: bool,
     /// The workspaces, top to bottom. There are as many as there are names.
     pub workspace_names: Vec<String>,
     /// Shown at launch, by index into `workspace_names`.
@@ -20,7 +19,6 @@ pub struct VirtualWorkspaceSettings {
 impl Default for VirtualWorkspaceSettings {
     fn default() -> Self {
         Self {
-            workspace_auto_back_and_forth: false,
             workspace_names: ["Main", "Development", "Communication", "Utilities"]
                 .map(String::from)
                 .to_vec(),

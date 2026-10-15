@@ -28,13 +28,12 @@ fn refused(text: &str) -> String {
 }
 
 /// The settings and workspaces, which are what an empty file and the reference must agree on.
-fn settings_and_workspaces(config: &Config) -> (Settings, Vec<String>, usize, bool, bool) {
+fn settings_and_workspaces(config: &Config) -> (Settings, Vec<String>, usize, bool) {
     let w = &config.virtual_workspaces;
     (
         config.settings.clone(),
         w.workspace_names.clone(),
         w.default_workspace,
-        w.workspace_auto_back_and_forth,
         w.reapply_app_rules_on_title_change,
     )
 }
@@ -147,7 +146,6 @@ fn input_maps_onto_focus_and_the_pointer() {
         "    mod-key \"Ctrl\"\n",
         "    focus-follows-mouse\n",
         "    warp-mouse-to-focus\n",
-        "    workspace-auto-back-and-forth\n",
         "    warp-mouse-across-stacked-outputs upper-side=\"right\" lower-top-at=0.25\n",
         "    ignore-app-activation \"com.apple.Spotlight\"\n",
         "    ignore-app-activation \"com.apple.dock\"\n",
@@ -156,11 +154,19 @@ fn input_maps_onto_focus_and_the_pointer() {
     let s = &config.settings;
     assert_eq!(s.mod_key, ModKey::Ctrl);
     assert!(s.focus_follows_mouse && s.mouse_follows_focus);
-    assert!(config.virtual_workspaces.workspace_auto_back_and_forth);
     assert!(s.warp_cursor_between_stacked_displays);
     assert_eq!(s.stacked_display_upper_is, StackedUpperSide::Right);
     assert_eq!(s.stacked_display_lower_top_at, 0.25);
     assert_eq!(s.auto_focus_denylist, ["com.apple.Spotlight", "com.apple.dock"]);
+}
+
+#[test]
+fn switching_to_the_shown_workspace_is_not_configurable() {
+    let report = refused("input {\n    workspace-auto-back-and-forth\n}\n");
+    assert!(
+        report.contains("unknown node `workspace-auto-back-and-forth` in `input`"),
+        "{report}"
+    );
 }
 
 #[test]

@@ -43,9 +43,6 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
         if let Some(Flag(on)) = input.warp_mouse_to_focus {
             settings.mouse_follows_focus = on;
         }
-        if let Some(Flag(on)) = input.workspace_auto_back_and_forth {
-            workspaces.workspace_auto_back_and_forth = on;
-        }
         if let Some(warp) = input.warp_mouse_across_stacked_outputs {
             settings.warp_cursor_between_stacked_displays = warp.on;
             if let Some(side) = warp.upper_side {
