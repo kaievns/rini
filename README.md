@@ -208,12 +208,14 @@ errors, and `cargo test --workspace`. Every step runs even when one fails. It bu
 `cargo test` runs in parallel; a test that reads an animation back off a layer holds Core
 Animation's lock while it does (`docs/testing.md`). Formatting needs nightly, because
 `rustfmt.toml` enables unstable options; stable `cargo fmt` ignores them and reflows every file.
-`cargo +nightly` works only through rustup's own `cargo`; `rustup run nightly` works with any.
+`cargo +nightly` works only through rustup's own `cargo`, and a cargo from outside rustup, such as
+Homebrew's, runs the `rustfmt` on `PATH` even under `rustup run nightly`. `RUSTFMT` naming nightly's
+`rustfmt` works with any.
 
 ```sh
 rustup toolchain install nightly
 bin/check.sh
-rustup run nightly cargo fmt
+RUSTFMT="$(rustup which --toolchain nightly rustfmt)" cargo fmt --all
 ```
 
 ## Configuration

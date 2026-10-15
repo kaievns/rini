@@ -24,9 +24,15 @@ step() {
     "$@" || failed+=("$name")
 }
 
-# rustfmt.toml enables unstable options, which only nightly reads. `rustup run` rather than
-# `cargo +nightly`, which a cargo installed outside rustup does not understand.
-step fmt rustup run nightly cargo fmt --all --check
+# rustfmt.toml enables unstable options, which only nightly's rustfmt reads. RUSTFMT names it,
+# because a cargo installed outside rustup finds the rustfmt on PATH even under `rustup run`.
+nightly_fmt() {
+    local rustfmt
+    rustfmt="$(rustup which --toolchain nightly rustfmt)" || return 1
+    RUSTFMT="$rustfmt" rustup run nightly cargo fmt --all --check
+}
+
+step fmt nightly_fmt
 step build cargo build --locked --workspace --all-targets
 # clippy goes here, between the build and the suite, once the workspace is clean of its warnings.
 step test cargo test --locked --workspace
