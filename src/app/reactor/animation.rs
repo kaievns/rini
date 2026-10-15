@@ -156,7 +156,14 @@ impl Reactor {
             && self.communication_manager.transitions_tx.is_some();
 
         let moved = moved.filter(|_| !any_resize);
-        let pan_delta = pan_delta(any_resize, moved.is_some(), strip_movement);
+        let change = if any_resize {
+            PassChange::Resize
+        } else if moved.is_some() {
+            PassChange::Move
+        } else {
+            PassChange::Scroll
+        };
+        let pan_delta = pan_delta(change, strip_movement);
         let moves: Vec<(WindowId, CGRect)> =
             placements.iter().map(|&(_, window, frame, _)| (window, frame)).collect();
         if use_overlay
@@ -388,17 +395,24 @@ fn place_on_strip(
     }
 }
 
+/// What a pass changes on the strip, as far as panning it goes: a window's size, the order of two
+/// columns, or no more than the scroll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PassChange {
+    Resize,
+    Move,
+    Scroll,
+}
+
 /// How far a pass pans the strip surface, or `None` when it does not pan. A pass that resizes a
 /// window is neither a pan nor a move: the strip surface draws final sizes, which would snap the
 /// resize. A move along the strip is a strip movement whether or not the strip scrolled, with the
 /// two columns that changed places crossing it; a scroll under a point is no pan.
-fn pan_delta(any_resize: bool, moved: bool, strip_movement: Option<CGPoint>) -> Option<CGPoint> {
-    if any_resize {
-        None
-    } else if moved {
-        Some(strip_movement.unwrap_or(CGPoint::new(0.0, 0.0)))
-    } else {
-        strip_movement.filter(|movement| movement.x.abs() >= 1.0)
+fn pan_delta(change: PassChange, strip_movement: Option<CGPoint>) -> Option<CGPoint> {
+    match change {
+        PassChange::Resize => None,
+        PassChange::Move => Some(strip_movement.unwrap_or(CGPoint::new(0.0, 0.0))),
+        PassChange::Scroll => strip_movement.filter(|movement| movement.x.abs() >= 1.0),
     }
 }
 
@@ -409,23 +423,18 @@ mod tests {
     #[test]
     fn a_pass_pans_by_the_strip_movement_unless_it_resizes() {
         let scroll = Some(CGPoint::new(-300.0, 0.0));
-        assert_eq!(pan_delta(false, false, scroll), scroll);
-        assert_eq!(pan_delta(true, false, scroll), None, "a resize is never a pan");
-        assert_eq!(pan_delta(true, true, scroll), None);
-        assert_eq!(
-            pan_delta(false, false, Some(CGPoint::new(0.5, 0.0))),
-            None,
-            "under a point of scroll is no pan"
-        );
-        assert_eq!(pan_delta(false, false, None), None);
-    }
-
-    #[test]
-    fn a_move_along_the_strip_pans_even_when_the_strip_did_not_scroll() {
-        assert_eq!(pan_delta(false, true, None), Some(CGPoint::new(0.0, 0.0)));
-        assert_eq!(
-            pan_delta(false, true, Some(CGPoint::new(0.5, 0.0))),
-            Some(CGPoint::new(0.5, 0.0))
-        );
+        let sliver = Some(CGPoint::new(0.5, 0.0));
+        for (change, movement, pan) in [
+            (PassChange::Scroll, scroll, scroll),
+            (PassChange::Scroll, sliver, None),
+            (PassChange::Scroll, None, None),
+            (PassChange::Resize, scroll, None),
+            (PassChange::Resize, None, None),
+            (PassChange::Move, scroll, scroll),
+            (PassChange::Move, sliver, sliver),
+            (PassChange::Move, None, Some(CGPoint::new(0.0, 0.0))),
+        ] {
+            assert_eq!(pan_delta(change, movement), pan, "{change:?}, {movement:?}");
+        }
     }
 }
