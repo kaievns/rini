@@ -9,6 +9,7 @@ a restart. Sits above `windows`, `displays` and `layout`.
 | | |
 |---|---|
 | `engine.rs` | `LayoutEngine`: the orchestrator. Holds the workspaces, the per-display layouts, floating state, app rules and the persistence journal. Display affinity and launch memory left for `domain/display_memory.rs`, owned by the reactor |
+| `engine/frames.rs` | The frames a layout pass writes for one space: the strip's columns, a column off the strip parked in the corner on its side, the floating layer kept where it is usable and centred where not, maximized floating windows over the tiling area, and every window of a workspace not showing parked bottom-right |
 | `engine/moves.rs` | A window moved to another workspace, to another display's space, and between the strip and the floating layer: each takes it out of its layer (`take_window`) and puts it into the destination (`place_window`), back where it was when the destination cannot be assigned |
 | `engine/commands/` | One module per family of `LayoutCommand`: `focus`, `arrange`, `resize`, `strip`, `floating`. `commands.rs` holds `resolve_target`, which is the space, active workspace and active layout every arm needs |
 | `domain/virtual_workspace.rs` | `WorkspaceStore`, `VirtualWorkspace`: one global workspace list, each display showing one independently |

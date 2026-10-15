@@ -72,20 +72,19 @@ rewards keeping logic where it cannot be tested, which is the opposite of what t
 command enum where the arms delegate. Its 40-line prelude resolving `(space, workspace_id, layout)`
 is the part that is not a dispatch, and it is shared by every arm.
 
-Still open, and named by the RULE rather than by line count this time:
+Named by the RULE rather than by line count this time. Four are out since: the park corner is
+`strip_frame` and the floating rescue `usable_floating_frame`, falling back to `centred_on`, each
+tested in `workspaces/engine/frames.rs`, and `op_space` collapsed to
+`space_with_window(window).unwrap_or(space)` in `workspaces/engine/moves.rs`. One is still open:
 
 | rule | where | why it is worth naming |
 |---|---|---|
-| the park corner | `:2385` | a column scrolled off the strip parks in a corner, and which corner records the edge an animation brings it back in from. The wrong one flies the window in from the wrong side |
-| the floating rescue | `:2349` | `requested -> stored -> centred`, filtered by "off every screen". What stops a floating window being stranded where no display can show it |
-| `op_space` | `:2615` | act on where the window IS, not where the command said. The `if` is a tautology: both branches give the same answer in all three cases, and it collapses to `inferred_space.unwrap_or(space)` |
-| `"next"` / `"prev"` | `:2628` | matched as magic NAMES before the name lookup, so a workspace a user actually names "next" cannot be selected by name. Undocumented trap |
-| `center_rect` | `:2327` | centre a size in a rect. Trivial, pure, untested |
+| `"next"` / `"prev"` | `move_window_to_workspace` | matched as magic NAMES before the name lookup, so a workspace a user actually names "next" cannot be selected by name. Undocumented trap |
 
-`on_windows_on_screen_updated` and `move_window_to_space` carry no rules worth
-extracting: both sequence store mutations on `was_floating` branches, which is orchestration. The
-one candidate is a three-tier target-workspace fallback at `:3091`. They were on the earlier list
-because they are long, which was the wrong reason.
+`on_windows_on_screen_updated` carries no rule worth extracting: it sequences store mutations on
+`was_floating` branches, which is orchestration. `move_window_to_space` and
+`move_window_to_workspace` share `take_window` and `place_window` with `toggle_window_floating`,
+and the target-workspace fallback of `move_window_to_space` is `ensure_active_workspace_info`.
 
 ## 2. `windows/platform/app_actor.rs` — 1,369 lines, 0 tests
 

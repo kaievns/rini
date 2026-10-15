@@ -180,7 +180,7 @@ forgets.
 > and 28pt of height on screen. Two other floating windows were stranded the same way, System Settings
 > at 52pt of height and zoom.us at 44pt.
 >
-> `ensure_visible_floating` already re-centres a floating window whose frame is hidden. It was asking
+> `settle_floating` already re-centres a floating window whose frame is hidden. It was asking
 > `is_hidden`, a 3pt both-axes test, which called these frames real positions. `is_off_screen`, the 40pt
 > both-axes test, calls two of the three real as well. Neither is wrong for tiled columns; both are wrong
 > for a float, which is why the floating rule is one-axis and its own.
