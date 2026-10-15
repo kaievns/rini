@@ -515,7 +515,6 @@ fn main() {
     });
 }
 
-#[cfg(panic = "unwind")]
 fn install_panic_hook() {
     // Abort on panic instead of propagating panics to the main thread.
     let original_hook = std::panic::take_hook();
@@ -524,6 +523,3 @@ fn install_panic_hook() {
         std::process::abort();
     }));
 }
-
-#[cfg(not(panic = "unwind"))]
-fn install_panic_hook() {}
