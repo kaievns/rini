@@ -212,9 +212,44 @@ pub fn on_recovery(
     }
 }
 
+/// Why a session tap could not be made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TapError {
+    /// `CGEventTapCreate` returned null.
+    Create,
+    /// The tap's Mach port gave no run-loop source.
+    RunLoopSource,
+}
+
+impl std::fmt::Display for TapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            TapError::Create => "CGEventTapCreate returned null",
+            TapError::RunLoopSource => "the tap's Mach port gave no run-loop source",
+        })
+    }
+}
+
+/// Passes `ctx` to `create` as the pointer a port keeps for its callbacks, and frees it when
+/// `create` fails. `create` must not leave the pointer anywhere on `Err`.
+fn hand_to_port<T, P>(
+    ctx: Box<T>,
+    create: impl FnOnce(*mut c_void) -> Result<P, TapError>,
+) -> Result<(P, *mut c_void), TapError> {
+    let ptr = Box::into_raw(ctx) as *mut c_void;
+    match create(ptr) {
+        Ok(port) => Ok((port, ptr)),
+        Err(error) => {
+            drop(unsafe { Box::from_raw(ptr as *mut T) });
+            Err(error)
+        }
+    }
+}
+
 impl EventTap {
     /// Creates a session event tap that reports disables (`disabled_callback`) and Mach-port
     /// invalidations (`invalidated_callback`) to its owner instead of recovering in the callback.
+    /// On `Err` the tap never took `user_info`, so the caller still owns it.
     pub unsafe fn new_with_options_and_recovery_callbacks(
         options: CGTapOpt,
         mask: CGEventMask,
@@ -223,7 +258,7 @@ impl EventTap {
         drop_ctx: Option<unsafe fn(*mut c_void)>,
         disabled_callback: TapDisabledCallback,
         invalidated_callback: TapInvalidatedCallback,
-    ) -> Option<Self> {
+    ) -> Result<Self, TapError> {
         let tramp = Box::new(TrampolineCtx {
             callback,
             original_user_info: user_info,
@@ -232,20 +267,23 @@ impl EventTap {
             invalidated_callback,
             port_ptr: None,
         });
-        let tramp_ptr = Box::into_raw(tramp) as *mut c_void;
 
-        let port = unsafe {
-            CGEvent::tap_create(
-                CGTapLoc::SessionEventTap,
-                CGTapPlace::HeadInsertEventTap,
-                options,
-                mask,
-                Some(trampoline_callback),
-                tramp_ptr,
-            )?
-        };
-
-        let source = CFMachPort::new_run_loop_source(None, Some(&port), 0)?;
+        let ((port, source), tramp_ptr) = hand_to_port(tramp, |tramp_ptr| {
+            let port = unsafe {
+                CGEvent::tap_create(
+                    CGTapLoc::SessionEventTap,
+                    CGTapPlace::HeadInsertEventTap,
+                    options,
+                    mask,
+                    Some(trampoline_callback),
+                    tramp_ptr,
+                )
+            }
+            .ok_or(TapError::Create)?;
+            let source = CFMachPort::new_run_loop_source(None, Some(&port), 0)
+                .ok_or(TapError::RunLoopSource)?;
+            Ok((port, source))
+        })?;
         if let Some(rl) = CFRunLoop::current() {
             debug!(
                 "EventTap: CFRunLoop::current() returned a run loop; adding source to common modes"
@@ -272,7 +310,7 @@ impl EventTap {
             event_tap.port.set_invalidation_call_back(Some(port_invalidated));
         }
 
-        Some(event_tap)
+        Ok(event_tap)
     }
 
     /// Re-arms a tap the OS disabled. `false` means the port is dead and the tap
@@ -305,6 +343,31 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    #[test]
+    fn a_failed_tap_creation_frees_what_it_was_handed_and_says_why() {
+        let held = std::rc::Rc::new(());
+        let result = hand_to_port(Box::new(std::rc::Rc::clone(&held)), |_| {
+            Err::<(), _>(TapError::Create)
+        });
+        assert_eq!(result.err(), Some(TapError::Create));
+        assert_eq!(std::rc::Rc::strong_count(&held), 1);
+    }
+
+    #[test]
+    fn a_created_tap_keeps_what_it_was_handed() {
+        let held = std::rc::Rc::new(());
+        let mut seen = core::ptr::null_mut();
+        let (_, ptr) = hand_to_port(Box::new(std::rc::Rc::clone(&held)), |ptr| {
+            seen = ptr;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(ptr, seen);
+        assert_eq!(std::rc::Rc::strong_count(&held), 2);
+        drop(unsafe { Box::from_raw(ptr as *mut std::rc::Rc<()>) });
+        assert_eq!(std::rc::Rc::strong_count(&held), 1);
+    }
 
     #[test]
     fn an_isolated_disable_re_enables_immediately() {
