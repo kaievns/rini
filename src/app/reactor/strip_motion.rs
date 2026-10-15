@@ -400,8 +400,14 @@ impl Reactor {
 
         let display_bounds = (self.reads.display_bounds)(screen.id);
         let height = screen.frame.size.height;
-        let (windows, destination_layout) =
-            self.switch_rows(space, &workspaces, from_index, to_index, &screen, &gaps);
+        let (windows, destination_layout) = self.switch_rows(
+            space,
+            &workspaces,
+            (from_index, to_index),
+            &screen,
+            display_bounds,
+            &gaps,
+        );
 
         // EVERY window in the layout, not just the destination workspace's. This layout is what the
         // non-animated path would have applied, and it includes the parked positions of windows
@@ -465,9 +471,9 @@ impl Reactor {
         &self,
         space: SpaceId,
         workspaces: &[(crate::workspaces::VirtualWorkspaceId, String)],
-        from_index: usize,
-        to_index: usize,
+        (from_index, to_index): (usize, usize),
         screen: &ScreenInfo,
+        display_bounds: CGRect,
         gaps: &crate::layout::settings::Gaps,
     ) -> (Vec<SurfaceWindow>, Vec<(WindowId, CGRect)>) {
         let (low, high) = (from_index.min(to_index), from_index.max(to_index));
@@ -478,7 +484,6 @@ impl Reactor {
         //
         // The surface is still expressed in full-display coordinates (the overlay's own), so a
         // window keeps its position below the bar within its row; only the row-to-row step shrinks.
-        let display_bounds = (self.reads.display_bounds)(screen.id);
         let row_pitch = screen.frame.size.height;
         let mut windows: Vec<SurfaceWindow> = Vec::new();
         let mut destination_layout = Vec::new();

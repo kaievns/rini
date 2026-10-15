@@ -1972,6 +1972,37 @@ fn a_jump_across_the_stack_draws_each_workspace_one_row_below_the_last() {
     );
 }
 
+/// A switch reads the display's bounds once for its stacked rows and the out-of-view check, so
+/// both measure the same display even if it is reconfigured mid-switch, and once more where it
+/// publishes the display its flight is drawn on.
+#[test]
+fn a_switch_reads_the_display_bounds_once_for_its_rows() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static READS: AtomicUsize = AtomicUsize::new(0);
+    let (mut apps, mut reactor, mut rx) = started(test_reactor_with_workspace_count(4));
+    reactor.reads.display_bounds = |_| {
+        READS.fetch_add(1, Ordering::SeqCst);
+        CGRect::ZERO
+    };
+    reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
+        workspace: rini_ipc::protocol::WorkspaceSelector::Index(2),
+        follow: false,
+        window_id: Some(2),
+    });
+    apps.simulate_until_quiet(&mut reactor);
+    strip_movements(&mut rx);
+    READS.store(0, Ordering::SeqCst);
+
+    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(2));
+
+    assert_eq!(strip_movements(&mut rx).len(), 1, "one slide down the stack");
+    assert_eq!(
+        READS.load(Ordering::SeqCst),
+        2,
+        "the rows', then the flight's display"
+    );
+}
+
 /// A restored layout shows the workspace it was saved on, and the first switch slides from that one.
 #[test]
 fn a_restored_layout_s_first_switch_slides_from_the_workspace_it_opened_on() {
