@@ -12,6 +12,7 @@ use objc2_core_foundation::CGRect;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use tracing::{debug, trace};
 
+use super::dispatch::GlobalActivation;
 use super::events::{
     EventOutcome, app as application_workflow, drag as interaction_workflow,
     space as topology_workflow, system as system_workflow, window as window_workflow,
@@ -408,10 +409,10 @@ impl Reactor {
     pub(super) fn on_application_globally_activated(
         &mut self,
         pid: pid_t,
-        duplicate: bool,
+        activation: GlobalActivation,
         should_update_notifications: bool,
     ) -> anyhow::Result<EventOutcome> {
-        if duplicate {
+        if activation == GlobalActivation::Repeated {
             trace!(pid, "Ignoring duplicate global application activation");
             return Ok(EventOutcome::focus_changed(None, should_update_notifications));
         }

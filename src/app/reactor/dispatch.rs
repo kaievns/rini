@@ -16,7 +16,14 @@ use super::{Event, Reactor, ReactorCommand};
 struct Dispatch {
     raised_window: Option<WindowId>,
     update_notifications: bool,
-    duplicate_global_activation: bool,
+    global_activation: GlobalActivation,
+}
+
+/// Whether an event is a global activation of the app already globally frontmost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum GlobalActivation {
+    New,
+    Repeated,
 }
 
 impl Dispatch {
@@ -102,11 +109,14 @@ impl Reactor {
     /// the looks it turned, and what the reducers are handed besides the event.
     fn take_focus_report(&mut self, event: &Event) -> Dispatch {
         let update_notifications = Self::should_update_notifications(event);
-        let duplicate_global_activation = matches!(
-            event,
+        let global_activation = match event {
             Event::ApplicationGloballyActivated(pid)
-                if self.main_window_tracker.is_globally_frontmost(*pid)
-        );
+                if self.main_window_tracker.is_globally_frontmost(*pid) =>
+            {
+                GlobalActivation::Repeated
+            }
+            _ => GlobalActivation::New,
+        };
         let key_before = self.main_window_tracker.key_window();
         let raised_window = event
             .focus_event()
@@ -116,7 +126,7 @@ impl Reactor {
         Dispatch {
             raised_window,
             update_notifications,
-            duplicate_global_activation,
+            global_activation,
         }
     }
 
@@ -173,7 +183,7 @@ impl Reactor {
             }
             Event::ApplicationGloballyActivated(pid) => self.on_application_globally_activated(
                 pid,
-                dispatch.duplicate_global_activation,
+                dispatch.global_activation,
                 dispatch.update_notifications,
             ),
             Event::ApplicationMainWindowChanged(..) => Ok(dispatch.focus_changed()),
@@ -389,7 +399,7 @@ mod tests {
         Dispatch {
             raised_window,
             update_notifications: true,
-            duplicate_global_activation: false,
+            global_activation: GlobalActivation::New,
         }
     }
 
