@@ -1461,6 +1461,36 @@ mod tests {
         );
     }
 
+    /// A showing floating window saves the frame it is laid out at over what its workspace had; a
+    /// parked one saves its frame only when its workspace has none, so it comes back where it was.
+    #[test]
+    fn a_parked_floating_window_keeps_the_frame_its_workspace_saved() {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(411);
+        let wid = WindowId::new(72, 1);
+        fx.expose(space, CGSize::new(1200.0, 800.0));
+        let _ = fx.open(space, vec![OnScreenEntry::plain(wid)]);
+        fx.float(space, wid);
+        let shown = fx.workspace_of(space, wid).expect("assigned");
+        let other = fx.workspaces(space).into_iter().find(|&w| w != shown).expect("another");
+        let saved = || CGRect::new(CGPoint::new(100.0, 100.0), CGSize::new(300.0, 200.0));
+        let saved_in = |fx: &EngineFixture| fx.engine.floating_positions.get(space, shown, wid);
+        fx.engine.floating_positions.store(space, shown, wid, saved());
+        assert_eq!(fx.frame(space, wid), saved());
+
+        fx.show(space, other);
+        let parked = fx.frame(space, wid);
+        assert_ne!(parked, saved());
+        assert_eq!(saved_in(&fx), Some(saved()), "a park keeps the saved frame");
+
+        fx.engine.floating_positions.remove_window(wid);
+        let _ = fx.frames(space);
+        assert!(
+            saved_in(&fx).is_some(),
+            "a park with nothing saved saves a frame"
+        );
+    }
+
     /// Each display is its own strip, so horizontal focus stops at this display's last column and
     /// never continues onto the neighbour. Baked in: this was a setting, defaulting to the hop.
     #[test]

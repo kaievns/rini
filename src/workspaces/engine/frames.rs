@@ -21,6 +21,25 @@ struct FramePass<'a> {
     frames: HashMap<WindowId, CGRect>,
 }
 
+/// How a floating window's settled frame is saved as its frame in its workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SaveFrame {
+    /// Over whatever the workspace saved for it: it is showing, and this is where it is.
+    Replace,
+    /// Only when the workspace has none for it: it is being parked, and the frame it comes back to
+    /// is one it already has.
+    IfAbsent,
+}
+
+/// One floating window to settle in a pass: its workspace, the frame it is offered, and how that is
+/// saved.
+struct Settle {
+    workspace: VirtualWorkspaceId,
+    window: WindowId,
+    candidate: Option<CGRect>,
+    save: SaveFrame,
+}
+
 fn size_or_unknown(frame: Option<CGRect>) -> CGSize { frame.map_or(UNKNOWN_SIZE, |f| f.size) }
 
 /// Where a strip column's frame is written. A column scrolled off the strip is parked in the
@@ -141,11 +160,23 @@ impl LayoutEngine {
                     window,
                 ) == Some(workspace)
             {
-                self.settle_floating(pass, workspace, window, Some(saved), false, window_size);
+                let settle = Settle {
+                    workspace,
+                    window,
+                    candidate: Some(saved),
+                    save: SaveFrame::Replace,
+                };
+                self.settle_floating(pass, settle, window_size);
             }
         }
         for window in self.active_floating_windows_in_workspace(window_store, pass.space) {
-            self.settle_floating(pass, workspace, window, None, false, window_size);
+            let settle = Settle {
+                workspace,
+                window,
+                candidate: None,
+                save: SaveFrame::Replace,
+            };
+            self.settle_floating(pass, settle, window_size);
         }
     }
 
@@ -170,32 +201,43 @@ impl LayoutEngine {
                     window,
                 )
             {
-                self.settle_floating(pass, workspace, window, frame, true, window_size);
+                let settle = Settle {
+                    workspace,
+                    window,
+                    candidate: frame,
+                    save: SaveFrame::IfAbsent,
+                };
+                self.settle_floating(pass, settle, window_size);
             }
             pass.frames.insert(window, parked_frame(pass.screen, frame, pass.all_screens));
         }
     }
 
-    /// `window`'s floating frame in this pass, `candidate` or the one it already has when usable
-    /// and centred when not, saved as its frame in `workspace`; only when it has none there with
-    /// `keep_saved`.
+    /// The window's floating frame in this pass, its candidate or the one it already has when
+    /// usable and centred when not, saved as its frame in its workspace as `settle.save` says.
     fn settle_floating(
         &mut self,
         pass: &mut FramePass,
-        workspace: VirtualWorkspaceId,
-        window: WindowId,
-        candidate: Option<CGRect>,
-        keep_saved: bool,
+        settle: Settle,
         window_size: &impl Fn(WindowId) -> CGSize,
     ) {
+        let Settle {
+            workspace,
+            window,
+            candidate,
+            save,
+        } = settle;
         let candidate = candidate.or_else(|| pass.frames.get(&window).copied());
         let rect = usable_floating_frame(pass.screen, pass.all_screens, candidate)
             .unwrap_or_else(|| centred_on(pass.screen, window_size(window)));
         pass.frames.insert(window, rect);
-        if keep_saved {
-            self.floating_positions.store_if_absent(pass.space, workspace, window, rect);
-        } else {
-            self.floating_positions.store(pass.space, workspace, window, rect);
+        match save {
+            SaveFrame::Replace => {
+                self.floating_positions.store(pass.space, workspace, window, rect);
+            }
+            SaveFrame::IfAbsent => {
+                self.floating_positions.store_if_absent(pass.space, workspace, window, rect);
+            }
         }
     }
 
