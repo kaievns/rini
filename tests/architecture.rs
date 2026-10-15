@@ -1176,7 +1176,7 @@ const LONG_FNS: [(&str, &str, usize); 40] = [
     ("src/workspaces/engine.rs", "move_focus_internal", 106),
     ("src/workspaces/engine.rs", "move_window_to_space", 118),
     ("src/workspaces/engine.rs", "move_window_to_workspace", 156),
-    ("src/workspaces/engine.rs", "on_windows_on_screen_updated", 151),
+    ("src/workspaces/engine.rs", "on_windows_on_screen_updated", 138),
 ];
 
 /// The files over `FILE_LIMIT`, each at its size now as its ceiling: file, ceiling.
@@ -1184,7 +1184,7 @@ const LONG_FILES: [(&str, usize); 4] = [
     ("src/app/reactor/mod.rs", 4502),
     ("src/layout/domain/scrolling.rs", 1816),
     ("src/transitions/platform/engine.rs", 2187),
-    ("src/workspaces/engine.rs", 2544),
+    ("src/workspaces/engine.rs", 2532),
 ];
 
 /// `source` with every comment blanked, so a `//` inside a string is not a comment, and with

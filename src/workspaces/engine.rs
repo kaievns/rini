@@ -31,33 +31,33 @@ mod persistence;
 use persistence::PersistenceState;
 pub use rini_ipc::protocol::LayoutCommand;
 
-/// One window as `WindowsOnScreenUpdated` describes it: id, title, AX role, AX subrole,
-/// is_modal, is_resizable, size, min size, max size.
-pub type OnScreenEntry = (
-    WindowId,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    bool,
-    bool,
-    CGSize,
-    Option<CGSize>,
-    Option<CGSize>,
-);
+/// One window as `WindowsOnScreenUpdated` describes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OnScreenEntry {
+    pub wid: WindowId,
+    pub title: Option<String>,
+    pub ax_role: Option<String>,
+    pub ax_subrole: Option<String>,
+    pub is_modal: bool,
+    pub is_resizable: bool,
+    pub size: CGSize,
+    pub min_size: Option<CGSize>,
+    pub max_size: Option<CGSize>,
+}
 
 /// The entry for `wid`. A window the store no longer has is resizable, sized zero, untitled.
 pub fn on_screen_entry(wid: WindowId, window: Option<&WindowState>) -> OnScreenEntry {
-    (
+    OnScreenEntry {
         wid,
-        window.map(|w| w.info.title.clone()),
-        window.and_then(|w| w.info.ax_role.clone()),
-        window.and_then(|w| w.info.ax_subrole.clone()),
-        window.is_some_and(|w| w.info.is_modal),
-        window.is_none_or(|w| w.info.is_resizable),
-        window.map_or(CGSize::new(0.0, 0.0), |w| w.frame_monotonic.size),
-        window.and_then(|w| w.info.min_size),
-        window.and_then(|w| w.info.max_size),
-    )
+        title: window.map(|w| w.info.title.clone()),
+        ax_role: window.and_then(|w| w.info.ax_role.clone()),
+        ax_subrole: window.and_then(|w| w.info.ax_subrole.clone()),
+        is_modal: window.is_some_and(|w| w.info.is_modal),
+        is_resizable: window.is_none_or(|w| w.info.is_resizable),
+        size: window.map_or(CGSize::new(0.0, 0.0), |w| w.frame_monotonic.size),
+        min_size: window.and_then(|w| w.info.min_size),
+        max_size: window.and_then(|w| w.info.max_size),
+    }
 }
 
 #[non_exhaustive]
@@ -1539,25 +1539,15 @@ impl LayoutEngine {
         };
         let mut focus_request = None;
 
-        for (
-            wid,
-            title_opt,
-            ax_role_opt,
-            ax_subrole_opt,
-            is_modal,
-            is_resizable,
-            size_hint,
-            min_size,
-            max_size,
-        ) in windows_with_titles
-        {
+        for entry in windows_with_titles {
+            let wid = entry.wid;
             self.observe_window_for_persistence(
                 window_store,
                 memory,
                 space,
                 wid,
-                title_opt.as_deref(),
-                size_hint,
+                entry.title.as_deref(),
+                entry.size,
                 app_bundle_id,
             );
 
@@ -1568,13 +1558,13 @@ impl LayoutEngine {
             // which is why left/right navigation "fixed" it. A change here has to ask for
             // that pass itself.
             let constraints = WindowLayoutConstraints {
-                is_resizable,
-                locked_width: size_hint.width,
-                locked_height: size_hint.height,
-                min_width: min_size.map_or(0.0, |s| s.width),
-                min_height: min_size.map_or(0.0, |s| s.height),
-                max_width: max_size.map_or(0.0, |s| s.width),
-                max_height: max_size.map_or(0.0, |s| s.height),
+                is_resizable: entry.is_resizable,
+                locked_width: entry.size.width,
+                locked_height: entry.size.height,
+                min_width: entry.min_size.map_or(0.0, |s| s.width),
+                min_height: entry.min_size.map_or(0.0, |s| s.height),
+                max_width: entry.max_size.map_or(0.0, |s| s.width),
+                max_height: entry.max_size.map_or(0.0, |s| s.height),
             }
             .normalized();
             let previous = self.window_layout_constraints.insert(wid, constraints);
@@ -1585,10 +1575,6 @@ impl LayoutEngine {
                 constraints_changed = true;
             }
 
-            let title_ref = title_opt.as_deref();
-            let ax_role_ref = ax_role_opt.as_deref();
-            let ax_subrole_ref = ax_subrole_opt.as_deref();
-
             let was_floating = self.floating.is_floating(wid);
             let outcome = match self.assign_window_with_app_info(
                 window_store,
@@ -1597,10 +1583,10 @@ impl LayoutEngine {
                 space,
                 app_bundle_id,
                 app_name,
-                title_ref,
-                ax_role_ref,
-                ax_subrole_ref,
-                is_modal,
+                entry.title.as_deref(),
+                entry.ax_role.as_deref(),
+                entry.ax_subrole.as_deref(),
+                entry.is_modal,
             ) {
                 Ok(outcome) => outcome,
                 Err(_) => {
@@ -3061,6 +3047,20 @@ mod tests {
     use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RuleMatch, WindowRule};
     use crate::workspaces::settings::VirtualWorkspaceSettings;
 
+    impl OnScreenEntry {
+        /// A resizable, untitled, non-modal window with no size and no limits.
+        fn plain(wid: WindowId) -> Self { on_screen_entry(wid, None) }
+
+        fn sized(self, width: f64, height: f64) -> Self {
+            Self {
+                size: CGSize::new(width, height),
+                ..self
+            }
+        }
+
+        fn modal(self, is_modal: bool) -> Self { Self { is_modal, ..self } }
+    }
+
     fn test_engine() -> LayoutEngine {
         LayoutEngine::new(&VirtualWorkspaceSettings::default(), &LayoutSettings::default())
     }
@@ -3158,17 +3158,7 @@ mod tests {
                 LayoutEvent::WindowsOnScreenUpdated(
                     space,
                     pid,
-                    vec![(
-                        wid,
-                        None,
-                        None,
-                        None,
-                        false,
-                        true,
-                        CGSize::new(0.0, 0.0),
-                        None,
-                        None,
-                    )],
+                    vec![OnScreenEntry::plain(wid)],
                     None,
                 ),
             );
@@ -3259,19 +3249,7 @@ mod tests {
             &mut memory,
             LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
         );
-        let info = |wid, is_modal| {
-            (
-                wid,
-                None,
-                None,
-                None,
-                is_modal,
-                true,
-                CGSize::new(300.0, 200.0),
-                None,
-                None,
-            )
-        };
+        let info = |wid, is_modal| OnScreenEntry::plain(wid).sized(300.0, 200.0).modal(is_modal);
         let _ = engine.handle_event(
             &mut window_store,
             &mut memory,
@@ -3344,17 +3322,7 @@ mod tests {
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 window.pid,
-                vec![(
-                    window,
-                    None,
-                    None,
-                    None,
-                    false,
-                    true,
-                    CGSize::new(300.0, 200.0),
-                    None,
-                    None,
-                )],
+                vec![OnScreenEntry::plain(window).sized(300.0, 200.0)],
                 Some(AppInfo {
                     bundle_id: Some("com.example.Tool".into()),
                     localized_name: None,
@@ -3437,17 +3405,7 @@ mod tests {
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 window.pid,
-                vec![(
-                    window,
-                    None,
-                    None,
-                    None,
-                    false,
-                    true,
-                    CGSize::new(500.0, 500.0),
-                    None,
-                    None,
-                )],
+                vec![OnScreenEntry::plain(window).sized(500.0, 500.0)],
                 Some(AppInfo {
                     bundle_id: Some("com.example.Editor".into()),
                     localized_name: None,
@@ -3502,19 +3460,7 @@ mod tests {
         let window_a = WindowId::new(1, 1);
         let window_b = WindowId::new(1, 2);
         let window_c = WindowId::new(2, 1);
-        let window_info = |wid| {
-            (
-                wid,
-                None,
-                None,
-                None,
-                false,
-                true,
-                CGSize::new(0.0, 0.0),
-                None,
-                None,
-            )
-        };
+        let window_info = |wid| OnScreenEntry::plain(wid);
 
         let _ = engine.handle_event(
             &mut window_store,
@@ -3580,19 +3526,7 @@ mod tests {
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0));
         let pid: pid_t = 42;
         let wid = WindowId::new(pid, 1);
-        let window_info = |wid| {
-            (
-                wid,
-                None,
-                None,
-                None,
-                false,
-                true,
-                CGSize::new(0.0, 0.0),
-                None,
-                None,
-            )
-        };
+        let window_info = |wid| OnScreenEntry::plain(wid);
 
         let _ = engine.handle_event(
             &mut window_store,
@@ -3651,19 +3585,7 @@ mod tests {
         let pid: pid_t = 43;
         let wid = WindowId::new(pid, 1);
         let source_position = CGRect::new(CGPoint::new(120.0, 140.0), CGSize::new(260.0, 220.0));
-        let window_info = |wid| {
-            (
-                wid,
-                None,
-                None,
-                None,
-                false,
-                true,
-                CGSize::new(0.0, 0.0),
-                None,
-                None,
-            )
-        };
+        let window_info = |wid| OnScreenEntry::plain(wid);
 
         let _ = engine.handle_event(
             &mut window_store,
@@ -3746,19 +3668,7 @@ mod tests {
         let tiled = WindowId::new(pid, 1);
         let float_a = WindowId::new(pid, 2);
         let float_b = WindowId::new(pid, 3);
-        let info = |wid| {
-            (
-                wid,
-                None,
-                None,
-                None,
-                false,
-                true,
-                CGSize::new(0.0, 0.0),
-                None,
-                None,
-            )
-        };
+        let info = |wid| OnScreenEntry::plain(wid);
 
         let _ = engine.handle_event(
             &mut window_store,
@@ -3957,19 +3867,7 @@ mod tests {
         let pid: pid_t = 75;
         let first = WindowId::new(pid, 1);
         let second = WindowId::new(pid, 2);
-        let info = |wid| {
-            (
-                wid,
-                None,
-                None,
-                None,
-                false,
-                true,
-                CGSize::new(0.0, 0.0),
-                None,
-                None,
-            )
-        };
+        let info = |wid| OnScreenEntry::plain(wid);
         let _ = engine.handle_event(
             &mut window_store,
             &mut memory,
@@ -4084,22 +3982,7 @@ mod tests {
         let _ = engine.handle_event(
             &mut window_store,
             &mut memory,
-            LayoutEvent::WindowsOnScreenUpdated(
-                space,
-                pid,
-                vec![(
-                    wid,
-                    None,
-                    None,
-                    None,
-                    false,
-                    true,
-                    CGSize::new(0.0, 0.0),
-                    None,
-                    None,
-                )],
-                None,
-            ),
+            LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![OnScreenEntry::plain(wid)], None),
         );
         engine.focused_window = Some(wid);
 
@@ -4286,19 +4169,7 @@ mod tests {
         let pid: pid_t = 5153;
         let w1 = WindowId::new(pid, 1);
         let w2 = WindowId::new(pid, 2);
-        let info = |wid| {
-            (
-                wid,
-                None,
-                None,
-                None,
-                false,
-                true,
-                CGSize::new(500.0, 500.0),
-                None,
-                None,
-            )
-        };
+        let info = |wid| OnScreenEntry::plain(wid).sized(500.0, 500.0);
 
         let _ = engine.handle_event(
             &mut window_store,
@@ -4352,19 +4223,7 @@ mod tests {
         let space_a = SpaceId::new(95);
         let space_b = SpaceId::new(96);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
-        let info = |wid| {
-            (
-                wid,
-                None,
-                None,
-                None,
-                false,
-                true,
-                CGSize::new(500.0, 500.0),
-                None,
-                None,
-            )
-        };
+        let info = |wid| OnScreenEntry::plain(wid).sized(500.0, 500.0);
         let a1 = WindowId::new(5154, 1);
         let a2 = WindowId::new(5154, 2);
         let b1 = WindowId::new(5155, 1);
@@ -4429,39 +4288,9 @@ mod tests {
         let pid: pid_t = 5151;
 
         let windows = vec![
-            (
-                WindowId::new(pid, 1),
-                None,
-                None,
-                None,
-                false,
-                true,
-                CGSize::new(500.0, 500.0),
-                None,
-                None,
-            ),
-            (
-                WindowId::new(pid, 2),
-                None,
-                None,
-                None,
-                false,
-                true,
-                CGSize::new(500.0, 500.0),
-                None,
-                None,
-            ),
-            (
-                WindowId::new(pid, 3),
-                None,
-                None,
-                None,
-                false,
-                true,
-                CGSize::new(500.0, 500.0),
-                None,
-                None,
-            ),
+            OnScreenEntry::plain(WindowId::new(pid, 1)).sized(500.0, 500.0),
+            OnScreenEntry::plain(WindowId::new(pid, 2)).sized(500.0, 500.0),
+            OnScreenEntry::plain(WindowId::new(pid, 3)).sized(500.0, 500.0),
         ];
 
         let _ = engine.handle_event(
@@ -4522,17 +4351,7 @@ mod tests {
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 pid,
-                vec![(
-                    wid,
-                    None,
-                    None,
-                    None,
-                    false,
-                    true,
-                    CGSize::new(500.0, 500.0),
-                    None,
-                    None,
-                )],
+                vec![OnScreenEntry::plain(wid).sized(500.0, 500.0)],
                 None,
             ),
         );
@@ -4590,17 +4409,7 @@ mod tests {
             LayoutEvent::WindowsOnScreenUpdated(
                 home,
                 pid,
-                vec![(
-                    wid,
-                    None,
-                    None,
-                    None,
-                    false,
-                    true,
-                    CGSize::new(500.0, 500.0),
-                    None,
-                    None,
-                )],
+                vec![OnScreenEntry::plain(wid).sized(500.0, 500.0)],
                 None,
             ),
         );
@@ -4649,28 +4458,8 @@ mod tests {
                 space,
                 pid,
                 vec![
-                    (
-                        wid1,
-                        None,
-                        None,
-                        None,
-                        false,
-                        true,
-                        CGSize::new(500.0, 500.0),
-                        None,
-                        None,
-                    ),
-                    (
-                        wid2,
-                        None,
-                        None,
-                        None,
-                        false,
-                        true,
-                        CGSize::new(500.0, 500.0),
-                        None,
-                        None,
-                    ),
+                    OnScreenEntry::plain(wid1).sized(500.0, 500.0),
+                    OnScreenEntry::plain(wid2).sized(500.0, 500.0),
                 ],
                 None,
             ),
@@ -4736,17 +4525,7 @@ mod tests {
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 pid,
-                vec![(
-                    wid,
-                    None,
-                    None,
-                    None,
-                    false,
-                    true,
-                    CGSize::new(500.0, 500.0),
-                    None,
-                    None,
-                )],
+                vec![OnScreenEntry::plain(wid).sized(500.0, 500.0)],
                 None,
             ),
         );
@@ -4824,17 +4603,7 @@ mod tests {
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 wid.pid,
-                vec![(
-                    wid,
-                    None,
-                    None,
-                    None,
-                    false,
-                    true,
-                    CGSize::new(500.0, 500.0),
-                    None,
-                    None,
-                )],
+                vec![OnScreenEntry::plain(wid).sized(500.0, 500.0)],
                 None,
             ),
         );
@@ -4890,17 +4659,7 @@ mod tests {
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 pid,
-                vec![(
-                    wid,
-                    None,
-                    None,
-                    None,
-                    false,
-                    true,
-                    CGSize::new(500.0, 500.0),
-                    None,
-                    None,
-                )],
+                vec![OnScreenEntry::plain(wid).sized(500.0, 500.0)],
                 None,
             ),
         );
