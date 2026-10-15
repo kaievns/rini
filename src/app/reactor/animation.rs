@@ -10,7 +10,7 @@ use tracing::{debug, trace};
 
 use crate::app::reactor::Reactor;
 use crate::app::reactor::present::{Present, instant_requests};
-use crate::app::reactor::strip_motion::StripLayout;
+use crate::app::reactor::strip_motion::{StripLayout, StripPan};
 use crate::pictures::domain::schedule::{Ask, Priority};
 use crate::pictures::domain::target::PictureTarget;
 use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
@@ -168,15 +168,13 @@ impl Reactor {
             placements.iter().map(|&(_, window, frame, _)| (window, frame)).collect();
         if use_overlay
             && let Some(delta) = pan_delta
-            && self.start_strip_pan(
-                space,
-                active_ws,
-                moves,
+            && self.start_strip_pan(space, active_ws, StripPan {
+                final_frames: moves,
                 delta,
                 moved,
-                &overlay_requests,
-                &strip_before,
-            )
+                standing: &overlay_requests,
+                laid_out: &strip_before,
+            })
         {
             // The strip movement owns it, including placing the real windows once it covers them.
         } else if use_overlay {

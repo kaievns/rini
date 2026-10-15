@@ -24,6 +24,15 @@ pub(crate) struct StripLayout {
     pub(crate) now: Vec<(WindowId, CGRect)>,
 }
 
+/// What a pass hands the strip pan, each field as `Reactor::start_strip_pan` reads it.
+pub(super) struct StripPan<'a> {
+    pub(super) final_frames: Vec<(WindowId, CGRect)>,
+    pub(super) delta: CGPoint,
+    pub(super) moved: Option<(WindowId, Direction)>,
+    pub(super) standing: &'a [crate::transitions::domain::request::AnimationRequest],
+    pub(super) laid_out: &'a [(WindowId, CGRect)],
+}
+
 impl Reactor {
     /// Places windows at their final frames immediately, with no animation.
     ///
@@ -183,17 +192,19 @@ impl Reactor {
     /// per-window path. `standing` is where the pass found each window and `laid_out` where the
     /// strip had it at the last pass: one away from where the shifted viewport draws it starts where
     /// it stands if on screen, else where the strip had it (`strip_move::start_where_standing`).
-    #[allow(clippy::too_many_arguments, reason = "no roadmap task groups them")]
     pub(super) fn start_strip_pan(
         &mut self,
         space: SpaceId,
         workspace_id: crate::workspaces::VirtualWorkspaceId,
-        final_frames: Vec<(WindowId, CGRect)>,
-        delta: CGPoint,
-        moved: Option<(WindowId, Direction)>,
-        standing: &[crate::transitions::domain::request::AnimationRequest],
-        laid_out: &[(WindowId, CGRect)],
+        pan: StripPan<'_>,
     ) -> bool {
+        let StripPan {
+            final_frames,
+            delta,
+            moved,
+            standing,
+            laid_out,
+        } = pan;
         if self.communication_manager.transitions_tx.is_none() {
             return false;
         }
