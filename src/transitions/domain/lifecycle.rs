@@ -411,10 +411,10 @@ pub struct EndWatch {
 }
 
 /// What a tick heard had arrived where it ends (`Event::Tick`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Arrived {
-    settled: bool,
-    landed: bool,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::transitions) struct Arrived {
+    pub(in crate::transitions) settled: bool,
+    pub(in crate::transitions) landed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

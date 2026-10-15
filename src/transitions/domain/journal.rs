@@ -19,7 +19,7 @@ use rini_geometry::space::{OverlayRect, Rect, ScreenRect};
 use serde::{Serialize, Serializer};
 use serde_with::{SerializeAs, serde_as};
 
-use super::lifecycle::{Command, Coordinator, Event, Generation, Kind, Start};
+use super::lifecycle::{Arrived, Command, Coordinator, Event, Generation, Kind, Start};
 use super::request::Cause;
 use crate::animation::event::Crops;
 use crate::pictures::domain::handover::HandoverDiff;
@@ -399,10 +399,7 @@ enum Pending {
     Nothing,
     One(Mark),
     /// A tick's reading, taken only once the clock has run out: before that the engine reads nothing.
-    Tick {
-        settled: bool,
-        landed: bool,
-    },
+    Tick(Arrived),
     FacesTurned(Vec<WindowId>),
 }
 
@@ -480,10 +477,10 @@ impl Journal {
                 window: *window,
             }),
             Event::Extend(needs) => Pending::One(Mark::Extend { ms: millis(*needs) }),
-            Event::Tick { settled, landed } if reads_landing => Pending::Tick {
+            Event::Tick { settled, landed } if reads_landing => Pending::Tick(Arrived {
                 settled: *settled,
                 landed: *landed,
-            },
+            }),
             Event::Tick { .. } => Pending::Nothing,
             Event::Quiet(of) => Pending::One(Mark::Quiet { of: *of }),
             Event::Abandon => Pending::One(Mark::Abandon),
@@ -501,16 +498,16 @@ impl Journal {
         pending: Pending,
         commands: &[Command],
     ) {
-        let mut read = (false, false);
+        let mut read = Arrived::default();
         match pending {
             Pending::Nothing => {}
             Pending::One(mark) => self.push(now, generation, mark),
-            Pending::Tick { settled, landed } => {
-                read = (settled, landed);
-                if first_in(&mut self.edges.at_rest, settled, generation) {
+            Pending::Tick(arrived) => {
+                read = arrived;
+                if first_in(&mut self.edges.at_rest, arrived.settled, generation) {
                     self.push(now, generation, Mark::AtRest);
                 }
-                if first_in(&mut self.edges.landed, landed, generation) {
+                if first_in(&mut self.edges.landed, arrived.landed, generation) {
                     self.push(now, generation, Mark::Landed);
                 }
             }
@@ -525,8 +522,8 @@ impl Journal {
         }
     }
 
-    /// `(at_rest, landed)`: what the drive's tick read, which a lift carries.
-    fn mark(command: &Command, (at_rest, landed): (bool, bool)) -> Mark {
+    /// `read`: what the drive's tick read, which a lift carries.
+    fn mark(command: &Command, read: Arrived) -> Mark {
         match command {
             Command::Hold => Mark::Hold,
             Command::Settle => Mark::Settle,
@@ -567,7 +564,10 @@ impl Journal {
                 focused: *focused,
             },
             Command::PlaceRest => Mark::PlaceRest,
-            Command::Lift { .. } => Mark::Lift { at_rest, landed },
+            Command::Lift { .. } => Mark::Lift {
+                at_rest: read.settled,
+                landed: read.landed,
+            },
             Command::Warm(windows) => Mark::Warm { windows: count(windows.len()) },
             Command::Refresh(windows) => Mark::Refresh { windows: count(windows.len()) },
             Command::ReportUp => Mark::ReportUp,
@@ -1051,13 +1051,16 @@ mod tests {
         ];
         for (command, expected) in table {
             assert_eq!(
-                name(&Journal::mark(&command, (true, false))),
+                name(&Journal::mark(&command, Arrived {
+                    settled: true,
+                    landed: false
+                })),
                 expected,
                 "{command:?}"
             );
         }
         assert_eq!(
-            Journal::mark(&Command::Watch(watch), (false, false)),
+            Journal::mark(&Command::Watch(watch), Arrived::default()),
             Mark::Watch {
                 landing: 1,
                 awaiting: 0,
@@ -1067,7 +1070,10 @@ mod tests {
             }
         );
         assert_eq!(
-            Journal::mark(&Command::Lift { generation: g }, (true, false)),
+            Journal::mark(&Command::Lift { generation: g }, Arrived {
+                settled: true,
+                landed: false
+            }),
             Mark::Lift { at_rest: true, landed: false }
         );
         assert_eq!(
@@ -1075,7 +1081,7 @@ mod tests {
                 &Command::Retarget {
                     held: Duration::from_micros(140_900)
                 },
-                (false, false)
+                Arrived::default()
             ),
             Mark::Retarget { waited_ms: 140 }
         );
