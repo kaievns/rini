@@ -325,7 +325,6 @@ mod tests {
         assert_eq!(old.home_by_intent, setup.home_by_intent);
         assert_eq!(old.display_strip["built-in"], [win(1), win(2)]);
         let old_widths = &old.window_width["built-in"];
-
         assert_eq!(
             old_widths[&win(1)],
             before_dragged_widths::ColumnWidth::Offset(0.33797)

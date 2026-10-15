@@ -338,7 +338,6 @@ impl Reactor {
         &mut self,
         setup_change: &SetupChange,
         arrived: &[DisplayUuid],
-
         outcome: &mut EventOutcome,
     ) {
         if !setup_change.restores_windows() && !arrived.is_empty() {

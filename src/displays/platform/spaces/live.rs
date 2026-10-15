@@ -30,7 +30,6 @@ pub struct LiveDisplays {
     pub(crate) active_space: fn() -> Option<SpaceId>,
     /// Every managed space, per display UUID.
     pub(crate) spaces_per_display: fn() -> HashMap<DisplayUuid, Vec<SpaceId>>,
-
     /// No window has moved, appeared or gone for `WINDOWSERVER_QUIET_US`. The clock behind it is
     /// process-wide and every reactor test sets it, so a test that read it would see the others.
     pub(crate) window_server_quiet: fn() -> bool,

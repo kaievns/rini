@@ -241,7 +241,6 @@ mod tests {
             frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(0.0, 0.0)),
             bounds: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(0.0, 0.0)),
             display_uuid: display_uuid.unwrap_or_default().into(),
-
             name: None,
             space: space.map(SpaceId::new),
             scale: 2.0,

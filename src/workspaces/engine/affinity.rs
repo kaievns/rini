@@ -196,7 +196,6 @@ impl LayoutEngine {
         };
         let found = memory.affinity.window_width(&on_display, window);
         debug!(idx = window.idx.get(), %on_display, width = ?found, "applying a remembered width");
-
         let Some(width) = found else {
             return;
         };

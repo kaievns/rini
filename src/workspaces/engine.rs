@@ -605,7 +605,6 @@ impl LayoutEngine {
                 continue;
             };
             let gaps = self.layout_settings.gaps.effective_for_display(display_uuid.as_ref());
-
             let border = self.borders.of(wid);
             self.workspace_tree_mut(ws_id).on_window_resized(
                 layout,

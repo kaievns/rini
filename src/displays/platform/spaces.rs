@@ -292,7 +292,6 @@ impl SpacesActor {
                 .and_then(|screen| screen.space)
         {
             self.state.forwarded.active_display_uuid = Some(active_display_uuid.clone());
-
             self.events.send(OutEvent::ActiveDisplayChanged {
                 menu_bar_space: Some(active_space),
                 command_space: Some(active_space),

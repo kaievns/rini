@@ -256,7 +256,6 @@ impl<'de> Deserialize<'de> for RuntimeDisplayData {
             frame: helper.frame,
             bounds: helper.frame,
             display_uuid: helper.uuid.into(),
-
             name: helper.name,
             space: helper.space.map(SpaceId::new),
             scale: crate::displays::domain::screen::ASSUMED_SCALE,

@@ -71,7 +71,6 @@ impl LayoutEngine {
                         .window_home(window_id)
                         .or_else(|| memory.affinity.display_for_space(info.space))?
                         .clone();
-
                     let index = self
                         .virtual_workspace_manager
                         .list_workspaces(info.space)

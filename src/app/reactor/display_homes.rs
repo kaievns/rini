@@ -234,7 +234,6 @@ impl Reactor {
         info!(
             %display_uuid,
             ?target_space,
-
             window_count = windows.len(),
             "Repatriating windows to their home display"
         );

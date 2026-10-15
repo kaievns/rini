@@ -576,7 +576,6 @@ impl StateView<'_> {
 
         Some(rini_ipc::protocol::DiagnosticDisplayCensus {
             display_uuid: display_uuid.into(),
-
             display_name: screen.name.clone(),
             homed,
             assigned,
