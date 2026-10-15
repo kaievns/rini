@@ -74,8 +74,13 @@ set_window_ordered_in_override(wsid, Some(false));
 set_window_spaces_override(wsid, Some(vec![space.get()]));
 ```
 
-Reset each to `None` at the end of the test. They are thread-locals and the suite
-runs single-threaded, so a leftover override leaks into whatever runs next.
+An override lasts as long as the thread that set it, and libtest runs every test on a
+thread of its own, at one test thread as at many. A probe of two tests at
+`RUST_TEST_THREADS=1`: `a` ran on `ThreadId(2)` and set a thread-local to 7, `b` ran on
+`ThreadId(3)` and read 0. So no override reaches another test, and the
+`*_override(.., None)` calls at the end of tests do nothing for isolation. They are left
+in place: a reset part-way through a test does change what its next step reads, and
+telling those apart from the trailing ones is site by site.
 
 ### How this was found
 
@@ -86,10 +91,69 @@ of `handle_authoritative_space_snapshot` put the loss inside
 developer's own desktop in it. `std::backtrace::Backtrace::force_capture()` in the
 `WindowRemoved` handler named the second one.
 
-## The test suite runs single-threaded on purpose
+## A process static is shared by every test
 
-Several tests reach macOS frameworks that initialise lazily, and initialising
-them from more than one thread at once aborts the whole process:
+A `static` is one value for the whole test binary, so in a parallel run a test that reads
+one sees whatever a test beside it wrote. A reset when the writer ends is not enough on
+its own: the reader can run in the middle. Each static a test writes is held one of two
+ways:
+
+- **Injected at its reader**, so no test reads the static at all. The reader takes a
+  function, the production one reads the static, and a test's default answers for it.
+- **Held for the test's lifetime** by a guard modelled on
+  `display_churn::hold_for_test`: a mutex, so one such test runs at a time, and a reset in
+  `Drop`, so the value is clear when the test ends, pass or fail
+  (`a_test_that_panics_holding_the_flag_leaves_it_clear`).
+
+| static | tests that write it | tests that read it | held by |
+|---|---|---|---|
+| `DISPLAY_CHURN_ACTIVE` (`src/displays/platform/display_churn.rs`) | spaces actor tests, through `begin` and `end` | `a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set`, under `hold_for_test`; every other reactor reads its own `display_churn` field, false under test | `hold_for_test` around every writer and that reader |
+| `LAST_WINDOWSERVER_ACTIVITY_US` (`src/windows/platform/window_server.rs`) | every reactor test that handles a window event | `the_production_reader_reports_a_window_server_that_just_moved_as_busy`, which only asks whether it is busy right after setting it; the spaces actor reads `LiveDisplays::window_server_quiet` | injection; the one reader holds because every writer moves the clock later |
+| `LOW_POWER_MODE` (`src/app/power.rs`), `MOUSE_STATE` (`src/windows/platform/mouse.rs`) | none: only the notification handler and the event tap write them | the reactor and the app actor read the initial value | nothing yet; a test that writes one injects it first |
+| `SAVE_TEMP_COUNTER` (`src/workspaces/engine/persistence/mod.rs`) | persistence tests | none read its value; it only makes temp names unique | nothing needed |
+
+The tests that hold this: `a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag` and
+`display_churn_waits_for_a_quiet_window_server_as_its_reader_reports_it`. The production readers
+behind both injections are held by
+`a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set` and
+`the_production_reader_reports_a_window_server_that_just_moved_as_busy`.
+
+## The suite runs in parallel, and a Core Animation read-back holds its lock
+
+`cargo test` runs on libtest's default threads, one per core: `.cargo/config.toml` sets no
+`RUST_TEST_THREADS`. On 2026-10-15, on 12 cores, the lib suite's 2770 tests took 8.9s to 9.7s
+in each of 20 consecutive `cargo test --workspace` runs, all green, where one thread took 54.7s.
+
+One kind of test is serialised: a test that installs an animation on a layer and reads it back.
+A probe installed one animation 300 times per row and read each back 50 times, while a second
+thread did the row's work:
+
+| the second thread | lost | lost, holding `CATransaction::lock` |
+|---|---|---|
+| nothing | 0 | 0 |
+| commits a `CATransaction` that changes another layer | 300 | 0 |
+| changes another layer, then `CATransaction::flush` | 300 | 0 |
+| a thread that changes a layer and exits | 300 | 0 |
+| a thread that makes a layer, changes nothing and exits | 0 | 0 |
+
+A commit on any thread, the implicit one a thread commits as it exits included, drops every
+animation from a layer that no render context holds, whatever its begin time. An explicit
+transaction around the install and the read-back kept nothing either (300 lost);
+`removedOnCompletion = false` keeps it. So a `CATransaction` nests per thread, but what its commit
+drops is not per thread. A test's layers are in no render context, and every test that changes a
+layer commits when its thread ends, so a read-back beside one found nothing: 11 to 15 failures per
+parallel run, "nothing under {key}", in `animation::platform::overlay` and
+`decorations::platform::layers`.
+
+`decorations::platform::layers::hold_core_animation` takes Core Animation's own lock for the
+test's lifetime. No commit landed while the probe held it, so a commit elsewhere waits for the
+read-back instead of landing inside it. Every read-back helper calls `assert_core_animation_held`, so a test
+that reads back without the hold fails on its first run, not on an unlucky one. 22 tests hold it;
+`a_commit_on_another_thread_drops_a_test_layers_animation_once_the_hold_is_let_go` holds the
+behaviour it rests on.
+
+The suite used to run on one thread for another reason, an abort while macOS frameworks start up
+lazily on two threads at once:
 
 ```
 objc[75992]: Cannot form weak reference to instance of class
@@ -97,19 +161,10 @@ SLSWindowManagementFallbackBridge. It is possible that this object was
 over-released, or is in the process of deallocation.
 ```
 
-Measured rates, 40 parallel runs each: none at all before the overlay work, and
-a few percent after it. Narrowing it was misleading, because skipping a test
-changes timing as well as coverage, so two different "confirmed" causes both
-turned out to be sampling noise. Single-threaded runs never reproduced it across
-88 runs.
-
-`RUST_TEST_THREADS = "1"` in `.cargo/config.toml` settles it, at a cost. On
-2026-10-10 the lib suite's 2687 tests took 60.0s on one thread and 11.5s on 8,
-and two 8-thread runs failed besides: 8 and then 9 of the Core Animation tests
-in `animation::platform::overlay` and `decorations::platform::layers`, which are
-not safe in parallel either, for a reason not looked into. The tests
-that build capture fixtures also avoid `IOSurface` entirely for the same reason
-and use a CPU bitmap instead.
+On 2026-10-10 it took a few percent of 40 parallel runs. It took none of the 47 parallel runs
+on 2026-10-15, with nothing changed that it was traced to; if it comes back the message names it.
+The tests that build capture fixtures still avoid `IOSurface` for that reason, and use a CPU
+bitmap instead.
 
 ## What a flight costs is measured on the screen, by the timing battery
 
@@ -144,4 +199,5 @@ only while Kai is away. The recordings so far are listed there too.
 
 `cargo clippy --all-targets --workspace` completes with no errors, so its lints reach every crate.
 Its warnings, mostly style lints such as a collapsible `if`, are not held at zero. The checks a
-change passes are a build with no warnings, `cargo test` and `tests/architecture.rs`.
+change passes are `bin/check.sh`: the nightly format check, a build of every target with warnings
+as errors, and the suite, `tests/architecture.rs` with it.

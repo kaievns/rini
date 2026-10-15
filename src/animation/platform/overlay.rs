@@ -1696,7 +1696,9 @@ mod tests {
     use crate::animation::domain::motion::tile::Anchor;
     use crate::decorations::domain::shape::{self, shadow_mask_frame};
     use crate::decorations::domain::stack::SHADOW_Z;
-    use crate::decorations::platform::layers::{shadow_mask_path, silhouette_path};
+    use crate::decorations::platform::layers::{
+        assert_core_animation_held, hold_core_animation, shadow_mask_path, silhouette_path,
+    };
 
     /// The window starts a band below the display's top and loses that much height; the canvas holds
     /// the whole display, lifted by the band so the top is clipped. With no band the two are the
@@ -1908,6 +1910,7 @@ mod tests {
     }
 
     fn installed<T>(layer: &CALayer, key: &str, read: impl Fn(&AnyObject) -> T) -> Installed<T> {
+        assert_core_animation_held();
         // SAFETY: a read of the layer's own animation.
         let animation = unsafe { layer.animationForKey(&NSString::from_str(key)) }
             .unwrap_or_else(|| panic!("nothing under {key}"));
@@ -2029,6 +2032,7 @@ mod tests {
     /// additive exactly when it is an accent.
     #[test]
     fn every_track_is_installed_as_itself() {
+        let _core_animation = hold_core_animation();
         let still = GroupKey::STILL;
         let tracks = [
             Track::between(
@@ -2089,6 +2093,7 @@ mod tests {
     /// would go on drawing the old sizes.
     #[test]
     fn a_tile_track_is_installed_on_every_layer_of_the_tile() {
+        let _core_animation = hold_core_animation();
         let origin = CGPoint::new(0.0, 0.0);
         let mut tile = strip_tile(typed(865.0, 32.0, 861.0, 1081.0));
         tile.decorations.radius = Some(16.0);
@@ -2206,6 +2211,7 @@ mod tests {
     /// installed for one, and what played under its key goes, as the score's track does.
     #[test]
     fn a_track_of_no_length_installs_nothing() {
+        let _core_animation = hold_core_animation();
         let layer = CALayer::layer();
         let moving = Track::between(
             container(),
@@ -2255,6 +2261,7 @@ mod tests {
     /// is drawn.
     #[test]
     fn the_bounce_installed_is_its_track() {
+        let _core_animation = hold_core_animation();
         let wall = OverlayVector::new(-72.0, 0.0);
         let plays = Duration::from_millis(350);
         let first = Bounce::from_rest(wall, plays);
@@ -2263,6 +2270,7 @@ mod tests {
             let track = bounce.track(GroupKey::STILL, 7.0);
             let layer = CALayer::layer();
             install_container_track(&layer, &track, &[]);
+            assert_core_animation_held();
             // SAFETY: a read of the layer's own animation.
             let animation =
                 unsafe { layer.animationForKey(&NSString::from_str(BOUNCE_ANIMATION_KEY)) }
@@ -2294,6 +2302,7 @@ mod tests {
     }
 
     fn animation_keys(layer: &CALayer) -> Vec<String> {
+        assert_core_animation_held();
         layer
             .animationKeys()
             .map(|keys| keys.iter().map(|key| key.to_string()).collect())
@@ -2302,6 +2311,7 @@ mod tests {
 
     /// When the animation under `key` plays, as Core Animation was handed it.
     fn playing(layer: &CALayer, key: &str) -> Playing {
+        assert_core_animation_held();
         // SAFETY: a read of the layer's own animation.
         let animation = unsafe { layer.animationForKey(&NSString::from_str(key)) }
             .expect("an animation under the key");
@@ -2374,6 +2384,7 @@ mod tests {
     /// on where they were; begun again a second time, they are still where they were.
     #[test]
     fn a_replaced_movement_begins_its_accents_again_from_the_replica() {
+        let _core_animation = hold_core_animation();
         let (layer, replica) = accented_container();
         let riding: Vec<Track> = replica.tracks(container()).cloned().collect();
         install_container_track(&layer, &new_leg(5.3), &riding);
@@ -2430,6 +2441,7 @@ mod tests {
     /// order they were added, so a movement added plainly goes after accents that began before it.
     #[test]
     fn core_animation_orders_a_layers_animations_by_begin_time() {
+        let _core_animation = hold_core_animation();
         let (layer, _) = accented_container();
         assert_eq!(
             animation_keys(&layer),
@@ -2516,6 +2528,7 @@ mod tests {
     /// piece: each piece's contents composed with it, at rest and at both ends of a resize.
     #[test]
     fn a_region_pictures_crop_pieces_show_only_the_region() {
+        let _core_animation = hold_core_animation();
         let container = CALayer::layer();
         let mut tile = new_tile(&container);
         tile.crop_grid = Some(new_crop_grid(&tile.picture));
@@ -2594,6 +2607,7 @@ mod tests {
     /// track to re-key along.
     #[test]
     fn a_swap_re_keys_a_crop_grid_on_its_tiles_track() {
+        let _core_animation = hold_core_animation();
         use crate::pictures::platform::picture::test_picture;
         let (from, to): (GroupRect, GroupRect) =
             (typed(263.0, 32.0, 600.0, 1081.0), typed(4.0, 32.0, 859.0, 1081.0));
@@ -2646,6 +2660,7 @@ mod tests {
     /// (`a_leg_in_two_steps_cuts_its_crop_grid_to_its_repaint_at_the_corner`).
     #[test]
     fn a_landing_smaller_than_the_frame_to_come_is_grounded_by_the_moving_edge() {
+        let _core_animation = hold_core_animation();
         use crate::pictures::platform::picture::test_picture;
         let column: GroupRect = typed(4.0, 3.0, 859.0, 1074.0);
         for (case, to, anchored_top) in [
@@ -2702,6 +2717,7 @@ mod tests {
     /// over every key.
     #[test]
     fn a_leg_in_two_steps_cuts_its_crop_grid_to_its_repaint_at_the_corner() {
+        let _core_animation = hold_core_animation();
         use crate::animation::domain::motion::tile::{Crop, corner_key, leg, two_steps};
         use crate::pictures::domain::ground::Ground;
         use crate::pictures::platform::picture::{LazyGround, Pixels, test_picture};
@@ -2745,6 +2761,7 @@ mod tests {
             curves: [track.curves()[0], Curve::Linear, track.curves()[1]].map(bezier_points).to_vec(),
         };
         let switched = |layer: &CALayer, key_path: &str| {
+            assert_core_animation_held();
             // SAFETY: a read of the layer's own animation.
             let animation = unsafe { layer.animationForKey(&NSString::from_str(key_path)) }
                 .unwrap_or_else(|| panic!("nothing under {key_path}"));
@@ -2834,6 +2851,7 @@ mod tests {
     /// drawn stretched over the whole leg from its start.
     #[test]
     fn a_leg_in_two_steps_cuts_to_its_repaint_at_the_corner_whatever_the_repaint_fits() {
+        let _core_animation = hold_core_animation();
         use crate::animation::domain::motion::tile::leg;
         use crate::pictures::platform::picture::{stand_in_picture, test_bitmap, test_picture};
         let (from, to): (GroupRect, GroupRect) =
@@ -2858,6 +2876,7 @@ mod tests {
     /// the crop grid and keyed along the leg rather than stretched over it.
     #[test]
     fn a_stretched_tile_takes_a_picture_that_does_not_fit_its_leg_cropped() {
+        let _core_animation = hold_core_animation();
         use crate::pictures::platform::picture::{stand_in_picture, test_bitmap, test_picture};
         let (from, to): (GroupRect, GroupRect) =
             (typed(4.0, 542.0, 859.0, 535.0), typed(4.0, 3.0, 859.0, 1074.0));
@@ -3025,6 +3044,7 @@ mod tests {
     /// and the outline's path go from the zero-width shape to the slot's on the same timing.
     #[test]
     fn a_resize_carries_the_hairline_on_the_tiles_timing() {
+        let _core_animation = hold_core_animation();
         let (from, to): (GroupRect, GroupRect) =
             (typed(4.0, 32.0, 0.0, 1081.0), typed(4.0, 32.0, 859.0, 1081.0));
         let mut tile = strip_tile(to);
@@ -3054,6 +3074,7 @@ mod tests {
     /// hairline's, or it would go on growing from none.
     #[test]
     fn a_resize_carries_one_corner_on_every_piece() {
+        let _core_animation = hold_core_animation();
         let (from, to): (GroupRect, GroupRect) =
             (typed(4.0, 32.0, 0.0, 1081.0), typed(4.0, 32.0, 859.0, 1081.0));
         let mut tile = strip_tile(to);
@@ -3117,6 +3138,7 @@ mod tests {
     }
 
     fn basic(layer: &CALayer, key: &str) -> Retained<CABasicAnimation> {
+        assert_core_animation_held();
         // SAFETY: a read of the layer's own animation.
         unsafe { layer.animationForKey(&NSString::from_str(key)) }
             .expect("an animation under the key")
@@ -3395,6 +3417,7 @@ mod tests {
         /// of the edits it was handed.
         #[test]
         fn the_overlay_plays_exactly_its_score() {
+            let _core_animation = hold_core_animation();
             let column =
                 |i: f64, w: f64| -> ScreenRect { typed(4.0 + i * 863.0, 32.0, w, 1081.0) };
             let step = |frame: ScreenRect| -> ScreenRect {
@@ -3651,6 +3674,7 @@ mod tests {
         /// carries none, a new leg flies the picture it has and cuts nothing.
         #[test]
         fn a_tile_carrying_a_picture_from_its_corner_cuts_to_it_there_and_a_snap_keeps_the_cut() {
+            let _core_animation = hold_core_animation();
             use crate::animation::domain::motion::tile::leg;
             let window = wid(1);
             let (from, to): (GroupRect, GroupRect) =
@@ -3819,6 +3843,7 @@ mod tests {
         /// the shadow's mask and silhouette, and the hairline, and plays nothing.
         #[test]
         fn a_placed_tile_moves_every_layer_of_the_tile() {
+            let _core_animation = hold_core_animation();
             let window = wid(1);
             let at: GroupRect = typed(865.0, 32.0, 861.0, 1081.0);
             let drawn = typed(865.0, 32.0, 861.0, 1081.0);

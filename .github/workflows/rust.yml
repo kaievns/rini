@@ -16,24 +16,17 @@ env:
   RUSTFLAGS: "-C debuginfo=0"
 
 jobs:
-  format:
+  check:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      # Nightly for rustfmt first, so the stable install after it is the default toolchain.
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
-      - name: Format Check
-        run: cargo +nightly fmt --all --check --verbose
-
-  test:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
-      - name: Compile
-        run: cargo check --locked
-      - name: Test
-        run: cargo nextest run
+        with:
+          workspaces: ". -> target-dev"
+      - name: Check
+        run: bin/check.sh

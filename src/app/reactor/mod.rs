@@ -568,6 +568,10 @@ pub struct Reactor {
     /// How a space id is classified. Injected rather than called, so a test can say what a
     /// non-user space is; see `displays::platform::spaces::SpaceKinds`.
     space_kinds: SpaceKinds,
+    /// Whether the spaces actor is mid display reconfiguration. Injected rather than called: the
+    /// flag behind the production reader is process-wide, so a test that read it would be
+    /// quarantined by whichever spaces test runs beside it.
+    display_churn: fn() -> bool,
 }
 
 impl Reactor {
@@ -698,6 +702,7 @@ impl Reactor {
             autosave_pending: false,
             autosave_path: Some(rini_core::paths::restore_file()),
             space_kinds: SpaceKinds::from_window_server(),
+            display_churn: crate::displays::platform::display_churn::is_active,
         };
         reactor
     }
@@ -1206,7 +1211,7 @@ impl Reactor {
     }
 
     fn should_quarantine_during_display_churn(&self, event: &Event) -> bool {
-        if !crate::displays::platform::display_churn::is_active() {
+        if !(self.display_churn)() {
             return false;
         }
 
@@ -2770,7 +2775,7 @@ impl Reactor {
     }
 
     fn sync_display_affinity_from_live_layout(&mut self) {
-        if crate::displays::platform::display_churn::is_active() {
+        if (self.display_churn)() {
             return;
         }
         // Closed windows keep their affinity otherwise, because the display-change path

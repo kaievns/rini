@@ -62,4 +62,17 @@ mod tests {
         let _held = hold_for_test();
         assert!(!is_active());
     }
+
+    #[test]
+    fn a_test_that_panics_holding_the_flag_leaves_it_clear() {
+        let panicked = std::thread::spawn(|| {
+            let _held = hold_for_test();
+            begin();
+            panic!("a failing test");
+        })
+        .join();
+        assert!(panicked.is_err());
+        let _held = hold_for_test();
+        assert!(!is_active());
+    }
 }

@@ -951,11 +951,10 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
 
 #[test]
 fn display_churn_quarantines_window_frame_and_membership_events() {
-    let reactor = test_reactor();
+    let mut reactor = test_reactor();
+    reactor.display_churn = || true;
     let space = SpaceId::new(7);
     let wsid = WindowServerId::new(77);
-    let _held = crate::displays::platform::display_churn::hold_for_test();
-    crate::displays::platform::display_churn::begin();
 
     let frame_changed = reactor.should_quarantine_during_display_churn(&Event::WindowFrameChanged(
         WindowId::new(99, 1),
@@ -980,7 +979,6 @@ fn display_churn_quarantines_window_frame_and_membership_events() {
     let space_destroyed =
         reactor.should_quarantine_during_display_churn(&Event::SpaceDestroyed(space));
 
-    crate::displays::platform::display_churn::end();
     assert!(
         frame_changed,
         "WindowFrameChanged should be quarantined during churn"
@@ -1002,6 +1000,32 @@ fn display_churn_quarantines_window_frame_and_membership_events() {
         space_destroyed,
         "SpaceDestroyed should be quarantined during churn"
     );
+}
+
+/// A test reactor reads its own churn reader, never the process-wide flag a spaces test sets beside it.
+#[test]
+fn a_test_reactor_is_not_quarantined_by_the_process_wide_churn_flag() {
+    let reactor = test_reactor();
+    let _held = crate::displays::platform::display_churn::hold_for_test();
+    crate::displays::platform::display_churn::begin();
+    assert!(!reactor.should_quarantine_during_display_churn(&Event::SpaceCreated(SpaceId::new(7))));
+}
+
+/// The reactor production builds reads the process-wide churn flag.
+#[test]
+fn a_production_reactor_is_quarantined_while_the_process_wide_churn_flag_is_set() {
+    let reactor = Reactor::new(
+        crate::app::config::Config::default(),
+        LayoutEngine::new(
+            &crate::app::config::VirtualWorkspaceSettings::default(),
+            &crate::app::config::LayoutSettings::default(),
+        ),
+        DisplayMemory::default(),
+        WindowTxStore::new(),
+    );
+    let _held = crate::displays::platform::display_churn::hold_for_test();
+    crate::displays::platform::display_churn::begin();
+    assert!(reactor.should_quarantine_during_display_churn(&Event::SpaceCreated(SpaceId::new(7))));
 }
 
 #[test]

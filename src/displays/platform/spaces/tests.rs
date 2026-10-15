@@ -1037,6 +1037,50 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
     assert_no_reactor_event(&mut reactor_rx);
 }
 
+/// The churn ends on the actor's own reader of window-server activity, never the process-wide clock
+/// behind the production one, which every reactor test running beside this one sets.
+#[test]
+fn display_churn_waits_for_a_quiet_window_server_as_its_reader_reports_it() {
+    let _held = display_churn::hold_for_test();
+    let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
+    actor.state.live.window_server_quiet = || false;
+    let (left, right) = (SpaceId::new(611), SpaceId::new(612));
+
+    actor.handle_event(Notification::DisplayReconfigured {
+        flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
+    });
+    assert!(matches!(
+        recv_reactor(&mut reactor_rx),
+        OutEvent::DisplayChurnBegin
+    ));
+    let epoch = actor.state.display_churn_epoch;
+    actor.state.screens = vec![
+        make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
+        make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right)),
+    ];
+
+    actor.attempt_finish_display_churn(epoch, 0);
+    actor.attempt_finish_display_churn(epoch, 1);
+    assert_no_wm_event(&mut wm_rx);
+    assert!(
+        actor.state.display_churn_active,
+        "a busy window server holds the churn open"
+    );
+
+    crate::windows::platform::window_server::note_windowserver_activity(611);
+    actor.state.live.window_server_quiet = || true;
+    actor.attempt_finish_display_churn(epoch, 2);
+    assert!(matches!(recv_wm(&mut wm_rx), OutEvent::SpaceStateUpdated(..)));
+    assert!(!actor.state.display_churn_active);
+}
+
+/// Safe beside every other test: they only move the clock later, which keeps it busy too.
+#[test]
+fn the_production_reader_reports_a_window_server_that_just_moved_as_busy() {
+    crate::windows::platform::window_server::note_windowserver_activity(1);
+    assert!(!(LiveDisplays::from_window_server().window_server_quiet)());
+}
+
 #[test]
 fn duplicate_visible_spaces_disable_remaps_and_layout_forcing() {
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
@@ -1190,6 +1234,7 @@ fn build_actor_seeing_display_and_space() -> (
             );
             map
         },
+        window_server_quiet: || true,
     };
     let (actor, _) = SpacesActor::new_for_tests_seeing(
         Box::new(Split {
