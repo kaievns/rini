@@ -18,8 +18,8 @@ the strip fresh.
 ## Refusing a file
 
 - A file written by a NEWER schema version MUST be refused rather than half-read.
-- A file written by an OLDER schema version MUST be refused too, layout and all, and the refusal MUST
-  say which version it is. rini reads only the current shape, so an older file read as one would
+- A file written by an OLDER schema version MUST be refused too, layout and all, whether it is
+  `layout.ron` or a file `save-layout` wrote, and the refusal MUST say which version it is. rini reads only the current shape, so an older file read as one would
   come back without the window records its own shape held.
 
 > **Reported 2026-10-15.** Kai's decision in the dead-code sweep: delete every reader of files older

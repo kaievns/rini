@@ -6,8 +6,8 @@ use crate::workspaces::domain::display_memory::DisplayMemory;
 ///
 /// The layout is a `Result` on purpose. Whether the saved strip can be trusted and whether the
 /// machine's memory can are two different questions, and the file answers them separately: a layout
-/// that fails validation, or one written by a newer schema, is refused without also forgetting which
-/// monitor each window lives on. Re-homing every window from scratch and landing every relaunched
+/// that fails validation, or one written by any schema but the current one, is refused without also
+/// forgetting which monitor each window lives on. Re-homing every window from scratch and landing every relaunched
 /// application in a default slot is a worse outcome than laying out the strip fresh.
 pub struct LoadedLayout {
     /// The saved layout, or why it was refused.
