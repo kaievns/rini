@@ -149,7 +149,7 @@ the window is not on screen. So `register_window` needs a `WindowServerInfo` hin
 
 `handle_notification` and `handle_raise_request`, which is async and drives activation waits, are
 tested on the same fake: a replaced element's notifications, miniaturize, hide and show, the skip of
-the window already focused, batch order, `Quiet` on the last window, the wait for activation, its
+the window already focused and of no background application's main window, batch order, `Quiet` on the last window, the wait for activation, its
 cancel and the frontmost polling that can end it. Still untested in there: `handle_request`'s
 `WindowMaybeDestroyed` and `SetWorkspaceSwitchPositions` arms. No `TODO` or `FIXME` is
 left in `app_actor.rs`; two of the questions they asked are answered on evidence in

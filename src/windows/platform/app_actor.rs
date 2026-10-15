@@ -2751,6 +2751,30 @@ mod tests {
         assert!(completed(&sink).is_empty(), "not reported done while waiting");
     }
 
+    /// A background application keeps its main window, so being main is not being focused: a raise
+    /// of a background application's main window is made key and raised like any other.
+    #[test]
+    fn a_raise_of_a_background_application_s_main_window_is_not_skipped() {
+        let (mut state, sink, wids) = app_with(&[7]);
+        state.ax.frontmost = false;
+        state.main_window = Some(wids[0]);
+        let state = RefCell::new(state);
+        let token = CancellationToken::new();
+
+        let mut raise = std::pin::pin!(State::handle_raise_request(
+            &state,
+            wids.clone(),
+            &token,
+            1,
+            Quiet::No
+        ));
+
+        assert!(poll_once(raise.as_mut()).is_pending(), "waiting for activation");
+        assert_eq!(state.borrow().ax.made_key(), [(PID, WindowServerId::new(7))]);
+        assert_eq!(*state.borrow().ax.raised.borrow(), [7]);
+        assert!(completed(&sink).is_empty(), "not reported done while waiting");
+    }
+
     /// The application's activation ends the wait, and the window already raised is not raised again.
     #[test]
     fn a_raise_waiting_for_activation_finishes_when_the_application_activates() {
