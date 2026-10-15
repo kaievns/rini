@@ -20,14 +20,10 @@ input {
     mod-key "Alt"
 
     // Moving the mouse into a window focuses it. Off unless written.
-    // suspend-while-held= names a key, or modifiers alone, that pause it while held.
-    // focus-follows-mouse suspend-while-held="Fn"
+    // focus-follows-mouse
 
     // When focus changes, move the mouse to the focused window. Off unless written.
     // warp-mouse-to-focus
-
-    // Switching to the workspace that is already shown goes back to the previous one instead.
-    // workspace-auto-back-and-forth
 
     // With displays arranged VERTICALLY, pushing the pointer off a left or right edge crosses to the
     // display above or below, as if they sat side by side. Off unless written. It only makes sense
@@ -51,11 +47,6 @@ input {
     // one line each. `rini-cli query applications` lists what is running. Examples:
     // ignore-app-activation "com.apple.Spotlight"
     // ignore-app-activation "com.apple.dock"
-}
-
-cursor {
-    // Hide the mouse cursor whenever focus moves to another window. Off unless written.
-    // hide-on-focus-change
 }
 
 layout {
@@ -123,10 +114,6 @@ layout {
     // - "always": the focused column sits in the middle, except the first and last columns, which
     //   sit flush with the display edge (niri centres those too).
     center-focused-column "never"
-
-    // Where a new window goes: "next-to-selection" (right after the focused window) or
-    // "end-of-tree" (the end of the strip).
-    window-insertion-point "next-to-selection"
 }
 
 // Per-display overrides of `layout`, by display UUID (`rini-cli query displays`). `gaps` and
@@ -387,7 +374,6 @@ binds {
     //   set-window-height "+5%" / "-5%"               windows stacked in one column
     //   set-column-width-or-window-height "+5%"       the height in a stacked column, the width otherwise
     //   center-column
-    //   scroll-strip 0.5                              scroll the strip by that many columns
     //   snap-strip                                    align the strip to column boundaries
     //   focus-workspace N
     //   focus-workspace-up / focus-workspace-down     skip-empty=true|false; never wrap

@@ -67,7 +67,6 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
         Action::SetColumnWidth(change) => resize(change.0, ResizeOrientation::Horizontal),
         Action::SetWindowHeight(change) => resize(change.0, ResizeOrientation::Vertical),
         Action::SetColumnWidthOrWindowHeight(change) => resize(change.0, ResizeOrientation::Smart),
-        Action::ScrollStrip(delta) => layout(LayoutCommand::ScrollStrip { delta: delta.0 }),
         Action::SnapStrip => layout(LayoutCommand::SnapStrip),
         Action::FocusWorkspace(workspace) => match workspace_index(&workspace, workspace_names) {
             Ok(index) => layout(LayoutCommand::SwitchToWorkspace(index)),

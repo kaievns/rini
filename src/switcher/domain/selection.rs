@@ -17,9 +17,8 @@ pub struct Selection {
 impl Selection {
     /// A cursor over `len` rows starting at `index`, or `None` when there is nothing to select.
     ///
-    /// An out-of-range start is clamped rather than refused: the list is rebuilt while a switch is
-    /// open (a window can close under it) and a cursor past the end must land somewhere valid instead
-    /// of ending the switch.
+    /// An out-of-range start is clamped rather than refused: a bad opening index must land somewhere
+    /// valid instead of ending the switch before it starts.
     pub fn new(len: usize, index: usize) -> Option<Self> {
         if len == 0 {
             return None;
@@ -29,10 +28,6 @@ impl Selection {
 
     pub fn index(&self) -> usize {
         self.index
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
     }
 
     /// Move by `delta` rows, wrapping at both ends.
@@ -57,24 +52,6 @@ impl Selection {
             return false;
         }
         self.index = index;
-        true
-    }
-
-    /// Re-point the cursor at a list that has changed length, keeping the row it was on if that row
-    /// still exists.
-    ///
-    /// `moved_to` is where the previously selected row now sits, if it is still in the list. A switch
-    /// stays open while windows open and close, and the selection has to follow the WINDOW rather than
-    /// the position — otherwise closing a window above the cursor silently retargets the commit.
-    pub fn relocate(&mut self, len: usize, moved_to: Option<usize>) -> bool {
-        if len == 0 {
-            return false;
-        }
-        self.len = len;
-        self.index = match moved_to {
-            Some(index) => index.min(len - 1),
-            None => self.index.min(len - 1),
-        };
         true
     }
 }
@@ -148,38 +125,7 @@ mod tests {
         assert_eq!(cursor.index(), 0, "and the cursor has not moved");
     }
 
-    /// A window closing while the switch is open must not silently retarget the commit to whatever
-    /// slid into that position.
-    #[test]
-    fn the_cursor_follows_its_row_when_the_list_changes() {
-        let mut cursor = Selection::new(4, 2).expect("cursor");
-        assert!(cursor.relocate(3, Some(1)));
-        assert_eq!(cursor.index(), 1);
-    }
-
-    /// When the selected row has gone entirely, the cursor stays where it is rather than jumping.
-    #[test]
-    fn a_vanished_row_leaves_the_cursor_in_place() {
-        let mut cursor = Selection::new(4, 2).expect("cursor");
-        assert!(cursor.relocate(3, None));
-        assert_eq!(cursor.index(), 2);
-    }
-
-    #[test]
-    fn relocating_past_the_new_end_clamps() {
-        let mut cursor = Selection::new(4, 3).expect("cursor");
-        assert!(cursor.relocate(2, None));
-        assert_eq!(cursor.index(), 1);
-    }
-
-    #[test]
-    fn relocating_onto_an_empty_list_fails_rather_than_panicking() {
-        let mut cursor = Selection::new(2, 1).expect("cursor");
-        assert!(!cursor.relocate(0, None));
-    }
-
-    /// The list is rebuilt under a live switch, so a start index past the end has to land somewhere
-    /// valid rather than ending the switch.
+    /// A start index past the end has to land somewhere valid rather than ending the switch.
     #[test]
     fn an_out_of_range_start_is_clamped() {
         let cursor = Selection::new(2, 9).expect("cursor");

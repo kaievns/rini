@@ -34,7 +34,7 @@ use std::time::Instant;
 
 use crate::input::domain::binding::Bind;
 use crate::input::domain::held_keys::HeldKeys;
-use crate::input::domain::hotkey::{HotkeyTable, modifiers_satisfy};
+use crate::input::domain::hotkey::HotkeyTable;
 use crate::input::domain::key::{Hotkey, KeyCode};
 use crate::input::domain::pointer;
 use crate::input::domain::switch_session::{
@@ -51,8 +51,6 @@ const MOUSE_MOVE_MIN_INTERVAL_NS_LOW_POWER: u64 = 16_000_000; // 16ms ~= 62 Hz
 #[derive(Debug)]
 pub enum Request {
     Warp(CGPoint),
-    HideOnFocus,
-    EnforceHidden,
     SetEventProcessing(bool),
     SetFocusFollowsMouseEnabled(bool),
     /// Every bind, its key free of `Mod`.
@@ -78,7 +76,6 @@ pub struct InputTap {
     mouse_window: Cell<pointer::PointerCache>,
     tap: RefCell<Option<tap::EventTap>>,
     tap_generation: Cell<u64>,
-    disable_hotkey: RefCell<Option<Hotkey>>,
     hotkey_specs: RefCell<Vec<Bind>>,
     hotkeys: SharedHotkeyTable,
 }
@@ -90,12 +87,9 @@ pub struct InputTap {
 unsafe impl Send for InputTap {}
 
 struct State {
-    hide_count: u32,
-    mouse_hides_on_focus: bool,
     focus_follows_mouse_config_enabled: bool,
     event_processing_enabled: bool,
     focus_follows_mouse_enabled: bool,
-    disable_hotkey_active: bool,
     low_power_mode: bool,
     held: HeldKeys,
     current_flags: CGEventFlags,
@@ -106,12 +100,9 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            hide_count: 0,
-            mouse_hides_on_focus: false,
             focus_follows_mouse_config_enabled: false,
             event_processing_enabled: false,
             focus_follows_mouse_enabled: true,
-            disable_hotkey_active: false,
             low_power_mode: false,
             held: HeldKeys::default(),
             current_flags: CGEventFlags::empty(),
@@ -138,10 +129,7 @@ unsafe fn drop_mouse_ctx(ptr: *mut std::ffi::c_void) {
 impl InputTap {
     #[inline]
     fn keyboard_handlers_enabled(&self) -> bool {
-        pointer::wants_keyboard_events(
-            self.disable_hotkey.borrow().is_some(),
-            self.hotkeys.load().len(),
-        )
+        pointer::wants_keyboard_events(self.hotkeys.load().len())
     }
 
     fn mouse_move_handlers_enabled(&self) -> bool {
@@ -245,20 +233,13 @@ impl InputTap {
         events: Box<dyn EventSink>,
         requests_rx: Receiver,
     ) -> Self {
-        let disable_hotkey = settings
-            .focus_follows_mouse_disable_hotkey
-            .clone()
-            .and_then(|spec| spec.to_hotkey());
-        let mut state = State::default();
-        state.low_power_mode = low_power_mode;
-        state.mouse_hides_on_focus = settings.mouse_hides_on_focus;
-        state.focus_follows_mouse_config_enabled = settings.focus_follows_mouse;
-        state.disable_hotkey_active = disable_hotkey
-            .as_ref()
-            .map(|target| state.compute_disable_hotkey_active(target))
-            .unwrap_or(false);
+        let state = State {
+            low_power_mode,
+            focus_follows_mouse_config_enabled: settings.focus_follows_mouse,
+            ..State::default()
+        };
         let event_mask = build_event_mask(
-            disable_hotkey.is_some(),
+            pointer::wants_keyboard_events(0),
             pointer::wants_mouse_move_events(
                 state.event_processing_enabled,
                 state.focus_follows_mouse_config_enabled,
@@ -278,7 +259,6 @@ impl InputTap {
             mouse_window: Cell::new(pointer::PointerCache::default()),
             tap: RefCell::new(None),
             tap_generation: Cell::new(0),
-            disable_hotkey: RefCell::new(disable_hotkey),
             hotkey_specs: RefCell::new(Vec::new()),
             hotkeys: Arc::new(ArcSwap::from_pointee(HotkeyTable::default())),
         }
@@ -302,15 +282,6 @@ impl InputTap {
             *this.tap.borrow_mut() = Some(tap);
         } else {
             return;
-        }
-
-        if this.state.borrow().mouse_hides_on_focus {
-            if let Err(e) = cursor::allow_hide_mouse() {
-                error!(
-                    "Could not enable mouse hiding: {e:?}. \
-                    mouse_hides_on_focus will have no effect."
-                );
-            }
         }
 
         // Local to the input thread on purpose: the cooldown timer is a CFRunLoop timer for THIS
@@ -388,21 +359,6 @@ impl InputTap {
                 if let Err(e) = cursor::warp_mouse(point) {
                     warn!("Failed to warp mouse: {e:?}");
                 }
-                if state.mouse_hides_on_focus && state.hide_count == 0 {
-                    debug!("Hiding mouse");
-                    state.hide_mouse();
-                }
-            }
-            Request::HideOnFocus => {
-                if state.mouse_hides_on_focus && state.hide_count == 0 {
-                    debug!("Hiding mouse after window focus changed");
-                    state.hide_mouse();
-                }
-            }
-            Request::EnforceHidden => {
-                if state.hide_count > 0 {
-                    state.hide_mouse();
-                }
             }
             Request::SetEventProcessing(enabled) => {
                 state.event_processing_enabled = enabled;
@@ -450,41 +406,10 @@ impl InputTap {
                 should_rebuild_mask = true;
             }
             Request::SettingsUpdated(settings) => {
-                let mouse_hides_on_focus = settings.mouse_hides_on_focus;
-                let focus_follows_mouse_config_enabled = settings.focus_follows_mouse;
-                let disable_hotkey =
-                    settings.focus_follows_mouse_disable_hotkey.and_then(|spec| spec.to_hotkey());
-                *self.disable_hotkey.borrow_mut() = disable_hotkey;
-                {
-                    let prev_mouse_hides_on_focus = state.mouse_hides_on_focus;
-                    let prev_focus_follows_mouse_config_enabled =
-                        state.focus_follows_mouse_config_enabled;
-                    state.mouse_hides_on_focus = mouse_hides_on_focus;
-                    state.focus_follows_mouse_config_enabled = focus_follows_mouse_config_enabled;
-                    let prev_active = state.disable_hotkey_active;
-                    state.disable_hotkey_active = self
-                        .disable_hotkey
-                        .borrow()
-                        .as_ref()
-                        .map(|target| state.compute_disable_hotkey_active(target))
-                        .unwrap_or(false);
-                    if prev_active && !state.disable_hotkey_active {
-                        self.reset_mouse_move_sampling();
-                        self.reset_mouse_window();
-                    }
-                    if prev_focus_follows_mouse_config_enabled
-                        != state.focus_follows_mouse_config_enabled
-                    {
-                        self.reset_mouse_move_sampling();
-                        self.reset_mouse_window();
-                    }
-                    if prev_mouse_hides_on_focus
-                        && !state.mouse_hides_on_focus
-                        && state.hide_count > 0
-                    {
-                        debug!("Showing mouse after disabling mouse_hides_on_focus");
-                        state.show_mouse();
-                    }
+                if state.focus_follows_mouse_config_enabled != settings.focus_follows_mouse {
+                    state.focus_follows_mouse_config_enabled = settings.focus_follows_mouse;
+                    self.reset_mouse_move_sampling();
+                    self.reset_mouse_window();
                 }
                 should_rebuild_mask = true;
             }
@@ -504,23 +429,6 @@ impl InputTap {
         }
     }
 
-    fn refresh_disable_hotkey_state(&self, state: &mut State) {
-        let Some(target) = self.disable_hotkey.borrow().as_ref().cloned() else {
-            return;
-        };
-        let prev_active = state.disable_hotkey_active;
-        state.disable_hotkey_active = state.compute_disable_hotkey_active(&target);
-        if state.disable_hotkey_active != prev_active {
-            if state.disable_hotkey_active {
-                debug!(?target, "focus_follows_mouse disabled while hotkey held");
-            } else {
-                debug!(?target, "focus_follows_mouse re-enabled after hotkey release");
-                self.reset_mouse_move_sampling();
-                self.reset_mouse_window();
-            }
-        }
-    }
-
     #[inline]
     fn reset_mouse_move_sampling(&self) {
         self.mouse_move_last_timestamp.set(None);
@@ -537,7 +445,6 @@ impl InputTap {
         debug!(?flags, "Event tap was re-enabled; reconciling pressed keys");
         state.reconcile_after_event_tap_reenabled(flags);
         drop(state);
-        self.refresh_disable_hotkey_state(&mut self.state.borrow_mut());
         self.abandon_switch_session();
     }
 
@@ -575,7 +482,6 @@ impl InputTap {
             if flags != state.current_flags {
                 state.current_flags = flags;
                 state.reconcile_modifier_keys();
-                self.refresh_disable_hotkey_state(&mut state);
             }
         }
 
@@ -607,10 +513,6 @@ impl InputTap {
             return true;
         }
 
-        if state.hide_count > 0 {
-            debug!("Showing mouse");
-            state.show_mouse();
-        }
         match event_type {
             CGEventType::RightMouseUp | CGEventType::LeftMouseUp => {
                 self.events.send(Event::MouseUp);
@@ -646,39 +548,18 @@ impl InputTap {
     ///
     /// Mouse moves are usually the most frequent events delivered to this tap.
     /// In particular, do not read CGEvent flags for every hardware event: the
-    /// keyboard and flags-changed events already maintain modifier state, and
-    /// the sampled move path below is sufficient as a recovery check.
+    /// keyboard and flags-changed events already maintain modifier state.
     fn on_mouse_moved(&self, event: &CGEvent) -> bool {
-        let mut state = self.state.borrow_mut();
+        let state = self.state.borrow();
         if !state.event_processing_enabled {
             return true;
         }
-        if state.hide_count > 0 {
-            debug!("Showing mouse");
-            state.show_mouse();
-        }
         let loc = CGEvent::location(Some(event));
-
-        // Recover modifier state at the sampled rate instead of once per raw
-        // mouse event. Normal modifier transitions arrive through
-        // FlagsChanged; this is only the defensive reconciliation path for
-        // events lost while macOS UI interrupts the tap.
-        if self.disable_hotkey.borrow().is_some() {
-            let flags = CGEvent::flags(Some(event));
-            if flags != state.current_flags {
-                state.current_flags = flags;
-                state.reconcile_modifier_keys();
-                self.refresh_disable_hotkey_state(&mut state);
-            }
-        }
 
         // Resolve and deduplicate the window on the input thread. The application
         // only needs to see transitions; it must not receive a message for
         // every sampled point while the cursor remains in one window.
-        if state.focus_follows_mouse_config_enabled
-            && state.focus_follows_mouse_enabled
-            && !state.disable_hotkey_active
-        {
+        if state.focus_follows_mouse_config_enabled && state.focus_follows_mouse_enabled {
             let hint = mouse_window_hint(event);
             let previous = self.mouse_window.get();
             let window = Self::resolve_mouse_window(hint, loc, previous);
@@ -758,7 +639,6 @@ impl InputTap {
                 _ => {}
             }
         }
-        self.refresh_disable_hotkey_state(state);
 
         // The switcher session, BEFORE the hotkey table.
         //
@@ -774,10 +654,6 @@ impl InputTap {
                 _ => None,
             };
             if let Some(kind) = kind {
-                let is_repeat = CGEvent::integer_value_field(
-                    Some(event),
-                    CGEventField::KeyboardEventAutorepeat,
-                ) != 0;
                 let verdict = state.switch.on_key(SwitchKeyEvent {
                     kind,
                     key: key_code,
@@ -785,7 +661,6 @@ impl InputTap {
                         state.current_flags,
                         state.held.pressed(),
                     ),
-                    is_repeat,
                     at: Instant::now(),
                 });
                 if let Some(signal) = verdict.signal {
@@ -875,22 +750,6 @@ unsafe extern "C-unwind" fn event_tap_invalidated(user_info: *mut std::ffi::c_vo
 }
 
 impl State {
-    fn hide_mouse(&mut self) {
-        if let Err(e) = cursor::hide_mouse() {
-            warn!("Failed to hide mouse: {e:?}");
-        }
-        self.hide_count += 1;
-    }
-
-    fn show_mouse(&mut self) {
-        while self.hide_count > 0 {
-            if let Err(e) = cursor::show_mouse() {
-                warn!("Failed to show mouse: {e:?}");
-            }
-            self.hide_count -= 1;
-        }
-    }
-
     fn note_key_down(&mut self, key_code: KeyCode) {
         self.held.key_down(key_code);
     }
@@ -911,11 +770,6 @@ impl State {
     fn reconcile_after_event_tap_reenabled(&mut self, flags: CGEventFlags) {
         self.current_flags = flags;
         self.held.tap_re_enabled(flags.bits());
-    }
-
-    fn compute_disable_hotkey_active(&self, target: &Hotkey) -> bool {
-        let active = modifiers_from_flags_with_keys(self.current_flags, self.held.pressed());
-        modifiers_satisfy(target.modifiers, active) && self.held.is_held(target.key_code)
     }
 }
 

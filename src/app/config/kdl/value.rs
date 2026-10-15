@@ -13,7 +13,7 @@ use super::layout::GradientRelativeTo;
 use crate::decorations::domain::paint::{Colour, ColourSpace, Hue};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::Decimal;
-use crate::layout::settings::{CenterFocusedColumn, WindowInsertionPoint};
+use crate::layout::settings::CenterFocusedColumn;
 use crate::windows::domain::rules::RelativeTo;
 use crate::workspaces::domain::display_pin::DisplayRole;
 
@@ -202,10 +202,6 @@ kebab_scalar!(CenterFocusedColumn {
     "never" => CenterFocusedColumn::Never,
     "always" => CenterFocusedColumn::Always,
 } not_yet { "on-overflow" });
-kebab_scalar!(WindowInsertionPoint {
-    "next-to-selection" => WindowInsertionPoint::NextToSelection,
-    "end-of-tree" => WindowInsertionPoint::EndOfTree,
-});
 kebab_scalar!(DisplayRole { "internal" => DisplayRole::Internal, "external" => DisplayRole::External });
 kebab_scalar!(GradientRelativeTo {
     "window" => GradientRelativeTo::Window,

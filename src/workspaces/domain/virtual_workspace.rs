@@ -135,8 +135,6 @@ pub struct WorkspaceStore {
     #[serde(skip)]
     default_workspace: usize,
     #[serde(skip)]
-    pub workspace_auto_back_and_forth: bool,
-    #[serde(skip)]
     pub layout_settings: LayoutSettings,
 }
 
@@ -166,7 +164,6 @@ impl WorkspaceStore {
             max_workspaces: MAX_WORKSPACES,
             default_workspace_names: config.workspace_names.clone(),
             default_workspace,
-            workspace_auto_back_and_forth: config.workspace_auto_back_and_forth,
             layout_settings: layout_settings.clone(),
         }
     }
@@ -183,7 +180,6 @@ impl WorkspaceStore {
         }
         self.layout_settings = layout_settings.clone();
         self.default_workspace_names = config.workspace_names.clone();
-        self.workspace_auto_back_and_forth = config.workspace_auto_back_and_forth;
 
         let target_count = config.workspace_count().min(self.max_workspaces);
         self.default_workspace = config.default_workspace.min(target_count - 1);
@@ -353,10 +349,6 @@ impl WorkspaceStore {
                 .position(|id| *id == active_ws_id)
                 .map(|idx| idx as u64)
         })
-    }
-
-    pub fn workspace_auto_back_and_forth(&self) -> bool {
-        self.workspace_auto_back_and_forth
     }
 
     pub fn set_active_workspace(

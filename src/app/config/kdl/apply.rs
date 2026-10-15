@@ -37,17 +37,11 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
         if let Some(mod_key) = input.mod_key {
             settings.mod_key = mod_key;
         }
-        if let Some(focus) = input.focus_follows_mouse {
-            settings.focus_follows_mouse = focus.on;
-            if focus.suspend_while_held.is_some() {
-                settings.focus_follows_mouse_disable_hotkey = focus.suspend_while_held;
-            }
+        if let Some(Flag(on)) = input.focus_follows_mouse {
+            settings.focus_follows_mouse = on;
         }
         if let Some(Flag(on)) = input.warp_mouse_to_focus {
             settings.mouse_follows_focus = on;
-        }
-        if let Some(Flag(on)) = input.workspace_auto_back_and_forth {
-            workspaces.workspace_auto_back_and_forth = on;
         }
         if let Some(warp) = input.warp_mouse_across_stacked_outputs {
             settings.warp_cursor_between_stacked_displays = warp.on;
@@ -61,10 +55,6 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
         if !input.ignore_app_activation.is_empty() {
             settings.auto_focus_denylist = input.ignore_app_activation;
         }
-    }
-
-    if let Some(Flag(on)) = part.cursor.and_then(|cursor| cursor.hide_on_focus_change) {
-        settings.mouse_hides_on_focus = on;
     }
 
     if let Some(mut layout) = part.layout {
@@ -321,9 +311,6 @@ fn apply_layout(
     }
     if let Some(center) = layout.center_focused_column {
         scrolling.center_focused_column = center;
-    }
-    if let Some(point) = layout.window_insertion_point {
-        scrolling.window_insertion_point = point;
     }
 }
 

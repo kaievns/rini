@@ -126,16 +126,6 @@ impl FromStr for Hotkey {
     }
 }
 
-pub fn modifiers_from_flags(flags: CGEventFlags) -> Modifiers {
-    let mut mods = Modifiers::empty();
-    for m in MOD_FAMILIES {
-        if m.is_active(flags.bits()) {
-            mods.insert(m.generic);
-        }
-    }
-    mods
-}
-
 pub fn modifiers_from_flags_with_keys<S: std::hash::BuildHasher>(
     flags: CGEventFlags,
     pressed_keys: &std::collections::HashSet<KeyCode, S>,
@@ -166,18 +156,6 @@ pub fn modifiers_from_flags_with_keys<S: std::hash::BuildHasher>(
     }
 
     mods
-}
-
-pub fn modifier_flag_for_key(key_code: KeyCode) -> Option<CGEventFlags> {
-    crate::input::domain::key::modifier_mask_for_key(key_code).map(CGEventFlags)
-}
-
-/// Returns whether the specific physical modifier key is active.
-///
-/// The device-independent Core Graphics masks only identify a modifier
-/// family. The low device-dependent bits retain the left/right distinction.
-pub fn modifier_key_is_active(flags: CGEventFlags, key_code: KeyCode) -> bool {
-    crate::input::domain::key::modifier_key_is_active(flags.bits(), key_code)
 }
 
 pub fn key_code_from_event(event: &CGEvent) -> Option<KeyCode> {
@@ -322,10 +300,8 @@ const fn build_cg_keycode_table() -> [Option<KeyCode>; 0x80] {
 
 const CG_KEYCODE_TABLE: [Option<KeyCode>; 0x80] = build_cg_keycode_table();
 
-#[cfg(target_os = "macos")]
 type CFStringRef = *const c_void;
 
-#[cfg(target_os = "macos")]
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
     fn TISCopyCurrentASCIICapableKeyboardLayoutInputSource() -> *mut c_void;
@@ -346,7 +322,6 @@ unsafe extern "C" {
     static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
 }
 
-#[cfg(target_os = "macos")]
 const VIRTUAL_KEYCODE_NUMS: &[u16] = &[
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
     0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
@@ -357,7 +332,6 @@ const VIRTUAL_KEYCODE_NUMS: &[u16] = &[
     0x5B, 0x5C,
 ];
 
-#[cfg(target_os = "macos")]
 fn generate_virtual_keymap() -> StdHashMap<String, KeyCode> {
     static KEYMAP_GENERATION_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
     let _guard = KEYMAP_GENERATION_LOCK.lock();
@@ -387,8 +361,6 @@ fn generate_virtual_keymap() -> StdHashMap<String, KeyCode> {
     const K_UC_NO_DEAD_KEYS: u32 = 1;
 
     let kbd_type: u32 = unsafe { LMGetKbdType() }.into();
-    #[allow(unused_assignments)]
-    let mut dead_key_state: u32 = 0;
     let mut chars = [0u16; 4];
     let mut actual_len: isize = 0;
 
@@ -397,7 +369,7 @@ fn generate_virtual_keymap() -> StdHashMap<String, KeyCode> {
             continue;
         };
 
-        dead_key_state = 0;
+        let mut dead_key_state: u32 = 0;
         let status = unsafe {
             UCKeyTranslate(
                 layout_ptr,
@@ -506,7 +478,6 @@ impl FromStr for HotkeySpec {
 
 #[cfg(test)]
 mod tests {
-    #[allow(unused)]
     use super::*;
 
     #[test]
@@ -553,21 +524,6 @@ mod tests {
             KeyCode::from_str("slash").unwrap(),
             keycode_from_char("/").unwrap_or(KeyCode::Slash)
         );
-    }
-
-    #[test]
-    fn modifier_key_activity_distinguishes_left_and_right_alt() {
-        let left_alt = CGEventFlags::from_bits_retain(
-            CGEventFlags::MaskAlternate.bits() | MOD_FAMILIES[1].left_mask,
-        );
-        let right_alt = CGEventFlags::from_bits_retain(
-            CGEventFlags::MaskAlternate.bits() | MOD_FAMILIES[1].right_mask,
-        );
-
-        assert!(modifier_key_is_active(left_alt, KeyCode::AltLeft));
-        assert!(!modifier_key_is_active(left_alt, KeyCode::AltRight));
-        assert!(modifier_key_is_active(right_alt, KeyCode::AltRight));
-        assert!(!modifier_key_is_active(right_alt, KeyCode::AltLeft));
     }
 
     #[test]

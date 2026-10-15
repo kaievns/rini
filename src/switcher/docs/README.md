@@ -11,7 +11,7 @@ switch groups windows into application stacks; the other two group nothing.
 |---|---|
 | **Who is offered** | `domain/candidates.rs` — `Candidate`, `Scope`, `switch_list`, `opening_selection` |
 | **What it steps between** | `domain/entries.rs` — `Entry`, `entries`: a window, or for the every-window switch an application's stack |
-| **Where the cursor is** | `domain/selection.rs` — `Selection`: stepping with wrap, clicking, and following its row when the list changes under it |
+| **Where the cursor is** | `domain/selection.rs` — `Selection`: stepping with wrap and clicking |
 | **Which binding holds it** | `domain/trigger.rs` — each switcher's session keys, derived from its own binding rather than configured twice |
 | **Where the rows go** | `domain/layout.rs` — the panel rect, one rect per row, a stack's cards inside its row, the scroll that keeps the selection visible, and the hit test |
 | **Whether a draw travels** | `domain/motion.rs` — how long the ring takes to move, and the one case where moving is right |

@@ -16,7 +16,7 @@ use crate::layout::domain::strip::{
     Reveal, anchor_x, centres, column_starts, offset_keeping_right_edge, place_offset, place_share,
     reveal_offset,
 };
-use crate::layout::settings::{Gaps, ScrollingLayoutSettings, WindowInsertionPoint};
+use crate::layout::settings::{Gaps, ScrollingLayoutSettings};
 use crate::layout::{Direction, LayoutId, ResizeOrientation};
 use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -911,14 +911,8 @@ impl ScrollingLayoutSystem {
         }
     }
 
-    fn insert_new_column(
-        state: &mut LayoutState,
-        wid: WindowId,
-        insertion_point: WindowInsertionPoint,
-    ) {
-        if insertion_point == WindowInsertionPoint::EndOfTree {
-            state.insert_column_at_end(wid);
-        } else if let Some((col_idx, _)) = state.selected_location() {
+    fn insert_new_column(state: &mut LayoutState, wid: WindowId) {
+        if let Some((col_idx, _)) = state.selected_location() {
             state.insert_column_after(col_idx, wid);
         } else if !state.columns.is_empty() {
             state.insert_column_after(0, wid);
@@ -947,59 +941,21 @@ impl ScrollingLayoutSystem {
         (kind, column_ratio(kind, base_ratio, col.width_offset, min_ratio, max_ratio))
     }
 
-    fn column_widths_and_starts(
+    fn column_starts(
         state: &LayoutState,
         screen_width: f64,
         gap_x: f64,
         min_ratio: f64,
         max_ratio: f64,
-    ) -> (Vec<f64>, Vec<f64>) {
-        let mut widths = Vec::with_capacity(state.columns.len());
+    ) -> Vec<f64> {
         let mut starts = Vec::with_capacity(state.columns.len());
         let mut cursor = 0.0;
         for col in &state.columns {
             starts.push(cursor);
             let (_, ratio) = Self::laid_out_ratio(state, col, min_ratio, max_ratio);
-            let width = (screen_width * ratio).max(1.0);
-            widths.push(width);
-            cursor += width + gap_x;
+            cursor += (screen_width * ratio).max(1.0) + gap_x;
         }
-        (widths, starts)
-    }
-
-    pub fn scroll_by_delta(&mut self, layout: LayoutId, delta: f64) {
-        let min_ratio = self.settings.min_column_width_ratio;
-        let max_ratio = self.settings.max_column_width_ratio;
-        let Some(state) = self.layout_state_mut(layout) else {
-            return;
-        };
-        let screen_width = f64::from_bits(state.last_screen_width.load(Ordering::Relaxed));
-        let gap_x = f64::from_bits(state.last_gap_x.load(Ordering::Relaxed));
-        if screen_width <= 0.0 {
-            return;
-        }
-        let (widths, starts) =
-            Self::column_widths_and_starts(state, screen_width, gap_x, min_ratio, max_ratio);
-        if starts.is_empty() {
-            return;
-        }
-        let selected_idx = state.selected_location().map(|(idx, _)| idx).unwrap_or(0);
-        let step = widths.get(selected_idx).copied().unwrap_or(1.0) + gap_x;
-        if step <= 0.0 {
-            return;
-        }
-        let base_max_offset = starts.last().copied().unwrap_or(0.0);
-        let center_offset_delta =
-            f64::from_bits(state.last_center_offset_delta_px.load(Ordering::Relaxed));
-        let (min_offset, max_offset) = if state.center_override_window.is_some() {
-            (center_offset_delta, base_max_offset + center_offset_delta)
-        } else {
-            (0.0, base_max_offset)
-        };
-        state.unpin();
-        let current = f64::from_bits(state.scroll_offset_px.load(Ordering::Relaxed));
-        let next = (current + delta * step).clamp(min_offset, max_offset);
-        state.scroll_offset_px.store(next.to_bits(), Ordering::Relaxed);
+        starts
     }
 
     pub fn snap_to_nearest_column(&mut self, layout: LayoutId) {
@@ -1013,8 +969,7 @@ impl ScrollingLayoutSystem {
         if screen_width <= 0.0 {
             return;
         }
-        let (_widths, starts) =
-            Self::column_widths_and_starts(state, screen_width, gap_x, min_ratio, max_ratio);
+        let starts = Self::column_starts(state, screen_width, gap_x, min_ratio, max_ratio);
         if starts.is_empty() {
             return;
         }
@@ -1633,11 +1588,10 @@ impl ScrollingLayoutSystem {
 
     pub fn add_window_after_selection(&mut self, layout: LayoutId, wid: WindowId) {
         let reveals_only = self.settings.reveals_only();
-        let insertion_point = self.settings.window_insertion_point;
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
-        Self::insert_new_column(state, wid, insertion_point);
+        Self::insert_new_column(state, wid);
         if reveals_only {
             state.reveal_selected_without_direction();
         }
@@ -1799,7 +1753,6 @@ impl ScrollingLayoutSystem {
 
     pub fn set_windows_for_app(&mut self, layout: LayoutId, pid: pid_t, desired: Vec<WindowId>) {
         let reveals_only = self.settings.reveals_only();
-        let insertion_point = self.settings.window_insertion_point;
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
@@ -1822,11 +1775,11 @@ impl ScrollingLayoutSystem {
                     current_iter.next();
                 }
                 (Some(des), None) => {
-                    Self::insert_new_column(state, **des, insertion_point);
+                    Self::insert_new_column(state, **des);
                     desired_iter.next();
                 }
                 (Some(des), Some(cur)) if des < cur => {
-                    Self::insert_new_column(state, **des, insertion_point);
+                    Self::insert_new_column(state, **des);
                     desired_iter.next();
                 }
                 (_, Some(cur)) => {
@@ -2343,9 +2296,7 @@ mod tests {
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::domain::edge_drag::Drag;
     use crate::layout::domain::tile;
-    use crate::layout::settings::{
-        CenterFocusedColumn, Gaps, ScrollingLayoutSettings, WindowInsertionPoint,
-    };
+    use crate::layout::settings::{CenterFocusedColumn, Gaps, ScrollingLayoutSettings};
     use crate::layout::{Direction, LayoutId, ResizeOrientation};
     use rini_core::ids::{WindowId, pid_t};
     use rustc_hash::FxHashMap as HashMap;
@@ -2381,6 +2332,14 @@ mod tests {
             .find(|(id, _)| *id == wid)
             .map(|(_, frame)| *frame)
             .expect("missing frame")
+    }
+
+    /// The strip scrolled to `offset` without a focus move, dropping what a later pass would have
+    /// taken, as every scroll does.
+    fn scroll_strip_to(system: &mut ScrollingLayoutSystem, layout: LayoutId, offset: f64) {
+        let state = system.layout_state_mut(layout).expect("layout state missing");
+        state.unpin();
+        state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
     }
 
     fn scroll_offset(system: &ScrollingLayoutSystem, layout: LayoutId) -> f64 {
@@ -3237,10 +3196,8 @@ mod tests {
     }
 
     #[test]
-    fn app_reconciliation_honors_updated_next_to_selection_policy() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.window_insertion_point = WindowInsertionPoint::EndOfTree;
-        let mut system = ScrollingLayoutSystem::new(&settings);
+    fn app_reconciliation_inserts_next_to_the_selection() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
         let layout = system.create_layout();
         let w1 = wid(1, 1);
         let w2 = wid(1, 2);
@@ -3249,30 +3206,9 @@ mod tests {
         system.add_window_after_selection(layout, w2);
         assert!(system.select_window(layout, w1));
 
-        settings.window_insertion_point = WindowInsertionPoint::NextToSelection;
-        system.update_settings(&settings);
         system.set_windows_for_app(layout, 1, vec![w1, w2, w3]);
 
         assert_eq!(system.all_windows_in_layout(layout), vec![w1, w3, w2]);
-    }
-
-    #[test]
-    fn app_reconciliation_honors_updated_end_of_tree_policy() {
-        let mut settings = ScrollingLayoutSettings::default();
-        let mut system = ScrollingLayoutSystem::new(&settings);
-        let layout = system.create_layout();
-        let w1 = wid(1, 1);
-        let w2 = wid(1, 2);
-        let w3 = wid(1, 3);
-        system.add_window_after_selection(layout, w1);
-        system.add_window_after_selection(layout, w2);
-        assert!(system.select_window(layout, w1));
-
-        settings.window_insertion_point = WindowInsertionPoint::EndOfTree;
-        system.update_settings(&settings);
-        system.set_windows_for_app(layout, 1, vec![w1, w2, w3]);
-
-        assert_eq!(system.all_windows_in_layout(layout), vec![w1, w2, w3]);
     }
 
     // ── full-width columns participate in the strip ─────────────────────────
@@ -3581,37 +3517,6 @@ mod tests {
         assert!(
             (ratio - 0.66667).abs() < 0.02,
             "one step down from the viewport, clamped to the configured maximum; got {ratio}"
-        );
-    }
-
-    /// Found while fixing the above, not reported: `scroll-strip` computed its own column widths and
-    /// did not know about maximised ones, so it stepped the strip by `max_column_width_ratio` of the
-    /// viewport for a column occupying all of it. One step left the next column part-way on screen.
-    /// Both sides read `constraints::column_ratio` now.
-    #[test]
-    fn scroll_strip_steps_over_a_maximised_column_by_its_real_width() {
-        let (mut system, layout, w1, w2) = setup_two_windows(preset_settings());
-        let screen = screen(1200.0, 800.0);
-        let gaps = Gaps::default();
-        let tiling_width = compute_tiling_area(screen, &gaps).size.width;
-
-        assert!(system.select_window(layout, w1));
-        toggle_selection(&mut system, layout);
-        // `scroll-strip` reads the geometry the last layout pass recorded.
-        render(&system, layout, screen, &gaps);
-        assert_eq!(scroll_offset(&system, layout), 0.0);
-
-        system.scroll_by_delta(layout, 1.0);
-
-        let stepped = scroll_offset(&system, layout);
-        assert!(
-            (stepped - (tiling_width + gaps.inner)).abs() < 2.0,
-            "one step should clear the whole maximised column ({} + gap), stepped {stepped}",
-            tiling_width
-        );
-        assert!(
-            frame_for(&render(&system, layout, screen, &gaps), w2).origin.x < tiling_width,
-            "the next column should be on screen after the step"
         );
     }
 
@@ -4721,18 +4626,6 @@ mod tests {
         assert_eq!(laid_out_xw(&system, layout, w[1]), (3.0, 1722.0), "stacked");
     }
 
-    /// Bounded, `scroll-strip` would step it by 1148pt plus the gap while the layout drew it 1443.
-    #[test]
-    fn scroll_strip_steps_a_dragged_column_by_its_dragged_width() {
-        let (mut system, layout, w) = kai_s_strip();
-        drag(&mut system, layout, w[1], xw(600.0, 882.0), xw(39.0, 1443.0));
-        render(&system, layout, KAI_SCREEN, &kai_s_gaps());
-        let before = scroll_offset(&system, layout);
-
-        system.scroll_by_delta(layout, 1.0);
-        assert_near(scroll_offset(&system, layout) - before, 1446.0, "step");
-    }
-
     /// Clamped back to `max-column-width`, the grow would shrink it to 1148pt.
     #[test]
     fn a_grow_key_on_a_column_dragged_past_max_does_nothing() {
@@ -5627,22 +5520,16 @@ mod tests {
         assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (3.0, 1148.0));
     }
 
-    /// The half of the middle third with the strip scrolled or snapped back to 0 stands at 578 with
-    /// two thirds of the free space on its left, and two thirds is where its next step stands.
+    /// The half of the middle third with the strip snapped back to 0 stands at 578 with two thirds
+    /// of the free space on its left, and two thirds is where its next step stands.
     #[test]
-    fn a_strip_scroll_or_snap_drops_the_place_and_the_next_key_takes_it_afresh() {
-        let scrolls: [(&str, fn(&mut ScrollingLayoutSystem, LayoutId)); 2] = [
-            ("a scroll", |system, layout| system.scroll_by_delta(layout, -1.0)),
-            ("a snap", |system, layout| system.snap_to_nearest_column(layout)),
-        ];
-        for (how, scroll) in scrolls {
-            let (mut system, layout, w) = kai_s_three_thirds();
-            assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (434.0, 860.0), "{how}");
-            scroll(&mut system, layout);
-            assert_eq!(laid_out_xw(&system, layout, w[1]), (578.0, 860.0), "{how}");
+    fn a_strip_snap_drops_the_place_and_the_next_key_takes_it_afresh() {
+        let (mut system, layout, w) = kai_s_three_thirds();
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (434.0, 860.0));
+        system.snap_to_nearest_column(layout);
+        assert_eq!(laid_out_xw(&system, layout, w[1]), (578.0, 860.0));
 
-            assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (386.0, 1148.0), "{how}");
-        }
+        assert_eq!(xw_in(&mod_r(&mut system, layout), w[1]), (386.0, 1148.0));
     }
 
     /// The first column closing leaves the half of the middle third part off the left: the next
@@ -6056,19 +5943,6 @@ mod tests {
     }
 
     #[test]
-    fn a_strip_scroll_while_full_width_restores_by_the_reveal() {
-        let (mut system, layout, w) = kai_s_thirds();
-
-        assert!(system.toggle_full_width(layout, w[1]));
-        kai_s_frames(&system, layout);
-        system.scroll_by_delta(layout, -1.0);
-        kai_s_frames(&system, layout);
-        assert!(system.toggle_full_width(layout, w[1]));
-
-        assert_eq!(laid_out_xw(&system, layout, w[1]), (866.0, 572.0));
-    }
-
-    #[test]
     fn a_strip_snap_while_full_width_restores_by_the_reveal() {
         let (mut system, layout, w) = kai_s_thirds();
 
@@ -6113,7 +5987,7 @@ mod tests {
         let (mut system, layout, w) = kai_s_thirds();
         assert!(system.select_window(layout, w[0]));
         kai_s_frames(&system, layout);
-        system.scroll_by_delta(layout, 1.5);
+        scroll_strip_to(&mut system, layout, 1296.0);
         kai_s_frames(&system, layout);
         let off_screen = laid_out_xw(&system, layout, w[0]);
         assert!(off_screen.0 + off_screen.1 < 0.0, "{off_screen:?}");
@@ -6350,7 +6224,7 @@ mod tests {
         }
         assert!(system.select_window(layout, b[1]));
         kai_s_frames(&system, layout);
-        system.scroll_by_delta(layout, 3.0);
+        scroll_strip_to(&mut system, layout, 2592.0);
         kai_s_frames(&system, layout);
         let off_screen = laid_out_xw(&system, layout, b[1]);
         assert!(off_screen.0 + off_screen.1 < 0.0, "{off_screen:?}");
@@ -6363,18 +6237,18 @@ mod tests {
     }
 
     #[test]
-    fn a_strip_scroll_between_the_folds_folds_back_by_the_reveal() {
+    fn a_strip_snap_between_the_folds_folds_back_by_the_reveal() {
         let (mut system, layout, _a, b) = a_stack_on_the_right(2);
         assert!(system.select_window(layout, b[1]));
         kai_s_frames(&system, layout);
 
         system.toggle_fold_of_selection(layout, Direction::Left);
         kai_s_frames(&system, layout);
-        system.scroll_by_delta(layout, -0.5);
+        system.snap_to_nearest_column(layout);
         kai_s_frames(&system, layout);
         system.toggle_fold_of_selection(layout, Direction::Left);
 
-        assert_eq!(laid_out_xw(&system, layout, b[1]), (435.0, 860.0));
+        assert_eq!(laid_out_xw(&system, layout, b[1]), (3.0, 860.0));
     }
 
     #[test]

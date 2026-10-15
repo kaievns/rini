@@ -412,15 +412,6 @@ impl LayoutEngine {
         if let Some((workspace_id, _)) = workspaces.get(workspace_index) {
             let workspace_id = *workspace_id;
             if self.virtual_workspace_manager.active_workspace(space) == Some(workspace_id) {
-                // Check if workspace_auto_back_and_forth is enabled
-                if self.virtual_workspace_manager.workspace_auto_back_and_forth() {
-                    // Switch to last workspace instead
-                    if let Some(last_workspace) =
-                        self.virtual_workspace_manager.last_workspace(space)
-                    {
-                        return self.activate_workspace(window_store, space, last_workspace, None);
-                    }
-                }
                 return EventResponse::default();
             }
             return self.activate_workspace(
@@ -2125,9 +2116,7 @@ impl LayoutEngine {
             | LayoutCommand::CyclePresetColumnWidth => {
                 self.handle_resize_command(memory, target, is_floating, command)
             }
-            LayoutCommand::ScrollStrip { .. }
-            | LayoutCommand::SnapStrip
-            | LayoutCommand::CenterSelection => self.handle_strip_command(target, command),
+            LayoutCommand::SnapStrip | LayoutCommand::CenterSelection => self.handle_strip_command(target, command),
             LayoutCommand::ToggleFullscreenWithinGaps => {
                 self.handle_floating_command(memory, target, command)
             }

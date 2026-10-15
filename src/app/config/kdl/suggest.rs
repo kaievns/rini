@@ -16,7 +16,6 @@ use crate::input::domain::binding::Action;
 pub const SCHEMA: &[(&str, &[&str])] = &[
     ("", &[
         "input",
-        "cursor",
         "layout",
         "animations",
         "gestures",
@@ -36,11 +35,9 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
         "mod-key",
         "focus-follows-mouse",
         "warp-mouse-to-focus",
-        "workspace-auto-back-and-forth",
         "warp-mouse-across-stacked-outputs",
         "ignore-app-activation",
     ]),
-    ("cursor", &["hide-on-focus-change"]),
     ("layout", &[
         "gaps",
         "struts",
@@ -49,7 +46,6 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
         "max-column-width",
         "preset-column-widths",
         "center-focused-column",
-        "window-insertion-point",
         "focus-ring",
         "border",
     ]),
@@ -126,6 +122,11 @@ pub const NIRI: &[(&str, &str, &str)] = &[
         "rini sets no environment; use `spawn-sh-at-startup \"VAR=value command\"`",
     ),
     ("", "clipboard", "rini does not manage the clipboard"),
+    (
+        "",
+        "cursor",
+        "macOS owns the cursor's look, and hiding it is not supported yet",
+    ),
     ("", "hotkey-overlay", "rini has no hotkey overlay"),
     ("", "blur", "rini draws no blur behind windows"),
     ("", "overview", "rini has no overview"),
@@ -155,18 +156,7 @@ pub const NIRI: &[(&str, &str, &str)] = &[
         "mod-key-nested",
         "rini never runs nested inside another window manager",
     ),
-    ("cursor", "xcursor-theme", "macOS owns the cursor's look"),
-    ("cursor", "xcursor-size", "macOS owns the cursor's look"),
-    (
-        "cursor",
-        "hide-when-typing",
-        "not supported yet; rini hides it on `hide-on-focus-change`",
-    ),
-    (
-        "cursor",
-        "hide-after-inactive-ms",
-        "not supported yet; rini hides it on `hide-on-focus-change`",
-    ),
+    ("input", "workspace-auto-back-and-forth", NOT_IN_RINI),
     ("layout", "always-center-single-column", NOT_IN_RINI),
     (
         "layout",

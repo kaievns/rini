@@ -3,7 +3,7 @@
 use knus::span::Span;
 
 use super::value::{ColourSpaceValue, ColourValue, Flag, Number, Pixels, Proportion};
-use crate::layout::settings::{CenterFocusedColumn, Edges, WindowInsertionPoint};
+use crate::layout::settings::{CenterFocusedColumn, Edges};
 
 #[derive(knus::Decode, Debug, Default)]
 #[knus(span_type = Span)]
@@ -22,8 +22,6 @@ pub struct LayoutPart {
     pub preset_column_widths: Option<Vec<PresetPart>>,
     #[knus(child, unwrap(argument))]
     pub center_focused_column: Option<CenterFocusedColumn>,
-    #[knus(child, unwrap(argument))]
-    pub window_insertion_point: Option<WindowInsertionPoint>,
     #[knus(child)]
     pub focus_ring: Option<BandPart>,
     #[knus(child)]

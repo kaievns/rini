@@ -60,8 +60,6 @@ pub enum Action {
     SetColumnWidth(#[knus(argument, str)] SizeChange),
     SetWindowHeight(#[knus(argument, str)] SizeChange),
     SetColumnWidthOrWindowHeight(#[knus(argument, str)] SizeChange),
-    /// By that many columns.
-    ScrollStrip(#[knus(argument)] Decimal),
     SnapStrip,
     FocusWorkspace(#[knus(argument)] WorkspaceReference),
     FocusWorkspaceDown(#[knus(property(name = "skip-empty"))] Option<bool>),

@@ -297,12 +297,6 @@ unsafe extern "C" {
 
     /// The frame the window server has for a window, answered without asking the app.
     pub fn SLSGetWindowBounds(cid: cid_t, wid: u32, frame: *mut CGRect) -> i32;
-    pub fn CGSSetConnectionProperty(
-        cid: cid_t,
-        target_cid: cid_t,
-        key: *mut CFString,
-        value: *mut CFType,
-    ) -> CGError;
     // this does not work and we should not rely on it
     pub fn CGSGetActiveSpace(cid: c_int) -> u64;
     pub fn CGSCopySpaces(cid: c_int, mask: CGSSpaceMask) -> *mut CFArray;

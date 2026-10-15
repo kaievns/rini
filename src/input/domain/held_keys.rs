@@ -26,6 +26,7 @@ pub struct HeldKeys {
 
 impl HeldKeys {
     /// The modifier mask last seen.
+    #[cfg(test)]
     pub fn flags(&self) -> u64 {
         self.flags
     }
@@ -95,6 +96,7 @@ impl HeldKeys {
     /// A modifier is answered from the flags, because that is the authoritative source and the cache
     /// may have missed an edge. Anything else is answered from the cache, because the flags say
     /// nothing about it.
+    #[cfg(test)]
     pub fn is_held(&self, key: KeyCode) -> bool {
         if is_modifier_key(key) {
             modifier_key_is_active(self.flags, key)

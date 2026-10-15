@@ -51,15 +51,12 @@ is borrowed.
   width the column has, 1.0 for a maximized one rather than the width it had
   before.
 - **One place applies the width bounds.** `constraints::column_ratio`, read by
-  the layout pass, by `scroll-strip`'s step, by the default width, by the
+  the layout pass, by `snap-strip`, by the default width, by the
   resize keys and by a resize report, each with a `ColumnKind`: full width,
-  unbounded, or bounded. The layout pass and `scroll-strip` pass the column's own. The
+  unbounded, or bounded. The layout pass and `snap-strip` pass the column's own. The
   default width and the keys always pass `Bounded`, which is how a key bounds a
   dragged width again. A report passes `Unbounded` for a side drag or a column
   already unbounded, and `Bounded` otherwise.
-  `scroll-strip` used to compute its own and did not know about maximized columns,
-  so it stepped the strip by two thirds of a screen for a column occupying all
-  of it and one step left the next column part-way on.
 - **There is one maximize mode, and it stays in the strip.** A second mode,
   `toggle_fullscreen`, used to assign the usable frame with its own absolute
   origin. That differed from this one by nothing but the outer gap, and it

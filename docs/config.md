@@ -63,8 +63,8 @@ and `RestoreSource`. The features' settings types carry no parsing.
 | An unknown node, property or argument is an error | niri's behaviour; the TOML silently accepted typos in one table |
 | Indices start at 1 | niri's `focus-workspace 1` is the first workspace (Kai's decision, `specs/input.md`) |
 
-The three pointer flags niri has off by default, `focus-follows-mouse`, `warp-mouse-to-focus` and
-cursor hiding, take niri's default: off. They were on, and a default-on flag can only be written as
+The two pointer flags niri has off by default, `focus-follows-mouse` and `warp-mouse-to-focus`,
+take niri's default: off. They were on, and a default-on flag can only be written as
 `x false`, which no niri config contains.
 
 ## Where rini differs from niri
@@ -109,8 +109,8 @@ cursor hiding, take niri's default: off. They were on, and a default-on flag can
 rini-only actions keep rini's own words: `move-window-left` and `-right` (a lone window swaps
 columns, a stacked one leaves as a new column, which niri's `move-column-left` never does),
 `toggle-fold-left` and `-right` (niri's `consume-or-expel-window-left` never round-tripped:
-`src/layout/docs/strip.md`), `toggle-stack`, `cycle-visible-windows`, `scroll-strip`,
-`snap-strip`, `move-mouse-to-monitor-…`, `switch-space-left` and `-right`,
+`src/layout/docs/strip.md`), `toggle-stack`, `cycle-visible-windows`, `snap-strip`,
+`move-mouse-to-monitor-…`, `switch-space-left` and `-right`,
 `toggle-space-activated`, the layout save and restore, and the debug actions. Every action and the
 wire command it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
 
@@ -130,7 +130,7 @@ wire command it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
 | `float_modal_windows` | the modal rule is an ordinary `window-rule` in `rini.default.kdl` |
 | `Meta` as a modifier name | niri's `Super`, or `Cmd` |
 | `swap_windows`, `focus_window`, and window ids in binds | a config cannot know a window id; they are IPC only, as niri's `#[knuffel(skip)]` actions |
-| `config save` | it rewrote the file without its comments and could not write `focus_follows_mouse_disable_hotkey` back. The file is the config |
+| `config save` | it rewrote the file without its comments. The file is the config |
 | the typed `config set-…` setters and the JSON-path `config set` | `config set '<KDL>'` applies a fragment through the same code as the file |
 | the legacy bare `resize_window_grow` migration | it existed for TOML, and made every parse error lose its span |
 

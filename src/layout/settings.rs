@@ -1,16 +1,8 @@
-//! What a strip can be told about itself: gaps, column widths, insertion, how it follows focus.
+//! What a strip can be told about itself: gaps, column widths, how it follows focus.
 //! Plain data with defaults; the config file fills it.
 use std::collections::BTreeMap;
 
 use serde::Serialize;
-
-#[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum WindowInsertionPoint {
-    #[default]
-    NextToSelection,
-    EndOfTree,
-}
 
 /// How the strip follows focus. niri's `center-focused-column`, without its `on-overflow`.
 #[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
@@ -31,7 +23,6 @@ pub struct LayoutSettings {
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct ScrollingLayoutSettings {
-    pub window_insertion_point: WindowInsertionPoint,
     pub column_width_ratio: f64,
     pub min_column_width_ratio: f64,
     pub max_column_width_ratio: f64,
@@ -46,7 +37,6 @@ pub struct ScrollingLayoutSettings {
 impl Default for ScrollingLayoutSettings {
     fn default() -> Self {
         Self {
-            window_insertion_point: WindowInsertionPoint::default(),
             column_width_ratio: 0.7,
             min_column_width_ratio: 0.3,
             max_column_width_ratio: 0.9,

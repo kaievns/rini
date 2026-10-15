@@ -8,7 +8,7 @@ use crate::app::config::kdl::suggest::{NIRI, NIRI_ACTIONS, SCHEMA};
 use crate::decorations::domain::paint::{Colour, ColourSpace, Gradient, Hue, Paint};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::{Action, SwitcherFilter, SwitcherScope, WorkspaceReference};
-use crate::layout::settings::{CenterFocusedColumn, Gaps, WindowInsertionPoint};
+use crate::layout::settings::{CenterFocusedColumn, Gaps};
 use crate::windows::domain::rules::{
     AppRuleDecision, AppRuleEngine, FloatingPosition, RelativeTo, WindowRuleContext,
 };
@@ -28,13 +28,12 @@ fn refused(text: &str) -> String {
 }
 
 /// The settings and workspaces, which are what an empty file and the reference must agree on.
-fn settings_and_workspaces(config: &Config) -> (Settings, Vec<String>, usize, bool, bool) {
+fn settings_and_workspaces(config: &Config) -> (Settings, Vec<String>, usize, bool) {
     let w = &config.virtual_workspaces;
     (
         config.settings.clone(),
         w.workspace_names.clone(),
         w.default_workspace,
-        w.workspace_auto_back_and_forth,
         w.reapply_app_rules_on_title_change,
     )
 }
@@ -87,7 +86,6 @@ fn an_empty_section_means_the_same_as_an_absent_one() {
     let absent = parse("");
     for section in [
         "input",
-        "cursor",
         "layout",
         "animations",
         "gestures",
@@ -146,20 +144,16 @@ fn input_maps_onto_focus_and_the_pointer() {
     let config = parse(concat!(
         "input {\n",
         "    mod-key \"Ctrl\"\n",
-        "    focus-follows-mouse suspend-while-held=\"Fn\"\n",
+        "    focus-follows-mouse\n",
         "    warp-mouse-to-focus\n",
-        "    workspace-auto-back-and-forth\n",
         "    warp-mouse-across-stacked-outputs upper-side=\"right\" lower-top-at=0.25\n",
         "    ignore-app-activation \"com.apple.Spotlight\"\n",
         "    ignore-app-activation \"com.apple.dock\"\n",
         "}\n",
-        "cursor {\n    hide-on-focus-change\n}\n",
     ));
     let s = &config.settings;
     assert_eq!(s.mod_key, ModKey::Ctrl);
-    assert!(s.focus_follows_mouse && s.mouse_follows_focus && s.mouse_hides_on_focus);
-    assert!(s.focus_follows_mouse_disable_hotkey.is_some());
-    assert!(config.virtual_workspaces.workspace_auto_back_and_forth);
+    assert!(s.focus_follows_mouse && s.mouse_follows_focus);
     assert!(s.warp_cursor_between_stacked_displays);
     assert_eq!(s.stacked_display_upper_is, StackedUpperSide::Right);
     assert_eq!(s.stacked_display_lower_top_at, 0.25);
@@ -167,9 +161,37 @@ fn input_maps_onto_focus_and_the_pointer() {
 }
 
 #[test]
-fn the_three_pointer_flags_are_off_unless_written() {
+fn switching_to_the_shown_workspace_is_not_configurable() {
+    let report = refused("input {\n    workspace-auto-back-and-forth\n}\n");
+    assert!(
+        report.contains("unknown node `workspace-auto-back-and-forth` in `input`"),
+        "{report}"
+    );
+    assert!(report.contains("niri has this and rini does not"), "{report}");
+}
+
+#[test]
+fn focus_follows_mouse_takes_no_key_that_pauses_it() {
+    assert!(parse("input {\n    focus-follows-mouse\n}\n").settings.focus_follows_mouse);
+    assert!(
+        refused("input {\n    focus-follows-mouse suspend-while-held=\"Fn\"\n}\n")
+            .contains("suspend-while-held")
+    );
+}
+
+#[test]
+fn a_cursor_section_is_refused_with_the_reason() {
+    for text in ["cursor {\n}\n", "cursor {\n    hide-on-focus-change\n}\n"] {
+        let report = refused(text);
+        assert!(report.contains("unknown section `cursor`"), "{report}");
+        assert!(report.contains("hiding it is not supported yet"), "{report}");
+    }
+}
+
+#[test]
+fn the_two_pointer_flags_are_off_unless_written() {
     let s = parse("").settings;
-    assert!(!s.focus_follows_mouse && !s.mouse_follows_focus && !s.mouse_hides_on_focus);
+    assert!(!s.focus_follows_mouse && !s.mouse_follows_focus);
 }
 
 #[test]
@@ -190,7 +212,6 @@ fn layout_maps_onto_the_strip() {
         "    max-column-width { proportion 0.66667; }\n",
         "    preset-column-widths { proportion 0.5; proportion 1.0; }\n",
         "    center-focused-column \"always\"\n",
-        "    window-insertion-point \"end-of-tree\"\n",
         "}\n",
     ));
     let layout = &config.settings.layout;
@@ -207,7 +228,15 @@ fn layout_maps_onto_the_strip() {
     );
     assert_eq!(s.preset_column_widths, [0.5, 1.0]);
     assert_eq!(s.center_focused_column, CenterFocusedColumn::Always);
-    assert_eq!(s.window_insertion_point, WindowInsertionPoint::EndOfTree);
+}
+
+#[test]
+fn where_a_new_window_opens_is_not_configurable() {
+    let report = refused("layout {\n    window-insertion-point \"end-of-tree\"\n}\n");
+    assert!(
+        report.contains("unknown node `window-insertion-point` in `layout`"),
+        "{report}"
+    );
 }
 
 #[test]
@@ -1040,6 +1069,12 @@ fn a_misspelt_action_gets_a_suggestion_on_its_span() {
 }
 
 #[test]
+fn scroll_strip_is_not_an_action() {
+    let report = refused("binds {\n    Mod+S { scroll-strip 0.5; }\n}\n");
+    assert!(report.contains("unknown action `scroll-strip`"), "{report}");
+}
+
+#[test]
 fn a_niri_action_rini_lacks_is_told_why() {
     let report = refused("binds {\n    Mod+J { focus-window-down; }\n}\n");
     assert!(report.contains("cross to the next display"), "{report}");
@@ -1052,7 +1087,6 @@ fn every_action_name_decodes() {
         "set-column-width" | "set-window-height" | "set-column-width-or-window-height" => {
             " \"+5%\""
         }
-        "scroll-strip" => " 0.5",
         "focus-workspace"
         | "move-window-to-workspace"
         | "focus-monitor"
@@ -1110,7 +1144,7 @@ fn an_unknown_section_names_the_sections_when_nothing_is_near() {
         report.contains("unknown section `completely-different`"),
         "{report}"
     );
-    assert!(report.contains("takes: input, cursor"), "{report}");
+    assert!(report.contains("takes: input, layout"), "{report}");
 }
 
 #[test]
@@ -1251,7 +1285,6 @@ fn the_suggestion_tables_are_true() {
         use super::kdl::{bar, gestures, input, layout, window_rule};
         let result = match section {
             "input" => knus::decode::node::<input::InputPart, Span>(node).err(),
-            "cursor" => knus::decode::node::<input::CursorPart, Span>(node).err(),
             "layout" => knus::decode::node::<layout::LayoutPart, Span>(node).err(),
             "animations" => knus::decode::node::<gestures::AnimationsPart, Span>(node).err(),
             "gestures" => knus::decode::node::<gestures::GesturesPart, Span>(node).err(),

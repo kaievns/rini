@@ -3,6 +3,19 @@
 One horizontal strip of columns per display. A column holds one or more windows stacked vertically.
 The strip scrolls left and right under a fixed viewport; it never pans within a single column.
 
+- No action MUST scroll the strip by a number of columns, and a bind to `scroll-strip` MUST be
+  refused as an unknown action.
+
+> **Reported 2026-10-15.** Kai's decision: `scroll-strip N` goes. Neither Kai's config nor the
+> default bound it, niri has no counterpart, and the trackpad swipe that drove it went on 2026-10-10.
+
+- A new window MUST open as a column right after the focused one, as in niri, and this is not
+  configurable: `layout › window-insertion-point` MUST be refused as an unknown node.
+
+> **Reported 2026-10-15.** Kai's decision: `window-insertion-point` goes, and its `"end-of-tree"`
+> with it. It was rift's, niri always inserts beside the focused column, and neither Kai's config nor
+> the default asked for the end of the strip.
+
 ## Columns and widths
 
 - A column MUST be at least 1pt wide and MUST NOT be wider than the viewport. Wider than the viewport
@@ -48,7 +61,7 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   that fills the viewport takes its end of the strip, flush left as the first or only column, flush
   right as the last, centred between. A centred column MUST stay centred. Where it stood is taken
   when a width key or `Mod+F` first finds the column focused, and MUST be forgotten when focus moves
-  to another column or anything else scrolls the strip: a strip scroll or snap, a window opening or
+  to another column or anything else scrolls the strip: a strip snap, a window opening or
   closing, a move, centring, a fold, a mouse drag, or the app sizing its window more than 1pt from
   the place rini gave it on an axis rini takes from it (see "a window that resizes itself"). rini
   takes no width from a column it holds to the viewport and no height from a column's only window,
@@ -104,7 +117,7 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   a full-width window MUST step from the whole viewport about that same place, so stepping back to
   the width it had puts it where it stood. A column part or wholly off screen when maximised comes
   back where the reveal shows it. Anything else that scrolls the strip in between wins: focus moving
-  to another column, a strip scroll or snap, a window opening or closing, a move, or centring. The
+  to another column, a strip snap, a window opening or closing, a move, or centring. The
   strip then scrolls only as far as it must to show the column. So does it for a window that reached
   full width another way (a restart, a drag across the screen) or was zoomed from its title bar
   without having focus.
@@ -193,10 +206,6 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > column holding a full-width window is 1.0 whatever its stored width says. The default preset list
 > gained 1.0, and a step off a full-width window now sizes it like any column. Kai chose niri's
 > direction after considering a downward cycle: ascending, with 100% wrapping to 1/3.
-
-> **Found 2026-09-24, not reported.** The same blind spot in `scroll-strip`, which computed its own
-> column widths: it stepped the strip by `max-column-width` of the viewport for a column
-> occupying all of it, so one step left the next column part-way on screen.
 
 > **Reported 2026-09-22.** "Most of the windows/apps that were in full-size mode don't come back as
 > full sized and respawn as the default 1/2 size... we already fixed it like 3 times in the past."
@@ -327,7 +336,7 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   instead.
 - **A fold out and back in with the same key MUST put the strip back too**: the column at the screen
   x it left, and a centred column centred again. Anything else that scrolls the strip in between
-  wins: focus moving to another column, a strip scroll or snap, a window opening or closing, a move,
+  wins: focus moving to another column, a strip snap, a window opening or closing, a move,
   centring, or a width given by key, and so does folding back with the other key. The strip then scrolls only
   as far as it must to show the column. Once back, focusing the window again MUST show it, even
   where the strip put it back off screen.

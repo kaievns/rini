@@ -58,12 +58,12 @@ pub fn pointer_window(cache: PointerCache, hint: Option<WindowServerId>) -> Poin
 
 /// Whether the tap should ask for keyboard events at all.
 ///
-/// Only when something would act on them: a disable hotkey, or any bound hotkey. An active tap sits
+/// Only when something would act on them: any bound hotkey. An active tap sits
 /// in the delivery path — the window server holds each matching event until the callback answers —
 /// so asking for keys nobody is listening for puts rini between the user and every keystroke for
 /// nothing.
-pub fn wants_keyboard_events(has_disable_hotkey: bool, bound_hotkeys: usize) -> bool {
-    has_disable_hotkey || bound_hotkeys > 0
+pub fn wants_keyboard_events(bound_hotkeys: usize) -> bool {
+    bound_hotkeys > 0
 }
 
 /// Whether the tap should ask for mouse-move events.
@@ -191,15 +191,8 @@ mod tests {
     /// The rule that keeps rini out of the keyboard path when nothing is bound.
     #[test]
     fn keyboard_events_are_only_wanted_when_something_would_act_on_them() {
-        assert!(
-            !wants_keyboard_events(false, 0),
-            "no bindings, no reason to see keys"
-        );
-        assert!(wants_keyboard_events(false, 1));
-        assert!(
-            wants_keyboard_events(true, 0),
-            "the disable hotkey is reason enough"
-        );
+        assert!(!wants_keyboard_events(0), "no bindings, no reason to see keys");
+        assert!(wants_keyboard_events(1));
     }
 
     #[test]

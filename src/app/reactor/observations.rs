@@ -452,9 +452,6 @@ impl Reactor {
             pictures.hint(crate::pictures::domain::watch::Hint::Focused(window));
         }
         if self.layout_manager.layout_engine.focused_window() == Some(window) {
-            if let Some(event_tap_tx) = &self.communication_manager.event_tap_tx {
-                _ = event_tap_tx.send(crate::input::platform::input_tap::Request::EnforceHidden);
-            }
             return Ok(EventOutcome::default());
         }
         if !self.state.windows.contains_window(window) {

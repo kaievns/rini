@@ -20,7 +20,7 @@ principle, and deliberately is not reused — see "Why this shape" in
 | `domain/preset_width.rs` | Which width the next `Mod+R` asks for, and whether that width is the whole viewport, past the bounds |
 | `domain/area.rs` | The tiling rect: the usable frame minus the outer gaps |
 | `domain/boundary.rs` | The ends of the strip and of the workspace stack: `strip_edge`, the left/right end a command stops at rather than crossing displays, and `workspace_stack_direction`, the end a `next`/`prev` step runs into |
-| `settings.rs` | Ratios, gaps and struts, presets, where focus sits (`center-focused-column`), insertion |
+| `settings.rs` | Ratios, gaps and struts, presets, where focus sits (`center-focused-column`) |
 
 ## The shape that matters
 
