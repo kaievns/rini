@@ -167,20 +167,16 @@ impl WindowStore {
 
 #[cfg(test)]
 mod tests {
+    use slotmap::SlotMap;
+
     use super::*;
-    use crate::workspaces::domain::virtual_workspace::WorkspaceStore;
 
     #[test]
     fn transfer_persistent_metadata_replaces_existing_target_workspace_assignment() {
         let mut window_store = WindowStore::default();
         let space = SpaceId::new(10);
-        let mut workspaces = WorkspaceStore::new();
-        let source_workspace = workspaces
-            .create_workspace(space, "Source".to_string())
-            .expect("source workspace");
-        let target_workspace = workspaces
-            .create_workspace(space, "Target".to_string())
-            .expect("target workspace");
+        let mut workspaces = SlotMap::<VirtualWorkspaceId, ()>::with_key();
+        let (source_workspace, target_workspace) = (workspaces.insert(()), workspaces.insert(()));
         let from = WindowId::new(1, 1);
         let to = WindowId::new(1, 2);
 
@@ -211,9 +207,7 @@ mod tests {
         let mut window_store = WindowStore::default();
         let space = SpaceId::new(10);
         let fullscreen_space = SpaceId::new(0x400000000 + space.get());
-        let mut workspaces = WorkspaceStore::new();
-        let workspace_id =
-            workspaces.create_workspace(space, "Main".to_string()).expect("workspace");
+        let workspace_id = SlotMap::<VirtualWorkspaceId, ()>::with_key().insert(());
         let from = WindowId::new(1, 1);
         let to = WindowId::new(1, 2);
         let wsid = WindowServerId::new(77);

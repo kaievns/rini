@@ -264,7 +264,7 @@ Every crate takes its lints from `[workspace.lints]` in `Cargo.toml` (`[lints] w
 held by `every_crate_inherits_the_workspace_lints`): clippy's defaults, plus `redundant_lifetimes`,
 `unused_macro_rules` and `allow_attributes_without_reason`. The last means every `#[allow]` says
 why, in one of three ways. One a roadmap task removes names the quality roadmap's task id
-(`reason = "P3.8"`) and sits on the one item it covers, and only when that task's done-criterion
+(`reason = "P4.1"`) and sits on the one item it covers, and only when that task's done-criterion
 takes the lint away: splitting a function or a file leaves its parameter lists as long. One allowed
 for good names what makes it right, such as a C name, a reference count Core Foundation drives too,
 or a `RefMut` dropped before the await clippy counts it across. One no task removes says so: a long
@@ -291,8 +291,7 @@ Nothing else in the repo cites an id; a comment or a doc names the work in words
 
 | Id | Task | Done when |
 |---|---|---|
-| P3.8 | `EngineFixture` over the production layout fn; delete the `cfg(test)` `calculate_layout` and the test-only `create_workspace` | engine test average under 30 lines; `virtual_workspace.rs` has one `cfg(test)` |
-| P4.1 | Named structs for positional tuples: the `OnScreenEntry` 9-tuple, `Request::SetWindowFrame(.., bool)`, `Event::WindowFrameChanged`, `ReactorParts` for an 11-parameter `spawn` | no tuple over 3 in an enum variant or pub fn type at these sites |
+| P4.1 | Named structs for positional tuples: `Request::SetWindowFrame(.., bool)`, `Event::WindowFrameChanged`, `ReactorParts` for an 11-parameter `spawn` | no tuple over 3 in an enum variant or pub fn type at these sites |
 | P4.8 | Small enums: `Pass` for `update_layout(bool, bool, ..)`, `Press`, `Axis`, the repaint subsets in `StageSummary`/`Flight` | no fn with 2+ bool parameters (`clippy::fn_params_excessive_bools` denied) |
 | P5.1 | SAFETY comments everywhere; deny `undocumented_unsafe_blocks` and `unsafe_op_in_unsafe_fn`; replace `static mut SERVER` in `rini-ipc` | clippy clean with both denied; 0 `static mut` in the repo |
 

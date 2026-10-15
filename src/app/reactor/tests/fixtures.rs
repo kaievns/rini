@@ -251,22 +251,35 @@ pub fn has_window_in_layout(
     screen: CGRect,
     wid: WindowId,
 ) -> bool {
-    let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
-    reactor
-        .layout_manager
-        .layout_engine
-        .calculate_layout(space, screen, &gaps)
+    test_layout(reactor, space, screen)
         .iter()
         .any(|(layout_wid, _)| *layout_wid == wid)
 }
 
+/// The tiled frames of `space`'s active workspace on `screen`, at their strip coordinates and in
+/// strip order.
 pub fn test_layout(
     reactor: &mut Reactor,
     space: SpaceId,
     screen: CGRect,
 ) -> Vec<(WindowId, CGRect)> {
     let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
-    reactor.layout_manager.layout_engine.calculate_layout(space, screen, &gaps)
+    let engine = &mut reactor.layout_manager.layout_engine;
+    let Some(workspace) = engine.active_workspace(space) else {
+        return Vec::new();
+    };
+    let frames: HashMap<WindowId, CGRect> = engine
+        .calculate_layout_for_workspace(&reactor.state.windows, space, workspace, screen, &gaps)
+        .into_iter()
+        .collect();
+    let strip = engine.ordered_windows_in_active_workspace(space);
+    strip.into_iter().filter_map(|wid| Some((wid, *frames.get(&wid)?))).collect()
+}
+
+/// The window selected in `space`'s active workspace.
+pub fn selected_window(reactor: &Reactor, space: SpaceId) -> Option<WindowId> {
+    let engine = &reactor.layout_manager.layout_engine;
+    engine.query_workspace_layout(space, None)?.selected_window
 }
 
 pub fn make_active_app(

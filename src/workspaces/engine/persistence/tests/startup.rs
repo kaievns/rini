@@ -91,15 +91,10 @@ fn completed_app_discovery_discards_a_ghost_from_a_dormant_display_size() {
         height: 944.0,
         app_id: Some("com.apple.Music".into()),
     });
-    let path = std::env::temp_dir().join(format!(
-        "rini-dormant-size-ghost-test-{}-{}.ron",
-        std::process::id(),
-        space.get(),
-    ));
+    let (_dir, path) = layout_file();
     snapshot.save(&memory, path.clone()).unwrap();
 
     let mut engine = LayoutEngine::load(path.clone()).unwrap();
-    let _ = std::fs::remove_file(path);
     let mut window_store = WindowStore::default();
     let _ = engine.handle_event(
         &mut window_store,
@@ -247,16 +242,11 @@ fn startup_restore_remaps_saved_space_by_display_identity_once() {
         LayoutEvent::SpaceExposed(saved_space, size),
     );
     snapshot.update_space_display(&mut memory, saved_space, Some(display.clone()));
-    let path = std::env::temp_dir().join(format!(
-        "rini-startup-space-remap-test-{}-{}.ron",
-        std::process::id(),
-        saved_space.get(),
-    ));
+    let (_dir, path) = layout_file();
     snapshot.save(&memory, path.clone()).unwrap();
 
     let (mut restored, _restored_memory) =
         LayoutEngine::load_for_startup_restore(path.clone(), |_, _| false, |_| false).unwrap();
-    let _ = std::fs::remove_file(path);
     let mut window_store = WindowStore::default();
     // An incomplete first topology snapshot must not consume the one-shot reconciliation.
     restored.reconcile_startup_spaces(&mut window_store, &mut memory, &[], 1);
@@ -321,15 +311,11 @@ fn startup_restore_handles_space_id_swaps_between_displays() {
         vec![on_a]
     );
 
-    let path = std::env::temp_dir().join(format!(
-        "rini-startup-space-swap-test-{}.ron",
-        std::process::id(),
-    ));
+    let (_dir, path) = layout_file();
     snapshot.save(&memory, path.clone()).unwrap();
 
     let (mut restored, _restored_memory) =
         LayoutEngine::load_for_startup_restore(path.clone(), |_, _| false, |_| false).unwrap();
-    let _ = std::fs::remove_file(path);
     let mut window_store = WindowStore::default();
     // display-a comes back as space_b and vice versa.
     restored.reconcile_startup_spaces(
@@ -399,14 +385,10 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
             app_id: Some("com.example.app".into()),
         });
     }
-    let path = std::env::temp_dir().join(format!(
-        "rini-absent-display-release-test-{}.ron",
-        std::process::id(),
-    ));
+    let (_dir, path) = layout_file();
     snapshot.save(&memory, path.clone()).unwrap();
 
     let mut restored = LayoutEngine::load(path.clone()).unwrap();
-    let _ = std::fs::remove_file(path);
     restored.startup_restore_pending = true;
     assert!(
         restored.restored_location_for_window(on_external).is_some(),
@@ -479,8 +461,7 @@ fn startup_restore_keeps_the_saved_windows_its_reads_still_find() {
             app_id: Some(format!("com.example.{}", window.pid)),
         });
     }
-    let path =
-        std::env::temp_dir().join(format!("rini-startup-reads-test-{}.ron", std::process::id(),));
+    let (_dir, path) = layout_file();
     snapshot.save(&memory, path.clone()).unwrap();
 
     let (restored, _) = LayoutEngine::load_for_startup_restore(
@@ -489,7 +470,6 @@ fn startup_restore_keeps_the_saved_windows_its_reads_still_find() {
         |app| app == "com.example.52",
     )
     .unwrap();
-    let _ = std::fs::remove_file(path);
 
     let saved = |window| restored.persistence.windows.contains_key(&window);
     assert_eq!((saved(gone), saved(open), saved(restarted)), (false, true, true));

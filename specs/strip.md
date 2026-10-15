@@ -388,6 +388,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 ## Off-strip windows
 
 - A window may be taken off the strip ("floating"). It keeps a position per workspace.
+- Taking a window off the strip MUST take it out of every strip, whichever display the command names
+  and also when it names none, because a window both floating and in a strip is laid out twice.
 - A floating window whose stored position is off every attached screen MUST be centred rather than
   restored where it cannot be seen.
 - macOS taking a window into its own fullscreen space MUST take that window off the strip and out of
@@ -412,5 +414,6 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 `src/workspaces/engine/commands/` the commands.
 Which edge a mouse drag moves, and what it asks of the column, is `src/layout/domain/edge_drag.rs`.
 A title-bar zoom is told from a resize by `src/windows/domain/zoom.rs`, and the full-width toggle both
-routes share is in `src/workspaces/engine/commands/floating.rs`.
+routes share is in `src/workspaces/engine/commands/floating.rs`. Taking a window off the strip and
+back is `toggle_window_floating` in `src/workspaces/engine/moves.rs`.
 Measurements are in `src/layout/docs/strip.md`.

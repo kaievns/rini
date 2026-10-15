@@ -200,8 +200,8 @@ INSIDE two production predicates, so the tests ran different code than ships —
 (`a4ad095`), since gone with the event subscriptions on 2026-10-15; `display_affinity` and `launch_memory` are now one `DisplayMemory` owned by
 `RiniState`, beside `WindowStore`, and passed in the same way.**
 
-`src/workspaces/engine.rs`, 2,876 code lines, 20 tests (144 lines per test). Its
-fields:
+`src/workspaces/engine.rs`, 2,876 code lines and 20 tests when audited; its jobs are one file each
+under `src/workspaces/engine/` now (`src/workspaces/docs/README.md`). Its fields then:
 
 ```
 workspace_layouts  floating  floating_positions  app_rules  focused_window
@@ -225,8 +225,7 @@ the memory again.
 Schema 5 nests the memory under its own key and `LoadedLayout` reads it BEFORE anything is
 validated. A file older than schema 6 is refused, its memory read only in the current shape.
 
-Its largest methods: `handle_command` (261), `calculate_layout_with_virtual_workspaces`
-(203), `move_window_to_workspace` (175), `on_windows_on_screen_updated` (168).
+No method of `LayoutEngine` is past the function limit; `tests/architecture.rs` holds it there.
 
 ### 3.2 `Reactor` holds every store and 41 event variants
 
@@ -363,7 +362,8 @@ The recent batches moved the opposite way deliberately — pure decisions to
 
 **PARTLY — `rini-cli` is 2 tests to 10 (`37dd37b`), 18 since; the tap's key decisions are
 `input::domain::router::KeyRouter`, with 21 tests, leaving `input_tap.rs` 5 tests, its size held to
-the file limit by `tests/architecture.rs`; the rest stand.**
+the file limit by `tests/architecture.rs`; `workspaces/engine.rs` is split by job under
+`workspaces/engine/`, each file and function under the limits; the rest stand.**
 
 ```
 crates/rini-cli/src/main.rs       824 code / 2 tests   412:1

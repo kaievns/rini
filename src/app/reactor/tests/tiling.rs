@@ -303,7 +303,7 @@ fn title_change_reapply_does_not_rebalance_unchanged_layout() {
 
     make_active_app_with_count(&mut apps, &mut reactor, 1, 3, Some(WindowId::new(1, 1)));
 
-    assert!(reactor.layout_manager.layout_engine.selected_window(space).is_some());
+    assert!(selected_window(&reactor, space).is_some());
     reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Up));
     apps.simulate_until_quiet(&mut reactor);
 
@@ -328,7 +328,7 @@ fn title_change_reapply_does_not_rebalance_when_window_stays_floating() {
 
     make_active_app_with_count(&mut apps, &mut reactor, 1, 3, Some(WindowId::new(1, 1)));
 
-    assert!(reactor.layout_manager.layout_engine.selected_window(space).is_some());
+    assert!(selected_window(&reactor, space).is_some());
     reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Up));
     apps.simulate_until_quiet(&mut reactor);
 

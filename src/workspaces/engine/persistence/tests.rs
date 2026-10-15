@@ -10,6 +10,14 @@ fn test_engine() -> LayoutEngine {
     LayoutEngine::new(&VirtualWorkspaceSettings::default(), &LayoutSettings::default())
 }
 
+/// A path for a layout file in a directory of its own, which goes, file and all, when the returned
+/// `TempDir` drops at the end of the test, passed or failed.
+fn layout_file() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("layout.ron");
+    (dir, path)
+}
+
 mod announcements;
 mod launch_memory;
 mod matching;

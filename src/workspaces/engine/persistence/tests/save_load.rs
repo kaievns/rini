@@ -33,15 +33,10 @@ fn save_and_load_arms_fingerprint_reconciliation() {
         height: 700.0,
         app_id: Some("com.example.editor".into()),
     });
-    let path = std::env::temp_dir().join(format!(
-        "rini-layout-restore-test-{}-{}.ron",
-        std::process::id(),
-        window.idx.get()
-    ));
+    let (_dir, path) = layout_file();
 
     engine.save(&memory, path.clone()).unwrap();
     let loaded = LayoutEngine::load(path.clone()).unwrap();
-    let _ = std::fs::remove_file(path);
 
     assert_eq!(loaded.persistence.windows[&window].window_server_id, Some(9001));
     assert!(loaded.persistence.pending_windows.contains(&window));
@@ -101,17 +96,12 @@ fn full_save_records_floating_window_in_its_inactive_workspace() {
         inactive_workspace,
     ));
     engine.floating.add_floating(window);
-    let path = std::env::temp_dir().join(format!(
-        "rini-inactive-floating-save-test-{}-{}.ron",
-        std::process::id(),
-        space.get(),
-    ));
+    let (_dir, path) = layout_file();
 
     engine
         .save_current_layout(path.clone(), &window_store, &memory, Some(space))
         .unwrap();
     let loaded = LayoutEngine::load(path.clone()).unwrap();
-    let _ = std::fs::remove_file(path);
 
     assert_eq!(
         loaded.restored_location_for_window(window),
@@ -172,17 +162,12 @@ fn full_save_removes_stale_floating_frame_from_a_tiled_window() {
     engine.add_window_to_layout(&mut window_store, &mut memory, space, window);
     // Model stale state left behind by an earlier floating-to-tiled transition.
     engine.floating_positions.store(space, workspace, window, frame);
-    let path = std::env::temp_dir().join(format!(
-        "rini-stale-floating-save-test-{}-{}.ron",
-        std::process::id(),
-        space.get(),
-    ));
+    let (_dir, path) = layout_file();
 
     engine
         .save_current_layout(path.clone(), &window_store, &memory, Some(space))
         .unwrap();
     let loaded = LayoutEngine::load(path.clone()).unwrap();
-    let _ = std::fs::remove_file(path);
 
     assert_eq!(
         loaded.restored_location_for_window(window),
@@ -445,15 +430,11 @@ fn a_save_keeps_the_space_active_at_the_last_save_though_it_has_no_layout() {
         !engine.workspace_layouts.spaces().contains(&active),
         "fixture: no layout on it"
     );
-    let path = std::env::temp_dir().join(format!(
-        "rini-saved-active-space-test-{}.ron",
-        std::process::id(),
-    ));
+    let (_dir, path) = layout_file();
 
     engine
         .autosave_current_layout(path.clone(), &window_store, &memory, Some(active))
         .unwrap();
-    let _ = std::fs::remove_file(path);
 
     assert!(engine.forget_vacant_spaces(&window_store, &memory, &[laid_out]).is_empty());
     assert_eq!(

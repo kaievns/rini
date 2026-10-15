@@ -150,20 +150,19 @@ impl WorkspaceAssignments {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::workspaces::domain::virtual_workspace::WorkspaceStore;
+    use slotmap::SlotMap;
 
-    fn two_workspaces(space: SpaceId) -> (VirtualWorkspaceId, VirtualWorkspaceId) {
-        let mut store = WorkspaceStore::new();
-        let a = store.create_workspace(space, "a".into()).unwrap();
-        let b = store.create_workspace(space, "b".into()).unwrap();
-        (a, b)
+    use super::*;
+
+    fn two_workspaces() -> (VirtualWorkspaceId, VirtualWorkspaceId) {
+        let mut ids = SlotMap::<VirtualWorkspaceId, ()>::with_key();
+        (ids.insert(()), ids.insert(()))
     }
 
     #[test]
     fn a_window_has_one_assignment_and_reassigning_moves_it() {
         let space = SpaceId::new(1);
-        let (a, b) = two_workspaces(space);
+        let (a, b) = two_workspaces();
         let mut idx = WorkspaceAssignments::default();
         let w = WindowId::new(1, 1);
         assert_eq!(
@@ -183,7 +182,7 @@ mod tests {
     #[test]
     fn windows_come_back_in_pid_then_index_order() {
         let space = SpaceId::new(1);
-        let (a, _) = two_workspaces(space);
+        let (a, _) = two_workspaces();
         let mut idx = WorkspaceAssignments::default();
         for w in [
             WindowId::new(2, 1),
@@ -203,7 +202,7 @@ mod tests {
     #[test]
     fn transfer_replaces_the_targets_assignment_and_clears_the_source() {
         let space = SpaceId::new(1);
-        let (a, b) = two_workspaces(space);
+        let (a, b) = two_workspaces();
         let mut idx = WorkspaceAssignments::default();
         let (from, to) = (WindowId::new(1, 1), WindowId::new(1, 2));
         idx.assign(from, WindowWorkspaceInfo { space, workspace_id: a });
@@ -219,8 +218,7 @@ mod tests {
     #[test]
     fn remap_space_merges_into_windows_already_on_the_new_space() {
         let (old, new) = (SpaceId::new(1), SpaceId::new(2));
-        let mut store = WorkspaceStore::new();
-        let a = store.create_workspace(old, "a".into()).unwrap();
+        let (a, _) = two_workspaces();
         let mut idx = WorkspaceAssignments::default();
         idx.assign(WindowId::new(1, 1), WindowWorkspaceInfo {
             space: old,

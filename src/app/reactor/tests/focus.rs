@@ -660,6 +660,7 @@ mod main_window_tracking {
     use test_log::test;
 
     use crate::app::reactor::testing::{Apps, make_windows, space_state_event};
+    use crate::app::reactor::tests::fixtures::selected_window;
     use crate::app::reactor::{Event, Quiet, Reactor, SpaceId, WindowId};
     use crate::workspaces::LayoutEngine;
 
@@ -686,10 +687,7 @@ mod main_window_tracking {
         ));
         reactor.handle_events(apps.make_app_with_opts(2, make_windows(2), None, false, true));
         assert_eq!(Some(WindowId::new(1, 1)), reactor.main_window());
-        assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
-            Some(WindowId::new(1, 1))
-        );
+        assert_eq!(selected_window(&reactor, space), Some(WindowId::new(1, 1)));
 
         reactor.handle_event(ApplicationGloballyDeactivated(1));
         assert_eq!(None, reactor.main_window());
@@ -702,10 +700,7 @@ mod main_window_tracking {
             Quiet::No,
         ));
         assert_eq!(Some(WindowId::new(2, 2)), reactor.main_window());
-        assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
-            Some(WindowId::new(2, 2))
-        );
+        assert_eq!(selected_window(&reactor, space), Some(WindowId::new(2, 2)));
         reactor.handle_event(ApplicationMainWindowChanged(
             1,
             Some(WindowId::new(1, 2)),
@@ -728,10 +723,7 @@ mod main_window_tracking {
             true,
         ));
         assert_eq!(Some(WindowId::new(3, 1)), reactor.main_window());
-        assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
-            Some(WindowId::new(3, 1))
-        );
+        assert_eq!(selected_window(&reactor, space), Some(WindowId::new(3, 1)));
     }
 
     #[test]
@@ -756,10 +748,7 @@ mod main_window_tracking {
         ));
         reactor.handle_events(apps.make_app_with_opts(2, make_windows(2), None, false, true));
         assert_eq!(Some(WindowId::new(1, 1)), reactor.main_window());
-        assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
-            Some(WindowId::new(1, 1))
-        );
+        assert_eq!(selected_window(&reactor, space), Some(WindowId::new(1, 1)));
 
         reactor.handle_event(ApplicationGloballyDeactivated(1));
         assert_eq!(None, reactor.main_window());
@@ -772,16 +761,10 @@ mod main_window_tracking {
             Quiet::Yes,
         ));
         assert_eq!(Some(WindowId::new(2, 2)), reactor.main_window());
-        assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
-            Some(WindowId::new(1, 1))
-        );
+        assert_eq!(selected_window(&reactor, space), Some(WindowId::new(1, 1)));
 
         reactor.handle_event(ApplicationActivated(2, Quiet::No));
-        assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
-            Some(WindowId::new(2, 2))
-        );
+        assert_eq!(selected_window(&reactor, space), Some(WindowId::new(2, 2)));
 
         reactor.handle_event(ApplicationMainWindowChanged(
             2,
@@ -789,18 +772,12 @@ mod main_window_tracking {
             Quiet::Yes,
         ));
         assert_eq!(Some(WindowId::new(2, 1)), reactor.main_window());
-        assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
-            Some(WindowId::new(2, 2))
-        );
+        assert_eq!(selected_window(&reactor, space), Some(WindowId::new(2, 2)));
 
         reactor.handle_event(ApplicationActivated(1, Quiet::Yes));
         reactor.handle_event(ApplicationGloballyActivated(1));
         assert_eq!(Some(WindowId::new(1, 1)), reactor.main_window());
-        assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
-            Some(WindowId::new(2, 2))
-        );
+        assert_eq!(selected_window(&reactor, space), Some(WindowId::new(2, 2)));
 
         reactor.handle_event(ApplicationMainWindowChanged(
             1,
@@ -808,10 +785,7 @@ mod main_window_tracking {
             Quiet::No,
         ));
         assert_eq!(Some(WindowId::new(1, 2)), reactor.main_window());
-        assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
-            Some(WindowId::new(1, 2))
-        );
+        assert_eq!(selected_window(&reactor, space), Some(WindowId::new(1, 2)));
     }
 
     #[test]
@@ -847,10 +821,7 @@ mod main_window_tracking {
         assert_eq!(Some(WindowId::new(3, 1)), reactor.main_window());
 
         reactor.handle_event(space_state_event(vec![screen_frame], vec![Some(space)]));
-        assert_eq!(
-            reactor.layout_manager.layout_engine.selected_window(space),
-            Some(WindowId::new(3, 1))
-        );
+        assert_eq!(selected_window(&reactor, space), Some(WindowId::new(3, 1)));
     }
 }
 
