@@ -243,10 +243,10 @@ as it is made, and every hide after is its alpha. AppKit sends a frame and an al
 server at once, and the layers go at the transaction's commit, by another path. So a rest window
 given a window, or shown again, goes to alpha 0 first, its new layers, if any, are committed and
 flushed, and only then does it take its frame, its place above its window and alpha 1
-(`rest::afresh`, in the order `rest::plan_draw` gives every call of a draw, a released rest window's
-alpha 0 inside the transaction); in the other order one frame could show the old window's band, clipped, in the
-new one's place. That the window server takes the two in the order rini sends them is inferred, not
-measured.
+(`rest::afresh`, in the order `rest::plan_draw` gives every call of a draw, a released rest
+window's alpha 0 inside the transaction); in the other order one frame could show the old window's
+band, clipped, in the new one's place. That the window server takes the two in the order rini sends
+them is inferred, not measured.
 
 **What a turn draws.** Each rest window keeps the look it last drew (`rest::Look`): its layers,
 laid from what its window wears and in which paints, the window's size and corner, the display's

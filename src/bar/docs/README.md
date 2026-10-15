@@ -115,9 +115,9 @@ root         n1 at 0.88, the ground until the first picture of it arrives
 
 `domain/pieces.rs` says what each piece shows, `domain/placement.rs` where its picture goes, and
 `domain/motion.rs` how the two movements run. `placement::frames` gives every frame of a draw,
-each tray extra's from the tray window's left edge, since its layer is the tray's. `platform/panel.rs`
-sets the layers, hiding each piece it drew before and not now, and `platform/text.rs` draws the
-words.
+each tray extra's from the tray window's left edge, since its layer is the tray's.
+`platform/panel.rs` sets the layers, hiding each piece it drew before and not now, and
+`platform/text.rs` draws the words.
 
 **The ground is a still picture.** The thread that pictures the menu extras also pictures the
 wallpaper behind each bar: the wallpaper window alone, so the desktop's icons and widgets stay out,

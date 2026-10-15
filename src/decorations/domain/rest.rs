@@ -1008,8 +1008,9 @@ pub enum PanelOp {
 /// shows (`assign`), each given a window or whose window focus came to or the window server
 /// reordered ordered above it (`to_reorder`), and each one's look drawn where it changed (`delta`),
 /// the layers in one transaction opened only when one is laid. A released rest window is hidden
-/// inside that transaction. One showing a window afresh (`afresh`) is hidden before any is ordered,
-/// and takes its frame, alpha 1 and its place in the stack only after the commit.
+/// inside that transaction. The others to reorder are ordered first; one showing a window afresh
+/// (`afresh`) is then hidden, and takes its frame, alpha 1 and its place in the stack only after
+/// the commit.
 pub fn plan_draw(rest: &Rest, panels: &[PanelState], draw: &Draw) -> Vec<PanelOp> {
     let wanted = rest.wanted();
     let mut targets: Vec<Option<WindowServerId>> =
@@ -2725,6 +2726,34 @@ mod tests {
                 order_op(1, 2),
                 PanelOp::Reveal { at: 0, look: looks[0] },
                 PanelOp::Reveal { at: 1, look: looks[1] },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rest_window_focus_came_to_is_ordered_before_one_given_a_window_hides() {
+        let rest = rest_with(
+            vec![at(1, true, false), at(2, false, false)],
+            SLOT,
+            Instant::now(),
+        );
+        let draw = Draw {
+            orders: Vec::new(),
+            focus: Some(ws(1)),
+        };
+        let looks = [1, 2].map(|window| rest.look_of(ws(window)).expect("shown"));
+        assert_eq!(
+            plan_draw(&rest, &[drawing(&rest, 1), PanelState::default()], &draw),
+            vec![
+                PanelOp::Target { at: 1, window: Some(ws(2)) },
+                order_op(0, 1),
+                PanelOp::Hide { at: 1 },
+                PanelOp::Begin,
+                PanelOp::Reveal { at: 0, look: looks[0] },
+                PanelOp::Lay { at: 1, look: looks[1] },
+                PanelOp::Commit,
+                PanelOp::Reveal { at: 1, look: looks[1] },
+                order_op(1, 2),
             ]
         );
     }
