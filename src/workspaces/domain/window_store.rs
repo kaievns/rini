@@ -7,7 +7,7 @@ use std::ops::{Deref, DerefMut};
 use crate::windows::domain::catalogue::{NativeFullscreenRecord, WindowCatalogue};
 use crate::windows::domain::state::WindowState;
 use rini_core::ids::SpaceId;
-use rini_core::ids::{WindowId, WindowServerId, pid_t};
+use rini_core::ids::{WindowId, WindowServerId};
 
 pub use crate::windows::domain::catalogue::{PendingNativeFullscreenRecord, WindowRecord};
 
@@ -162,11 +162,6 @@ impl WindowStore {
         self.catalogue.remove_window(window_id);
     }
 
-    pub fn remove_windows_for_app(&mut self, pid: pid_t) {
-        self.assignments.remove_all_for_pid(pid);
-        self.catalogue.remove_windows_for_app(pid);
-    }
-
     pub fn remap_space(&mut self, old_space: SpaceId, new_space: SpaceId) {
         self.assignments.remap_space(old_space, new_space);
         self.catalogue.remap_space(old_space, new_space);
@@ -274,31 +269,5 @@ mod tests {
                 .current_window_id,
             to
         );
-    }
-
-    #[test]
-    fn app_cleanup_removes_all_indexes() {
-        let mut store = WindowStore::default();
-        let wid = WindowId::new(4, 1);
-        let wsid = WindowServerId::new(55);
-        let mut workspaces = WorkspaceStore::new();
-        let workspace_id = workspaces
-            .create_workspace(SpaceId::new(9), Some("Cleanup".to_string()))
-            .expect("workspace");
-        store.track_window_server_id(wsid, wid);
-        store.assign_window_to_workspace(
-            wid,
-            WindowWorkspaceInfo {
-                space: SpaceId::new(9),
-                workspace_id,
-            },
-        );
-
-        store.remove_windows_for_app(wid.pid);
-
-        assert!(store.record(wid).is_none());
-        assert_eq!(store.tracked_window_id(wsid), None);
-        assert!(store.window_ids_for_pid(wid.pid).next().is_none());
-        store.debug_assert_invariants();
     }
 }

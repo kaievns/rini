@@ -841,6 +841,22 @@ mod tests {
     }
 
     #[test]
+    fn app_cleanup_removes_every_index_of_the_apps_windows() {
+        let mut catalogue = WindowCatalogue::default();
+        let wid = WindowId::new(4, 1);
+        let wsid = WindowServerId::new(55);
+        catalogue.track_window_server_id(wsid, wid);
+        catalogue.set_last_rule_decision(wid, true);
+
+        catalogue.remove_windows_for_app(wid.pid);
+
+        assert!(catalogue.record(wid).is_none());
+        assert_eq!(catalogue.tracked_window_id(wsid), None);
+        assert!(catalogue.window_ids_for_pid(wid.pid).next().is_none());
+        catalogue.debug_assert_invariants();
+    }
+
+    #[test]
     fn track_window_server_id_binds_pending_native_fullscreen_record() {
         let mut window_store = WindowCatalogue::default();
         let wid = WindowId::new(8, 1);

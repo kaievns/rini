@@ -49,7 +49,7 @@ pub fn handle_application_terminated(pid: i32) -> anyhow::Result<EventOutcome> {
 }
 
 /// No Accessibility destruction follows once the thread has stopped, so each window still held goes
-/// here.
+/// here, and with them the application's native-fullscreen records.
 pub fn handle_application_thread_terminated(
     apps: &mut AppManager,
     state: &mut RiniState,
@@ -68,6 +68,7 @@ pub fn handle_application_thread_terminated(
             window::WindowDestroyedPayload { window },
         )?);
     }
+    state.windows.remove_windows_for_app(pid);
     Ok(outcome.with_arrange_passes(1).with_layout_event(LayoutEvent::AppClosed(pid)))
 }
 

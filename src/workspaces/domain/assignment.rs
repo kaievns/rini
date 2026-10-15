@@ -2,7 +2,7 @@
 //! "which workspace owns this window" and "which windows does this workspace hold" are one lookup
 //! each and can never disagree. See "One workspace list" in `src/workspaces/docs/workspaces-and-displays.md`.
 use rini_core::ids::SpaceId;
-use rini_core::ids::{WindowId, pid_t};
+use rini_core::ids::WindowId;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 
@@ -39,13 +39,6 @@ impl WorkspaceAssignments {
         let old = self.by_window.remove(&window)?;
         self.unindex(window, old);
         Some(old)
-    }
-
-    pub fn remove_all_for_pid(&mut self, pid: pid_t) {
-        let windows: Vec<_> = self.by_window.keys().copied().filter(|w| w.pid == pid).collect();
-        for window in windows {
-            self.remove(window);
-        }
     }
 
     /// Carries `from`'s assignment over to `to`, replacing whatever `to` had. A no-op when `from`
@@ -257,26 +250,5 @@ mod tests {
         assert!(idx.windows(old, a).is_empty());
         assert_eq!(idx.spaces(), vec![new]);
         idx.debug_assert_invariants();
-    }
-
-    #[test]
-    fn removing_an_apps_windows_leaves_other_apps_alone() {
-        let space = SpaceId::new(1);
-        let (a, _) = two_workspaces(space);
-        let mut idx = WorkspaceAssignments::default();
-        idx.assign(
-            WindowId::new(1, 1),
-            WindowWorkspaceInfo { space, workspace_id: a },
-        );
-        idx.assign(
-            WindowId::new(2, 1),
-            WindowWorkspaceInfo { space, workspace_id: a },
-        );
-        idx.remove_all_for_pid(1);
-        assert_eq!(idx.windows(space, a), vec![WindowId::new(2, 1)]);
-        assert!(idx.has_assignments_in_space(space));
-        idx.remove(WindowId::new(2, 1));
-        assert!(idx.is_empty());
-        assert!(!idx.has_assignments_in_space(space));
     }
 }
