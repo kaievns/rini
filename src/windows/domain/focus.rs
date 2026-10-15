@@ -87,20 +87,17 @@ impl RaiseEcho {
 /// not showing. Following that costs a workspace switch on the parked window's display, even when the app
 /// has a perfectly visible window that the user was last in. Redirecting only ever AVOIDS a switch: it
 /// applies when the pick is parked and the remembered window is not, so it can never cause one.
-pub fn activation_focus_target(
-    picked: WindowId,
-    picked_is_visible: bool,
-    remembered: Option<WindowId>,
-    remembered_is_visible: bool,
-) -> Option<WindowId> {
-    if picked_is_visible {
-        return None;
-    }
+pub fn activation_focus_target(picked: Sighting, remembered: Option<Sighting>) -> Option<WindowId> {
     let remembered = remembered?;
-    if remembered == picked || !remembered_is_visible {
-        return None;
-    }
-    Some(remembered)
+    (!picked.visible && remembered.visible && remembered.window != picked.window)
+        .then_some(remembered.window)
+}
+
+/// A window an activation weighs, and whether it is visible: on a workspace a display shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sighting {
+    pub window: WindowId,
+    pub visible: bool,
 }
 
 /// The windows whose look turns when the key window goes from `before` to `after`: the one that
@@ -720,6 +717,10 @@ mod tests {
         }
     }
 
+    fn seen(window: WindowId) -> Sighting { Sighting { window, visible: true } }
+
+    fn unseen(window: WindowId) -> Sighting { Sighting { window, visible: false } }
+
     /// The measured case: cmd-tab to Ghostty, and macOS makes the built-in display's window main even
     /// though the user was in the external display's one. Following the pick would switch the built-in
     /// display's workspace to reveal a window the user did not ask for.
@@ -728,7 +729,7 @@ mod tests {
         let parked = WindowId::new(954, 11333);
         let visible = WindowId::new(954, 9607);
         assert_eq!(
-            activation_focus_target(parked, false, Some(visible), true),
+            activation_focus_target(unseen(parked), Some(seen(visible))),
             Some(visible)
         );
     }
@@ -739,7 +740,7 @@ mod tests {
         // remembers a different window.
         let visible = WindowId::new(954, 9607);
         let other = WindowId::new(954, 11333);
-        assert_eq!(activation_focus_target(visible, true, Some(other), true), None);
+        assert_eq!(activation_focus_target(seen(visible), Some(seen(other))), None);
     }
 
     /// The redirect must never CAUSE a workspace switch, only avoid one. A remembered window that is
@@ -749,7 +750,7 @@ mod tests {
         let parked = WindowId::new(954, 11333);
         let also_parked = WindowId::new(954, 9607);
         assert_eq!(
-            activation_focus_target(parked, false, Some(also_parked), false),
+            activation_focus_target(unseen(parked), Some(unseen(also_parked))),
             None
         );
     }
@@ -757,8 +758,8 @@ mod tests {
     #[test]
     fn nothing_remembered_or_the_same_window_leaves_focus_alone() {
         let parked = WindowId::new(954, 11333);
-        assert_eq!(activation_focus_target(parked, false, None, false), None);
-        assert_eq!(activation_focus_target(parked, false, Some(parked), true), None);
+        assert_eq!(activation_focus_target(unseen(parked), None), None);
+        assert_eq!(activation_focus_target(unseen(parked), Some(seen(parked))), None);
     }
 
     fn launched(tracker: &mut MainWindowTracker, pid: pid_t, main_window: Option<WindowId>) {

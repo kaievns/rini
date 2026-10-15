@@ -71,8 +71,8 @@ fn is_app_extension_path(path: &str) -> bool {
 /// against, and refusing every window whose id has not arrived yet would drop windows during the
 /// gap between Accessibility reporting one and the server catching up. With an id, the server's
 /// info is the answer.
-pub fn has_visible_peer(window_server_id_known: bool, server_reported: bool) -> bool {
-    !window_server_id_known || server_reported
+pub fn has_visible_peer<I, R>(window_server_id: Option<I>, reported: Option<R>) -> bool {
+    window_server_id.is_none() || reported.is_some()
 }
 
 /// Applications whose AX tree lies about a window being standard unless it has a title element.
@@ -200,14 +200,15 @@ mod tests {
     /// have arrived yet. An id the server does not know about means the window is not on screen.
     #[test]
     fn a_window_with_no_server_id_yet_counts_as_visible() {
+        let (id, info) = (Some(56), Some("on screen"));
         assert!(
-            has_visible_peer(false, false),
+            has_visible_peer(None::<u32>, None::<&str>),
             "no id yet, so nothing to contradict AX"
         );
-        assert!(has_visible_peer(false, true));
-        assert!(has_visible_peer(true, true));
+        assert!(has_visible_peer(None::<u32>, info));
+        assert!(has_visible_peer(id, info));
         assert!(
-            !has_visible_peer(true, false),
+            !has_visible_peer(id, None::<&str>),
             "an id the server does not report is not on screen"
         );
     }

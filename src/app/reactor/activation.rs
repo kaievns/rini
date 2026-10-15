@@ -7,6 +7,7 @@ use tracing::{debug, trace};
 
 use super::events::EventOutcome;
 use super::{Reactor, WorkspaceSwitchOrigin};
+use crate::windows::domain::focus::{Sighting, activation_focus_target};
 use crate::windows::domain::request::Quiet;
 use crate::windows::domain::{raise as raise_manager, raise_order};
 use crate::workspaces::LayoutEvent;
@@ -98,12 +99,16 @@ impl Reactor {
         // Peeked, not taken: when this does not redirect, the workspace switch below may still
         // use the remembered window (`maybe_auto_switch_to_window_workspace`).
         let remembered = self.main_window_tracker.peek_activation_target(picked.pid)?;
-        let target = crate::windows::domain::focus::activation_focus_target(
-            picked,
-            self.window_is_in_active_workspace(picked, Some(picked_space)),
-            Some(remembered),
-            self.window_is_standard(remembered)
-                && self.window_is_in_active_workspace(remembered, None),
+        let target = activation_focus_target(
+            Sighting {
+                window: picked,
+                visible: self.window_is_in_active_workspace(picked, Some(picked_space)),
+            },
+            Some(Sighting {
+                window: remembered,
+                visible: self.window_is_standard(remembered)
+                    && self.window_is_in_active_workspace(remembered, None),
+            }),
         )?;
         self.main_window_tracker.take_activation_target(picked.pid);
         debug!(

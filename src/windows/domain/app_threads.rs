@@ -67,13 +67,20 @@ mod tests {
 
     const PID: pid_t = 21114;
 
-    fn seen(regular: bool, finished_launching: bool) -> Readiness {
-        Readiness {
-            regular,
-            finished_launching,
-            login_window: false,
-        }
-    }
+    const LAUNCHING: Readiness = Readiness {
+        regular: true,
+        finished_launching: false,
+        login_window: false,
+    };
+    const LAUNCHING_ACCESSORY: Readiness = Readiness { regular: false, ..LAUNCHING };
+    const LAUNCHED: Readiness = Readiness {
+        finished_launching: true,
+        ..LAUNCHING
+    };
+    const LAUNCHED_ACCESSORY: Readiness = Readiness {
+        finished_launching: true,
+        ..LAUNCHING_ACCESSORY
+    };
 
     fn discovered() -> AppThreads {
         let mut threads = AppThreads::default();
@@ -88,16 +95,16 @@ mod tests {
         let mut threads = discovered();
 
         assert_eq!(
-            threads.next(PID, seen(true, false)),
+            threads.next(PID, LAUNCHING),
             Next::AwaitFinishedLaunching,
             "Regular at check-in, still launching"
         );
         assert_eq!(
-            threads.next(PID, seen(false, true)),
+            threads.next(PID, LAUNCHED_ACCESSORY),
             Next::AwaitActivationPolicy,
             "finished launching, by which time it had hidden its Dock icon"
         );
-        assert_eq!(threads.next(PID, seen(true, true)), Next::Spawn, "Regular again");
+        assert_eq!(threads.next(PID, LAUNCHED), Next::Spawn, "Regular again");
         assert!(
             !threads.look_on_activation(PID),
             "becoming frontmost afterwards starts nothing"
@@ -108,10 +115,13 @@ mod tests {
     #[test]
     fn an_application_first_seen_ready_when_it_is_activated_is_taken_on_then() {
         let mut threads = discovered();
-        assert_eq!(threads.next(PID, seen(false, true)), Next::AwaitActivationPolicy);
+        assert_eq!(
+            threads.next(PID, LAUNCHED_ACCESSORY),
+            Next::AwaitActivationPolicy
+        );
 
         assert!(threads.look_on_activation(PID));
-        assert_eq!(threads.next(PID, seen(true, true)), Next::Spawn);
+        assert_eq!(threads.next(PID, LAUNCHED), Next::Spawn);
         assert!(!threads.look_on_activation(PID));
     }
 
@@ -128,29 +138,32 @@ mod tests {
     #[test]
     fn a_launch_reported_twice_does_not_start_a_second_thread() {
         let mut threads = discovered();
-        assert_eq!(threads.next(PID, seen(true, true)), Next::Spawn);
-        assert_eq!(threads.next(PID, seen(true, true)), Next::AlreadyRunning);
+        assert_eq!(threads.next(PID, LAUNCHED), Next::Spawn);
+        assert_eq!(threads.next(PID, LAUNCHED), Next::AlreadyRunning);
     }
 
     #[test]
     fn a_thread_that_gave_up_is_replaced_at_the_next_sighting() {
         let mut threads = discovered();
-        assert_eq!(threads.next(PID, seen(true, true)), Next::Spawn);
+        assert_eq!(threads.next(PID, LAUNCHED), Next::Spawn);
 
         threads.ended(PID);
 
         assert!(threads.look_on_activation(PID));
-        assert_eq!(threads.next(PID, seen(true, true)), Next::Spawn);
+        assert_eq!(threads.next(PID, LAUNCHED), Next::Spawn);
     }
 
     #[test]
     fn an_application_that_is_not_regular_waits_however_far_its_launch_has_got() {
         let mut threads = discovered();
         assert_eq!(
-            threads.next(PID, seen(false, false)),
+            threads.next(PID, LAUNCHING_ACCESSORY),
             Next::AwaitActivationPolicy
         );
-        assert_eq!(threads.next(PID, seen(false, true)), Next::AwaitActivationPolicy);
+        assert_eq!(
+            threads.next(PID, LAUNCHED_ACCESSORY),
+            Next::AwaitActivationPolicy
+        );
         assert!(threads.look_on_activation(PID), "still unmanaged");
     }
 
@@ -169,8 +182,8 @@ mod tests {
     #[test]
     fn one_application_s_thread_says_nothing_about_another_s() {
         let mut threads = discovered();
-        assert_eq!(threads.next(PID, seen(true, true)), Next::Spawn);
-        assert_eq!(threads.next(PID + 1, seen(true, true)), Next::Spawn);
+        assert_eq!(threads.next(PID, LAUNCHED), Next::Spawn);
+        assert_eq!(threads.next(PID + 1, LAUNCHED), Next::Spawn);
 
         threads.ended(PID);
 
