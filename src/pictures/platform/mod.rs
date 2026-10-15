@@ -3,6 +3,7 @@
 //! the desktop and the bar, and the helpers that hand a picture to a layer.
 
 pub mod bitmap;
+pub mod capturer;
 pub mod desktop;
 pub mod layer;
 pub mod measure;

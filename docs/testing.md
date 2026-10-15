@@ -27,7 +27,11 @@ without checking. Both are in `docs/implementation-audit.md` under 4.4 and 4.4.1
 The test for it: if the thing behind the `#[cfg]` is a QUERY — something the operating system
 answers — a fake is fine, and it belongs at the boundary with the other fakes. If it is a RULE —
 something rini decides — inject what the rule reads and let the test name it. `SpaceKinds` and
-`LiveDisplays` in `src/displays/platform/spaces.rs` are what that looks like.
+`LiveDisplays` in `src/displays/platform/spaces.rs` are what that looks like. Where a thread both
+decides and makes the calls, the calls are a port it is generic over: the pictures service is
+`Service<C: Capturer>` (`src/pictures/platform/capturer.rs`), and its tests run its rounds against
+`FakeCapturer`, which answers from the frames a test gives it and records every call made
+(`overlapping_windows_go_in_calls_of_their_own_and_every_set_in_its_own`).
 
 ## A unit test must not read the live window server
 
