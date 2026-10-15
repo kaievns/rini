@@ -215,10 +215,15 @@ the new size, and an entry leaves the list once it is back under
 (`no_function_or_file_grows_past_its_limit`). Those lists are the record of how long each
 function and file is now; a doc that needs a size points at them.
 
-No function in the workspace, tests' included, takes two `bool` parameters: clippy's
+No function in the workspace, tests' included, takes two `bool` parameters by value: clippy's
 `fn_params_excessive_bools` is denied in `[workspace.lints]` and `clippy.toml` sets
 `max-fn-params-bools = 1`, so a choice a call would spell `true, false` is an enum, or a struct
-naming each field. A struct with more than three `bool` fields fails `struct_excessive_bools`
+naming each field. Clippy counts free functions, inherent methods and a trait's own declarations.
+It skips a method in `impl Trait for X`, whose signature is its trait's and is counted where a
+trait of ours is declared, an `extern "C"` function, whose signature is C's, and a closure. It
+counts no `bool` behind a reference, so no source in `src`, `crates` or `tests` takes one by
+reference at all (`no_bool_is_taken_by_reference`): a `bool` is `Copy`, and one written back
+through `&mut` is a return value. A struct with more than three `bool` fields fails `struct_excessive_bools`
 unless each flag stands on its own and its allow says so.
 
 No `use` in `src/app` gives a module another name

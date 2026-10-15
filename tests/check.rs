@@ -344,3 +344,52 @@ fn no_long_parameter_list_tangled_type_or_bool_run_is_allowed() {
         .collect();
     assert!(allowed.is_empty(), "name the parameters instead: {allowed:#?}");
 }
+
+/// Whether `line` holds a `bool` behind a reference, `&`, `&mut` or `&'a` before the word `bool`.
+fn references_a_bool(line: &str) -> bool {
+    line.match_indices('&').any(|(at, _)| {
+        let mut rest = &line[at + 1..];
+        if let Some(lifetime) = rest.strip_prefix('\'') {
+            rest = lifetime.split_once(' ').map_or("", |(_, after)| after);
+        }
+        rest = rest.strip_prefix("mut ").unwrap_or(rest);
+        rest.strip_prefix("bool")
+            .is_some_and(|after| !after.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+    })
+}
+
+/// Clippy's `fn_params_excessive_bools` counts only a `bool` taken by value, so none is taken by
+/// reference: a `bool` is `Copy`, and one written back through `&mut` is a return value.
+#[test]
+fn no_bool_is_taken_by_reference() {
+    let b = "bool";
+    for line in [
+        format!("fn f(a: &{b}, b: &{b})"),
+        format!("fn f(a: &mut {b})"),
+        format!("fn f<'a>(a: &'a {b})"),
+        format!("let f = |a: &&{b}| **a;"),
+    ] {
+        assert!(references_a_bool(&line), "{line}");
+    }
+    for line in [
+        format!("fn f(a: {b}, b: {b}s)"),
+        format!("g(&{b}s[0], &mut {b}_flag)"),
+        format!("x & {b}"),
+    ] {
+        assert!(!references_a_bool(&line), "{line}");
+    }
+    let referencing: Vec<String> = rust_sources(&["src", "crates", "tests"])
+        .iter()
+        .flat_map(|(path, source)| {
+            source
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| references_a_bool(line))
+                .map(move |(at, _)| format!("{path}:{}", at + 1))
+        })
+        .collect();
+    assert!(
+        referencing.is_empty(),
+        "take the bool by value: {referencing:#?}"
+    );
+}
