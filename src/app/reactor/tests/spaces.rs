@@ -7,7 +7,7 @@ use test_log::test;
 use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
-use crate::displays::platform::spaces::SpaceKinds;
+use crate::displays::domain::snapshot::SpaceKinds;
 use crate::workspaces::LayoutCommand;
 
 #[test]

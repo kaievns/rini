@@ -7,8 +7,8 @@ use rini_geometry::CGRectExt;
 use rustc_hash::FxHashSet as HashSet;
 
 use super::space_resolution::{self as resolve, Candidates};
+use crate::displays::domain::snapshot::SpaceKinds;
 use crate::displays::domain::topology::ForwardedSpaceState;
-use crate::displays::platform::spaces::SpaceKinds;
 use crate::windows::domain::state::WindowState;
 use crate::windows::domain::transaction::TransactionManager;
 use crate::windows::platform::window_server;

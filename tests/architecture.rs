@@ -961,7 +961,7 @@ const FN_LIMIT: usize = 100;
 const FILE_LIMIT: usize = 1500;
 
 /// The functions over `FN_LIMIT`, each at its size now as its ceiling: file, name, ceiling.
-const LONG_FNS: [(&str, &str, usize); 42] = [
+const LONG_FNS: [(&str, &str, usize); 40] = [
     ("crates/rini-ipc/src/mach.rs", "mach_server_begin", 101),
     ("src/animation/domain/choreography/slide.rs", "retarget", 156),
     ("src/animation/domain/motion/plan.rs", "merge_plans", 202),
@@ -1002,8 +1002,6 @@ const LONG_FNS: [(&str, &str, usize); 42] = [
     ),
     ("src/app/reactor/mod.rs", "start_strip_switch", 132),
     ("src/app/reactor/query.rs", "handle_diagnostics_query", 161),
-    ("src/displays/platform/spaces.rs", "build_forwarded_state", 117),
-    ("src/displays/platform/spaces.rs", "handle_event", 118),
     ("src/displays/screen.rs", "refresh_snapshot", 130),
     ("src/input/platform/keyboard.rs", "build_cg_keycode_table", 125),
     ("src/layout/domain/constraints.rs", "solve_axis_lengths", 114),
@@ -1530,7 +1528,7 @@ const OTHERS_NAMES: [&str; 16] = [
 
 /// Names the docs record as deleted: the audits' findings as they were found, and rift's options
 /// a spec says are gone.
-const GONE_NAMES: [&str; 13] = [
+const GONE_NAMES: [&str; 14] = [
     "focus_stays_on_this_display",
     "current_reported_space_for_window_id",
     "capture_composite_via_skylight",
@@ -1544,6 +1542,7 @@ const GONE_NAMES: [&str; 13] = [
     "consume_or_expel_window",
     "focus_follows_mouse_disable_hotkey",
     "mouse_hides_on_focus",
+    "resolve_menu_bar_space",
 ];
 
 /// The snake_case name of four words or more an inline code span `span` holds, path and call

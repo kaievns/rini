@@ -22,6 +22,14 @@ conservative:
 - Window enter/leave notices arriving during a quarantine are dropped and
   counted (`QuarantineStats`), because the authoritative snapshot that follows
   supersedes them.
+- Nothing is asked again for ever. A refresh retries a snapshot it cannot
+  forward `REFRESH_MAX_RETRIES` times, and starts over only while a wake or an
+  unlock is owed a snapshot; a churn checks a topology it has already seen
+  `DISPLAY_STABILIZE_MAX_ATTEMPTS` times, then ends unsettled and refreshes.
+
+The rules are functions over values in `src/displays/domain/snapshot.rs` (what
+the snapshot holds) and `src/displays/domain/settling.rs` (when to ask again);
+the actor makes the reads and keeps the state.
 
 The failure this prevents: treating an unstable lock/wake/login snapshot as
 authoritative user-space state made rini initialise fresh default workspaces

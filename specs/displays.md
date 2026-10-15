@@ -125,6 +125,11 @@ context is arranged differently depending on what is plugged in, and rini rememb
   before anything reads them.
 - A window MUST NOT be followed onto a login or fullscreen space. Assigning one there strands it
   somewhere the user cannot reach and no layout pass will touch.
+- Asking the window server again MUST stop. A refresh MUST retry a snapshot it cannot forward at
+  most `REFRESH_MAX_RETRIES` times, and MAY start over only while a wake or an unlock is still owed
+  a snapshot, since only a forwarded one releases the reactor. A display churn MUST check a topology
+  it has already sampled at most `DISPLAY_STABILIZE_MAX_ATTEMPTS` times, then end unsettled and
+  refresh.
 - Each snapshot MUST make one visible-window refresh once every quarantine it releases is lifted,
   not one per quarantine.
 
@@ -158,10 +163,14 @@ context is arranged differently depending on what is plugged in, and rini rememb
 
 ## Where it lives
 
-`src/displays/platform/spaces.rs` is the authority, `src/displays/domain/topology.rs` the snapshot
-rules, `src/workspaces/domain/display_memory.rs` the durable records.
+`src/displays/platform/spaces.rs` is the authority, `src/displays/domain/topology.rs`,
+`src/displays/domain/snapshot.rs` and `src/displays/domain/settling.rs` the snapshot rules,
+`src/workspaces/domain/display_memory.rs` the durable records.
+`a_refresh_asks_again_for_a_snapshot_it_cannot_forward_up_to_its_cap_then_stops` and
+`a_churn_that_never_settles_is_checked_up_to_its_cap_then_ends_with_a_refresh` in
+`src/displays/platform/spaces/tests.rs` hold the caps, and
 `wake_quarantine_waits_for_fresh_space_snapshot_before_refresh` and
-`session_lock_quarantine_ignores_discovery_and_replays_one_refresh_after_unlock` hold the one refresh.
+`session_lock_quarantine_ignores_discovery_and_replays_one_refresh_after_unlock` the one refresh.
 `src/displays/platform/mission_control.rs` watches the Dock, and
 `a_subscription_the_dock_is_too_busy_to_answer_is_left_for_the_next_ask` there and
 `an_application_too_busy_to_answer_is_asked_again_until_it_answers` and

@@ -55,14 +55,15 @@ thread's narrower `Reader`, until that thread moves onto the port; and the pictu
 | the window server: windows, frames, levels, spaces, order, the space lists, the key window, the listings; `make_key_window`, `take_stack_place` | `WindowServer`, an `Arc<dyn WindowServer>` (`src/windows/platform/window_server/port.rs`) | `window_server::live()` | a clone of an `Arc<FakeWindowServer>`, answers stated with its `set_` methods, commands read back with `commands()`, reads counted with `reads()`; every read unknown until stated |
 | Accessibility, from the per-app thread | `AxWorld`, a type parameter (`src/windows/platform/ax/world.rs`) | `MacAx` | `FakeAx`, whose elements are numbers; an element with nothing recorded answers as a window that has gone |
 | the window server, from the frames thread that follows windows | `Reader`, a struct of fn pointers (`src/displays/platform/window_notify.rs`), a narrower view of the window server answered through the same free functions, which folds into `WindowServer` when `window_notify` moves onto the port | `LIVE` | a `Reader` of its own fns |
-| displays and spaces, from the spaces actor | `LiveDisplays` and `SpaceKinds`, structs of fn pointers (`src/displays/platform/spaces.rs`) | `from_window_server()` | `LiveDisplays::silent()`, which knows nothing, and `SpaceKinds::for_tests()`, or a struct of its own |
+| displays and spaces, from the spaces actor | `LiveDisplays` (`src/displays/platform/spaces.rs`) and `SpaceKinds` (`src/displays/domain/snapshot.rs`), structs of fn pointers, beside the `WindowServer` port for each space's windows and each window's home space | `from_window_server()`, and `window_server::live()` | `LiveDisplays::silent()`, which knows nothing, and `SpaceKinds::for_tests()`, which only a test build has, or a struct of its own; a `FakeWindowServer` (`hand_window_server`) |
+| when the spaces actor asks again: a refresh's retries, a churn's checks | `Schedule`, a trait object (`src/displays/platform/spaces/schedule.rs`) | `MainQueue`, the main dispatch queue | `Recorded`, which keeps every notification asked for and sends none, so a test feeds them back to run a retry to its cap (`a_churn_that_never_settles_is_checked_up_to_its_cap_then_ends_with_a_refresh`) |
 | the window server and ScreenCaptureKit, from the pictures thread | `Capturer`, a type parameter (`src/pictures/platform/capturer.rs`) | `MacCapturer` | `FakeCapturer`, answering from the frames a test gives it and recording every call |
 | the screens, for `ScreenCache` | `System`, a type parameter (`src/displays/screen.rs`) | `Actual` | a `System` of its own, as the stubs in `screen.rs`'s tests are |
 
 A caller not yet handed a `WindowServer` calls the free functions of the same names in
 `window_server`, answered in a test build by a thread-local `FakeWindowServer` the `set_*_override`
 setters state answers into. That shim is temporary, and nothing new is written against it: the
-reactor, the flight engine, the app actor and the spaces actor move onto a port and it goes.
+reactor, the flight engine and the app actor move onto a port, as the spaces actor has, and it goes.
 
 ## A unit test must not read the live window server
 
@@ -204,8 +205,9 @@ SLSWindowManagementFallbackBridge. It is possible that this object was
 over-released, or is in the process of deallocation.
 ```
 
-On 2026-10-10 it took a few percent of 40 parallel runs. It took none of the 47 parallel runs
-on 2026-10-15, with nothing changed that it was traced to; if it comes back the message names it.
+On 2026-10-10 it took a few percent of 40 parallel runs, and none of 47 on 2026-10-15. On
+2026-10-16 it aborted 4 of 10 runs of the lib suite's binary at `00d9e9e5`, with nothing changed
+that either swing was traced to; the message names it.
 The tests that build capture fixtures still avoid `IOSurface` for that reason, and use a CPU
 bitmap instead.
 

@@ -78,11 +78,11 @@ use crate::app::reactor::events::window_discovery;
 use crate::app::reactor::state::RiniState;
 pub use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::screen::order_visible_spaces_by_position;
+use crate::displays::domain::snapshot::SpaceKinds;
 use crate::displays::domain::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use crate::displays::domain::topology::{
     ForwardedSpaceState, SpaceEventKind, TopologyWindowDelta, display_set_delta,
 };
-use crate::displays::platform::spaces::SpaceKinds;
 use crate::input::domain::switch_session::Signal as SwitchSignal;
 use crate::input::platform::input_tap as event_tap;
 use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, switch_list};
@@ -560,7 +560,7 @@ pub struct Reactor {
     /// ~/.rini/layout.ron with test fixtures. `Reactor::new_for_test` sets it to `None`.
     autosave_path: Option<PathBuf>,
     /// How a space id is classified. Injected rather than called, so a test can say what a
-    /// non-user space is; see `displays::platform::spaces::SpaceKinds`.
+    /// non-user space is; see `displays::domain::snapshot::SpaceKinds`.
     space_kinds: SpaceKinds,
     /// Whether the spaces actor is mid display reconfiguration. Injected rather than called: the
     /// flag behind the production reader is process-wide, so a test that read it would be
