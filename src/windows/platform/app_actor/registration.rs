@@ -212,7 +212,7 @@ impl<W: AxWorld> State<W> {
         wsid: Option<WindowServerId>,
         hint: Option<WindowServerInfo>,
     ) -> bool {
-        admissible::has_visible_peer(wsid, hint)
+        admissible::has_visible_peer(wsid, hint.as_ref())
     }
 }
 
