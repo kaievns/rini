@@ -328,11 +328,7 @@ impl<'a> Merged<'a> {
             let key = new.key;
             let to = self.plan.positions.get(&key).copied().unwrap_or(new.install).rounded();
             self.making.push(Edit::Place(Node::Container(key), Value::Point(to)));
-            let way = ContainerWay {
-                key,
-                from: new.install.rounded(),
-                to,
-            };
+            let way = ContainerWay { key, from: new.install, to };
             look.open(&mut self.making, way, new.leaving);
         }
         self.join_tiles(look);
@@ -681,19 +677,32 @@ mod tests {
     /// it lands, every window the flight drew before it is drawn where it was, and a window it brings
     /// rides beside the windows it sits beside in the layout: drawn where the pass has it, moved by
     /// as far as the container it rides is drawn from where the last pass sent it. Each edge within
-    /// the half point placing on whole points allows, and within a point for a window the pass moves
-    /// into a container it opens (`OPENED_SLACK`): passes built as the reactor builds them, from
+    /// the half point placing on whole points allows: passes built as the reactor builds them, from
     /// where the last pass sends every window, merged into a flight playing from its score, 200 cases
-    /// from a fixed seed.
+    /// from each of `BEND_SEEDS`.
     fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
-        let mut rng = Gen(163);
+        BEND_SEEDS
+            .into_iter()
+            .try_for_each(|seed| bends_without_a_jump_from(make, seed))
+    }
+
+    /// The seeds of the bend contract's flights: 163, and 2, which moves members of two containers
+    /// into one a pass opens, a member from the other drawn 0.82pt from where it was while
+    /// `Merged::bend` started the container's movement at the whole point nearest where it installs.
+    const BEND_SEEDS: [u64; 2] = [163, 2];
+
+    fn bends_without_a_jump_from(
+        make: &dyn Fn() -> Box<dyn Choreography>,
+        seed: u64,
+    ) -> Result<(), String> {
+        let mut rng = Gen(seed);
         let mut brought = 0;
         for run in 0..RUNS {
             let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
             flight.start(&[]);
             let mut now = BEGIN;
             for step in 0..1 + rng.below(4) {
-                let tag = format!("seed 163 run {run} step {step}");
+                let tag = format!("seed {seed} run {run} step {step}");
                 now += rng.pt(10.0, 400.0) / 1000.0;
                 let windows = flight.plan.windows();
                 let newcomer = wid(500 + step as u32);
@@ -703,7 +712,7 @@ mod tests {
                     .filter_map(|w| Some((*w, flight.score.drawn(*w, now)?)))
                     .collect();
                 let sent = flight.plan.clone();
-                let delta = flight.merge(&incoming, pan, None, now).delta;
+                flight.merge(&incoming, pan, None, now);
                 if let Some(Member::Rigid { key, .. }) = flight.plan.member(newcomer)
                     && let Some(start) = sent.positions.get(&key)
                 {
@@ -737,12 +746,7 @@ mod tests {
                         return Err(format!("{tag}: {window:?} gone"));
                     };
                     let apart = edges_apart(is, was);
-                    let slack = if moved_into_an_opened(&delta, window) {
-                        OPENED_SLACK
-                    } else {
-                        0.5
-                    };
-                    if apart > slack + 1e-6 {
+                    if apart > 0.5 + 1e-6 {
                         return Err(format!(
                             "{tag}: {window:?} jumped {apart}: {was:?} then {is:?}"
                         ));
@@ -751,7 +755,7 @@ mod tests {
             }
         }
         if brought == 0 {
-            return Err("no window brought beside the strip".to_string());
+            return Err(format!("seed {seed}: no window brought beside the strip"));
         }
         Ok(())
     }
@@ -772,19 +776,6 @@ mod tests {
         let cut = bends_without_a_jump(&|| Flawed::boxed(Flaw::CutsTheBend))
             .expect_err("a bend that cuts to the pass");
         assert!(cut.contains("jumped"), "{cut}");
-    }
-
-    /// How far a window a pass moves into a container it opens may be drawn from where it was: the
-    /// container opens on a whole point where its first member's container is drawn, and a member
-    /// from another container sat at another fraction, a half point each. See "Whole points" in
-    /// `src/animation/docs/animation-smoothness.md`.
-    const OPENED_SLACK: f64 = 1.0;
-
-    /// Whether the merge that left `delta` moved `window` into a container it opened.
-    fn moved_into_an_opened(delta: &PlanDelta, window: WindowId) -> bool {
-        delta.reparented.iter().any(|&(moved, _, to)| {
-            moved == window && delta.new_groups.iter().any(|group| group.key == to)
-        })
     }
 
     /// A pass as the reactor builds one for `flight`, from where its last pass sends every window: a
@@ -1150,7 +1141,7 @@ mod tests {
     /// half of them bringing a step: the score after the motion starts and after each pass, and each
     /// pass's edits. A change to how Slide moves changes it; one that only moves code between Slide
     /// and what every look shares keeps it.
-    const SLIDE_SCORES: u64 = 0xf63d_137b_00ac_6966;
+    const SLIDE_SCORES: u64 = 0x6373_4c6a_e8c8_829e;
 
     /// Slide draws over seed 163's flights what `SLIDE_SCORES` holds: every node's place, ride and
     /// tracks, and every edit a pass answers; some flights start stepping or pushed, and some passes

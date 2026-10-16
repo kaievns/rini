@@ -837,13 +837,7 @@ mod tests {
             .expect("a container of its own");
         assert_eq!(opened.leaving, Some(strip_key));
         let to = point(flight.score.model(Node::Container(key)));
-        let carried = Leg::toward(
-            Some(&leg),
-            opened.install.rounded(),
-            to,
-            now,
-            spring_omega(PLAIN),
-        );
+        let carried = Leg::toward(Some(&leg), opened.install, to, now, spring_omega(PLAIN));
         assert_eq!(
             track_on(&bent.edits, Node::Container(key), Channel::Base),
             Some(carried.track(key, SAMPLE_STEP))

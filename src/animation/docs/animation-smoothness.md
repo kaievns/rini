@@ -312,19 +312,22 @@ Mechanics worth remembering:
   durations bypass the animation and draw the final frame directly.
 - `NSValue::valueWithPoint` (the from/to carrier) requires the
   `NSGeometry` + `objc2-core-foundation` features of `objc2-foundation`.
-- **Whole points.** Slide places every container and tile on whole points
-  (`tiles_sit_on_whole_points_like_the_real_windows`): layout offsets are fractional (4592.67) and
+- **Whole points.** Every container and tile is placed on whole points: at a bend by every
+  look's `Merged::bend`, and by Slide's pose and compose
+  (`tiles_sit_on_whole_points_like_the_real_windows`). Layout offsets are fractional (4592.67) and
   the window server places windows on whole points, so a tile drawn at the fraction was resampled
   and popped by the fraction at the lift. Rounding a frame rounds its edges, so its width moves by
   up to a point while no edge moves more than a half. A member a merge moves to another container
   starts at its plan frame and keeps the rounding its tile sat at; placed from the plan frame alone
-  it jumped by up to a point, origin and width. One moved into a container the merge opens still
-  jumps by up to a point: the container opens on a whole point where its first member's container
-  is drawn, and a member from another container sat at another fraction, a half point each. Over
-  41 seeds of the bend contract it passed a half point on 6 under Slide, the farthest 0.82pt, and
-  on 1 under the test-only Linear look, 0.79pt (measured with a probe over seeds 1-40 and 163; not
-  seen on screen), so the contract allows those a point
-  (`every_look_bends_a_flight_without_a_jump`).
+  it jumped by up to a point, origin and width. A container the merge opens is placed where it
+  ends, but its movement starts where it installs, where its first member's container is drawn,
+  and not at the whole point nearest that: from there a member of another container moved into
+  it jumped by up to a point, a half for the container and a half for its own frame. That passed
+  a half point on 6 of seeds 1-40 and 163 of the bend contract's generator under Slide, the
+  farthest 0.82pt on seed 2, and on 1 under the test-only Linear look, 0.79pt (measured with a
+  probe not committed; not seen on screen). The contract runs seeds 163 and 2 and holds every
+  edge to a half point (`every_look_bends_a_flight_without_a_jump`); tile frames, and so where
+  every window lands, are as they were, within 0.88pt of its plan over those 41 seeds.
 
 Found on the first live run of the per-tile strip path: **floating tiles
 were drawn behind the desktop backdrop.** The band behind the strip sits
