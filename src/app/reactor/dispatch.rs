@@ -4,7 +4,7 @@
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_ipc::protocol::Command;
 
-use super::events::{EventOutcome, app, command, space, system, window};
+use super::events::{CloseTarget, EventOutcome, app, command, space, system, window};
 use super::{Event, Reactor, ReactorCommand};
 
 /// What the reducers may be handed besides their event: the window the event's focus report
@@ -353,9 +353,9 @@ impl Reactor {
                 Ok(self.switch_window(backward, scope))
             }
             ReactorCommand::ToggleSpaceActivated => self.on_toggle_space_activated(),
-            ReactorCommand::CloseWindow { window_server_id } => {
-                command::handle_close_window(window_server_id.map(WindowServerId::new))
-            }
+            ReactorCommand::CloseWindow { window_server_id } => command::handle_close_window(
+                CloseTarget::named(window_server_id.map(WindowServerId::new)),
+            ),
             ReactorCommand::FocusWindow { window_id, window_server_id } => {
                 self.on_focus_window(window_id, window_server_id)
             }

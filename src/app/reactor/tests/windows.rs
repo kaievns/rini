@@ -621,3 +621,42 @@ fn a_windows_context_event_becomes_the_reactor_event_with_its_payload_intact() {
     );
     assert!(matches!(Event::from(W::MenuClosed(7)), Event::MenuClosed(7)));
 }
+
+/// A close naming no window goes to the focused window's application unnumbered, so it closes
+/// whatever is key there; one naming a window goes to that window's application with its number,
+/// and one naming a window rini does not track goes nowhere.
+#[test]
+fn a_close_goes_to_the_focused_window_or_the_one_it_names() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let space = Some(SpaceId::new(1));
+    let mut first = reactor.add_test_app_listening(1, "com.test.first", "First");
+    let mut second = reactor.add_test_app_listening(2, "com.test.second", "Second");
+    reactor.add_test_window(WindowId::new(1, 1), WindowServerId::new(901), space, screen);
+    reactor.add_test_window(WindowId::new(2, 1), WindowServerId::new(902), space, screen);
+    reactor.set_test_focus(WindowId::new(1, 1));
+    let close = |window_server_id| {
+        Event::Command(Command::Reactor(ReactorCommand::CloseWindow {
+            window_server_id,
+        }))
+    };
+    let closes = |app: &mut channels::Receiver<Request>| -> Vec<Option<WindowServerId>> {
+        std::iter::from_fn(|| app.try_recv().ok())
+            .filter_map(|(_, request)| match request {
+                Request::CloseWindow(target) => Some(target),
+                _ => None,
+            })
+            .collect()
+    };
+
+    reactor.handle_event(close(None));
+    assert_eq!(closes(&mut first), [None]);
+    assert!(closes(&mut second).is_empty());
+
+    reactor.handle_event(close(Some(902)));
+    assert!(closes(&mut first).is_empty());
+    assert_eq!(closes(&mut second), [Some(WindowServerId::new(902))]);
+
+    reactor.handle_event(close(Some(99)));
+    assert!(closes(&mut first).is_empty() && closes(&mut second).is_empty());
+}

@@ -43,7 +43,7 @@ mod tests;
 use std::path::PathBuf;
 use std::thread;
 
-use events::{EventOutcome, WindowFrameWriteRequest, focus};
+use events::{CloseTarget, EventOutcome, WindowFrameWriteRequest, focus};
 use layout_pass::Pass;
 use objc2_core_foundation::CGRect;
 use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
@@ -1120,8 +1120,8 @@ impl Reactor {
             }
         }
 
-        if let Some(window_server_id) = outcome.close_window {
-            self.close_requested_window(window_server_id);
+        if let Some(target) = outcome.close_window {
+            self.close_requested_window(target);
         }
         if let Some(config) = outcome.service_config_update {
             self.publish_service_config(config);
@@ -1159,15 +1159,15 @@ impl Reactor {
         }
     }
 
-    fn close_requested_window(&mut self, window_server_id: Option<WindowServerId>) {
-        let target = match window_server_id {
-            Some(wsid) => self.state.windows.tracked_window_id(wsid),
-            None => self.main_window(),
+    fn close_requested_window(&mut self, target: CloseTarget) {
+        let window = match target {
+            CloseTarget::Window(wsid) => self.state.windows.tracked_window_id(wsid),
+            CloseTarget::Focused => self.main_window(),
         };
-        if let Some(window) = target {
-            self.request_close_window(window.pid, window_server_id);
+        if let Some(window) = window {
+            self.request_close_window(window.pid, target.window_server_id());
         } else {
-            warn!(?window_server_id, "Close target not found");
+            warn!(?target, "Close target not found");
         }
     }
 

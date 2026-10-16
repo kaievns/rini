@@ -10,5 +10,5 @@ pub mod window_discovery;
 mod outcome;
 
 pub(crate) use outcome::{
-    ArrangeRequest, EventOutcome, WindowDiscoveryRequest, WindowFrameWriteRequest,
+    ArrangeRequest, CloseTarget, EventOutcome, WindowDiscoveryRequest, WindowFrameWriteRequest,
 };

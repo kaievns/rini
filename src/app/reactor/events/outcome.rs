@@ -22,6 +22,28 @@ pub(crate) struct WindowFrameWriteRequest {
     pub(crate) frame: CGRect,
 }
 
+/// The window a close asks for: the focused one, or the one the window server numbers so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CloseTarget {
+    Focused,
+    Window(WindowServerId),
+}
+
+impl CloseTarget {
+    /// A close as the command names it: no window is the focused one.
+    pub(crate) fn named(window_server_id: Option<WindowServerId>) -> Self {
+        window_server_id.map_or(Self::Focused, Self::Window)
+    }
+
+    /// The window the application is told to close, none meaning its focused one.
+    pub(crate) fn window_server_id(self) -> Option<WindowServerId> {
+        match self {
+            Self::Focused => None,
+            Self::Window(id) => Some(id),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TopologyReassignment {
     pub(crate) window: WindowId,
@@ -59,7 +81,7 @@ pub(crate) struct EventOutcome {
     pub(crate) pre_layout_window_frame_writes: Vec<WindowFrameWriteRequest>,
     pub(crate) drag_swap_evaluations: Vec<(WindowId, CGRect)>,
     pub(crate) dispatch_mouse_up: bool,
-    pub(crate) close_window: Option<Option<WindowServerId>>,
+    pub(crate) close_window: Option<CloseTarget>,
     pub(crate) service_config_update: Option<Config>,
     pub(crate) stdout_lines: Vec<String>,
     pub(crate) reapply_app_rules: Vec<WindowId>,
@@ -501,8 +523,8 @@ impl EventOutcome {
         self
     }
 
-    pub(crate) fn with_close_window(mut self, window_server_id: Option<WindowServerId>) -> Self {
-        self.close_window = Some(window_server_id);
+    pub(crate) fn with_close_window(mut self, target: CloseTarget) -> Self {
+        self.close_window = Some(target);
         self
     }
 
@@ -530,6 +552,19 @@ impl EventOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_close_naming_no_window_is_of_the_focused_one() {
+        let named = WindowServerId::new(7);
+        let table = [
+            (None, CloseTarget::Focused),
+            (Some(named), CloseTarget::Window(named)),
+        ];
+        for (window_server_id, target) in table {
+            assert_eq!(CloseTarget::named(window_server_id), target);
+            assert_eq!(target.window_server_id(), window_server_id);
+        }
+    }
 
     #[test]
     fn default_and_no_change_request_no_follow_up_work() {
@@ -858,7 +893,7 @@ mod tests {
             EventOutcome::default().with_app_request(1, Request::GetVisibleWindows),
             EventOutcome::default().with_make_key_window(1, WindowServerId::new(7)),
             EventOutcome::default().with_mouse_warp(CGPoint::default()),
-            EventOutcome::default().with_close_window(None),
+            EventOutcome::default().with_close_window(CloseTarget::Focused),
             EventOutcome::default().with_stdout_line("line".into()),
         ];
         for (index, mut outcome) in requests.into_iter().enumerate() {

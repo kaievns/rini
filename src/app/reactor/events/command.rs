@@ -4,7 +4,7 @@ use tracing::{error, warn};
 
 use super::super::ScreenInfo;
 use crate::app::config::Config;
-use crate::app::reactor::events::EventOutcome;
+use crate::app::reactor::events::{CloseTarget, EventOutcome};
 use crate::app::reactor::managers::{DragManager, WorkspaceSwitchManager};
 use crate::app::reactor::state::RiniState;
 use crate::app::reactor::{AppState, WorkspaceSwitchOrigin};
@@ -106,10 +106,8 @@ fn store_current_floating_positions(state: &RiniState, layout: &mut LayoutEngine
     }
 }
 
-pub fn handle_close_window(
-    window_server_id: Option<WindowServerId>,
-) -> anyhow::Result<EventOutcome> {
-    Ok(EventOutcome::no_change().with_close_window(window_server_id))
+pub fn handle_close_window(target: CloseTarget) -> anyhow::Result<EventOutcome> {
+    Ok(EventOutcome::no_change().with_close_window(target))
 }
 
 pub fn handle_config_updated(
