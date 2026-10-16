@@ -1105,6 +1105,72 @@ fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Words in a sentence that say its test count is a measurement of its time, not what holds now.
+const MEASURED_THEN: [&str; 2] = ["when audited", "at commit"];
+
+/// The first line of each paragraph of `text`, outside a fenced block, holding a sentence that
+/// states a count of tests without saying it was measured then.
+fn undated_test_counts(text: &str) -> Vec<usize> {
+    let trim = |word: &str| word.trim_matches(|c: char| "*`(),.;:".contains(c)).replace(',', "");
+    let counts_tests = |sentence: &str| {
+        let words: Vec<String> = sentence.split_whitespace().map(trim).collect();
+        words.windows(2).any(|pair| {
+            !pair[0].is_empty()
+                && pair[0].chars().all(|c| c.is_ascii_digit())
+                && (pair[1] == "test" || pair[1] == "tests")
+        })
+    };
+    let mut found = Vec::new();
+    let mut fenced = false;
+    let mut paragraph: Option<(usize, String)> = None;
+    let mut close = |paragraph: &mut Option<(usize, String)>| {
+        if let Some((start, text)) = paragraph.take() {
+            let undated = text.split(". ").any(|sentence| {
+                counts_tests(sentence) && !MEASURED_THEN.iter().any(|m| sentence.contains(m))
+            });
+            if undated {
+                found.push(start);
+            }
+        }
+    };
+    for (index, line) in text.lines().enumerate() {
+        if line.trim_start().starts_with("```") {
+            close(&mut paragraph);
+            fenced = !fenced;
+        } else if fenced {
+        } else if line.trim().is_empty() {
+            close(&mut paragraph);
+        } else {
+            let (_, text) = paragraph.get_or_insert_with(|| (index + 1, String::new()));
+            text.push(' ');
+            text.push_str(line);
+        }
+    }
+    close(&mut paragraph);
+    found
+}
+
+/// `docs/implementation-audit.md` states a count of tests only as measured then: a DONE note with
+/// a count reads as what holds now, and goes stale with the next test.
+#[test]
+fn the_implementation_audit_states_a_test_count_only_as_measured_then() {
+    let text = fs::read_to_string("docs/implementation-audit.md").expect("readable audit");
+    let undated = undated_test_counts(&text);
+    assert!(
+        undated.is_empty(),
+        "docs/implementation-audit.md states a test count with no measurement time at lines \
+         {undated:?}: name where the tests live instead"
+    );
+}
+
+#[test]
+fn a_test_count_is_found_across_lines_and_never_in_a_fenced_block_or_once_dated() {
+    let text = "Measured at commit `abc`: 1,101 tests.\n\n**DONE: five rules, with\n10 \
+                tests.**\n\n```\nfile.rs 824 code / 2 tests\n```\n\n20 tests when audited. \
+                It has 3 tests.\n\nNo testing here, 4 testers.\n";
+    assert_eq!(undated_test_counts(text), vec![3, 10]);
+}
+
 /// The longest a function may be, in code lines: comments, blank lines and test code not counted.
 const FN_LIMIT: usize = 100;
 /// The longest a file may be, counted the same way.

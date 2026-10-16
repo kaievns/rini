@@ -192,7 +192,7 @@ parallel run, "nothing under {key}", in `animation::platform::overlay` and
 `decorations::platform::layers::hold_core_animation` takes Core Animation's own lock for the
 test's lifetime. No commit landed while the probe held it, so a commit elsewhere waits for the
 read-back instead of landing inside it. Every read-back helper calls `assert_core_animation_held`, so a test
-that reads back without the hold fails on its first run, not on an unlucky one. 22 tests hold it;
+that reads back without the hold fails on its first run, not on an unlucky one. Each test that reads a layer back holds it;
 `a_commit_on_another_thread_drops_a_test_layers_animation_once_the_hold_is_let_go` holds the
 behaviour it rests on.
 

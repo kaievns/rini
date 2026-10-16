@@ -6,7 +6,7 @@ came from. Ranked within each section by what it costs to leave alone.
 
 Measured at commit `118e35d`: **54,751 non-test code lines**, 1101 tests.
 
-**Status: worked through from `45adc4b`, taking the tests from 1101 to 1241.** The findings are
+**Status: worked through from `45adc4b`.** The findings are
 left as written rather than edited into the past tense, because what they say about how the code got
 that way is the part worth keeping. What changed since is marked `DONE`, `PARTLY`, `KEPT`, `GONE` or
 `OPEN` at the head of each entry. The open ones, 3.2 to 3.4, are collected in `roadmap.md`
@@ -29,7 +29,7 @@ mis-frames and are excluded throughout.
 
 ### 1.1 Twelve answers to "which space is this window on"
 
-**DONE — the six precedence orders are five named rules in `space_resolution.rs` with 10 tests; the one dead method is deleted (`ffc0155`).**
+**DONE — the six precedence orders are five named rules in `space_resolution.rs`, tested there; the one dead method is deleted (`ffc0155`).**
 
 `src/app/reactor/space_affinity.rs` exposes twelve space-resolution methods over
 the same stores. Caller counts:
@@ -62,7 +62,7 @@ recorded in `src/workspaces/docs/workspaces-and-displays.md`.
 
 ### 1.2 Two event taps, one lifecycle, written twice
 
-**DONE — `tap::Recovery` and `tap::on_recovery` were shared, with 6 tests on the generation rules
+**DONE — `tap::Recovery` and `tap::on_recovery` were shared, with tests on the generation rules
 (`06da288`). The HID gesture tap then went with the trackpad swipes (2026-10-10), so the session tap
 is the one tap left.**
 
@@ -258,14 +258,14 @@ Each is held under the function limit by `no_function_or_file_grows_past_its_lim
 
 `handle_layout_response` gave up three rules to `windows::domain::raise_order`
 (`drop_parked`, `lead_with_regroup`, `group_by_app_and_space`) and one to
-`layout::domain::boundary` (`workspace_step_at_boundary`, deleted with the trackpad swipes), with
-15 tests between them.
+`layout::domain::boundary` (`workspace_step_at_boundary`, deleted with the trackpad swipes), the three
+tested in `raise_order.rs`, as the boundary rule was in `boundary.rs`.
 One of those extractions was a bug fix: see 3.2.1. Its phases are methods of their own:
 `bounce_at_edge`, `switch_target`, `focus_without_raise`, `drop_focus_out_of_sight`,
 `raise_list` and `warp_for_focus`.
 
 `handle_authoritative_space_snapshot` gave up its display-set comparison to
-`displays::domain::topology::display_set_delta` with 9 tests. That one was a
+`displays::domain::topology::display_set_delta`, tested in `topology.rs`. That one was a
 correctness hazard rather than a length one: the previous display set was captured
 inline, one line before the field holding it was overwritten, and a comment was all
 that kept the two statements in that order. The function now takes both lists as
@@ -275,7 +275,7 @@ to a display that arrived, over a `SnapshotSettlement` of what the snapshot left
 
 `apply_event_outcome` gave up three rules: `ArrangeRequest::passes_to_run`,
 `EventOutcome::focus_landed` and `notification_ids_to_publish` (`src/app/reactor/managers.rs`),
-with 14 tests. It no longer re-enters itself, and it is one call for each of its two halves.
+with its tests in `managers.rs`. It no longer re-enters itself, and it is one call for each of its two halves.
 `settle_ahead_of_arrange` carries out the steps before the arrange, split off by
 `take_work_before_arrange`, through `settle_before_arrange`, which settles what a
 discovery, a fullscreen restoration, the held space change and a drag's release hand back
@@ -374,12 +374,12 @@ The recent batches moved the opposite way deliberately — pure decisions to
 
 | file | code | why it resists |
 |---|---|---|
-| `src/windows/platform/app_actor.rs` | — | the AX driver, its size held to the file limit by `tests/architecture.rs`. DONE: its admission rules are now `windows::domain::admissible` with 11 tests (`4dac5df`), and the fake `AXUIElement` seam it needed (`FakeAx`, `9ea1079`) carries the actor's own tests, `handle_notification` and `handle_raise_request` among them, beside each job's code in `src/windows/platform/app_actor/` |
+| `src/windows/platform/app_actor.rs` | — | the AX driver, its size held to the file limit by `tests/architecture.rs`. DONE: its admission rules are now `windows::domain::admissible`, tested there (`4dac5df`), and the fake `AXUIElement` seam it needed (`FakeAx`, `9ea1079`) carries the actor's own tests, `handle_notification` and `handle_raise_request` among them, beside each job's code in `src/windows/platform/app_actor/` |
 | `src/displays/platform/spaces.rs` | — | has `spaces/tests.rs` beside it, but two of its rules were untestable until `SpaceKinds` — see 4.4 |
-| `gesture_tap.rs`, the HID gesture tap | 657 | DONE, then deleted: the phase machine became `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`); the tap, the rules and their tests went with the trackpad swipes (2026-10-10) |
+| `gesture_tap.rs`, the HID gesture tap | 657 | DONE, then deleted: the phase machine became `SwipeTrack` in `domain/gesture.rs` (`06da288`); the tap, the rules and their tests went with the trackpad swipes (2026-10-10) |
 | `src/app/reactor/observations.rs` | — | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
 | `src/main.rs` | — | the composition root: `main` builds the actors in order, each built by a function of its own, and joins them |
-| `src/app/controller/mod.rs` | 404 | DONE: the alias lowering is `controller/lower.rs` with 7 tests |
+| `src/app/controller/mod.rs` | 404 | DONE: the alias lowering is `controller/lower.rs`, tested in `lower/tests.rs` |
 
 ### 4.3 Worst code-to-test ratios among tested files
 
@@ -425,7 +425,7 @@ reached the reactor as a display's space.
 wires the window server in `AuthorityState::runtime()`; a test names its own. Two rules
 moved to `displays::domain::topology` on the way out — `snapshot_is_committable` and
 `snapshot_spaces_are_coherent` — because they were static methods calling a platform
-predicate. 9 tests.
+predicate, and are tested in `topology.rs`.
 
 Also consolidated: `should_buffer_topology_updates` and
 `should_quarantine_window_space_event` had different names and byte-identical bodies. Now
