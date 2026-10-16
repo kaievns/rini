@@ -202,26 +202,40 @@ mod tests {
         }
     }
 
-    fn said(suitable: Option<bool>, ordered_in: Option<bool>) -> Liveness {
-        Liveness { suitable, ordered_in }
-    }
-
     #[test]
     fn a_window_is_gone_only_on_an_explicit_negative_observation() {
         let real = info(0, 800.0, 600.0);
         assert!(
-            !looks_gone(&real, said(None, None)),
+            !looks_gone(&real, Liveness {
+                suitable: None,
+                ordered_in: None
+            }),
             "unknown suitability and order are not evidence"
         );
-        assert!(!looks_gone(&real, said(Some(true), Some(true))));
-        assert!(looks_gone(&real, said(Some(false), None)));
-        assert!(looks_gone(&real, said(None, Some(false))));
+        assert!(!looks_gone(&real, Liveness {
+            suitable: Some(true),
+            ordered_in: Some(true)
+        }));
+        assert!(looks_gone(&real, Liveness {
+            suitable: Some(false),
+            ordered_in: None
+        }));
+        assert!(looks_gone(&real, Liveness {
+            suitable: None,
+            ordered_in: Some(false)
+        }));
         assert!(
-            looks_gone(&info(1, 800.0, 600.0), said(None, None)),
+            looks_gone(&info(1, 800.0, 600.0), Liveness {
+                suitable: None,
+                ordered_in: None
+            }),
             "off layer 0"
         );
         assert!(
-            looks_gone(&info(0, 1.0, 600.0), said(None, None)),
+            looks_gone(&info(0, 1.0, 600.0), Liveness {
+                suitable: None,
+                ordered_in: None
+            }),
             "a sliver is not a window"
         );
     }
