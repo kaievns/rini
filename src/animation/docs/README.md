@@ -88,7 +88,8 @@ display the overlay covers (`viewport`):
 
 1. `domain/choreography/<name>.rs`: a `Choreography` and a `stage`. Its `retarget` calls
    `Merged::new` and `Merged::bend` with a `Bending` of its own, and adds only motion; `linear.rs`
-   is the smallest one.
+   is the smallest one. A rigid member's tile has no track of its own: `Merged::bend` moves one to
+   another container by riding and placing it alone, and the bend contract holds every look to it.
 2. `domain/choreography.rs`: a `Look` variant, a slot in `ALL`, and an arm in `choreography` and
    in `stage`. `ALL` puts it under every contract test there and the overlay's playback tests in
    `platform/overlay.rs`.

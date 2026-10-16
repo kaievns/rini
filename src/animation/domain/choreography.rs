@@ -25,7 +25,7 @@ use super::motion::accents::Accent;
 use super::motion::plan::{
     FlightPlan, GroupKey, Member, PlanDelta, ReflowPlan, merge_plans, stale_overlay_layers,
 };
-use super::motion::score::{Channel, Edit, Node, Score, Value};
+use super::motion::score::{Edit, Node, Score, Value};
 
 /// How a flight moves, chosen when it begins: a later pass's look is not asked.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -391,9 +391,6 @@ impl<'a> Merged<'a> {
             self.making.open(to_key, at);
             self.making.push(Edit::Ride(window, to_key));
             self.making.push(Edit::Place(Node::Tile(window), Value::Rect(frame.rounded())));
-            if self.making.score.track(Node::Tile(window), Channel::Base).is_some() {
-                self.making.push(Edit::Cut(Node::Tile(window), Channel::Base));
-            }
             placed.push(window);
         }
         placed
@@ -484,7 +481,7 @@ mod tests {
         EDGE_BOUNCE_OVERSHOOT, GROUP_TOLERANCE, GroupKey, Member, Resolved, carries_out_and_back,
         on_overlay, overlay_of, reflow_plan,
     };
-    use crate::animation::domain::motion::score::{Curve, SAMPLE_STEP, Track};
+    use crate::animation::domain::motion::score::{Channel, Curve, SAMPLE_STEP, Track};
     use crate::animation::domain::motion::testing::{
         DISPLAY, Gen, RUNS, VIEWPORT, random_requests, rect,
     };
@@ -750,7 +747,8 @@ mod tests {
     /// the windows it sits beside in the layout: drawn where the pass has it, moved by as far as the
     /// container it rides is drawn from where the last pass sent it. Each edge within the half point
     /// placing on whole points allows, and within a point for a window the pass moves into a
-    /// container it opens (`OPENED_SLACK`).
+    /// container it opens (`OPENED_SLACK`). No rigid member's tile has a track of its own:
+    /// `Merged::bend` moves one to another container by riding and placing it alone.
     fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
         let mut brought = 0;
         bent_flights(make, &mut |bend| {
@@ -798,6 +796,13 @@ mod tests {
                 };
                 if apart > slack + 1e-6 {
                     return Err(format!("{tag}: {window:?} jumped {apart}: {was:?} then {is:?}"));
+                }
+            }
+            for window in flight.plan.windows() {
+                if matches!(flight.plan.member(window), Some(Member::Rigid { .. }))
+                    && flight.score.track(Node::Tile(window), Channel::Base).is_some()
+                {
+                    return Err(format!("{tag}: rigid {window:?} has a track of its own"));
                 }
             }
             Ok(())
@@ -879,12 +884,16 @@ mod tests {
         }
     }
 
-    /// The bend contract rejects a look that cuts every node the pass moves to where it ends.
+    /// The bend contract rejects a look that cuts every node the pass moves to where it ends, and
+    /// one that gives a rigid member's tile a track of its own.
     #[test]
-    fn the_bend_contract_rejects_a_look_that_cuts_to_the_pass() {
+    fn the_bend_contract_rejects_a_look_that_cuts_to_the_pass_or_tracks_a_rigid_tile() {
         let cut = bends_without_a_jump(&|| Flawed::boxed(Flaw::CutsTheBend))
             .expect_err("a bend that cuts to the pass");
         assert!(cut.contains("jumped"), "{cut}");
+        let tracked = bends_without_a_jump(&|| Flawed::boxed(Flaw::TracksRigidTiles))
+            .expect_err("a rigid tile with a track of its own");
+        assert!(tracked.contains("track of its own"), "{tracked}");
     }
 
     /// Every look keeps the speed contract.
@@ -1407,6 +1416,8 @@ mod tests {
         /// Its bend starts every container it carries on `MOTION_CURVE` from where it is, at the
         /// curve's speed, whatever speed it had.
         RestartsTheBend,
+        /// Its motion holds every rigid member's tile at its frame on a track of its own.
+        TracksRigidTiles,
     }
 
     /// Slide but for one flaw, so a contract's check is seen to reject a look that breaks it.
@@ -1447,14 +1458,31 @@ mod tests {
                 | Flaw::PushesFromRest
                 | Flaw::PushesSlowly
                 | Flaw::CutsTheBend
-                | Flaw::RestartsTheBend => self.slide.fold(plan, pass),
+                | Flaw::RestartsTheBend
+                | Flaw::TracksRigidTiles => self.slide.fold(plan, pass),
             }
         }
 
         fn pose(&self, stage: &Stage) -> Score { self.slide.pose(stage) }
 
         fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
-            self.slide.compose(playing, stage, begin)
+            let mut edits = self.slide.compose(playing, stage, begin);
+            if let Flaw::TracksRigidTiles = self.flaw {
+                let members = stage.plan.groups.iter().flat_map(|group| &group.members);
+                for member in members.filter(|m| stage.drawn.contains(&m.window)) {
+                    let frame = Value::Rect(member.rel.rounded());
+                    edits.push(Edit::Add(Track::between(
+                        Node::Tile(member.window),
+                        Channel::Base,
+                        frame,
+                        frame,
+                        begin,
+                        stage.seconds,
+                        Curve::Bezier(MOTION_CURVE),
+                    )));
+                }
+            }
+            edits
         }
 
         fn retarget(
@@ -1510,7 +1538,8 @@ mod tests {
                 | Flaw::StartsAtTheEnd
                 | Flaw::PushesSideways
                 | Flaw::CutsTheBend
-                | Flaw::RestartsTheBend => self.slide.push(playing, cue, wall, seconds, now),
+                | Flaw::RestartsTheBend
+                | Flaw::TracksRigidTiles => self.slide.push(playing, cue, wall, seconds, now),
                 Flaw::PushesSlowly => self.slide.push(playing, cue, wall, seconds * 10.0, now),
                 Flaw::PushesFromRest => playing
                     .containers()
