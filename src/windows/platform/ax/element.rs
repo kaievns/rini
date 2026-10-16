@@ -47,8 +47,8 @@ impl AXUIElement {
 
     #[inline]
     pub fn application(pid: pid_t) -> Self {
-        // SAFETY: The returned object follows the Create rule and therefore
-        // owns +1 retain count.
+        // SAFETY: takes only a pid; the element comes back +1 under the Create rule, in a
+        // `CFRetained`.
         let inner = unsafe { RawAXUIElement::new_application(pid) };
         Self::new(inner)
     }
@@ -66,6 +66,7 @@ impl AXUIElement {
     #[inline]
     pub unsafe fn from_get_rule(ptr: *const RawAXUIElement) -> Self {
         let ptr = NonNull::new(ptr.cast_mut()).expect("attempted to create a NULL object");
+        // SAFETY: the caller's: `ptr` is a live element; the retain taken here is ours.
         let retained = unsafe { CFRetained::retain(ptr) };
         Self::new(retained)
     }
@@ -73,6 +74,7 @@ impl AXUIElement {
     fn copy_attribute(&self, name: &'static str) -> Result<Option<CFRetained<CFType>>> {
         let attr = CFString::from_static_str(name);
         let mut value: *const CFType = ptr::null();
+        // SAFETY: `attr` is live for the call, and `value` is a local it writes.
         let status = unsafe {
             self.inner.copy_attribute_value(
                 attr.as_ref(),
@@ -85,8 +87,8 @@ impl AXUIElement {
                 if value.is_null() {
                     Ok(None)
                 } else {
-                    // SAFETY: The function follows the Copy rule and returns
-                    // a value the caller owns.
+                    // SAFETY: a Copy call that succeeded, so `value` is +1 and the `CFRetained`
+                    // takes that retain.
                     let retained = unsafe {
                         CFRetained::from_raw(
                             NonNull::new(value as *mut CFType).expect("non-null value pointer"),
@@ -115,15 +117,16 @@ impl AXUIElement {
     }
 
     pub fn is_settable(&self, name: &'static str) -> Result<bool> {
-        let mut is_settable = false;
+        let mut is_settable: u8 = 0;
+        // SAFETY: the name is live for the call, and `is_settable` is a local `Boolean` it writes.
         let status = unsafe {
             self.inner.is_attribute_settable(
                 CFString::from_static_str(name).as_ref(),
-                NonNull::new_unchecked((&mut is_settable as *mut bool).cast::<u8>()),
+                NonNull::from(&mut is_settable),
             )
         };
         match status {
-            AXError::Success => Ok(is_settable),
+            AXError::Success => Ok(is_settable != 0),
             err => Err(Error::Ax(err)),
         }
     }
@@ -131,7 +134,7 @@ impl AXUIElement {
     pub fn frame(&self) -> Result<CGRect> {
         let value = self.copy_required_attribute("AXFrame")?;
         let ax_value = self.downcast::<AXValue>(value)?;
-        rect_from_axvalue(&ax_value)
+        ax_struct(&ax_value)
     }
 
     pub fn role(&self) -> Result<String> {
@@ -171,6 +174,7 @@ impl AXUIElement {
             return Ok(Vec::new());
         };
         let array = self.downcast::<CFArray>(value)?;
+        // SAFETY: every entry of a CFArray is a CF object, and each is downcast before it is used.
         let array = unsafe { CFRetained::cast_unchecked::<CFArray<CFType>>(array) };
         let mut out = Vec::with_capacity(array.len());
         for entry in array.iter() {
@@ -184,20 +188,21 @@ impl AXUIElement {
         self.copy_attribute(name)
     }
 
-    pub fn set_position(&self, mut point: CGPoint) -> Result<()> {
+    pub fn set_position(&self, point: CGPoint) -> Result<()> {
         let attr = CFString::from_static_str("AXPosition");
-        let value = make_axvalue(AXValueType::CGPoint, &mut point)?;
+        let value = make_axvalue(&point)?;
         self.set_attribute_value(attr.as_ref(), value.as_ref())
     }
 
-    pub fn set_size(&self, mut size: CGSize) -> Result<()> {
+    pub fn set_size(&self, size: CGSize) -> Result<()> {
         let attr = CFString::from_static_str("AXSize");
-        let value = make_axvalue(AXValueType::CGSize, &mut size)?;
+        let value = make_axvalue(&size)?;
         self.set_attribute_value(attr.as_ref(), value.as_ref())
     }
 
     pub fn raise(&self) -> Result<()> {
         let action = CFString::from_static_str("AXRaise");
+        // SAFETY: `action` is live for the call.
         let status = unsafe { self.inner.perform_action(action.as_ref()) };
         if status == AXError::Success {
             Ok(())
@@ -207,6 +212,7 @@ impl AXUIElement {
     }
 
     fn set_attribute_value(&self, name: &CFString, value: &CFType) -> Result<()> {
+        // SAFETY: `name` and `value` are live CF objects, borrowed for the call.
         let status = unsafe { self.inner.set_attribute_value(name, value) };
         if status == AXError::Success {
             Ok(())
@@ -254,24 +260,39 @@ impl fmt::Debug for AXUIElement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { self.deref().fmt(f) }
 }
 
-fn rect_from_axvalue(value: &AXValue) -> Result<CGRect> {
-    let mut rect = CGRect::default();
-    let success = unsafe {
-        value.value(
-            AXValueType::CGRect,
-            NonNull::new((&mut rect as *mut CGRect).cast::<c_void>()).expect("rect pointer"),
-        )
-    };
+/// A struct an `AXValue` holds, and the `AXValueType` that names it.
+trait AxStruct: Default {
+    const TYPE: AXValueType;
+}
+
+impl AxStruct for CGPoint {
+    const TYPE: AXValueType = AXValueType::CGPoint;
+}
+
+impl AxStruct for CGSize {
+    const TYPE: AXValueType = AXValueType::CGSize;
+}
+
+impl AxStruct for CGRect {
+    const TYPE: AXValueType = AXValueType::CGRect;
+}
+
+/// The `T` `value` holds; an error when it holds another type.
+fn ax_struct<T: AxStruct>(value: &AXValue) -> Result<T> {
+    let mut out = T::default();
+    // SAFETY: `out` is a `T`, the struct `T::TYPE` names, so the call writes no more than it holds.
+    let success = unsafe { value.value(T::TYPE, NonNull::from(&mut out).cast::<c_void>()) };
     if success {
-        Ok(rect)
+        Ok(out)
     } else {
         Err(Error::Ax(AXError::Failure))
     }
 }
 
-fn make_axvalue<T>(ty: AXValueType, value: &mut T) -> Result<CFRetained<AXValue>> {
-    let ptr = NonNull::new((value as *mut T).cast::<c_void>()).expect("value pointer");
-    unsafe { AXValue::new(ty, ptr) }.ok_or(Error::Ax(AXError::Failure))
+fn make_axvalue<T: AxStruct>(value: &T) -> Result<CFRetained<AXValue>> {
+    // SAFETY: `value` is a `T`, the struct `T::TYPE` names, so the call reads no more than it holds.
+    unsafe { AXValue::new(T::TYPE, NonNull::from(value).cast::<c_void>()) }
+        .ok_or(Error::Ax(AXError::Failure))
 }
 
 #[cfg(test)]
@@ -290,5 +311,19 @@ mod tests {
         by_element.insert(first, 1);
 
         assert_eq!(by_element.get(&second), Some(&1));
+    }
+
+    #[test]
+    fn an_ax_value_reads_back_the_struct_it_was_made_of_and_no_other() {
+        let point = CGPoint::new(12.0, -3.5);
+        let size = CGSize::new(640.0, 480.0);
+        let made = make_axvalue(&point).expect("a point value");
+        assert_eq!(ax_struct::<CGPoint>(&made).ok(), Some(point));
+        assert!(
+            ax_struct::<CGRect>(&made).is_err(),
+            "a point is not read as a rect"
+        );
+        let made = make_axvalue(&size).expect("a size value");
+        assert_eq!(ax_struct::<CGSize>(&made).ok(), Some(size));
     }
 }
