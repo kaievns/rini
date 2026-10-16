@@ -150,10 +150,9 @@ pub fn ratio_of_column_width(kind: ColumnKind, width: f64, viewport_width: f64, 
 
 /// `size` reduced to what the window will actually accept, never grown.
 ///
-/// Applied to a maximized frame as well as an ordinary column slot. It used to apply only to the
-/// slot: a maximized window was handed the whole tiling width regardless of its maximum, while the
-/// strip reserved the CLAMPED width for its column, so the next column was laid out overlapping it.
-/// Both sides read this now, which is what makes them agree.
+/// Applied to a maximized frame as well as an ordinary column slot: the strip reserves the CLAMPED
+/// width for a column, so a maximized window handed the whole tiling width past its maximum would
+/// overlap the next column. Both sides read this, which is what makes them agree.
 pub fn clamp_to_constraints(
     size: objc2_core_foundation::CGSize,
     constraints: crate::layout::WindowLayoutConstraints,

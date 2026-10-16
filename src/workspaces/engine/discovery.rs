@@ -221,8 +221,8 @@ impl LayoutEngine {
             {
                 let authoritative_native_space =
                     window_store.current_window_server_space_for_window(wid);
-                // Skip re-adding if the VWM no longer assigns this window to this space
-                // (it was moved to another space during this discovery cycle).
+                // Skip re-adding if the VWM assigns this window to another space now
+                // (it was sent there during this discovery cycle).
                 if wid.pid != pid
                     || self.floating.is_floating(wid)
                     || desired.contains(&wid)
@@ -236,8 +236,8 @@ impl LayoutEngine {
 
             if desired.is_empty() && total_tiled_count == 0 {
                 // Empty discovery can mean AX temporarily omitted the app. Preserve
-                // windows still assigned to this workspace, but allow moved windows
-                // to be removed from this layout tree.
+                // windows still assigned to this workspace, but let windows sent elsewhere
+                // leave this layout tree.
                 let tree_windows = self.workspace_tree(ws_id).windows_for_app(layout, pid);
                 desired = tree_windows
                     .into_iter()

@@ -8,7 +8,7 @@ use crate::workspaces::domain::display_memory::DisplayMemory;
 
 #[test]
 fn startup_validation_preserves_stale_ids_when_the_app_can_still_fuzzy_match() {
-    // Restored state drops apps that are no longer running: `closed` below is that case.
+    // Restored state drops apps that have quit: `closed` below is that case.
     let mut engine = test_engine();
     let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
@@ -342,11 +342,9 @@ fn startup_restore_handles_space_id_swaps_between_displays() {
 
 /// Restoring a layout must never leave windows on a display that is not attached.
 ///
-/// This is what made restore unsafe to enable by default. A saved layout describes every
-/// display the last session had, so restoring it while the external is unplugged put its
-/// windows at that display's coordinates — measured at x=-1680, with nothing there — and
-/// no path migrated them back. One dock/undock cycle produced a layout that could only be
-/// fixed by deleting ~/.rini/layout.ron.
+/// A saved layout describes every display the last session had, so restored as it is while the
+/// external is unplugged it would put that display's windows at its coordinates, x=-1680 with
+/// nothing there, and no path would migrate them back.
 #[test]
 fn startup_restore_releases_windows_saved_on_an_absent_display() {
     let builtin_space = SpaceId::new(630);

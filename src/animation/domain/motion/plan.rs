@@ -669,7 +669,7 @@ pub fn animation_targets(plan: &FlightPlan) -> Vec<AnimationTarget> {
     out
 }
 
-/// What a flight stops drawing once a pass is in: the tiles of windows it no longer draws (`keep`
+/// What a flight stops drawing once a pass is in: the tiles of windows it stops drawing (`keep`
 /// names the rest), and the containers left with nothing in them. `tiles` is every tile drawn, with
 /// the container it rides.
 ///

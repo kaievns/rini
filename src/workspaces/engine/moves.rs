@@ -229,7 +229,7 @@ impl LayoutEngine {
         self.focus_after_workspace_move(window_store, window, from, to)
     }
 
-    /// Where focus goes once `window` moved from `from` to `to` on one space and the view stayed:
+    /// Where focus goes once `window` went from `from` to `to` on one space and the view stayed:
     /// with the window when it landed on the workspace showing, else to the first window left
     /// behind on the one it left.
     fn focus_after_workspace_move(

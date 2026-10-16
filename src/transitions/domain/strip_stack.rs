@@ -117,7 +117,7 @@ mod tests {
     /// With the pitch a USABLE height, one workspace's tiling area sits directly on the next: the
     /// area filling the usable frame [32, 1117] in one row ends exactly where the next row's begins.
     /// The only space left between two workspaces' windows is their own outer margins, as between
-    /// two windows side by side, not the menu-bar band the full-display pitch used to leave.
+    /// two windows side by side, not the menu-bar band a full-display pitch would leave.
     #[test]
     fn consecutive_workspaces_abut() {
         let usable = rect(4.0, 32.0, 859.0, 1085.0);

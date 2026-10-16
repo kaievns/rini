@@ -1,7 +1,7 @@
 //! Moving focus around the strip, and across to the next display when it runs out.
 //!
-//! One arm per command, lifted out of `handle_command` unchanged. `impl LayoutEngine` across modules
-//! is the pattern `engine/persistence/` already uses.
+//! One arm per command. `impl LayoutEngine` across modules is the pattern `engine/persistence/`
+//! already uses.
 
 use objc2_core_foundation::CGPoint;
 use rini_core::ids::SpaceId;

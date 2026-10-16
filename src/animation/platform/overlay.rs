@@ -761,12 +761,11 @@ impl TileOverlay {
             )
         };
         // NOT opaque, even though it is a black slab across the whole display when it is up. The
-        // opaque flag is a promise to the window server that nothing behind this window contributes to
-        // what is composited — and since the overlay stays ordered in at alpha 0 between animations,
-        // that promise was being kept for windows ABOVE it as well: the backdrop a
-        // blurred surface above it samples was truncated here, so the switcher's blur had nothing to blur.
-        // The black comes from the background colour below, which is what fills an undrawn gap; being
-        // opaque was never what did that.
+        // opaque flag promises the window server that nothing behind this window contributes to what
+        // is composited, and the overlay stays ordered in at alpha 0 between animations, so the
+        // promise would hold for windows ABOVE it as well: the backdrop a blurred surface above it
+        // samples would be truncated here, leaving the switcher's blur nothing to blur. The black
+        // comes from the background colour below, which is what fills an undrawn gap.
         window.setOpaque(false);
         window.setBackgroundColor(Some(&NSColor::blackColor()));
         window.setHasShadow(false);
@@ -3755,7 +3754,7 @@ mod tests {
         /// A snap moves where a tile's own leg ends and keeps how the tile is drawn, even where
         /// the snapped leg judged again would draw it otherwise, so it never turns mid-flight. A
         /// resize of under a percent whose picture fits both ends stretches; snapped 4pt past the
-        /// plan, its picture no longer fits where it ends and it stays stretched. A new leg is
+        /// plan, its picture misfits where it ends and it stays stretched. A new leg is
         /// judged again: a shrink then crops the picture it has.
         #[test]
         fn a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again() {

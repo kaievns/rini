@@ -18,7 +18,7 @@ impl HideCorner {
     }
 }
 
-/// Pure geometry used to place inactive-workspace windows just offscreen.
+/// Pure geometry that places inactive-workspace windows just offscreen.
 pub struct HiddenWindowPlacement;
 
 impl HiddenWindowPlacement {

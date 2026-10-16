@@ -1,6 +1,6 @@
 //! Which window takes focus, as a precedence rather than a chain of `if focus_window.is_none()`.
 //!
-//! Two rules, both of which used to be written out inside `LayoutEngine` against live stores: what
+//! Two rules, kept apart from `LayoutEngine` and its live stores: what
 //! to focus when a workspace becomes the active one, and where focus lands when the user cycles
 //! through the windows in it. The reads stay in the engine; the orders are here.
 

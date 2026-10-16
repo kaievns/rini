@@ -162,7 +162,7 @@ pub struct BatchCall<'a> {
 pub struct Batch {
     pub pictures: Vec<(WindowId, Picture)>,
     /// The baked call came back another shape than its windows, the desktop listed after them
-    /// included: a desktop window listed is no longer there.
+    /// included: a desktop window listed has gone.
     pub desktop_stale: bool,
     /// The windows whose call `halt` stopped before it was made.
     pub halted: Vec<WindowId>,
@@ -577,9 +577,9 @@ mod tests {
         );
     }
 
-    /// The reported regression: during a strip pan the real windows move while the flight flies, and
-    /// a framed capture of one half past the display edge came back full-size, half transparent, and
-    /// was cut onto its tile as a half-missing window. It must not count as covering the window.
+    /// During a strip pan the real windows move while the flight flies, and a framed capture of one
+    /// half past the display edge comes back full-size and half transparent: cut onto its tile, it
+    /// would show a half-missing window. It must not count as covering the window.
     #[test]
     fn a_framed_capture_of_a_window_not_wholly_on_a_display_covers_nothing() {
         let laptop = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0));

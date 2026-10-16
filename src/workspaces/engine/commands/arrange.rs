@@ -1,7 +1,7 @@
 //! Moving windows within the strip: swaps, node moves, folding and stacking.
 //!
-//! One arm per command, lifted out of `handle_command` unchanged. `impl LayoutEngine` across modules
-//! is the pattern `engine/persistence/` already uses.
+//! One arm per command. `impl LayoutEngine` across modules is the pattern `engine/persistence/`
+//! already uses.
 
 use objc2_core_foundation::CGPoint;
 use rini_core::ids::SpaceId;
@@ -48,8 +48,8 @@ impl LayoutEngine {
 
                 // The strip has no room that way. Whether the window may leave for the next display is
                 // the same question focus asks, and gets the same answer from the same place: a window
-                // pushed past the last column used to teleport to the other monitor while focus in
-                // that direction stopped.
+                // pushed past the last column must not leave for the other monitor where focus in
+                // that direction stops.
                 let adjacent_space = match strip_edge(direction) {
                     Some(_) => None,
                     None => self.next_space_for_direction(

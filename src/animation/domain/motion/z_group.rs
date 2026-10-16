@@ -43,9 +43,8 @@ pub enum Band {
 ///
 /// Public because the overlay derives its backdrop depth from it: the deepest possible tile is just
 /// short of three strides, and the backdrop has to sit behind THAT, not behind some smaller constant.
-/// The floating tiles used to land at zPosition about -(1<<20) while the backdrop sat at -10000, so
-/// every floating tile was drawn behind the desktop picture — present in every composition and visible
-/// in none.
+/// A floating tile at zPosition about -(1<<20) behind a backdrop at -10000 is drawn behind the desktop
+/// picture: present in every composition and visible in none.
 pub const GROUP_STRIDE: usize = 1 << 20;
 
 /// Inside the lifted band, the application gaining focus takes the front half and every other lifted

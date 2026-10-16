@@ -260,7 +260,7 @@ impl Lands {
                 self.state = done;
                 return;
             }
-            // Every later capture at this size is refused too: what the cache holds is the picture.
+            // Every later capture at this size is refused as well: what the cache holds is the picture.
             _ if refused => {
                 self.state = Arrival::Lost;
                 out.lost.push((tag, window));
@@ -468,7 +468,7 @@ mod tests {
     }
 
     /// A landing whose capture the cache refuses for the picture it holds is lost at once, waiting or
-    /// settling, and never delivered: every later capture at that size would be refused too.
+    /// settling, and never delivered: every later capture at that size would be refused as well.
     #[test]
     fn a_landing_the_cache_refuses_is_lost_at_once() {
         let start = Instant::now();
@@ -527,7 +527,7 @@ mod tests {
     }
 
     /// A repainting window where it ends but cut by the display's edge is captured through
-    /// ScreenCaptureKit, one capture after another, no longer looked at through SkyLight, and
+    /// ScreenCaptureKit, one capture after another, rather than looked at through SkyLight, and
     /// delivered as landed, at the frame it was found at, once two captures in a row match. A window
     /// only landing there is never handed over: it is lost at its deadline.
     #[test]

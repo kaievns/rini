@@ -36,7 +36,7 @@ pub fn bitmap_context(
 }
 
 /// `image` drawn into an image of its own, premultiplied BGRA, the layout Core Animation draws from
-/// without converting: a region kept as its own copy, so it no longer holds its composite alive.
+/// without converting: a region kept as its own copy, so it stops holding its composite alive.
 pub fn standalone_copy(image: &CGImage) -> Option<CFRetained<CGImage>> {
     let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
     if width == 0 || height == 0 {
@@ -109,8 +109,8 @@ mod tests {
         CGBitmapContextCreateImage(Some(&ctx)).unwrap()
     }
 
-    /// A copy has the pixels of what it was made of, in an image of its own: a crop's copy no longer
-    /// holds the image it was cut from.
+    /// A copy has the pixels of what it was made of, in an image of its own: a crop's copy holds
+    /// nothing of the image it was cut from.
     #[test]
     fn a_copy_has_the_pixels_of_its_source_in_an_image_of_its_own() {
         let ctx = rgba_bitmap_context(4, 2).unwrap();

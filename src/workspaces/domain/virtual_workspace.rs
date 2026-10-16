@@ -336,8 +336,8 @@ impl WorkspaceStore {
         trace_misc("set_active_workspace", || {
             let previous = self.active_workspace(space);
 
-            // No "does this workspace belong to this display" check any more: every
-            // workspace exists on every display.
+            // No "does this workspace belong to this display" check: every workspace exists on
+            // every display.
 
             if self.workspaces.contains_key(workspace_id) {
                 self.active_workspace_per_space.insert(space, ShownWorkspace {
@@ -1371,9 +1371,8 @@ mod tests {
 
     /// An app rule pins the WORKSPACE without pinning the display.
     ///
-    /// Under the old model workspace indices were per-display, so a rule naming the third workspace
-    /// meant a different object on each display. Now it is one workspace, and a rule sends the
-    /// window there regardless of which display it opened on.
+    /// Workspace indices are not per-display: a rule naming the third workspace names one workspace,
+    /// and sends the window there regardless of which display it opened on.
     #[test]
     fn an_app_rule_pins_the_workspace_on_whichever_display_it_opens_on() {
         let mut window_store = WindowStore::default();

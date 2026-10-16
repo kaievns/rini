@@ -113,11 +113,10 @@ fn a_layout_file_wrapped_in_the_old_layout_system_tag_is_refused_by_name() {
 
 /// The reason the display memory is its own record.
 ///
-/// A layout written by a NEWER schema cannot be trusted, and rini refuses it. That refusal used to
-/// take the machine's memory with it, because both lived in the same struct behind the same
-/// validation: every window was then re-homed from scratch on the next display change and every
-/// relaunched application landed in a default slot. Which monitor a window lives on is not a fact the
-/// layout's version has any bearing on.
+/// A layout written by a NEWER schema cannot be trusted, and rini refuses it. The refusal must keep
+/// the machine's memory: lost with it, every window would be re-homed from scratch on the next
+/// display change and every relaunched application land in a default slot. Which monitor a window
+/// lives on is not a fact the layout's version has any bearing on.
 #[test]
 fn a_layout_from_a_newer_schema_is_refused_without_forgetting_the_displays() {
     let mut engine = test_engine();
@@ -309,9 +308,8 @@ fn a_file_without_launch_memory_still_loads() {
     assert!(loaded.memory.launch.is_empty());
 }
 
-/// This used to compare `mem::discriminant`, asking whether the right layout SYSTEM came back out
-/// of the file. With one system left that question has no content, so it asks the one that does:
-/// whether the strip's own shape survives the trip.
+/// Whether the strip's own shape survives the trip: with one layout system, which system came back
+/// out of the file is no question.
 #[test]
 fn layout_system_round_trips_through_ron() {
     let mut system = VirtualWorkspace::create_layout_system(&LayoutSettings::default());

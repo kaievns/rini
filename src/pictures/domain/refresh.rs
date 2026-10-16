@@ -194,7 +194,7 @@ impl<C> Refreshes<C> {
     /// settled at a capture with the band print of the one before it, taken `REPAINT_SETTLED` after
     /// its face turned; it is done then, or once its tries run out, with that capture or its latest,
     /// and settled windows drop out of the rounds after. One the cache would refuse is done with
-    /// nothing: every later capture at that size is refused too. A capture that missed it wholly on
+    /// nothing: every later capture at that size is refused as well. A capture that missed it wholly on
     /// the display spends a try. One the window server does not have wholly on the display, or one no
     /// try captured, is owed a ScreenCaptureKit capture. One not in `seen`, its call never made for a
     /// press on its way, spends nothing and is owed nowhere else.
@@ -435,7 +435,7 @@ mod tests {
     /// server is owed ScreenCaptureKit's capture instead. One wholly on the display whose capture
     /// missed is looked at again, a try spent, and owed ScreenCaptureKit's only if no try captured it;
     /// one captured before is pictured with that capture. A capture the cache would refuse ends a
-    /// refresh with nothing put and nothing more owed: every later one at that size is refused too.
+    /// refresh with nothing put and nothing more owed: every later one at that size is refused as well.
     #[test]
     fn only_a_window_off_the_display_or_never_captured_is_owed_elsewhere_and_a_refused_one_nothing()
     {

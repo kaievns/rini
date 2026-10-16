@@ -107,7 +107,7 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
     };
 
     // The window as it was before the application quit: moved off the active workspace and made full
-    // width, which are the two things that used to be forgotten.
+    // width, the two things a relaunch must remember.
     insert(&mut window_store, before_quit);
     let _ = engine.handle_event(
         &mut window_store,
@@ -231,7 +231,7 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
 
     // Park it in a workspace that is not the active one, through the command the user runs, so its tree
     // membership really moves. Reassigning it in the store alone leaves it in the active workspace's tree,
-    // where the old lookup could still find it and the test would prove nothing.
+    // where a lookup there could still find it and the test would prove nothing.
     let parked_index = 2usize;
     let _ = engine.handle_command(
         &mut window_store,
@@ -435,9 +435,8 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
 }
 
 /// The width has to come from the window's own layout, not from the affinity map. That map is only written
-/// by explicit width COMMANDS, so a window whose width came from the layout itself never appeared in it —
-/// measured live as `window_width:{}` in the file with every slot recording no width, which is why a
-/// relaunched window came back at the default no matter what it had been.
+/// by explicit width COMMANDS, so a window whose width came from the layout itself never appears in it, and
+/// read from the map a relaunched window would come back at the default whatever its width.
 #[test]
 fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
     use crate::layout::ColumnWidth;
@@ -799,8 +798,8 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
         LayoutEvent::WindowAdded(space, after_relaunch),
     );
 
-    // The autosave fires while the width still cannot be read. This is the step that used to
-    // destroy the record, and after it the window can never come back full width again.
+    // The autosave fires while the width still cannot be read. This step must keep the record: were
+    // it destroyed, the window could never come back full width again.
     reloaded.remember_launch_slots(&store, &mut memory, &[DisplayUuid::new(DISPLAY)]);
     assert_eq!(
         memory.launch.slots(APP, &topology)[0].width,

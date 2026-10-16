@@ -112,7 +112,7 @@ impl Picture {
         *self.ground.0.get_or_init(|| ground_of(&self.image).unwrap_or(STAND_IN_GROUND))
     }
 
-    /// This picture as one to keep: a region copied into an image of its own, so it no longer holds
+    /// This picture as one to keep: a region copied into an image of its own, so it stops holding
     /// its composite alive. `None` for any other kind, which holds nothing but itself.
     pub fn kept(&self) -> Option<Picture> {
         let Pixels::Region { .. } = &self.image else {
@@ -183,7 +183,7 @@ impl HasCoverage for Picture {
 impl CarriesOver for Picture {
     /// A picture carrying its window's blur is kept over a capture of the window on its own at the
     /// same size, which would be flat grey exactly where the blur is. A different size means the
-    /// window was resized and the old picture no longer fits it, so the new one is taken after all.
+    /// window was resized and the old picture misfits it, so the new one is taken after all.
     fn keeps_over(&self, incoming: &Self) -> bool {
         let blur = |picture: &Picture| Blur {
             carried: picture.carries_blur,

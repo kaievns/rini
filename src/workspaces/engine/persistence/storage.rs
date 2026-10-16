@@ -67,13 +67,11 @@ impl LayoutEngine {
     pub fn deserialize_file(buf: &str) -> anyhow::Result<LoadedLayout> {
         // Checked before parsing, because parsing is what fails: schema 4 dropped the
         // `LayoutSystemKind` wrapper, so every earlier file tags its layouts `scrolling((...))`
-        // for an enum that no longer exists and RON reports a shape mismatch deep inside the tree.
+        // for an enum that is gone and RON reports a shape mismatch deep inside the tree.
         // Saying so here is the difference between "start fresh" and an unreadable error.
         if buf.contains("layout_system:scrolling(") {
-            // 4 is the version that dropped the wrapper and does not move when the current version
-            // does. Interpolating CURRENT_SCHEMA_VERSION here made the message claim the file
-            // predated whatever the latest schema happened to be, which was true by accident and
-            // said nothing about the actual incompatibility.
+            // 4 is the version that dropped the wrapper, not CURRENT_SCHEMA_VERSION: the message
+            // names the incompatibility, which does not move when the current version does.
             return Err(anyhow::anyhow!(
                 "this layout file predates schema 4: it wraps each layout in the layout-system \
                  tag that rini no longer has, so the saved strip is ignored and laid out fresh"
@@ -230,7 +228,7 @@ impl LayoutEngine {
         result
     }
 
-    /// Forget every native space macOS no longer lists, no display is remembered on and no window
+    /// Forget every native space macOS has stopped listing, no display is remembered on and no window
     /// is on, so the file does not keep a strip per space id for every reconnect there ever was.
     /// `listed` is every space macOS lists on the attached displays, on screen or not. Nothing is
     /// forgotten before the startup restore has run, since until then the saved spaces have not

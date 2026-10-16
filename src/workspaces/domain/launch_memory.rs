@@ -492,8 +492,8 @@ mod tests {
         assert_eq!(resolve_width(&new, 0, &[]), None);
     }
 
-    /// The autosave loop that erased the record: every save re-projects, and one save that could not
-    /// read the layout used to overwrite the width with `None` for good.
+    /// The autosave loop must never erase the record: every save re-projects, and one save that cannot
+    /// read the layout must not overwrite the width with `None` for good.
     #[test]
     fn repeated_saves_that_cannot_read_the_layout_never_erase_a_width() {
         let mut memory = LaunchMemory::default();

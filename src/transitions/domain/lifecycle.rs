@@ -36,7 +36,7 @@ pub const FINAL_BEFORE_END: Duration = Duration::from_millis(110);
 pub const FINAL_NOT_BEFORE: Duration = Duration::from_millis(40);
 
 /// One press, or one burst merged in flight. Every picture asked for carries it, so one taken for an
-/// end its tile no longer has is never drawn.
+/// end its tile has left is never drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct Generation(pub u64);
 
@@ -502,12 +502,12 @@ struct Flight {
     /// any other window.
     unfocused: Option<WindowId>,
     /// The window focus leaves whose turn the pictures service will not see, until focus moves again:
-    /// what the target's changed picture waits for no longer.
+    /// what the target's changed picture stops waiting for.
     unseen: Option<WindowId>,
     /// The focus target's changed picture, not swapped while the window losing focus is watched to
     /// turn first: under its generation, at its frame, since when. Swapped at that turn, once that
     /// turn is reported unseen, as the last capture is asked, or `CHANGE_EVERY` after; dropped when
-    /// focus moves on, and handing nothing over once it no longer fits its tile.
+    /// focus moves on, and handing nothing over once it misfits its tile.
     held_change: Option<(Generation, ScreenRect, Instant)>,
     /// The focus target's latest landing, not swapped over the focused face its tile flies until focus
     /// hands over: under its generation, at its frame.
@@ -629,7 +629,7 @@ impl Flight {
     }
 
     /// The target's changed picture held for the window losing focus, swapped in and kept as its
-    /// focused face, and focus handed over, if it still fits. One that no longer does is dropped: its
+    /// focused face, and focus handed over, if it still fits. One that misfits is dropped: its
     /// hairline turns with the next picture of it that fits, or at the last capture's ask.
     fn swap_held_change(&mut self, out: &mut Vec<Command>) {
         let (Some((generation, frame, _)), Some(to)) = (self.held_change.take(), self.stage.focus)
@@ -728,7 +728,7 @@ impl Flight {
     }
 
     /// Every tile whose window was pictured where it still ends, snapped again: a merge or the start
-    /// can have placed it back on its model. A window no longer ending there is forgotten.
+    /// can have placed it back on its model. A window ending elsewhere now is forgotten.
     fn snap_landed(&mut self, out: &mut Vec<Command>) {
         let stage = &self.stage;
         self.landed
@@ -1279,7 +1279,7 @@ fn hold_or_move(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
 }
 
 /// A pass merged before the motion holding for `newcomers`, holding the overlay their `hold_cap`
-/// from its own arrival, never less than it already holds, but no longer than `BURST_HOLD_CAP` from
+/// from its own arrival, never less than it already holds, but never past `BURST_HOLD_CAP` from
 /// the overlay going up, so a burst cannot stall it.
 fn hold_again(f: &mut Flight, newcomers: &[WindowId], now: Instant) {
     let cap = f.hold_cap(newcomers);
@@ -1302,7 +1302,7 @@ fn hold_cap<'a>(
     }
 }
 
-/// `window` is held for no longer, its picture in or never to come: once the hold waits for nothing,
+/// `window` is let out of the hold, its picture in or never to come: once the hold waits for nothing,
 /// the motion starts, or the merge held merges.
 fn hold_no_longer(f: &mut Flight, window: WindowId, now: Instant, out: &mut Vec<Command>) {
     f.held.retain(|w| *w != window);
@@ -1319,8 +1319,8 @@ fn hold_no_longer(f: &mut Flight, window: WindowId, now: Instant, out: &mut Vec<
 /// A pass reaching the flight while its motion runs, its real windows written at once: held, up to
 /// its grows' `hold_cap` from now, until each window it grows that ends on the display, wholly or cut
 /// by its edge, has repainted where it ends, watched there; merged at once when it grows none. A pass held
-/// after another replaces what the hold waits for, its own grows from its own arrival, but no longer
-/// than `BURST_HOLD_CAP` from the first one's, and a window an earlier one grew is watched where the
+/// after another replaces what the hold waits for, its own grows from its own arrival, but never
+/// past `BURST_HOLD_CAP` from the first one's, and a window an earlier one grew is watched where the
 /// latest sends it.
 fn hold_merge(
     f: &mut Flight,
@@ -1369,7 +1369,7 @@ fn hold_merge(
     out.push(Command::Watch(end_watch(f, now)));
 }
 
-/// The passes held since the motion ran merge now, a held merge waiting no longer.
+/// The passes held since the motion ran merge now, a held merge done waiting.
 fn retarget(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
     if matches!(f.phase, Phase::MergeHeld { .. }) {
         f.held.clear();
@@ -2307,7 +2307,7 @@ mod tests {
     }
 
     /// A held window whose picture the pictures service gives up on, out of time, out of tries or
-    /// refused by the cache, is held for no longer: the motion starts once nothing else is, with
+    /// refused by the cache, is let out of the hold: the motion starts once nothing else is, with
     /// nothing swapped or snapped for it. Its repainted picture would have handed focus over; lost,
     /// focus hands over as the last capture is asked.
     #[test]
@@ -2358,8 +2358,8 @@ mod tests {
         assert!(has(&out, |c| *c == Command::StartMoving));
     }
 
-    /// A held window a merged pass sends where no watch can see it repaint, off the display, is held
-    /// for no longer: the motion starts at once rather than at the cap.
+    /// A held window a merged pass sends where no watch can see it repaint, off the display, is let
+    /// out of the hold: the motion starts at once rather than at the cap.
     #[test]
     fn a_held_window_a_merge_sends_off_the_display_is_held_for_no_longer() {
         let now = Instant::now();
@@ -2380,7 +2380,7 @@ mod tests {
     }
 
     /// A merge's retarget watches again a window lost under the generation before, so only a loss under
-    /// the generation watched now holds it for no longer.
+    /// the generation watched now lets it out of the hold.
     #[test]
     fn a_window_lost_under_the_generation_before_a_merge_is_still_held_for() {
         let now = Instant::now();
@@ -2678,7 +2678,7 @@ mod tests {
     }
 
     /// The old window's turn given up on, clipped where it is, out of tries or refused, the target's
-    /// held change waits for it no longer, and nothing more does; under a generation before, it was
+    /// held change stops waiting for it, and nothing more waits; under a generation before, it was
     /// given up on for another end. One a pass resized is watched to repaint instead, its face coming
     /// only with its repainted picture, and drawn unfocused just before the target.
     #[test]
@@ -3138,7 +3138,7 @@ mod tests {
         ]);
     }
 
-    /// A held change no longer fitting its tile, a press resizing the target meanwhile, turns nothing:
+    /// A held change misfitting its tile, a press resizing the target meanwhile, turns nothing:
     /// its hairline waits for a picture of it that fits.
     #[test]
     fn a_held_change_that_no_longer_fits_hands_nothing_over() {
@@ -3900,7 +3900,7 @@ mod tests {
 
     /// A pass merged before the motion growing window 2 to end cut by the display's edge, over a
     /// hold for window 1 that SkyLight watches, holds `ELSEWHERE_HOLD_CAP` from its arrival, and
-    /// no longer than `BURST_HOLD_CAP` from the show.
+    /// never past `BURST_HOLD_CAP` from the show.
     #[test]
     fn a_merge_before_the_motion_growing_a_cut_end_holds_the_longer_cap_from_its_arrival() {
         let tick = Event::Tick { settled: false, landed: false };
@@ -4093,7 +4093,7 @@ mod tests {
         assert!(!swapped(shrinking, moving, shrunk), "shrunk, then moved");
     }
 
-    /// Shrunk by a pass merged before the motion starts, a window grown first is held for no longer:
+    /// Shrunk by a pass merged before the motion starts, a window grown first is let out of the hold:
     /// the motion starts with the merge, while holding, or with the coalesce, before the show.
     #[test]
     fn a_window_shrunk_by_a_merge_before_the_motion_is_held_for_no_longer() {
@@ -4874,7 +4874,7 @@ mod tests {
     }
 
     /// A window an earlier held pass grows that a later one sends off the display is watched to
-    /// repaint no longer, nor is a hole left over it there: no watch can see it repaint.
+    /// repaint no more, nor is a hole left over it there: no watch can see it repaint.
     #[test]
     fn a_held_grow_a_later_pass_sends_off_the_display_is_watched_no_longer() {
         let now = Instant::now();

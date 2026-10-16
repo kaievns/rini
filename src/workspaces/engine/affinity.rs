@@ -114,8 +114,8 @@ impl LayoutEngine {
             .collect()
     }
 
-    /// Drop affinity for windows that no longer exist. Called on every settled topology; the
-    /// removal paths alone missed windows closed while their display was unplugged.
+    /// Drop affinity for windows that have gone. Called on every settled topology: the removal
+    /// paths alone miss windows closed while their display was unplugged.
     pub fn forget_affinity_for_dead_windows(
         &mut self,
         window_store: &WindowStore,
