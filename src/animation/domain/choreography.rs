@@ -477,10 +477,12 @@ mod tests {
 
     use super::*;
     use crate::animation::domain::motion::bounce::Bounce;
+    use crate::animation::domain::motion::easing::MOTION_CURVE;
     use crate::animation::domain::motion::plan::{
         EDGE_BOUNCE_OVERSHOOT, GROUP_TOLERANCE, GroupKey, Member, Resolved, carries_out_and_back,
         on_overlay, overlay_of, reflow_plan,
     };
+    use crate::animation::domain::motion::score::{Curve, SAMPLE_STEP, Track};
     use crate::animation::domain::motion::testing::{
         DISPLAY, Gen, RUNS, VIEWPORT, random_requests, rect,
     };
@@ -673,89 +675,172 @@ mod tests {
         }
     }
 
-    /// The bend contract, over flights of the look `make` gives: whatever a pass brings and whenever
-    /// it lands, every window the flight drew before it is drawn where it was, and a window it brings
-    /// rides beside the windows it sits beside in the layout: drawn where the pass has it, moved by
-    /// as far as the container it rides is drawn from where the last pass sent it. Each edge within
-    /// the half point placing on whole points allows: passes built as the reactor builds them, from
-    /// where the last pass sends every window, merged into a flight playing from its score, 200 cases
-    /// from each of `BEND_SEEDS`.
-    fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
-        BEND_SEEDS
-            .into_iter()
-            .try_for_each(|seed| bends_without_a_jump_from(make, seed))
+    /// One pass of the bend contracts' flights, merged at `now`: the flight playing as it lands and
+    /// the plan it had, and the flight with it in.
+    struct Bend<'a> {
+        tag: String,
+        now: f64,
+        incoming: &'a ReflowPlan,
+        newcomer: WindowId,
+        playing: &'a Score,
+        sent: &'a FlightPlan,
+        bent: &'a Flight,
     }
 
-    /// The seeds of the bend contract's flights: 163, and 2, which moves members of two containers
+    /// Every pass of the bend contracts' flights of the look `make` gives, as `check` sees it: passes
+    /// built as the reactor builds them, from where the last pass sends every window, merged one to
+    /// four times 10-400ms apart into a flight playing from its score, 200 flights from each of
+    /// `BEND_SEEDS`.
+    fn bent_flights(
+        make: &dyn Fn() -> Box<dyn Choreography>,
+        check: &mut dyn FnMut(&Bend) -> Result<(), String>,
+    ) -> Result<(), String> {
+        for seed in BEND_SEEDS {
+            let mut rng = Gen(seed);
+            for run in 0..RUNS {
+                let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
+                flight.start(&[]);
+                let mut now = BEGIN;
+                for step in 0..1 + rng.below(4) {
+                    now += rng.pt(10.0, 400.0) / 1000.0;
+                    let newcomer = wid(500 + step as u32);
+                    let (incoming, pan) = random_pass(&mut rng, &mut flight, newcomer);
+                    let (playing, sent) = (flight.score.clone(), flight.plan.clone());
+                    flight.merge(&incoming, pan, None, now);
+                    check(&Bend {
+                        tag: format!("seed {seed} run {run} step {step}"),
+                        now,
+                        incoming: &incoming,
+                        newcomer,
+                        playing: &playing,
+                        sent: &sent,
+                        bent: &flight,
+                    })?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The seeds of the bend contracts' flights: 163, and 2, which moves members of two containers
     /// into one a pass opens, a member from the other drawn 0.82pt from where it was while
     /// `Merged::bend` started the container's movement at the whole point nearest where it installs.
     const BEND_SEEDS: [u64; 2] = [163, 2];
 
-    fn bends_without_a_jump_from(
-        make: &dyn Fn() -> Box<dyn Choreography>,
-        seed: u64,
-    ) -> Result<(), String> {
-        let mut rng = Gen(seed);
+    /// The bend contract, over `bent_flights`: whatever a pass brings and whenever it lands, every
+    /// window the flight drew before it is drawn where it was, and a window it brings rides beside
+    /// the windows it sits beside in the layout: drawn where the pass has it, moved by as far as the
+    /// container it rides is drawn from where the last pass sent it. Each edge within the half point
+    /// placing on whole points allows.
+    fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
         let mut brought = 0;
-        for run in 0..RUNS {
-            let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
-            flight.start(&[]);
-            let mut now = BEGIN;
-            for step in 0..1 + rng.below(4) {
-                let tag = format!("seed {seed} run {run} step {step}");
-                now += rng.pt(10.0, 400.0) / 1000.0;
-                let windows = flight.plan.windows();
-                let newcomer = wid(500 + step as u32);
-                let (incoming, pan) = random_pass(&mut rng, &mut flight, newcomer);
-                let before: Vec<(WindowId, OverlayRect)> = windows
-                    .iter()
-                    .filter_map(|w| Some((*w, flight.score.drawn(*w, now)?)))
-                    .collect();
-                let sent = flight.plan.clone();
-                flight.merge(&incoming, pan, None, now);
-                if let Some(Member::Rigid { key, .. }) = flight.plan.member(newcomer)
-                    && let Some(start) = sent.positions.get(&key)
-                {
-                    let from = incoming.groups.iter().find_map(|g| {
+        bent_flights(make, &mut |bend| {
+            let (tag, now, newcomer, flight) = (&bend.tag, bend.now, bend.newcomer, bend.bent);
+            if let Some(Member::Rigid { key, .. }) = flight.plan.member(newcomer)
+                && let Some(start) = bend.sent.positions.get(&key)
+            {
+                let from =
+                    bend.incoming.groups.iter().find_map(|g| {
                         g.members.iter().find(|m| m.window == newcomer).map(|m| m.rel)
                     });
-                    let from = from.expect("the pass brings it");
-                    let Some(Value::Point(container)) =
-                        flight.score.sample(Node::Container(key), now)
-                    else {
-                        return Err(format!("{tag}: {key:?} is not drawn"));
-                    };
-                    let want = OverlayRect::new(
-                        OverlayPoint::new(
-                            from.origin.x + container.x - start.x,
-                            from.origin.y + container.y - start.y,
-                        ),
-                        from.size.respace(),
-                    );
-                    let is = flight.score.drawn(newcomer, now).expect("drawn");
-                    let apart = edges_apart(is, want);
-                    if apart > 0.5 + 1e-6 {
-                        return Err(format!(
-                            "{tag}: {newcomer:?} starts {apart} from beside the strip: {is:?}, wants {want:?}"
-                        ));
-                    }
-                    brought += 1;
+                let from = from.expect("the pass brings it");
+                let Some(Value::Point(container)) = flight.score.sample(Node::Container(key), now)
+                else {
+                    return Err(format!("{tag}: {key:?} is not drawn"));
+                };
+                let want = OverlayRect::new(
+                    OverlayPoint::new(
+                        from.origin.x + container.x - start.x,
+                        from.origin.y + container.y - start.y,
+                    ),
+                    from.size.respace(),
+                );
+                let is = flight.score.drawn(newcomer, now).expect("drawn");
+                let apart = edges_apart(is, want);
+                if apart > 0.5 + 1e-6 {
+                    return Err(format!(
+                        "{tag}: {newcomer:?} starts {apart} from beside the strip: {is:?}, wants {want:?}"
+                    ));
                 }
-                for (window, was) in before {
-                    let Some(is) = flight.score.drawn(window, now) else {
-                        return Err(format!("{tag}: {window:?} gone"));
-                    };
-                    let apart = edges_apart(is, was);
-                    if apart > 0.5 + 1e-6 {
-                        return Err(format!(
-                            "{tag}: {window:?} jumped {apart}: {was:?} then {is:?}"
-                        ));
-                    }
+                brought += 1;
+            }
+            for window in bend.sent.windows() {
+                let Some(was) = bend.playing.drawn(window, now) else {
+                    continue;
+                };
+                let Some(is) = flight.score.drawn(window, now) else {
+                    return Err(format!("{tag}: {window:?} gone"));
+                };
+                let apart = edges_apart(is, was);
+                if apart > 0.5 + 1e-6 {
+                    return Err(format!("{tag}: {window:?} jumped {apart}: {was:?} then {is:?}"));
                 }
             }
-        }
+            Ok(())
+        })?;
         if brought == 0 {
-            return Err(format!("seed {seed}: no window brought beside the strip"));
+            return Err("no window brought beside the strip".to_string());
+        }
+        Ok(())
+    }
+
+    /// The speed contract, over `bent_flights`: every window the flight drew before a pass that the
+    /// pass leaves riding a container goes on at the speed it is drawn moving. Each edge's speed over
+    /// the `SAMPLE_STEP` before the pass, as it was drawn, and over the one after, as it is, differs
+    /// by no more than the motions themselves change it there: the motion before the pass over the
+    /// step before that and over the step after, as it would have gone on, the one after it over its
+    /// second step, and the half point a bend may move an edge, over a step. A loose tile is outside
+    /// it: Slide starts each one a pass bends from where it is drawn on `MOTION_CURVE` again, so its
+    /// speed jumps, against "Arriving mid-flight" in `specs/animation.md`.
+    fn bends_at_the_speed_it_moves(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
+        const STEP: f64 = SAMPLE_STEP;
+        let edges =
+            |frame: OverlayRect| [frame.min().x, frame.min().y, frame.max().x, frame.max().y];
+        let mut moving = 0;
+        bent_flights(make, &mut |bend| {
+            let now = bend.now;
+            for window in bend.sent.windows() {
+                if !matches!(bend.bent.plan.member(window), Some(Member::Rigid { .. })) {
+                    continue;
+                }
+                let was = |k: f64| bend.playing.drawn(window, now + k * STEP).map(edges);
+                let is = |k: f64| bend.bent.score.drawn(window, now + k * STEP).map(edges);
+                let (Some(p2), Some(p1), Some(p0), Some(o1), Some(q0), Some(q1), Some(q2)) = (
+                    was(-2.0),
+                    was(-1.0),
+                    was(0.0),
+                    was(1.0),
+                    is(0.0),
+                    is(1.0),
+                    is(2.0),
+                ) else {
+                    continue;
+                };
+                for edge in 0..4 {
+                    let earlier = (p1[edge] - p2[edge]) / STEP;
+                    let before = (p0[edge] - p1[edge]) / STEP;
+                    let unbent = (o1[edge] - p0[edge]) / STEP;
+                    let after = (q1[edge] - q0[edge]) / STEP;
+                    let later = (q2[edge] - q1[edge]) / STEP;
+                    let change = (after - before).abs();
+                    let allowed = (before - earlier).abs()
+                        + (unbent - before).abs()
+                        + (later - after).abs()
+                        + 0.5 / STEP;
+                    if change > allowed {
+                        return Err(format!(
+                            "{}: {window:?}'s speed jumped from {before:.0} to {after:.0}pt/s, \
+                             allowed {allowed:.0}",
+                            bend.tag
+                        ));
+                    }
+                    moving += usize::from(before.abs() > 100.0);
+                }
+            }
+            Ok(())
+        })?;
+        if moving == 0 {
+            return Err("no window was moving as a pass landed".to_string());
         }
         Ok(())
     }
@@ -776,6 +861,26 @@ mod tests {
         let cut = bends_without_a_jump(&|| Flawed::boxed(Flaw::CutsTheBend))
             .expect_err("a bend that cuts to the pass");
         assert!(cut.contains("jumped"), "{cut}");
+    }
+
+    /// Every look keeps the speed contract.
+    #[test]
+    fn every_look_bends_a_flight_at_the_speed_it_moves() {
+        for look in Look::ALL {
+            if let Err(broken) = bends_at_the_speed_it_moves(&|| look.choreography()) {
+                panic!("{look:?}: {broken}");
+            }
+        }
+    }
+
+    /// The speed contract rejects a look that starts every container a pass bends on a fresh curve
+    /// from where it is drawn, keeping the bend contract.
+    #[test]
+    fn the_speed_contract_rejects_a_look_that_restarts_the_motion_at_a_pass() {
+        let restarted = bends_at_the_speed_it_moves(&|| Flawed::boxed(Flaw::RestartsTheBend))
+            .expect_err("a bend that restarts the motion");
+        assert!(restarted.contains("speed jumped"), "{restarted}");
+        bends_without_a_jump(&|| Flawed::boxed(Flaw::RestartsTheBend)).expect("drawn where it was");
     }
 
     /// A pass as the reactor builds one for `flight`, from where its last pass sends every window: a
@@ -1262,6 +1367,9 @@ mod tests {
         PushesFromRest,
         /// Its bend moves nothing: every node it would carry is cut to where it ends.
         CutsTheBend,
+        /// Its bend starts every container it carries on `MOTION_CURVE` from where it is, at the
+        /// curve's speed, whatever speed it had.
+        RestartsTheBend,
     }
 
     /// Slide but for one flaw, so a contract's check is seen to reject a look that breaks it.
@@ -1300,7 +1408,8 @@ mod tests {
                 Flaw::PlaysNoPush
                 | Flaw::PushesSideways
                 | Flaw::PushesFromRest
-                | Flaw::CutsTheBend => self.slide.fold(plan, pass),
+                | Flaw::CutsTheBend
+                | Flaw::RestartsTheBend => self.slide.fold(plan, pass),
             }
         }
 
@@ -1318,13 +1427,29 @@ mod tests {
             now: f64,
         ) -> Retarget {
             let mut bent = self.slide.retarget(playing, plan, pass, now);
-            if let Flaw::CutsTheBend = self.flaw {
-                for edit in &mut bent.edits {
-                    if let Edit::Add(track) = edit
-                        && track.channel() == Channel::Base
-                    {
-                        *edit = Edit::Cut(track.node(), Channel::Base);
+            for edit in &mut bent.edits {
+                let Edit::Add(track) = edit else { continue };
+                if track.channel() != Channel::Base {
+                    continue;
+                }
+                match (self.flaw, track.node(), track.keys()) {
+                    (Flaw::CutsTheBend, node, _) => *edit = Edit::Cut(node, Channel::Base),
+                    (
+                        Flaw::RestartsTheBend,
+                        node @ Node::Container(_),
+                        [(_, from), .., (_, to)],
+                    ) => {
+                        *edit = Edit::Add(Track::between(
+                            node,
+                            Channel::Base,
+                            *from,
+                            *to,
+                            now,
+                            pass.seconds,
+                            Curve::Bezier(MOTION_CURVE),
+                        ))
                     }
+                    _ => {}
                 }
             }
             bent
@@ -1346,7 +1471,8 @@ mod tests {
                 | Flaw::DropsResizes
                 | Flaw::StartsAtTheEnd
                 | Flaw::PushesSideways
-                | Flaw::CutsTheBend => self.slide.push(playing, cue, wall, seconds, now),
+                | Flaw::CutsTheBend
+                | Flaw::RestartsTheBend => self.slide.push(playing, cue, wall, seconds, now),
                 Flaw::PushesFromRest => playing
                     .containers()
                     .filter(|key| carries_out_and_back(*key, wall))

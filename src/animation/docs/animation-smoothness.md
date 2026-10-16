@@ -175,6 +175,22 @@ A retarget now accelerates over about 30ms from the speed it was at (210, 4163,
 separate pulses at 300-570ms between presses is separate flights: the first
 leg is 97% home by half time, so the strip is at rest before the next press.
 
+Every look keeps that speed for a window riding a container
+(`every_look_bends_a_flight_at_the_speed_it_moves`): across a pass, each edge's speed over the
+1/120s step either side changes by no more than the motions themselves change it over the steps
+around it, and a half point over a step. Drawn as Core Animation's polyline a spring changes its
+speed at every sample, so the bend's own change, up to 4,008pt/s under Slide over seed 163's
+flights, is held against the motion's, at most 0.71 of it over the contract's two seeds; a look
+restarting each container on `MOTION_CURVE` from where it is drawn changes it by up to 9.3 times
+the motion's
+(`the_speed_contract_rejects_a_look_that_restarts_the_motion_at_a_pass`), and Linear, before it
+carried its speed, by up to 79 times. **Slide's loose tiles still restart:** a resize, entrance
+or floating window a pass bends starts `MOTION_CURVE` again from where it is drawn (`tile_leg`), so
+its speed jumps, against "Arriving mid-flight" in `specs/animation.md`. Over seed 163's flights
+a resizing tile's changed by a median 3,408pt/s and up to 16,676pt/s, and one a pass made resize
+out of a moving container's by a median 5,111pt/s (measured with a probe not committed; not seen
+on screen), so the contract holds only windows riding a container.
+
 The look reads every container's two positions once, from the flight's score, for `merge_plans`,
 and turns the delta into the score's edits, which the overlay plays in one transaction: reparents,
 container animations, joins, loose retargets, and the `Bank` the engine appends. What rides where

@@ -1,11 +1,12 @@
 //! Linear, a look only the tests build: every container and loose tile goes straight to where its
-//! pass sends it at an even speed over the flight's length, a pass arriving mid-flight starting each
-//! again from where the score has it, with no speed carried and no accent but the push; a move holds
-//! the column it passes. It plans, folds and poses as Slide does and bends through `Merged::bend`,
-//! so it keeps every look's contract on motion of its own.
+//! pass sends it at an even speed over the flight's length, and a pass arriving mid-flight carries
+//! each on from where the score has it at the speed it is moving there, that speed changing evenly
+//! until it arrives over the pass's length; no accent but the push, and a move holds the column it
+//! passes. It plans, folds and poses as Slide does and bends through `Merged::bend`, so it keeps
+//! every look's contract on motion of its own.
 
 use rini_geometry::Round;
-use rini_geometry::space::OverlayVector;
+use rini_geometry::space::{GroupRect, OverlayPoint, OverlayVector, Point, Size};
 
 use super::slide::Slide;
 use super::{
@@ -17,7 +18,9 @@ use crate::animation::domain::motion::plan::{
     AnimationTarget, FlightPlan, GroupKey, ReflowPlan, animation_targets, group_relative,
     on_overlay,
 };
-use crate::animation::domain::motion::score::{Channel, Curve, Edit, Node, Score, Track, Value};
+use crate::animation::domain::motion::score::{
+    Channel, Curve, Edit, Node, SAMPLE_STEP, Score, Track, Value,
+};
 
 #[derive(Debug)]
 pub struct Linear;
@@ -41,17 +44,28 @@ pub fn stage(cue: &Cue, strip: &Strip) -> Staging {
     staging
 }
 
-/// The clock every movement of one composition or bend runs on.
-struct Even {
+/// The clock every movement of one composition or bend runs on, and for a bend the score playing
+/// as it lands, whose speeds it carries on.
+struct Even<'a> {
     begin: f64,
     seconds: f64,
+    bent: Option<&'a Score>,
 }
 
-impl Even {
-    /// `node` carried from `from` to where it is placed, on a linear track; nothing for no length.
-    fn carry(&self, making: &mut Making, node: Node, from: Value, to: Value) {
-        if self.seconds > 0.0 && from != to {
-            making.push(Edit::Add(Track::between(
+/// How far back a bend reads a track's speed from: within one of its steps, which are 1/120s.
+const SPEED_READ: f64 = 1e-4;
+
+impl Even<'_> {
+    /// `node` carried from `from` to where it is placed, starting at `speed`: from rest on a linear
+    /// track, or with its speed changing evenly on one sampled every `SAMPLE_STEP`; nothing for no
+    /// length or no movement.
+    fn carry(&self, making: &mut Making, node: Node, from: Value, to: Value, speed: [f64; 4]) {
+        let still = from == to && speed == [0.0; 4];
+        if self.seconds <= 0.0 || still {
+            return;
+        }
+        let track = match self.bent {
+            None => Track::between(
                 node,
                 Channel::Base,
                 from,
@@ -59,24 +73,72 @@ impl Even {
                 self.begin,
                 self.seconds,
                 Curve::Linear,
-            )));
+            ),
+            Some(_) => {
+                let (a, b, length) = (parts(from), parts(to), self.seconds);
+                let steps = (length / SAMPLE_STEP).ceil().max(1.0) as usize;
+                let values = (0..=steps).map(|k| {
+                    let t = length * k as f64 / steps as f64;
+                    let at = |i: usize| {
+                        let pull = b[i] - a[i] - speed[i] * length;
+                        a[i] + speed[i] * t + pull * (t / length).powi(2)
+                    };
+                    with_parts(from, [at(0), at(1), at(2), at(3)])
+                });
+                Track::samples(node, Channel::Base, values, self.begin, length)
+            }
+        };
+        making.push(Edit::Add(track));
+    }
+
+    /// How fast `node`'s movement is going as the bend lands, per part a second: still for a node
+    /// with no movement playing then, and in a composition.
+    fn speed(&self, node: Node) -> [f64; 4] {
+        let track = self.bent.and_then(|score| score.track(node, Channel::Base));
+        let read = track.map(|track| (track.at(self.begin - SPEED_READ), track.at(self.begin)));
+        match read {
+            Some((Some(before), Some(now))) => {
+                let (before, now) = (parts(before), parts(now));
+                std::array::from_fn(|i| (now[i] - before[i]) / SPEED_READ)
+            }
+            _ => [0.0; 4],
         }
     }
 }
 
-impl Bending for Even {
+/// A value's numbers: a point's x and y and two zeros, or a frame's origin and size.
+fn parts(value: Value) -> [f64; 4] {
+    match value {
+        Value::Point(p) => [p.x, p.y, 0.0, 0.0],
+        Value::Rect(r) => [r.origin.x, r.origin.y, r.size.width, r.size.height],
+    }
+}
+
+/// `parts` back into a value of `kind`'s kind.
+fn with_parts(kind: Value, [x, y, width, height]: [f64; 4]) -> Value {
+    match kind {
+        Value::Point(_) => Value::Point(OverlayPoint::new(x, y)),
+        Value::Rect(_) => Value::Rect(GroupRect::new(Point::new(x, y), Size::new(width, height))),
+    }
+}
+
+impl Bending for Even<'_> {
     fn retarget(&mut self, making: &mut Making, way: ContainerWay) {
         let node = Node::Container(way.key);
-        self.carry(making, node, Value::Point(way.from), Value::Point(way.to));
+        let speed = self.speed(node);
+        self.carry(making, node, Value::Point(way.from), Value::Point(way.to), speed);
     }
 
-    fn open(&mut self, making: &mut Making, way: ContainerWay, _leaving: Option<GroupKey>) {
-        self.retarget(making, way);
+    fn open(&mut self, making: &mut Making, way: ContainerWay, leaving: Option<GroupKey>) {
+        let node = Node::Container(way.key);
+        let speed = leaving.map_or([0.0; 4], |left| self.speed(Node::Container(left)));
+        self.carry(making, node, Value::Point(way.from), Value::Point(way.to), speed);
     }
 
     fn tile(&mut self, making: &mut Making, way: TileWay) {
         let node = Node::Tile(way.window);
-        self.carry(making, node, Value::Rect(way.from), Value::Rect(way.to));
+        let speed = self.speed(node);
+        self.carry(making, node, Value::Rect(way.from), Value::Rect(way.to), speed);
     }
 }
 
@@ -91,7 +153,11 @@ impl Choreography for Linear {
 
     /// Exactly what `animation_targets` names, each node placed where it ends and carried there.
     fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
-        let even = Even { begin, seconds: stage.seconds };
+        let even = Even {
+            begin,
+            seconds: stage.seconds,
+            bent: None,
+        };
         let mut making = Making::from(playing);
         for target in animation_targets(stage.plan) {
             match target {
@@ -101,7 +167,7 @@ impl Choreography for Linear {
                     }
                     let (from, to) = (Value::Point(from.rounded()), Value::Point(to.rounded()));
                     making.push(Edit::Place(Node::Container(key), to));
-                    even.carry(&mut making, Node::Container(key), from, to);
+                    even.carry(&mut making, Node::Container(key), from, to, [0.0; 4]);
                 }
                 AnimationTarget::Tile { window, from, to } => {
                     let Some(offset) =
@@ -112,7 +178,7 @@ impl Choreography for Linear {
                     let at =
                         |frame| Value::Rect(group_relative(on_overlay(frame), offset).rounded());
                     making.push(Edit::Place(Node::Tile(window), at(to)));
-                    even.carry(&mut making, Node::Tile(window), at(from), at(to));
+                    even.carry(&mut making, Node::Tile(window), at(from), at(to), [0.0; 4]);
                 }
             }
         }
@@ -124,6 +190,7 @@ impl Choreography for Linear {
         merged.bend(&mut Even {
             begin: now,
             seconds: pass.seconds,
+            bent: Some(playing),
         });
         merged.retarget()
     }
