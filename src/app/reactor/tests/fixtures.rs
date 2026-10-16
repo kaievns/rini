@@ -443,6 +443,11 @@ pub fn logged_commands(run: impl FnOnce()) -> Vec<String> {
 
     let seen = Arc::new(Mutex::new(Vec::new()));
     let subscriber = tracing_subscriber::registry().with(Commands(seen.clone()));
-    tracing::subscriber::with_default(subscriber, run);
+    // A callsite another test thread registers while no subscriber is set caches "never" for every
+    // dispatcher; rebuilding the cache under this one makes the run's events reach it.
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::callsite::rebuild_interest_cache();
+        run();
+    });
     seen.lock().unwrap().clone()
 }
