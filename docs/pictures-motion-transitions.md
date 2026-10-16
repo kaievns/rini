@@ -77,8 +77,8 @@ only while none does, through SkyLight where its window is wholly on the display
 
 ## `animation`
 
-A `Score` is everything that moves in one transition, as data: tracks of keyframes on containers and
-tiles, on three channels (the movement, the bounce, the nudge), each segment linear or a cubic
+A `Score` is everything that moves in one transition, as data: tracks of keyframes on the strip's
+zoom, containers and tiles, on three channels (the movement, the bounce, the nudge), each segment linear or a cubic
 Bezier, and instant cuts (place, reparent, depth, drop). It is the fold of
 its edits, and evaluates at any instant to what Core Animation plays: a spring leg as the polyline of
 its samples, the bounce's way home on the `(0.42, 0, 0.58, 1)` Bezier. A picture swap is not a score
@@ -94,12 +94,15 @@ movement. An `Accent` adds an additive track (the bounce re-kicks from where it 
 renderer plays a score's edits, the snap of a tile onto its window's frame among them, swaps
 pictures, cuts holes over windows that end on screen, draws each tile's decorations, and lifts. A
 bend's structure, what rides where and where every node ends, is every look's alike
-(`Merged::bend`), so a look gives only motion. A new look that moves tiles through points and rects
+(`Merged::bend`), so a look gives only motion. A new look
 is a file under `src/animation/domain/choreography/`, a `Look` variant in `ALL` there, a row in
 `src/animation/docs/README.md` ("Adding a look") and the reactor's choice of it; capture, swaps and
-handover never see what a score contains. A zoom is more than a look: a score's `Value` is a `Point` or a `Rect`
-(`src/animation/domain/motion/score.rs`), so nothing in a score can say scale, and a zoom also needs a
-scale track in the score and the overlay installing its key.
+handover never see what a score contains. A zoom of the strip is such a look: the score's strip node
+holds a `Zoom`, a scale and a shift that say a scale about a centre through a camera
+(`src/animation/domain/motion/score.rs`), and the overlay plays it on the layer every container but the
+floating one hangs under, so a zoom look needs only its choreography and staging, its `retarget`
+bending the strip's zoom beside `Merged::bend`, which bends containers and tiles alone. A container
+scaled on its own, as the parked spike lifted the moved window, is not in the score.
 
 ## `transitions`
 

@@ -1084,15 +1084,7 @@ mod tests {
         ];
         let mut flight = Flight::posed(&requests);
         let whole = |v: f64| v == v.round();
-        let on_whole = |value: Value| match value {
-            Value::Point(p) => whole(p.x) && whole(p.y),
-            Value::Rect(r) => {
-                whole(r.origin.x)
-                    && whole(r.origin.y)
-                    && whole(r.size.width)
-                    && whole(r.size.height)
-            }
-        };
+        let on_whole = |value: Value| value.parts().into_iter().all(whole);
         let edits = flight.start(PLAIN, &[]);
         for (node, value) in places(&edits) {
             assert!(on_whole(value), "{node:?} at {value:?}");

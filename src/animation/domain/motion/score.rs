@@ -1,15 +1,15 @@
-//! Everything that moves in one transition, as data: tracks of keyframes on containers and tiles,
-//! where each node ends, which container each tile rides and how deep everything is drawn. A score is
-//! the fold of its edits (`Edit`), and evaluates at any media time to what Core Animation draws, so a
-//! retarget starts from the score instead of the presentation layer. What Core Animation was
-//! measured to play is "The score" in `src/animation/docs/animation-smoothness.md`.
+//! Everything that moves in one transition, as data: tracks of keyframes on the strip, containers
+//! and tiles, where each node ends, which container each tile rides and how deep everything is
+//! drawn. A score is the fold of its edits (`Edit`), and evaluates at any media time to what Core
+//! Animation draws, so a retarget starts from the score instead of the presentation layer. What Core
+//! Animation was measured to play is "The score" in `src/animation/docs/animation-smoothness.md`.
 use std::collections::HashMap;
 use std::time::Instant;
 
 use rini_core::ids::WindowId;
 #[cfg(test)]
 use rini_geometry::space::OverlayRect;
-use rini_geometry::space::{GroupRect, OverlayPoint, Point, Size};
+use rini_geometry::space::{GroupRect, OverlayPoint, OverlayVector, Point, Size};
 
 use super::easing::CubicBezier;
 use super::plan::{Banding, GroupKey, Presented};
@@ -17,9 +17,12 @@ use super::plan::{Banding, GroupKey, Presented};
 /// How far apart a spring leg's and a nudge's samples are: one 120Hz frame.
 pub const SAMPLE_STEP: f64 = 1.0 / 120.0;
 
-/// What a track moves: a container's position, or a tile's frame inside its container.
+/// What a track moves: the strip's zoom, a container's position, or a tile's frame inside its
+/// container.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Node {
+    /// What every container but the floating one rides, drawn through its zoom.
+    Strip,
     Container(GroupKey),
     Tile(WindowId),
 }
@@ -28,30 +31,76 @@ impl Node {
     fn holds(self, value: Value) -> bool {
         matches!(
             (self, value),
-            (Node::Container(_), Value::Point(_)) | (Node::Tile(_), Value::Rect(_))
+            (Node::Strip, Value::Zoom(_))
+                | (Node::Container(_), Value::Point(_))
+                | (Node::Tile(_), Value::Rect(_))
         )
     }
 }
 
-/// A container holds a `Point` and a tile a `Rect`, on every channel.
+/// How the strip is drawn: a point `p` of it at `p * scale + shift`. A zoom by `scale` about a
+/// centre with a camera is one (`Zoom::about`).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Zoom {
+    pub scale: f64,
+    pub shift: OverlayVector,
+}
+
+impl Zoom {
+    /// The strip drawn as it is laid out.
+    pub const REST: Zoom = Zoom {
+        scale: 1.0,
+        shift: OverlayVector::new(0.0, 0.0),
+    };
+
+    /// `scale` about `centre` through `camera`: a point `p` drawn at
+    /// `centre + scale * (p - camera - centre)`.
+    pub fn about(scale: f64, centre: OverlayPoint, camera: OverlayVector) -> Zoom {
+        Zoom {
+            scale,
+            shift: centre.to_vector() * (1.0 - scale) - camera * scale,
+        }
+    }
+
+    /// Where the strip's point `p` is drawn.
+    pub fn draw(self, p: OverlayPoint) -> OverlayPoint { p * self.scale + self.shift }
+}
+
+/// The strip holds a `Zoom`, a container a `Point` and a tile a `Rect`, on every channel.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Value {
     Point(OverlayPoint),
     Rect(GroupRect),
+    Zoom(Zoom),
 }
 
 impl Value {
-    fn zip(self, other: Value, f: impl Fn(f64, f64) -> f64) -> Value {
-        match (self, other) {
-            (Value::Point(a), Value::Point(b)) => {
-                Value::Point(Point::new(f(a.x, b.x), f(a.y, b.y)))
-            }
-            (Value::Rect(a), Value::Rect(b)) => Value::Rect(GroupRect::new(
-                Point::new(f(a.origin.x, b.origin.x), f(a.origin.y, b.origin.y)),
-                Size::new(f(a.size.width, b.size.width), f(a.size.height, b.size.height)),
-            )),
-            _ => unreachable!("a node holds one kind of value"),
+    /// The value's numbers: a point's x and y, a frame's origin and size, or a zoom's scale and
+    /// shift, zeros after.
+    pub fn parts(self) -> [f64; 4] {
+        match self {
+            Value::Point(p) => [p.x, p.y, 0.0, 0.0],
+            Value::Rect(r) => [r.origin.x, r.origin.y, r.size.width, r.size.height],
+            Value::Zoom(z) => [z.scale, z.shift.x, z.shift.y, 0.0],
         }
+    }
+
+    /// `parts` back into a value of this one's kind.
+    pub fn with_parts(self, [a, b, c, d]: [f64; 4]) -> Value {
+        match self {
+            Value::Point(_) => Value::Point(Point::new(a, b)),
+            Value::Rect(_) => Value::Rect(GroupRect::new(Point::new(a, b), Size::new(c, d))),
+            Value::Zoom(_) => Value::Zoom(Zoom {
+                scale: a,
+                shift: OverlayVector::new(b, c),
+            }),
+        }
+    }
+
+    /// `f` of each part of this value and `other`, in this one's kind.
+    fn zip(self, other: Value, f: impl Fn(f64, f64) -> f64) -> Value {
+        let (a, b) = (self.parts(), other.parts());
+        self.with_parts(std::array::from_fn(|i| f(a[i], b[i])))
     }
 
     fn lerp(self, to: Value, progress: f64) -> Value { self.zip(to, |a, b| a + (b - a) * progress) }
@@ -147,7 +196,8 @@ impl Track {
     }
 
     /// Panics unless there are two keys or more, in order from 0 to 1, one curve per segment, every
-    /// value of the kind the node holds, and `seconds` is not negative.
+    /// value of the kind the node holds, the strip's on `Base` alone, and `seconds` is not
+    /// negative.
     pub fn keyframes(
         node: Node,
         channel: Channel,
@@ -179,6 +229,10 @@ impl Track {
         assert!(
             keys.iter().all(|(_, value)| node.holds(*value)),
             "{node:?} holds one kind of value: {keys:?}"
+        );
+        assert!(
+            node != Node::Strip || channel == Channel::Base,
+            "the strip's zoom has no accent: {channel:?}"
         );
         assert!(seconds >= 0.0, "{seconds}s");
         Track {
@@ -316,7 +370,7 @@ impl Score {
     pub fn containers(&self) -> impl Iterator<Item = GroupKey> + '_ {
         self.models.keys().filter_map(|node| match node {
             Node::Container(key) => Some(*key),
-            Node::Tile(_) => None,
+            Node::Strip | Node::Tile(_) => None,
         })
     }
 
@@ -363,16 +417,22 @@ impl Score {
     }
 
     /// Where `window`'s tile is drawn at `at`: its frame in its container, moved by where the
-    /// container is drawn.
+    /// container is drawn, and through the strip's zoom unless it floats.
     #[cfg(test)]
     pub fn drawn(&self, window: WindowId, at: f64) -> Option<OverlayRect> {
         let key = self.parent(window)?;
-        match (
+        let laid = match (
             self.sample(Node::Tile(window), at)?,
             self.sample(Node::Container(key), at)?,
         ) {
-            (Value::Rect(frame), Value::Point(at)) => Some(super::plan::overlay_of(frame, at)),
+            (Value::Rect(frame), Value::Point(at)) => super::plan::overlay_of(frame, at),
             _ => unreachable!("a tile holds a frame and a container a point"),
+        };
+        match self.sample(Node::Strip, at) {
+            Some(Value::Zoom(zoom)) if key != GroupKey::Floating => {
+                Some(OverlayRect::new(zoom.draw(laid.origin), laid.size * zoom.scale))
+            }
+            _ => Some(laid),
         }
     }
 
@@ -451,7 +511,7 @@ mod tests {
         Curve::Bezier(EASE_IN_OUT),
     ];
 
-    fn strip() -> Node { Node::Container(GroupKey::Rigid(1)) }
+    fn container() -> Node { Node::Container(GroupKey::Rigid(1)) }
 
     fn tile() -> Node { Node::Tile(WindowId::new(1, 1)) }
 
@@ -461,26 +521,16 @@ mod tests {
         Value::Rect(GroupRect::new(Point::new(x, y), Size::new(w, h)))
     }
 
-    fn x(value: Option<Value>) -> f64 {
-        match value {
-            Some(Value::Point(p)) => p.x,
-            Some(Value::Rect(r)) => r.origin.x,
-            None => panic!("no value"),
-        }
-    }
+    fn x(value: Option<Value>) -> f64 { value.expect("a value").parts()[0] }
 
     fn gap(a: Value, b: Value) -> f64 {
-        let components = |v: Value| match v {
-            Value::Point(p) => [p.x, p.y, 0.0, 0.0],
-            Value::Rect(r) => [r.origin.x, r.origin.y, r.size.width, r.size.height],
-        };
-        let (a, b) = (components(a), components(b));
+        let (a, b) = (a.parts(), b.parts());
         (0..4).map(|i| (a[i] - b[i]).abs()).fold(0.0, f64::max)
     }
 
     fn base(from: f64, to: f64, begin: f64, seconds: f64, curve: Curve) -> Track {
         Track::between(
-            strip(),
+            container(),
             Channel::Base,
             point(from, 0.0),
             point(to, 0.0),
@@ -492,7 +542,7 @@ mod tests {
 
     fn moving(from: f64, to: f64, begin: f64, seconds: f64, curve: Curve) -> Score {
         let mut score = Score::default();
-        score.place(strip(), point(to, 0.0));
+        score.place(container(), point(to, 0.0));
         score.add(base(from, to, begin, seconds, curve));
         score
     }
@@ -521,15 +571,15 @@ mod tests {
     fn a_movement_on_any_curve_runs_from_its_start_to_its_end() {
         for curve in CURVES {
             let score = moving(0.0, 1722.0, 10.0, 0.35, curve);
-            assert_eq!(x(score.sample(strip(), 10.0)), 0.0, "{curve:?}");
+            assert_eq!(x(score.sample(container(), 10.0)), 0.0, "{curve:?}");
             assert!(
-                (x(score.sample(strip(), 10.35 - 1e-9)) - 1722.0).abs() < 1e-3,
+                (x(score.sample(container(), 10.35 - 1e-9)) - 1722.0).abs() < 1e-3,
                 "{curve:?}"
             );
-            assert_eq!(x(score.sample(strip(), 10.35)), 1722.0, "{curve:?}");
+            assert_eq!(x(score.sample(container(), 10.35)), 1722.0, "{curve:?}");
             let mut previous = 0.0;
             for step in 0..=350 {
-                let drawn = x(score.sample(strip(), 10.0 + step as f64 / 1000.0));
+                let drawn = x(score.sample(container(), 10.0 + step as f64 / 1000.0));
                 assert!(drawn >= previous, "{curve:?} went back at {step}ms");
                 previous = drawn;
             }
@@ -545,13 +595,13 @@ mod tests {
             let score = moving(-861.0, 861.0, 3.0, 0.5, Curve::Bezier(curve));
             for step in 0..500 {
                 let t = step as f64 / 500.0;
-                let drawn = x(score.sample(strip(), 3.0 + 0.5 * t));
+                let drawn = x(score.sample(container(), 3.0 + 0.5 * t));
                 let expected = -861.0 + 1722.0 * curve.ease(t);
                 assert!((drawn - expected).abs() < 1e-6, "{curve:?} at {t}");
             }
         }
         let linear = moving(0.0, 100.0, 0.0, 2.0, Curve::Linear);
-        assert!((x(linear.sample(strip(), 0.5)) - 25.0).abs() < 1e-12);
+        assert!((x(linear.sample(container(), 0.5)) - 25.0).abs() < 1e-12);
     }
 
     /// A tile's frame moves and resizes on one curve: origin and size are at the same progress at
@@ -588,9 +638,9 @@ mod tests {
     #[test]
     fn key_times_pick_the_segment() {
         let mut score = Score::default();
-        score.place(strip(), point(0.0, 0.0));
+        score.place(container(), point(0.0, 0.0));
         score.add(Track::keyframes(
-            strip(),
+            container(),
             Channel::Base,
             vec![
                 (0.0, point(0.0, 0.0)),
@@ -601,12 +651,12 @@ mod tests {
             0.0,
             1.0,
         ));
-        assert!((x(score.sample(strip(), 0.125)) - 50.0).abs() < 1e-12);
-        assert!((x(score.sample(strip(), 0.25)) - 100.0).abs() < 1e-12);
+        assert!((x(score.sample(container(), 0.125)) - 50.0).abs() < 1e-12);
+        assert!((x(score.sample(container(), 0.25)) - 100.0).abs() < 1e-12);
         let home = 100.0 * (1.0 - EASE_IN_OUT.ease(0.5 / 0.75));
-        assert!((x(score.sample(strip(), 0.75)) - home).abs() < 1e-9);
+        assert!((x(score.sample(container(), 0.75)) - home).abs() < 1e-9);
         assert!(
-            (x(score.sample(strip(), 0.625)) - 50.0).abs() < 1e-9,
+            (x(score.sample(container(), 0.625)) - 50.0).abs() < 1e-9,
             "half way home"
         );
     }
@@ -617,9 +667,9 @@ mod tests {
     fn evenly_spaced_samples_are_drawn_at_their_key_times() {
         let values = [0.0, 100.0, 50.0, 300.0];
         let mut score = Score::default();
-        score.place(strip(), point(300.0, 0.0));
+        score.place(container(), point(300.0, 0.0));
         score.add(Track::samples(
-            strip(),
+            container(),
             Channel::Base,
             values.map(|v| point(v, 0.0)),
             10.0,
@@ -627,16 +677,19 @@ mod tests {
         ));
         for (k, value) in values.iter().enumerate() {
             let at = 10.0 + k as f64 / 3.0;
-            assert!((x(score.sample(strip(), at)) - value).abs() < 1e-9, "key {k}");
+            assert!(
+                (x(score.sample(container(), at)) - value).abs() < 1e-9,
+                "key {k}"
+            );
         }
         // What the probe read off Core Animation for the same keyframes.
         for (at, drawn) in [(1.0 / 12.0, 25.0), (5.0 / 12.0, 87.5), (0.75, 112.5)] {
             assert!(
-                (x(score.sample(strip(), 10.0 + at)) - drawn).abs() < 1e-9,
+                (x(score.sample(container(), 10.0 + at)) - drawn).abs() < 1e-9,
                 "{at}"
             );
         }
-        let track = score.track(strip(), Channel::Base).unwrap();
+        let track = score.track(container(), Channel::Base).unwrap();
         assert_eq!(track.curves(), [Curve::Linear; 3]);
         assert_eq!(track.keys().iter().map(|(t, _)| *t).collect::<Vec<_>>(), [
             0.0,
@@ -652,32 +705,36 @@ mod tests {
     #[test]
     fn outside_its_window_a_movement_draws_the_model() {
         let score = moving(0.0, 500.0, 2.0, 0.5, Curve::Bezier(MOTION_CURVE));
-        assert_eq!(x(score.sample(strip(), 1.999)), 500.0, "not begun: the model");
-        assert_eq!(x(score.sample(strip(), 2.0)), 0.0, "begun: its start");
-        assert_eq!(x(score.sample(strip(), 2.5)), 500.0);
-        assert_eq!(x(score.sample(strip(), 99.0)), 500.0);
+        assert_eq!(
+            x(score.sample(container(), 1.999)),
+            500.0,
+            "not begun: the model"
+        );
+        assert_eq!(x(score.sample(container(), 2.0)), 0.0, "begun: its start");
+        assert_eq!(x(score.sample(container(), 2.5)), 500.0);
+        assert_eq!(x(score.sample(container(), 99.0)), 500.0);
 
         let mut short = moving(0.0, 500.0, 2.0, 0.5, Curve::Linear);
-        short.place(strip(), point(800.0, 0.0));
-        assert!((x(short.sample(strip(), 2.499)) - 499.0).abs() < 1e-6);
-        assert_eq!(x(short.sample(strip(), 2.5)), 800.0, "the model, at once");
+        short.place(container(), point(800.0, 0.0));
+        assert!((x(short.sample(container(), 2.499)) - 499.0).abs() < 1e-6);
+        assert_eq!(x(short.sample(container(), 2.5)), 800.0, "the model, at once");
     }
 
     /// An accent adds nothing outside its window, and the movement under it is unchanged there.
     #[test]
     fn outside_its_window_an_accent_adds_nothing() {
         let mut score = Score::default();
-        score.place(strip(), point(40.0, 0.0));
+        score.place(container(), point(40.0, 0.0));
         score.add(Track::samples(
-            strip(),
+            container(),
             Channel::Nudge,
             [point(0.0, 0.0), point(-300.0, 0.0), point(0.0, 0.0)],
             5.0,
             0.4,
         ));
-        assert_eq!(x(score.sample(strip(), 4.9)), 40.0);
-        assert!((x(score.sample(strip(), 5.2)) + 260.0).abs() < 1e-9);
-        assert_eq!(x(score.sample(strip(), 5.4)), 40.0);
+        assert_eq!(x(score.sample(container(), 4.9)), 40.0);
+        assert!((x(score.sample(container(), 5.2)) + 260.0).abs() < 1e-9);
+        assert_eq!(x(score.sample(container(), 5.4)), 40.0);
     }
 
     /// The movement, the bounce and the nudge on one container add up: each accent rides the
@@ -686,7 +743,7 @@ mod tests {
     fn a_bounce_and_a_nudge_add_to_the_movement() {
         let mut score = moving(0.0, -861.0, 0.0, 0.35, Curve::Bezier(MOTION_CURVE));
         let bounce = Track::keyframes(
-            strip(),
+            container(),
             Channel::Bounce,
             vec![
                 (0.0, point(0.0, 0.0)),
@@ -698,7 +755,7 @@ mod tests {
             0.35,
         );
         let nudge = Track::samples(
-            strip(),
+            container(),
             Channel::Nudge,
             [point(0.0, 0.0), point(287.0, 0.0), point(0.0, 0.0)],
             0.05,
@@ -708,19 +765,22 @@ mod tests {
         score.add(nudge.clone());
         for step in 0..60 {
             let at = step as f64 / 100.0;
-            let mut expected = score.along(strip(), at).unwrap();
+            let mut expected = score.along(container(), at).unwrap();
             for accent in [&bounce, &nudge] {
                 if let Some(offset) = accent.at(at) {
                     expected = expected.plus(offset);
                 }
             }
-            assert!(gap(score.sample(strip(), at).unwrap(), expected) < 1e-12, "{at}");
+            assert!(
+                gap(score.sample(container(), at).unwrap(), expected) < 1e-12,
+                "{at}"
+            );
         }
         let at = 0.2;
-        let Some(Value::Point(drawn)) = score.sample(strip(), at) else {
+        let Some(Value::Point(drawn)) = score.sample(container(), at) else {
             panic!()
         };
-        let Some(Value::Point(movement)) = score.along(strip(), at) else {
+        let Some(Value::Point(movement)) = score.along(container(), at) else {
             panic!()
         };
         let (Some(Value::Point(b)), Some(Value::Point(n))) = (bounce.at(at), nudge.at(at)) else {
@@ -738,10 +798,10 @@ mod tests {
         let mut score = moving(0.0, 100.0, 0.0, 1.0, Curve::Linear);
         let second = base(50.0, 200.0, 0.5, 1.0, Curve::Linear);
         score.apply(&Edit::Add(second.clone()));
-        assert_eq!(score.track(strip(), Channel::Base), Some(&second));
+        assert_eq!(score.track(container(), Channel::Base), Some(&second));
 
         let bounce = Track::between(
-            strip(),
+            container(),
             Channel::Bounce,
             point(0.0, 0.0),
             point(0.0, 0.0),
@@ -762,10 +822,10 @@ mod tests {
             Curve::Linear,
         );
         score.apply(&Edit::Add(elsewhere.clone()));
-        assert_eq!(score.track(strip(), Channel::Base), Some(&second));
-        assert_eq!(score.track(strip(), Channel::Bounce), Some(&bounce));
+        assert_eq!(score.track(container(), Channel::Base), Some(&second));
+        assert_eq!(score.track(container(), Channel::Bounce), Some(&bounce));
         assert_eq!(score.track(other, Channel::Base), Some(&elsewhere));
-        assert_eq!(score.tracks(strip()).count(), 2);
+        assert_eq!(score.tracks(container()).count(), 2);
     }
 
     /// A node's tracks come out movement first, whatever order they went in: Core Animation lets
@@ -773,14 +833,20 @@ mod tests {
     #[test]
     fn a_nodes_tracks_come_out_movement_first() {
         let mut score = Score::default();
-        score.place(strip(), point(0.0, 0.0));
+        score.place(container(), point(0.0, 0.0));
         let accent = |channel| {
-            Track::samples(strip(), channel, [point(0.0, 0.0), point(5.0, 0.0)], 0.0, 1.0)
+            Track::samples(
+                container(),
+                channel,
+                [point(0.0, 0.0), point(5.0, 0.0)],
+                0.0,
+                1.0,
+            )
         };
         score.add(accent(Channel::Nudge));
         score.add(accent(Channel::Bounce));
         score.add(base(0.0, 0.0, 0.0, 1.0, Curve::Linear));
-        let order: Vec<Channel> = score.tracks(strip()).map(Track::channel).collect();
+        let order: Vec<Channel> = score.tracks(container()).map(Track::channel).collect();
         assert_eq!(order, Channel::ALL);
         assert!(!Channel::Base.is_additive());
         assert!(Channel::Bounce.is_additive() && Channel::Nudge.is_additive());
@@ -794,7 +860,7 @@ mod tests {
         assert!(!score.settled(0.0));
         assert!((score.remaining(0.0) - 1.35).abs() < 1e-12);
         score.add(Track::samples(
-            strip(),
+            container(),
             Channel::Nudge,
             [point(0.0, 0.0), point(9.0, 0.0), point(0.0, 0.0)],
             1.2,
@@ -812,7 +878,7 @@ mod tests {
         ));
         let last = 1.2 + 0.455;
         assert_eq!(
-            score.ends(strip()),
+            score.ends(container()),
             Some(last),
             "the nudge outlasts the movement"
         );
@@ -834,14 +900,14 @@ mod tests {
     fn a_track_of_no_length_is_a_cut() {
         let mut score = moving(0.0, 100.0, 1.0, 0.0, Curve::Bezier(MOTION_CURVE));
         score.add(Track::samples(
-            strip(),
+            container(),
             Channel::Bounce,
             [point(0.0, 0.0), point(0.0, 72.0), point(0.0, 0.0)],
             1.0,
             0.0,
         ));
         for at in [0.5, 1.0, 1.0 + 1e-9, 2.0] {
-            assert_eq!(score.sample(strip(), at), Some(point(100.0, 0.0)), "{at}");
+            assert_eq!(score.sample(container(), at), Some(point(100.0, 0.0)), "{at}");
         }
         assert!(score.settled(1.0));
         assert_eq!(score.remaining(1.0), 0.0);
@@ -853,7 +919,7 @@ mod tests {
     fn presented_draws_accents_and_along_does_not() {
         let mut score = moving(0.0, -861.0, 0.0, 0.35, Curve::Bezier(MOTION_CURVE));
         score.add(Track::samples(
-            strip(),
+            container(),
             Channel::Nudge,
             [point(0.0, 0.0), point(287.0, 0.0), point(0.0, 0.0)],
             0.0,
@@ -866,7 +932,7 @@ mod tests {
         let presented = score.presented(at);
         let key = GroupKey::Rigid(1);
         let (Some(Value::Point(drawn)), Some(Value::Point(along))) =
-            (score.sample(strip(), at), score.along(strip(), at))
+            (score.sample(container(), at), score.along(container(), at))
         else {
             panic!("the strip is placed")
         };
@@ -904,7 +970,7 @@ mod tests {
         assert_eq!(snapped.curves(), track.curves());
 
         let samples = Track::samples(
-            strip(),
+            container(),
             Channel::Base,
             [point(0.0, 0.0), point(5.0, 0.0), point(9.0, 0.0)],
             1.0,
@@ -923,7 +989,7 @@ mod tests {
         let between = base(0.0, 1.0, 0.0, 1.0, Curve::Linear);
         assert_eq!(between.form(), Form::Between);
         let samples = Track::samples(
-            strip(),
+            container(),
             Channel::Base,
             [point(0.0, 0.0), point(1.0, 0.0)],
             0.0,
@@ -932,7 +998,7 @@ mod tests {
         assert_eq!(samples.form(), Form::Samples);
         assert_eq!(samples.keys(), between.keys());
         let keyframes = Track::keyframes(
-            strip(),
+            container(),
             Channel::Base,
             vec![(0.0, point(0.0, 0.0)), (1.0, point(1.0, 0.0))],
             vec![Curve::Linear],
@@ -950,7 +1016,7 @@ mod tests {
     fn a_cut_takes_one_channel_and_a_removal_the_whole_node() {
         let mut score = moving(0.0, 100.0, 0.0, 1.0, Curve::Linear);
         let bounce = Track::samples(
-            strip(),
+            container(),
             Channel::Bounce,
             [point(0.0, 0.0), point(0.0, 9.0), point(0.0, 0.0)],
             0.0,
@@ -961,25 +1027,25 @@ mod tests {
             Edit::Add(bounce),
             Edit::Place(floating, point(0.0, 0.0)),
             Edit::Place(tile(), rect(0.0, 0.0, 10.0, 10.0)),
-            Edit::Cut(strip(), Channel::Bounce),
+            Edit::Cut(container(), Channel::Bounce),
         ] {
             score.apply(&edit);
         }
-        assert_eq!(score.track(strip(), Channel::Bounce), None);
+        assert_eq!(score.track(container(), Channel::Bounce), None);
         let cut = score.clone();
-        score.apply(&Edit::Cut(strip(), Channel::Bounce));
+        score.apply(&Edit::Cut(container(), Channel::Bounce));
         assert_eq!(score, cut, "nothing left to cut");
         assert!(
-            score.track(strip(), Channel::Base).is_some(),
+            score.track(container(), Channel::Base).is_some(),
             "the movement stays"
         );
 
         let mut keys: Vec<GroupKey> = score.containers().collect();
         keys.sort_by_key(|key| format!("{key:?}"));
         assert_eq!(keys, [GroupKey::Floating, GroupKey::Rigid(1)]);
-        score.apply(&Edit::Drop(strip()));
-        assert_eq!(score.model(strip()), None);
-        assert_eq!(score.tracks(strip()).count(), 0);
+        score.apply(&Edit::Drop(container()));
+        assert_eq!(score.model(container()), None);
+        assert_eq!(score.tracks(container()).count(), 0);
         assert_eq!(score.containers().collect::<Vec<_>>(), [GroupKey::Floating]);
         assert!(score.settled(0.5), "nothing is left playing");
         assert!(score.model(tile()).is_some(), "the tile stays");
@@ -1070,7 +1136,7 @@ mod tests {
         ] {
             score.apply(&edit);
         }
-        let along = x(score.along(strip(), 0.25));
+        let along = x(score.along(container(), 0.25));
         assert_eq!(
             score.drawn(a, 0.25),
             Some(OverlayRect::new(
@@ -1095,7 +1161,147 @@ mod tests {
         assert_eq!(score.track(Node::Tile(b), Channel::Base), None);
         assert_eq!(score.drawn(b, 0.25), None);
         assert_eq!(score.tiles().count(), 1);
-        assert!(score.model(strip()).is_some(), "the container stays");
+        assert!(score.model(container()).is_some(), "the container stays");
+    }
+
+    const CENTRE: OverlayPoint = OverlayPoint::new(864.0, 572.5);
+
+    fn zoom(scale: f64, camera: f64) -> Value {
+        Value::Zoom(Zoom::about(scale, CENTRE, OverlayVector::new(camera, 0.0)))
+    }
+
+    /// A zoom about a centre draws the point its camera looks at on the centre, scales everything
+    /// else toward it, and at scale 1 with no camera draws the strip as it is laid out.
+    #[test]
+    fn a_zoom_draws_what_its_camera_looks_at_on_its_centre() {
+        let camera = OverlayVector::new(-862.5, 0.0);
+        let deep = Zoom::about(0.88, CENTRE, camera);
+        assert_eq!(deep.draw(CENTRE + camera), CENTRE);
+        let p = OverlayPoint::new(4.0, 32.0);
+        let drawn = deep.draw(p);
+        let want = CENTRE + (p - camera - CENTRE) * 0.88;
+        assert!(
+            (drawn - want).square_length() < 1e-18,
+            "{drawn:?} against {want:?}"
+        );
+        assert_eq!(Zoom::about(1.0, CENTRE, OverlayVector::zero()), Zoom::REST);
+        assert_eq!(Zoom::REST.draw(p), p);
+    }
+
+    /// The strip's zoom samples as any track does: on its curve between two keys, exactly at each
+    /// key of its samples and on the straight line between them, and its model outside its window.
+    #[test]
+    fn a_zoom_track_samples_in_the_score() {
+        let deep = zoom(0.88, -862.5);
+        let mut score = Score::default();
+        score.place(Node::Strip, Value::Zoom(Zoom::REST));
+        score.add(Track::between(
+            Node::Strip,
+            Channel::Base,
+            deep,
+            Value::Zoom(Zoom::REST),
+            10.0,
+            0.35,
+            Curve::Bezier(EASE_IN_OUT),
+        ));
+        for step in 0..35 {
+            let t = step as f64 / 35.0;
+            let Some(Value::Zoom(drawn)) = score.sample(Node::Strip, 10.0 + 0.35 * t) else {
+                panic!("the strip holds a zoom");
+            };
+            let p = EASE_IN_OUT.ease(t);
+            assert!((drawn.scale - (0.88 + 0.12 * p)).abs() < 1e-9, "at {t}");
+            assert!(gap(Value::Zoom(drawn), deep.lerp(Value::Zoom(Zoom::REST), p)) < 1e-9);
+        }
+        assert_eq!(score.sample(Node::Strip, 9.9), Some(Value::Zoom(Zoom::REST)));
+        assert_eq!(score.sample(Node::Strip, 10.35), Some(Value::Zoom(Zoom::REST)));
+
+        let arc: Vec<Value> = (0..=12)
+            .map(|k| {
+                let f = k as f64 / 12.0;
+                zoom(
+                    1.0 - 0.12 * (std::f64::consts::PI * f).sin().powi(2),
+                    -862.5 * (1.0 - f),
+                )
+            })
+            .collect();
+        score.add(Track::samples(
+            Node::Strip,
+            Channel::Base,
+            arc.clone(),
+            20.0,
+            0.24,
+        ));
+        for (k, key) in arc.iter().enumerate() {
+            let at = 20.0 + 0.24 * k as f64 / 12.0;
+            assert!(
+                gap(score.sample(Node::Strip, at).unwrap(), *key) < 1e-9,
+                "key {k}"
+            );
+        }
+        let between = score.sample(Node::Strip, 20.0 + 0.24 * 2.5 / 12.0).unwrap();
+        assert!(gap(between, arc[2].lerp(arc[3], 0.5)) < 1e-9);
+        assert!(score.settled(20.24) && !score.settled(20.2));
+    }
+
+    /// A tile of the strip is drawn through its zoom, scaled by it as well as moved; a floating one
+    /// is drawn as its container has it.
+    #[test]
+    fn a_tile_is_drawn_through_the_strips_zoom_unless_it_floats() {
+        let (a, f) = (window(1), window(2));
+        let frame = rect(865.0, 32.0, 859.0, 1081.0);
+        let mut score = Score::default();
+        for edit in [
+            Edit::Place(container(), point(-861.0, 0.0)),
+            Edit::Place(Node::Container(GroupKey::Floating), point(0.0, 0.0)),
+            Edit::Ride(a, GroupKey::Rigid(1)),
+            Edit::Place(Node::Tile(a), frame),
+            Edit::Ride(f, GroupKey::Floating),
+            Edit::Place(Node::Tile(f), frame),
+        ] {
+            score.apply(&edit);
+        }
+        let laid = |at: f64| OverlayRect::new(Point::new(at, 32.0), Size::new(859.0, 1081.0));
+        assert_eq!(score.drawn(a, 0.0), Some(laid(4.0)));
+        let deep = Zoom::about(0.88, CENTRE, OverlayVector::new(-862.5, 0.0));
+        score.apply(&Edit::Place(Node::Strip, Value::Zoom(deep)));
+        let drawn = score.drawn(a, 0.0).unwrap();
+        assert!((drawn.origin - deep.draw(laid(4.0).origin)).square_length() < 1e-18);
+        assert!((drawn.size.width - 859.0 * 0.88).abs() < 1e-9);
+        assert_eq!(score.drawn(f, 0.0), Some(laid(865.0)), "the floating window");
+        score.apply(&Edit::Drop(Node::Strip));
+        assert_eq!(score.drawn(a, 0.0), Some(laid(4.0)), "at rest again");
+        assert_eq!(score.containers().count(), 2, "the strip is no container");
+    }
+
+    #[test]
+    #[should_panic(expected = "holds one kind of value")]
+    fn the_strip_cannot_be_given_a_point() {
+        Track::between(
+            Node::Strip,
+            Channel::Base,
+            point(0.0, 0.0),
+            point(1.0, 0.0),
+            0.0,
+            1.0,
+            Curve::Linear,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "the strip's zoom has no accent")]
+    fn the_strips_zoom_has_no_accent() {
+        Track::samples(
+            Node::Strip,
+            Channel::Nudge,
+            [
+                Value::Zoom(Zoom::REST),
+                zoom(0.9, 0.0),
+                Value::Zoom(Zoom::REST),
+            ],
+            0.0,
+            1.0,
+        );
     }
 
     /// `plays` says whether any node has a track of the channel playing: from its begin up to its
@@ -1120,7 +1326,7 @@ mod tests {
         assert!(!score.plays(Channel::Nudge, 2.4), "home");
         assert!(!score.plays(Channel::Bounce, 2.2));
         score.apply(&Edit::Add(Track::samples(
-            strip(),
+            container(),
             Channel::Bounce,
             [point(0.0, 0.0), point(0.0, 72.0), point(0.0, 0.0)],
             3.0,
@@ -1133,15 +1339,15 @@ mod tests {
     fn a_node_never_placed_draws_nothing() {
         let mut score = Score::default();
         score.add(base(0.0, 1.0, 0.0, 1.0, Curve::Linear));
-        assert_eq!(score.sample(strip(), 0.5), None);
-        assert_eq!(score.along(strip(), 0.5), None);
+        assert_eq!(score.sample(container(), 0.5), None);
+        assert_eq!(score.along(container(), 0.5), None);
     }
 
     #[test]
     #[should_panic(expected = "holds one kind of value")]
     fn a_container_cannot_be_given_a_frame() {
         Track::between(
-            strip(),
+            container(),
             Channel::Base,
             rect(0.0, 0.0, 1.0, 1.0),
             rect(1.0, 0.0, 1.0, 1.0),
@@ -1155,7 +1361,7 @@ mod tests {
     #[should_panic(expected = "one curve per segment")]
     fn every_segment_has_a_curve() {
         Track::keyframes(
-            strip(),
+            container(),
             Channel::Base,
             vec![
                 (0.0, point(0.0, 0.0)),
@@ -1172,7 +1378,7 @@ mod tests {
     #[should_panic(expected = "key times run from 0 to 1 in order")]
     fn key_times_run_from_zero_to_one() {
         Track::keyframes(
-            strip(),
+            container(),
             Channel::Base,
             vec![(0.0, point(0.0, 0.0)), (0.9, point(1.0, 0.0))],
             vec![Curve::Linear],
@@ -1196,6 +1402,11 @@ mod tests {
 
         fn value(&mut self, node: Node) -> Value {
             match node {
+                Node::Strip => Value::Zoom(Zoom::about(
+                    self.within(0.5, 1.0),
+                    OverlayPoint::new(self.within(0.0, 1728.0), self.within(0.0, 1117.0)),
+                    OverlayVector::new(self.within(-1722.0, 1722.0), 0.0),
+                )),
                 Node::Container(_) => {
                     point(self.within(-3000.0, 3000.0), self.within(-900.0, 900.0))
                 }
@@ -1223,15 +1434,15 @@ mod tests {
             }
         }
 
-        /// An accent out from rest and home again.
+        /// An accent out from rest and home again, on a container or a tile.
         fn accent(&mut self, node: Node, channel: Channel, begin: f64) -> Track {
             let rest = match node {
-                Node::Container(_) => point(0.0, 0.0),
                 Node::Tile(_) => rect(0.0, 0.0, 0.0, 0.0),
+                _ => point(0.0, 0.0),
             };
             let out = match node {
-                Node::Container(_) => point(self.within(-600.0, 600.0), self.within(-72.0, 72.0)),
                 Node::Tile(_) => rect(self.within(-72.0, 72.0), 0.0, 0.0, 0.0),
+                _ => point(self.within(-600.0, 600.0), self.within(-72.0, 72.0)),
             };
             let turn = self.within(0.1, 0.9);
             let curves = vec![self.curve(), self.curve()];
@@ -1241,21 +1452,26 @@ mod tests {
     }
 
     /// A movement retargeted at `now` from where the score has the node continues from exactly
-    /// where it was drawn, whatever was playing, accents included: a merge can bend a flight from
-    /// the score and never read Core Animation back. 2000 cases from a fixed seed.
+    /// where it was drawn, whatever was playing, accents included, on a container, a tile or the
+    /// strip's zoom: a merge can bend a flight from the score and never read Core Animation back.
+    /// 2000 cases from a fixed seed.
     #[test]
     fn a_movement_retargeted_from_the_score_is_drawn_without_a_jump() {
         const NEAR: f64 = 1e-12;
         let mut stream = Stream(0x5c0e);
         for case in 0..2000 {
-            let node = if stream.next() < 0.7 { strip() } else { tile() };
+            let node = match stream.next() {
+                pick if pick < 0.6 => container(),
+                pick if pick < 0.9 => tile(),
+                _ => Node::Strip,
+            };
             let to = stream.value(node);
             let mut score = Score::default();
             score.place(node, to);
             let begin = stream.within(0.0, 1.0);
             score.add(stream.movement(node, to, begin));
             for channel in [Channel::Bounce, Channel::Nudge] {
-                if stream.next() < 0.5 {
+                if node != Node::Strip && stream.next() < 0.5 {
                     let begin = stream.within(0.0, 1.0);
                     score.add(stream.accent(node, channel, begin));
                 }
@@ -1295,19 +1511,19 @@ mod tests {
     fn a_movement_begun_where_an_accent_draws_the_node_carries_it_twice() {
         let mut score = moving(0.0, -861.0, 0.0, 0.35, Curve::Bezier(MOTION_CURVE));
         score.add(Track::samples(
-            strip(),
+            container(),
             Channel::Nudge,
             [point(0.0, 0.0), point(287.0, 0.0), point(0.0, 0.0)],
             0.0,
             0.455,
         ));
         let now = 0.2;
-        let drawn = x(score.sample(strip(), now));
+        let drawn = x(score.sample(container(), now));
         let mut bent = score.clone();
         bent.add(base(drawn, -1722.0, now, 0.35, Curve::Linear));
-        let riding = x(score.track(strip(), Channel::Nudge).unwrap().at(now));
+        let riding = x(score.track(container(), Channel::Nudge).unwrap().at(now));
         assert!(riding > 200.0, "{riding}");
-        assert!((x(bent.sample(strip(), now)) - (drawn + riding)).abs() < 1e-9);
+        assert!((x(bent.sample(container(), now)) - (drawn + riding)).abs() < 1e-9);
     }
 
     #[test]

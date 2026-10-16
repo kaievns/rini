@@ -6,7 +6,7 @@
 //! every look's contract on motion of its own.
 
 use rini_geometry::Round;
-use rini_geometry::space::{GroupRect, OverlayPoint, OverlayVector, Point, Size};
+use rini_geometry::space::OverlayVector;
 
 use super::slide::Slide;
 use super::{
@@ -75,7 +75,7 @@ impl Even<'_> {
                 Curve::Linear,
             ),
             Some(_) => {
-                let (a, b, length) = (parts(from), parts(to), self.seconds);
+                let (a, b, length) = (from.parts(), to.parts(), self.seconds);
                 let steps = (length / SAMPLE_STEP).ceil().max(1.0) as usize;
                 let values = (0..=steps).map(|k| {
                     let t = length * k as f64 / steps as f64;
@@ -83,7 +83,7 @@ impl Even<'_> {
                         let pull = b[i] - a[i] - speed[i] * length;
                         a[i] + speed[i] * t + pull * (t / length).powi(2)
                     };
-                    with_parts(from, [at(0), at(1), at(2), at(3)])
+                    from.with_parts([at(0), at(1), at(2), at(3)])
                 });
                 Track::samples(node, Channel::Base, values, self.begin, length)
             }
@@ -98,27 +98,11 @@ impl Even<'_> {
         let read = track.map(|track| (track.at(self.begin - SPEED_READ), track.at(self.begin)));
         match read {
             Some((Some(before), Some(now))) => {
-                let (before, now) = (parts(before), parts(now));
+                let (before, now) = (before.parts(), now.parts());
                 std::array::from_fn(|i| (now[i] - before[i]) / SPEED_READ)
             }
             _ => [0.0; 4],
         }
-    }
-}
-
-/// A value's numbers: a point's x and y and two zeros, or a frame's origin and size.
-fn parts(value: Value) -> [f64; 4] {
-    match value {
-        Value::Point(p) => [p.x, p.y, 0.0, 0.0],
-        Value::Rect(r) => [r.origin.x, r.origin.y, r.size.width, r.size.height],
-    }
-}
-
-/// `parts` back into a value of `kind`'s kind.
-fn with_parts(kind: Value, [x, y, width, height]: [f64; 4]) -> Value {
-    match kind {
-        Value::Point(_) => Value::Point(OverlayPoint::new(x, y)),
-        Value::Rect(_) => Value::Rect(GroupRect::new(Point::new(x, y), Size::new(width, height))),
     }
 }
 

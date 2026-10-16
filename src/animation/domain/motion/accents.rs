@@ -85,7 +85,7 @@ mod tests {
             .iter()
             .map(|track| match track.node() {
                 Node::Container(key) => key,
-                Node::Tile(_) => unreachable!("an accent rides containers"),
+                other => unreachable!("an accent rides containers: {other:?}"),
             })
             .collect();
         keys.sort_by_key(|key| format!("{key:?}"));
@@ -109,7 +109,7 @@ mod tests {
                 .iter()
                 .map(|track| match track.node() {
                     Node::Container(key) => (key, track.clone()),
-                    Node::Tile(_) => unreachable!("a push rides containers"),
+                    other => unreachable!("a push rides containers: {other:?}"),
                 })
                 .collect();
             for track in tracks {

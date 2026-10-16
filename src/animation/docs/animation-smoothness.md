@@ -18,7 +18,9 @@ floating windows. The flight's look, chosen as it begins (`Look` in
 (`src/transitions/domain/flight_score.rs`) and the overlay plays: Slide, the default look
 (`src/animation/domain/choreography/slide.rs`). Frame zero is its pose, every group with a drawn
 member a container at the origin, which the overlay builds its tree from (`TileOverlay::pose` in
-`overlay.rs`): each group is one `CALayer` container under the overlay's root. A container's
+`overlay.rs`): each group is one `CALayer` container, the floating one and its twin under the
+overlay's root and every other under the strip layer, whose `transform` is the strip's zoom, at rest
+unless a look zooms. A container's
 `position` is the only animated translation its members get; the tiles inside sit at
 frames in its own points (`Group` in `crates/rini-geometry/docs/README.md`), the overlay's less its
 position, and never move on their own. Resizes and entrances
@@ -610,8 +612,9 @@ changes is how the picture maps onto it (`content_mode` in
 ## The score: what Core Animation plays
 
 `src/animation/domain/motion/score.rs` is the movement of a transition as data:
-tracks of keyframes on containers (a position) and tiles (a frame), on three
-channels (`Base`, the movement; `Bounce` and `Nudge`, added on top), and the
+tracks of keyframes on the strip (a `Zoom`, a scale and a shift), containers (a
+position) and tiles (a frame), on three channels (`Base`, the movement; `Bounce`
+and `Nudge`, added on top of a container's), and the
 model value each node ends at, which container each tile rides and how deep
 everything is drawn. A score is the fold of its edits (`Edit`: a place, a track
 added or cut, a ride, a drop, a bank; `a_score_is_the_fold_of_its_edits`).
@@ -632,7 +635,13 @@ its content mode again against its first and last key, set only when it changes,
 on with its end moved, a snap, keeps it drawn as it was, so a snap never turns a tile
 (`a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again`); a swap judges it again against
 the picture landing (`TileOverlay::swap` in "A grow waits for its repaint",
-`src/transitions/docs/coordination.md`).
+`src/transitions/docs/coordination.md`). The strip's zoom plays on the strip layer's `transform`
+under its own key (`rini.strip.zoom`), a matrix of a scale and a translation alone
+(`zoom_transform`), so interpolated entry by entry or decomposed it is the score's part-by-part
+lerp. That is inferred, not measured on the render server; the read-back pins what is installed
+(`the_strip_layer_lets_go_of_its_zoom`). `transform` is the key path the parked zoom spike played and
+read back on its strip layer; `transform.scale` carries no camera, and `sublayerTransform` would draw
+the same through a layer of its own.
 The presentation layer is read only by the trace.
 
 Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in
