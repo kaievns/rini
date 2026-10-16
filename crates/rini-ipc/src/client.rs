@@ -2,20 +2,18 @@
 //!
 //! `rini-cli` is the one client: it sends a request and blocks for the response.
 
-use std::ffi::{CStr, CString, c_int, c_void};
-use std::mem::{size_of, zeroed};
-use std::ptr::copy_nonoverlapping;
+use std::ffi::{CStr, CString, c_int};
+use std::mem::size_of;
 use std::thread;
 use std::time::Duration;
 
 use rini_mach_sys::{
     KERN_SUCCESS, MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND, MACH_MSGH_BITS,
     MACH_PORT_LIMITS_INFO, MACH_PORT_LIMITS_INFO_COUNT, MACH_PORT_RIGHT_RECEIVE, MACH_RCV_MSG,
-    MACH_SEND_MSG, MAX_MESSAGE_SIZE_USIZE, TASK_BOOTSTRAP_PORT, bootstrap_look_up, kern_return_t,
-    mach_buffer_t, mach_message_t, mach_msg, mach_msg_destroy, mach_msg_header_t,
-    mach_port_allocate, mach_port_deallocate, mach_port_insert_right, mach_port_limits,
-    mach_port_mod_refs, mach_port_set_attributes, mach_port_t, mach_task_self,
-    task_get_special_port,
+    MACH_SEND_MSG, MAX_MESSAGE_SIZE_USIZE, kern_return_t, mach_buffer_t, mach_get_bs_port,
+    mach_message_t, mach_msg, mach_msg_destroy, mach_msg_header_t, mach_port_allocate,
+    mach_port_deallocate, mach_port_insert_right, mach_port_limits, mach_port_mod_refs,
+    mach_port_set_attributes, mach_port_t, mach_task_self,
 };
 use serde::de::DeserializeOwned;
 use thiserror::Error;
@@ -66,7 +64,7 @@ impl RiniMachClient {
     /// Sends one request and blocks until Rini responds.
     pub fn send_request(&self, request: &RiniRequest) -> Result<RiniResponse, ClientError> {
         let request_json = serde_json::to_vec(request).map_err(ClientError::Encode)?;
-        let response = unsafe { send_request(&request_json)? };
+        let response = send_request(&request_json)?;
         parse_json_payload(&response, "response")
     }
 }
@@ -104,82 +102,72 @@ impl ServicePort {
 
 impl Drop for ServicePort {
     fn drop(&mut self) {
-        unsafe {
-            let _ = mach_port_deallocate(mach_task_self(), self.name);
-        }
+        // SAFETY: names the send right `mach_get_bs_port` gave this port, released once.
+        let _ = unsafe { mach_port_deallocate(mach_task_self(), self.name) };
     }
 }
 
 impl ReplyPort {
     fn allocate(queue_limit: u32) -> Result<Self, ClientError> {
-        unsafe {
-            let task = mach_task_self();
-            let mut name = 0;
-            let result = mach_port_allocate(task, MACH_PORT_RIGHT_RECEIVE, &mut name);
-            if result != KERN_SUCCESS {
-                return Err(ClientError::Mach {
-                    operation: "mach_port_allocate",
-                    code: result,
-                });
-            }
+        let task = mach_task_self();
+        let mut name = 0;
+        // SAFETY: the out-pointer is a live local of the port type it is written as.
+        let result = unsafe { mach_port_allocate(task, MACH_PORT_RIGHT_RECEIVE, &mut name) };
+        if result != KERN_SUCCESS {
+            return Err(ClientError::Mach {
+                operation: "mach_port_allocate",
+                code: result,
+            });
+        }
 
-            let limits = mach_port_limits { mpl_qlimit: queue_limit };
-            let _ = mach_port_set_attributes(
+        let limits = mach_port_limits { mpl_qlimit: queue_limit };
+        // SAFETY: `info` is a live `mach_port_limits`, the one integer MACH_PORT_LIMITS_INFO_COUNT
+        // says.
+        let _ = unsafe {
+            mach_port_set_attributes(
                 task,
                 name,
                 MACH_PORT_LIMITS_INFO,
-                &limits as *const _ as *const c_void,
+                (&raw const limits).cast(),
                 MACH_PORT_LIMITS_INFO_COUNT,
-            );
+            )
+        };
 
-            let result = mach_port_insert_right(task, name, name, MACH_MSG_TYPE_MAKE_SEND as c_int);
-            if result != KERN_SUCCESS {
+        // SAFETY: names the receive right just allocated; no pointer is passed.
+        let result =
+            unsafe { mach_port_insert_right(task, name, name, MACH_MSG_TYPE_MAKE_SEND as c_int) };
+        if result != KERN_SUCCESS {
+            // SAFETY: names the receive right just allocated, released once; no pointer is passed.
+            unsafe {
                 let _ = mach_port_mod_refs(task, name, MACH_PORT_RIGHT_RECEIVE, -1);
                 let _ = mach_port_deallocate(task, name);
-                return Err(ClientError::Mach {
-                    operation: "mach_port_insert_right",
-                    code: result,
-                });
             }
-            Ok(Self { name })
+            return Err(ClientError::Mach {
+                operation: "mach_port_insert_right",
+                code: result,
+            });
         }
+        Ok(Self { name })
     }
 }
 
 impl Drop for ReplyPort {
     fn drop(&mut self) {
+        let task = mach_task_self();
+        // SAFETY: names the receive and send rights `allocate` made, each released once; no
+        // pointer is passed.
         unsafe {
-            let task = mach_task_self();
             let _ = mach_port_mod_refs(task, self.name, MACH_PORT_RIGHT_RECEIVE, -1);
             let _ = mach_port_deallocate(task, self.name);
         }
     }
 }
 
-unsafe fn lookup_service(name: &CStr) -> Result<mach_port_t, ClientError> {
-    let mut bootstrap_port = 0;
-    let result = unsafe {
-        task_get_special_port(mach_task_self(), TASK_BOOTSTRAP_PORT, &mut bootstrap_port)
-    };
-    if result != KERN_SUCCESS {
-        return Err(ClientError::Mach {
-            operation: "task_get_special_port",
-            code: result,
-        });
-    }
-
-    let mut service_port = 0;
-    let result = unsafe { bootstrap_look_up(bootstrap_port, name.as_ptr(), &mut service_port) };
-    if result != KERN_SUCCESS {
-        return Err(ClientError::ServiceUnavailable);
-    }
-    Ok(service_port)
-}
-
-unsafe fn find_service_with_retry() -> Result<ServicePort, ClientError> {
+fn find_service_with_retry() -> Result<ServicePort, ClientError> {
     let name = service_name()?;
     for attempt in 0..5 {
-        if let Ok(port) = unsafe { lookup_service(&name) } {
+        let port = mach_get_bs_port(&name);
+        if port != 0 {
             return Ok(ServicePort::new(port));
         }
         thread::sleep(Duration::from_millis(50 * (1 << attempt)));
@@ -187,26 +175,26 @@ unsafe fn find_service_with_retry() -> Result<ServicePort, ClientError> {
     Err(ClientError::ServiceUnavailable)
 }
 
-unsafe fn send_request(payload: &[u8]) -> Result<Vec<u8>, ClientError> {
+fn send_request(payload: &[u8]) -> Result<Vec<u8>, ClientError> {
     if payload.len() > MAX_MESSAGE_SIZE {
         return Err(ClientError::MessageTooLarge);
     }
 
-    let service_port = unsafe { find_service_with_retry()? };
+    let service_port = find_service_with_retry()?;
     let owned_reply_port = ReplyPort::allocate(1)?;
     let reply_port = owned_reply_port.name;
 
     let aligned_len = (payload.len() + 3) & !3;
-    let mut message: mach_message_t = unsafe { zeroed() };
+    let mut message = mach_message_t::default();
     message.header.msgh_remote_port = service_port.name;
     message.header.msgh_local_port = reply_port;
     message.header.msgh_id = reply_port as i32;
     message.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND);
     message.header.msgh_size = (size_of::<mach_msg_header_t>() + aligned_len) as u32;
-    unsafe {
-        copy_nonoverlapping(payload.as_ptr(), message.data.as_mut_ptr(), payload.len());
-    }
+    message.data[..payload.len()].copy_from_slice(payload);
 
+    // SAFETY: `message` is a whole simple message with its `msgh_size` inside it, a header and at
+    // most MAX_MESSAGE_SIZE bytes of data, sent with no receive.
     let result = unsafe {
         mach_msg(
             &mut message.header,
@@ -225,11 +213,12 @@ unsafe fn send_request(payload: &[u8]) -> Result<Vec<u8>, ClientError> {
         });
     }
 
-    unsafe { receive_message(reply_port) }
+    receive_message(reply_port)
 }
 
-unsafe fn receive_message(reply_port: mach_port_t) -> Result<Vec<u8>, ClientError> {
-    let mut buffer: mach_buffer_t = unsafe { zeroed() };
+fn receive_message(reply_port: mach_port_t) -> Result<Vec<u8>, ClientError> {
+    let mut buffer = mach_buffer_t::default();
+    // SAFETY: `buffer` is live and as long as the receive size given, a message and its trailer.
     let result = unsafe {
         mach_msg(
             &mut buffer.message.header,
@@ -253,13 +242,11 @@ unsafe fn receive_message(reply_port: mach_port_t) -> Result<Vec<u8>, ClientErro
         .header
         .msgh_size
         .saturating_sub(size_of::<mach_msg_header_t>() as u32) as usize;
-    if payload_len > MAX_MESSAGE_SIZE {
-        unsafe { mach_msg_destroy(&mut buffer.message.header) };
-        return Err(ClientError::MessageTooLarge);
-    }
-    let payload = buffer.message.data[..payload_len].to_vec();
+    let payload =
+        (payload_len <= MAX_MESSAGE_SIZE).then(|| buffer.message.data[..payload_len].to_vec());
+    // SAFETY: `buffer` holds the message just received, destroyed once and read no more.
     unsafe { mach_msg_destroy(&mut buffer.message.header) };
-    Ok(payload)
+    payload.ok_or(ClientError::MessageTooLarge)
 }
 
 #[cfg(test)]
@@ -270,6 +257,36 @@ mod tests {
     fn parses_nul_terminated_response_with_alignment_padding() {
         let response: RiniResponse =
             parse_json_payload(b"{\"data\":true}\0\0\0", "response").unwrap();
+        assert_eq!(response, RiniResponse::Success {
+            data: serde_json::Value::Bool(true)
+        });
+    }
+
+    #[test]
+    fn a_reply_waiting_on_the_reply_port_is_received_as_its_payload() {
+        let port = ReplyPort::allocate(1).unwrap();
+        let mut reply = mach_message_t::default();
+        reply.header.msgh_remote_port = port.name;
+        reply.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
+        reply.header.msgh_size = (size_of::<mach_msg_header_t>() + 16) as u32;
+        reply.data[..14].copy_from_slice(b"{\"data\":true}\0");
+        // SAFETY: `reply` is a whole simple message with its `msgh_size` inside it, sent with no
+        // receive.
+        let kr = unsafe {
+            mach_msg(
+                &mut reply.header,
+                MACH_SEND_MSG,
+                reply.header.msgh_size,
+                0,
+                0,
+                0,
+                0,
+            )
+        };
+        assert_eq!(kr, KERN_SUCCESS);
+        let payload = receive_message(port.name).unwrap();
+        assert_eq!(payload, b"{\"data\":true}\0\0\0");
+        let response: RiniResponse = parse_json_payload(&payload, "response").unwrap();
         assert_eq!(response, RiniResponse::Success {
             data: serde_json::Value::Bool(true)
         });

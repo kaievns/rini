@@ -12,8 +12,8 @@ Port allocation and rights (`mach_port_allocate`, `mach_port_insert_right`,
 `mach_msg_destroy`), the MIG special reply port, and the bootstrap calls
 (`bootstrap_look_up`, `bootstrap_register`). One thin helper sits beside them:
 `mach_get_bs_port` finds a registered service, for the server's startup check for a second
-instance (`rini-ipc/src/mach.rs`). The client in `rini-ipc/src/client.rs` imports its constants,
-message layouts and externs from here. A complex message's descriptors are
+instance (`rini-ipc/src/mach.rs`) and the client's lookup (`rini-ipc/src/client.rs`). The client
+imports its constants, message layouts and externs from here. A complex message's descriptors are
 not declared: the server reads them from the message's bytes (`payload_of` in `rini-ipc`).
 
 ## The shape that matters
