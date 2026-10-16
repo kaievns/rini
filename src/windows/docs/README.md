@@ -132,7 +132,10 @@ stacking it produces. `domain/raise_order.rs` exists because that order kept bei
 thrown away: the batching step grouped the list through a hash map, which handed the
 batches back in hash order and undid the strip regroup that had just been built. With
 eight applications, `FxHashMap` returned them exactly reversed, so the focused window
-was raised first instead of last and ended up behind the strip.
+was raised first instead of last and ended up behind the strip. Parked windows are left out of a
+raise (`drop_parked`) rather than sorted to the front behind last-wins: the front entry is the
+primary window, and a parked one there made macOS activate an invisible window and then raise the
+real one, a flicker.
 
 ## Reading order
 

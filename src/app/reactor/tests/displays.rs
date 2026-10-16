@@ -2367,9 +2367,6 @@ fn the_diagnostics_census_counts_every_workspace_on_each_display() {
 /// the external, park off the external on the next switch, and so on until every window had
 /// walked onto one display. Measured on hardware as all 17 windows collapsing onto the
 /// external, with both displays stuck on the same workspace.
-///
-/// The old per-display workspace model hid this: a window reassigned across displays landed in
-/// a different workspace OBJECT, which broke the cycle by accident.
 #[test]
 fn a_parked_window_is_not_claimed_by_the_display_it_is_parked_over() {
     let mut reactor = test_reactor();

@@ -16,10 +16,9 @@ use rustc_hash::FxHashMap as HashMap;
 /// window entirely outside every display. Raising a sliver costs an Accessibility round-trip and
 /// shows nothing, and a sliver raised after the on-screen windows sits in FRONT of them.
 ///
-/// An earlier attempt sorted parked windows to the front instead, on the theory that last-wins would
-/// leave them behind. It flickered: the first entry of a raise list is not just the first raise, it
-/// is the PRIMARY window, used for make-key, the `is_standard` check and the activation wait. Sorting
-/// a parked window into that slot made macOS activate an invisible window and then raise the real one.
+/// The first entry of a raise list is the PRIMARY window, used for make-key, the `is_standard` check
+/// and the activation wait, so a parked window MUST never lead: macOS would activate an invisible
+/// window and then raise the real one (`src/windows/docs/README.md`).
 ///
 /// If EVERY window is parked the list is kept as it is. An empty raise list takes a different path in
 /// the caller — it can skip the raise and the focus entirely — and the caller asked for these windows

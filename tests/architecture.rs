@@ -2559,7 +2559,7 @@ let index = slice[0];
 
 /// Phrasings that narrate where code came from or what it once did. A comment says what holds and
 /// the constraint it protects; the history of a change is in git and, when worth keeping, `docs/`.
-const HISTORY: [&str; 8] = [
+const HISTORY: [&str; 9] = [
     "used to",
     "no longer",
     "previously",
@@ -2567,6 +2567,7 @@ const HISTORY: [&str; 8] = [
     "anymore",
     "lifted out",
     "moved from",
+    "an earlier attempt",
     "# history",
 ];
 
@@ -2673,6 +2674,8 @@ fn unused_to() {}
 /* previously */ let any_more = 1;
 //! # History
 // Written out any more often than once.
+// An earlier
+// attempt sorted these.
 "#;
     let found: Vec<(usize, &str)> = history_phrasings(source)
         .into_iter()
@@ -2684,5 +2687,6 @@ fn unused_to() {}
         (6, "previously"),
         (7, "# history"),
         (8, "any more"),
+        (9, "an earlier attempt"),
     ]);
 }

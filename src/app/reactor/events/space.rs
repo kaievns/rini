@@ -247,11 +247,10 @@ fn user_space_appearance(
     //   -> WindowServerAppeared(wsid, SpaceId(980), User)
     //   -> reassigned to 980
     //
-    // The old per-display workspace model contained this by accident: a window
-    // reassigned across displays landed in a DIFFERENT workspace object, which broke
-    // the cycle. Sharing workspaces between displays removed that accident, so the
-    // guard has to be explicit. This mirrors `keep_assigned_for_scrolling` on the
-    // WindowFrameChanged path, which exists for the same reason.
+    // A parked window reassigned across displays MUST stay on its assigned space, or
+    // the discovery cycle walks it onto one display. This mirrors
+    // `keep_assigned_for_scrolling` on the WindowFrameChanged path, which exists for
+    // the same reason.
     if observations.is_parked_by_rini && Some(resolved_space) != assigned_space {
         debug!(
             ?wsid,

@@ -239,7 +239,7 @@ mod tests {
     }
 
     /// Each display draws its own rows: the one it shows, the ones holding windows ON THAT DISPLAY,
-    /// and the empty ones. An earlier bar drew one shared set for both displays.
+    /// and the empty ones, never one set shared by both displays.
     #[test]
     fn each_display_has_its_own_rows() {
         let model = build(&input());

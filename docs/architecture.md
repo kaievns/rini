@@ -274,7 +274,7 @@ Anything that names one feature belongs inside it.
 
 A comment states what holds and the constraint it protects, never where the code came from or
 what it once did: no comment in `src/` or `crates/`, a test's included, says used to, no longer,
-previously, any more, anymore, lifted out, moved from or `# History`
+previously, any more, anymore, lifted out, moved from, an earlier attempt or `# History`
 (`no_comment_in_src_or_crates_narrates_the_code_s_history`). A comment quoting an external API's
 own words in one of those is named in `QUOTED_HISTORY` beside the test.
 
