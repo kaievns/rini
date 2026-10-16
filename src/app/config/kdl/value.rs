@@ -10,6 +10,7 @@ use knus::span::Spanned;
 use knus::traits::ErrorSpan;
 
 use super::layout::GradientRelativeTo;
+use crate::animation::domain::choreography::Look;
 use crate::decorations::domain::paint::{Colour, ColourSpace, Hue};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::Decimal;
@@ -249,11 +250,13 @@ pub trait Word {
 /// Decodes a string enum the config spells in kebab-case into a type that lives with its feature,
 /// and spells it back. Values listed under `not_yet` are niri's and refused by name.
 macro_rules! kebab_scalar {
-    ($ty:ty { $($text:literal => $value:path),* $(,)? } $(not_yet { $($later:literal),* })?) => {
+    ($ty:ty {
+        $($(#[$meta:meta])* $text:literal => $value:path),* $(,)?
+    } $(not_yet { $($later:literal),* })?) => {
         impl Word for $ty {
             fn word(self) -> &'static str {
                 match self {
-                    $($value => $text,)*
+                    $($(#[$meta])* $value => $text,)*
                 }
             }
         }
@@ -270,7 +273,7 @@ macro_rules! kebab_scalar {
                 value: &knus::span::Spanned<knus::ast::Literal, S>,
                 _: &mut knus::decode::Context<S>,
             ) -> Result<Self, knus::errors::DecodeError<S>> {
-                let expected = [$(concat!("`", $text, "`")),*].join(", ");
+                let expected = [$($(#[$meta])* concat!("`", $text, "`")),*].join(", ");
                 let knus::ast::Literal::String(text) = &**value else {
                     return Err(knus::errors::DecodeError::conversion(
                         value,
@@ -278,20 +281,21 @@ macro_rules! kebab_scalar {
                     ));
                 };
                 match &**text {
-                    $($text => Ok($value),)*
+                    $($(#[$meta])* $text => Ok($value),)*
                     $($($later => Err(knus::errors::DecodeError::conversion(
                         value,
                         format!("`{}` is niri's and not supported yet; expected one of {expected}", $later),
                     )),)*)?
                     other => Err(knus::errors::DecodeError::conversion(
                         value,
-                        format!("expected one of {expected}, found `{other}`"),
+                        crate::app::config::kdl::suggest::unknown_word(other, [$($(#[$meta])* $text),*]),
                     )),
                 }
             }
         }
     };
 }
+kebab_scalar!(Look { "slide" => Look::Slide, #[cfg(test)] "linear" => Look::Linear, #[cfg(test)] "probe" => Look::Probe });
 kebab_scalar!(StackedUpperSide { "left" => StackedUpperSide::Left, "right" => StackedUpperSide::Right });
 kebab_scalar!(CenterFocusedColumn {
     "never" => CenterFocusedColumn::Never,

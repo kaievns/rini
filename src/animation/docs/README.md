@@ -93,8 +93,9 @@ display the overlay covers (`viewport`):
    in `stage`. `ALL` puts it under every contract test there and the overlay's playback tests in
    `platform/overlay.rs`.
 3. This README: a row for its file.
-4. The reactor's choice of it: it takes `Look::default()` for every flight
-   (`src/app/reactor/strip_motion.rs`, `src/app/reactor/animation.rs`).
+4. Its name: a word in `kebab_scalar!(Look …)` in `src/app/config/kdl/value.rs`, which
+   `animations › look` decodes and `config get` prints. Every flight the reactor sends takes the
+   look the config names (`specs/animation.md`, "Looks").
 
 A zoom of the strip is a look like any other: its tracks on `Node::Strip` hold a `Zoom`, and its
 `retarget` bends them beside `Merged::bend` (`docs/pictures-motion-transitions.md`).

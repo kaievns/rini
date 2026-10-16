@@ -380,14 +380,15 @@ pub struct SurfaceFlight {
     pub duration: std::time::Duration,
 }
 
-/// Every strip movement the reactor sent since the last look.
+/// Every strip movement the reactor sent since the last look, staged by the look it asks for, as
+/// the flight engine stages one that begins a flight.
 pub fn strip_movements(
     rx: &mut crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
 ) -> Vec<SurfaceFlight> {
     let mut out = Vec::new();
     while let Ok((_, event)) = rx.try_recv() {
         if let crate::transitions::platform::engine::Event::AnimateSurface {
-            windows,
+            mut windows,
             from_offset,
             to_offset,
             final_frames,
@@ -395,11 +396,20 @@ pub fn strip_movements(
             focused_before,
             key,
             cue,
-            accent,
+            area,
+            look,
             duration,
             ..
         } = event
         {
+            let accent = crate::transitions::domain::strip_move::stage_move(
+                &mut windows,
+                &cue,
+                area,
+                crate::animation::domain::motion::surface::pan_travel(from_offset, to_offset),
+                duration.as_secs_f64(),
+                look,
+            );
             out.push(SurfaceFlight {
                 windows,
                 from_offset,

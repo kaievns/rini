@@ -600,7 +600,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// The move as the reactor stages it and the engine flies it: the passed column held on the
+    /// The move as the engine stages and flies it: the passed column held on the
     /// strip, the strip on `flight_curve`, the step on every container the engine steps.
     fn staged(direction: Direction, stepping: bool) -> Flight {
         let (mut windows, from_offset) = full_width_move(direction);

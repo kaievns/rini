@@ -18,6 +18,7 @@ use crate::animation::domain::motion::tile;
 
 #[derive(Debug)]
 pub struct FlightScore {
+    look: Look,
     choreography: Box<dyn Choreography>,
     score: Score,
     /// At most one of each kind, until the motion starts.
@@ -27,16 +28,18 @@ pub struct FlightScore {
 impl FlightScore {
     pub fn new(look: Look) -> FlightScore {
         FlightScore {
+            look,
             choreography: look.choreography(),
             score: Score::default(),
             waiting: Vec::new(),
         }
     }
 
-    /// A flight moved by `choreography`, a look only the tests build.
+    /// A flight moved by `choreography`, a look only the tests build, its passes staged as Slide's.
     #[cfg(test)]
     pub fn of(choreography: Box<dyn Choreography>) -> FlightScore {
         FlightScore {
+            look: Look::Slide,
             choreography,
             score: Score::default(),
             waiting: Vec::new(),
@@ -44,6 +47,9 @@ impl FlightScore {
     }
 
     pub fn score(&self) -> &Score { &self.score }
+
+    /// The look the flight began with, which stages and bends every pass merged into it.
+    pub fn look(&self) -> Look { self.look }
 
     /// The flight's plan from its first pass, as its look makes it.
     pub fn plan(&self, pass: ReflowPlan, cue: &Cue) -> FlightPlan {

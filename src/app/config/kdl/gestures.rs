@@ -1,9 +1,10 @@
-//! `gestures` and `animations`: dragging one window onto another, how the movements are drawn, and
-//! whether their journal is written and each lift's handover measured.
+//! `gestures` and `animations`: dragging one window onto another, how the movements are drawn and in
+//! which look, and whether their journal is written and each lift's handover measured.
 
 use knus::span::Span;
 
 use super::value::{Flag, Number, Proportion, Slowdown};
+use crate::animation::domain::choreography::Look;
 
 #[derive(knus::Decode, Debug, Default)]
 #[knus(span_type = Span)]
@@ -19,6 +20,8 @@ pub struct AnimationsPart {
     pub off: Option<Flag>,
     #[knus(child, unwrap(argument))]
     pub slowdown: Option<Number<Slowdown>>,
+    #[knus(child, unwrap(argument))]
+    pub look: Option<Look>,
     #[knus(child)]
     pub journal: Option<JournalPart>,
 }

@@ -1,11 +1,13 @@
-//! Looks: how a flight moves. A look stages a press on the strip before the flight is asked for
-//! (`Look::stage`), and for each flight its `Choreography` makes the plan, poses frame zero, composes
-//! the motion, folds a press before it and bends the flight at a press after it, answering with the
-//! score's edits (`motion::score::Edit`), which the renderer plays as they are. A bend's structure is
-//! every look's alike (`Merged::bend`), and a look gives only each node's movement in it
-//! (`Bending`). `Look::ALL` is every look, and the tests below are the contract each keeps; `slide`
-//! is the default, and `linear`, a look only the tests build, keeps the contract through the same
-//! seam. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
+//! Looks: how a flight moves. A look stages a press on the strip as the strip movement reaches the
+//! flight engine, the look of the flight it joins or begins (`Look::stage`), and for each flight its
+//! `Choreography` makes the plan, poses frame zero, composes the motion, folds a press before it and
+//! bends the flight at a press after it, answering with the score's edits (`motion::score::Edit`),
+//! which the renderer plays as they are. A bend's structure is every look's alike (`Merged::bend`),
+//! and a look gives only each node's movement in it (`Bending`). `Look::ALL` is every look, and the
+//! tests below are the contract each keeps; `slide` is the default, the config's `animations › look`
+//! picks the one every flight takes, and `linear` and `probe`, looks only the tests build, keep the
+//! contract through the same seam. See "The overlay engine" in
+//! `src/animation/docs/animation-smoothness.md`.
 
 #[cfg(test)]
 pub mod linear;
@@ -34,13 +36,17 @@ pub enum Look {
     Slide,
     #[cfg(test)]
     Linear,
+    /// Slide's choreography and staging but for the step, so a test can tell a chosen look from
+    /// the default and a flight's staging from another look's.
+    #[cfg(test)]
+    Probe,
 }
 
 impl Look {
     #[cfg(not(test))]
     pub const ALL: [Look; 1] = [Look::Slide];
     #[cfg(test)]
-    pub const ALL: [Look; 2] = [Look::Slide, Look::Linear];
+    pub const ALL: [Look; 3] = [Look::Slide, Look::Linear, Look::Probe];
 
     /// The look's choreography for one flight.
     pub fn choreography(self) -> Box<dyn Choreography> {
@@ -48,6 +54,8 @@ impl Look {
             Look::Slide => Box::new(Slide::default()),
             #[cfg(test)]
             Look::Linear => Box::new(linear::Linear),
+            #[cfg(test)]
+            Look::Probe => Box::new(Slide::default()),
         }
     }
 
@@ -58,6 +66,11 @@ impl Look {
             Look::Slide => slide::stage(cue, strip),
             #[cfg(test)]
             Look::Linear => linear::stage(cue, strip),
+            #[cfg(test)]
+            Look::Probe => Staging {
+                accent: None,
+                ..slide::stage(cue, strip)
+            },
         }
     }
 }

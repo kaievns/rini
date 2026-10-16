@@ -2828,6 +2828,49 @@ fn a_commands_flight_carries_its_cause() {
     }
 }
 
+/// Every flight the reactor asks for, a layout pass, a strip scroll, a workspace switch and a bounce,
+/// takes the look the config picks, and a reload's from the next flight on ("Looks" in
+/// `specs/animation.md`). The strip starts on the default look, so each other look is a reload.
+#[test]
+fn every_flight_takes_the_look_the_config_picks() {
+    use crate::animation::domain::choreography::Look;
+    use crate::transitions::platform::engine::Event as Engine;
+    fn looks(rx: &mut crate::app::channels::Receiver<Engine>) -> Vec<(&'static str, Look)> {
+        let mut out = Vec::new();
+        while let Ok((_, event)) = rx.try_recv() {
+            out.push(match event {
+                Engine::Animate { look, .. } => ("pass", look),
+                Engine::AnimateSurface { look, .. } => ("movement", look),
+                Engine::Bounce { look, .. } => ("bounce", look),
+                _ => continue,
+            });
+        }
+        out
+    }
+    for look in Look::ALL {
+        let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+        let mut config = reactor.config().clone();
+        config.settings.look = look;
+        reactor.handle_event(Event::ConfigUpdated(Box::new(config)));
+        looks(&mut rx);
+        for (command, kind) in [
+            (LayoutCommand::MoveFocus(Direction::Left), Some("bounce")),
+            (LayoutCommand::MoveFocus(Direction::Right), None),
+            (LayoutCommand::MoveFocus(Direction::Right), Some("movement")),
+            (LayoutCommand::ToggleFullscreenWithinGaps, Some("pass")),
+            (LayoutCommand::NextWorkspace(None), Some("movement")),
+        ] {
+            let what = format!("{look:?} {command:?}");
+            reactor.handle_event(Event::Command(Command::Layout(command)));
+            let sent = looks(&mut rx);
+            if let Some(kind) = kind {
+                assert!(sent.iter().any(|(sent, _)| *sent == kind), "{what}: {sent:?}");
+            }
+            assert!(sent.iter().all(|(_, sent)| *sent == look), "{what}: {sent:?}");
+        }
+    }
+}
+
 /// An app's frame report that releases a drag handles the mouse up inside it, as part of the
 /// report: the strip laid out again for the release is the report's press.
 #[test]

@@ -94,8 +94,8 @@ merging back.
 - A push against the end of a strip or the workspace stack bounces the view 72pt, and every push
   shows.
 - Animation is cosmetic and never load-bearing: with it off, rini behaves the same. A movement takes
-  0.35s times `slowdown`. `animations { off; }` or `--no-animate` turns it off, and Low Power Mode
-  skips it.
+  0.35s times `slowdown`, drawn in the look `animations › look` picks, `"slide"` unless written.
+  `animations { off; }` or `--no-animate` turns it off, and Low Power Mode skips it.
 
 ### What rini draws
 

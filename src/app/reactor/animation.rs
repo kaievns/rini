@@ -290,7 +290,7 @@ impl Reactor {
             focused_before: self.focused_as_event_began,
             key: self.main_window_tracker.key_window(),
             duration,
-            look: crate::animation::domain::choreography::Look::default(),
+            look: self.config.settings.look,
             cause: self.cause,
         };
         if self.send_flight(space, flight) {

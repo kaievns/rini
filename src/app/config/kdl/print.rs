@@ -170,6 +170,7 @@ fn animations(out: &mut Out, settings: &Settings) {
                 BASE_ANIMATION_SECONDS * slowdown == duration
             })
         ));
+        out.line(&format!("look {}", string(settings.look.word())));
         let journal = &settings.journal;
         if journal.write {
             out.line(&format!(

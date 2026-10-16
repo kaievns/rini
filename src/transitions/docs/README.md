@@ -134,5 +134,7 @@ kept as its focused face. Seen, its tile is still drawn focused until its own tu
 hairline and shadow over an unfocused picture.
 
 **The kinds' builders live in the reactor.** `start_strip_pan`, `start_strip_switch`,
-`start_edge_bounce` and `animate_layout` (`src/app/reactor/`) stage each kind with this feature's
-`domain/` and send it to the engine; they move here when the coordinator composes flights.
+`start_edge_bounce` and `animate_layout` (`src/app/reactor/`) build each kind with this feature's
+`domain/` and send it to the engine, which has the look of the flight a strip movement joins, else
+the one it asks for, stage its press (`domain/strip_move.rs`); they move here when the coordinator
+composes flights.

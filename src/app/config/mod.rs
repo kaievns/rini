@@ -47,6 +47,8 @@ pub struct Settings {
     pub animate: bool,
     /// Seconds, `BASE_ANIMATION_SECONDS` times `animations › slowdown`.
     pub animation_duration: f64,
+    /// `animations › look`: how every flight moves.
+    pub look: crate::animation::domain::choreography::Look,
     pub activate_spaces_by_default: bool,
     pub warp_mouse_to_focus: bool,
     pub warp_cursor_between_stacked_displays: bool,
@@ -78,6 +80,7 @@ impl Default for Settings {
         Self {
             animate: true,
             animation_duration: BASE_ANIMATION_SECONDS,
+            look: Default::default(),
             activate_spaces_by_default: false,
             warp_mouse_to_focus: false,
             warp_cursor_between_stacked_displays: false,
