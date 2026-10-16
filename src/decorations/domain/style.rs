@@ -3,7 +3,6 @@
 //! it and whether its display holds focus; who wears it, and who is drawn urgent.
 
 use rini_core::ids::WindowId;
-use serde::Serialize;
 
 use crate::decorations::domain::paint::Paint;
 use crate::windows::domain::attention::Attention;
@@ -39,7 +38,7 @@ const FOCUSED_SHADOW: ShadowStyle = ShadowStyle {
 /// A band rini draws outside a window, as niri's focus ring and border are: its width in points, and
 /// its paint, a colour or a gradient, on the window holding focus, on a window drawn urgent and on
 /// the others that wear it.
-#[derive(Clone, Copy, PartialEq, Debug, Serialize)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Band {
     pub width: f64,
     pub active: Paint,

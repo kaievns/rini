@@ -562,7 +562,7 @@ pub fn normalize_spec(key: &str) -> String {
 }
 
 /// The modifier `Mod` stands for in a key: `input › mod-key`, niri's name for it.
-#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ModKey {
     #[default]
     Alt,

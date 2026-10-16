@@ -114,19 +114,6 @@ fn the_drag_swap_overlap_has_one_default() {
 }
 
 #[test]
-fn the_config_serialises_for_config_get() {
-    let json = serde_json::to_value(Config::reference()).expect("serialises");
-    assert_eq!(json["settings"]["mod_key"], "Alt");
-    assert_eq!(json["binds"][0]["key"], "Mod+Z");
-    assert_eq!(json["binds"][0]["action"], "toggle-space-activated");
-    assert_eq!(json["virtual_workspaces"]["workspace_names"][0], "Main");
-    assert_eq!(json["settings"]["activate_spaces_by_default"], false);
-    assert_eq!(json["settings"]["warp_mouse_to_focus"], false);
-    assert!(json["settings"]["ignore_app_activation"].is_array());
-    assert_eq!(json["settings"]["window_snapping"]["drag_swap_overlap"], 0.3);
-}
-
-#[test]
 fn the_bar_keeps_its_band_clear_until_it_is_turned_off() {
     let mut settings = Config::reference().settings;
     assert!(settings.bar.enabled);
@@ -316,9 +303,8 @@ fn gaps_and_struts_make_the_outer_gaps_and_a_display_replaces_each_as_a_whole() 
         },
         inner: 8.0
     });
-    let json = serde_json::to_value(gaps).expect("serialises");
-    assert_eq!(
-        json["per_display"]["D2"]["gaps"], 8.0,
+    assert!(
+        kdl::print::print(&config).contains("output \"D2\" {\n    layout {\n        gaps 8\n"),
         "config get keys a display by its UUID"
     );
 }
@@ -1416,12 +1402,7 @@ fn every_action_name_decodes() {
         let config = parse(&text);
         let action =
             config.binds.iter().chain(&config.switcher_binds).next().unwrap().action.clone();
-        let json = serde_json::to_value(&action).unwrap();
-        let decoded = json
-            .as_str()
-            .map(str::to_owned)
-            .or_else(|| json.as_object().and_then(|o| o.keys().next().cloned()));
-        assert_eq!(decoded.as_deref(), Some(*name), "{text}");
+        assert_eq!(<&str>::from(&action), *name, "{text}");
     }
 }
 
@@ -1762,4 +1743,367 @@ fn a_fragment_whose_rules_or_binds_did_not_decode_does_not_check_the_running_one
     );
     assert!(report.contains("`bogus`"), "{report}");
     assert!(!report.contains("the running binds"), "{report}");
+}
+
+// --- printing ----------------------------------------------------------------------------------
+
+fn printed(config: &Config) -> String { kdl::print::print(config) }
+
+/// What `config get` prints reads back to the config it printed, and printing that gives the same
+/// text again.
+fn assert_prints_and_reads_back(config: &Config) {
+    let text = printed(config);
+    let read = Config::parse("printed.kdl", &text)
+        .unwrap_or_else(|error| panic!("{}\n{text}", error.render()));
+    assert_eq!(&read, config, "{text}");
+    assert_eq!(printed(&read), text);
+}
+
+/// Every section the file takes, each written away from its default, and every kind of value: flags
+/// both ways, numbers whole and not, a slowdown and a size change that are held as something else,
+/// strings that need escaping, colours as hex, with alpha, and in forms hex cannot hold, every
+/// gradient space, enums, lists, outputs, workspaces with a focused one, window rules that open,
+/// dress or both, and every action with what it takes.
+fn every_section() -> String {
+    let actions: String = Action::VARIANTS
+        .iter()
+        .filter(|name| !matches!(**name, "next-window" | "previous-window"))
+        .enumerate()
+        .map(|(index, name)| {
+            let takes = match *name {
+                "set-column-width" => " \"+7.5%\"",
+                "set-window-height" => " \"-12%\"",
+                "set-column-width-or-window-height" => " \"+0.1%\"",
+                "focus-workspace" => " \"Two\"",
+                "move-window-to-workspace" => " 3 focus=false",
+                "move-window-to-workspace-up" => " focus=false",
+                "focus-workspace-down" => " skip-empty=true",
+                "focus-workspace-up" => " skip-empty=false",
+                "focus-monitor" => " 2",
+                "move-window-to-monitor" => " \"11111111-2222-3333-4444-555555555555\"",
+                "move-mouse-to-monitor" => " 1",
+                "spawn" => " \"/usr/bin/open\" \"-a\" \"say \\\"hi\\\"\\\\n\"",
+                "spawn-sh" => " \"echo $HOME | tr a-z A-Z\"",
+                _ => "",
+            };
+            let key = format!(
+                "{}F{}",
+                ["Mod+", "Mod+Ctrl+", "Mod+Shift+"][index / 20],
+                index % 20 + 1
+            );
+            let repeat = if index % 7 == 0 { " repeat=true" } else { "" };
+            format!("    {key}{repeat} {{ {name}{takes}; }}\n")
+        })
+        .collect();
+    format!(
+        r##"input {{
+    mod-key "Super"
+    focus-follows-mouse
+    warp-mouse-to-focus true
+    warp-mouse-across-stacked-outputs upper-side="right" lower-top-at=0.25
+    ignore-app-activation "com.apple.Spotlight"
+    ignore-app-activation "com.apple.dock"
+}}
+layout {{
+    gaps 6.5
+    struts {{
+        left 1
+        top 20
+    }}
+    default-column-width {{ proportion 0.6; }}
+    min-column-width {{ proportion 0.2; }}
+    max-column-width {{ proportion 0.95; }}
+    preset-column-widths {{
+        proportion 0.25
+        proportion 0.75
+    }}
+    center-focused-column "always"
+    focus-ring {{
+        off
+        width 3.5
+        active-gradient from="#80c8ff" to="#bbddff80" angle=45 in="oklch longer hue"
+        inactive-gradient from="hsl(120 33% 41%)" to="#505050"
+        urgent-gradient from="red" to="rgb(10.5 20 30 / 0.5)" angle=-90 in="srgb-linear"
+    }}
+    border {{
+        width 1
+        active-gradient from="#000" to="#fff" in="oklab"
+        inactive-gradient from="#123456" to="#654321" angle=0 in="oklch increasing hue"
+        urgent-gradient from="#abcdef" to="#fedcba" in="oklch decreasing hue"
+    }}
+}}
+output "11111111-2222-3333-4444-555555555555" {{
+    layout {{
+        gaps 8
+        struts {{ top 20; }}
+    }}
+}}
+output "AAAAAAAA-0000-0000-0000-000000000000" {{
+    layout {{
+    }}
+}}
+animations {{
+    off
+    slowdown 0.3
+    journal {{ measure-handover; }}
+}}
+gestures {{
+    drag-swap-overlap 0.45
+}}
+recent-windows {{
+    icons {{
+        "com.mitchellh.ghostty" "~/.config/rini/icons/ghostty.png"
+        "com.example.X" "/tmp/x \"quoted\".png"
+    }}
+    binds {{
+        Alt+Tab {{ next-window; }}
+        Alt+Grave repeat=true {{ next-window scope="workspace"; }}
+        Ctrl+Tab {{ previous-window filter="app-id"; }}
+        Ctrl+Grave {{ previous-window scope="all"; }}
+    }}
+}}
+bar {{
+    off
+}}
+config-notification {{
+    disable-failed
+}}
+workspace "One"
+workspace "Two"
+workspace "Three" {{
+    focus-at-startup
+}}
+window-rule {{
+    match app-id=r"^com\.example\.X$" title="Pref" app-name="^X$" ax-role="AXWindow" ax-subrole="AXDialog" is-modal=true is-floating=false
+    match app-id=r#"say "hi""#
+    exclude title="^$" is-modal=false
+    open-on-workspace "Two"
+    open-floating true
+    default-floating-position x=-40 y=40.5 relative-to="bottom-right"
+    default-column-width {{ fixed 640; }}
+    default-window-height {{ fixed 480.5; }}
+    open-focused true
+    manage true
+    open-on-output "internal"
+    focus-ring {{
+        on
+        width 6
+        active-color "#ff0000"
+        inactive-color "hsl(0 50% 50% / 0.25)"
+        urgent-color "#123"
+    }}
+    border {{
+        off
+        width 3
+        active-gradient from="#000" to="#fff" in="oklab"
+        inactive-gradient from="#000" to="#fff"
+        urgent-gradient from="#000" to="#fff" angle=30
+    }}
+    geometry-corner-radius 12
+}}
+window-rule {{
+    match is-focused=true
+    exclude is-urgent=true is-active=false
+    focus-ring {{
+        active-gradient from="#000" to="#111"
+        inactive-gradient from="#222" to="#333" in="oklch"
+        urgent-gradient from="#444" to="#555"
+    }}
+    border {{
+        active-color "#00ff00"
+        inactive-color "#00ff0080"
+        urgent-color "#ff00ff"
+    }}
+}}
+window-rule {{
+    match app-id="Slack"
+    open-on-output "external"
+    manage false
+}}
+window-rule {{
+    match app-id="Nothing"
+}}
+window-rule {{
+    focus-ring {{
+        off
+    }}
+    border {{
+        on
+        width 2
+    }}
+}}
+reapply-window-rules-on-title-change
+activate-spaces-by-default
+spawn-at-startup "/usr/bin/open" "-a" "Terminal" "tab	and\\backslash"
+spawn-sh-at-startup "sleep 1 && echo \"done\""
+binds {{
+{actions}}}
+"##
+    )
+}
+
+#[test]
+fn the_reference_config_prints_as_kdl_that_reads_back_the_same() {
+    assert_prints_and_reads_back(&Config::reference());
+    assert_prints_and_reads_back(&Config::code_defaults());
+}
+
+#[test]
+fn every_section_and_every_kind_of_value_prints_and_reads_back() {
+    let config = parse(&every_section());
+    assert_eq!(config.binds.len(), Action::VARIANTS.len() - 2);
+    assert_eq!(config.switcher_binds.len(), 4);
+    assert_eq!(config.virtual_workspaces.app_rules.len(), 3);
+    assert_eq!(config.settings.decorations.rules.len(), 3);
+    assert_prints_and_reads_back(&config);
+    assert_eq!(
+        printed(&config).matches("window-rule {").count(),
+        5,
+        "each rule written once, the one that opens and dresses as one"
+    );
+}
+
+/// Every node `SCHEMA` lists is printed by the reference config or the one that writes every
+/// section, so no setting the file takes is left out of `config get`. The one exception holds no
+/// setting: `draw-border-with-background false` is the only value accepted, and is what rini draws.
+#[test]
+fn config_get_writes_every_node_the_file_takes() {
+    use knus::ast::SpannedNode;
+    use knus::span::Span;
+    fn walk(nodes: &[SpannedNode<Span>], path: &str, seen: &mut Vec<(String, String)>) {
+        for node in nodes {
+            let name = node.node_name.to_string();
+            seen.push((path.to_owned(), name.clone()));
+            if let Some(children) = &node.children {
+                let child_path = if path.is_empty() {
+                    name
+                } else {
+                    format!("{path}/{name}")
+                };
+                walk(children, &child_path, seen);
+            }
+        }
+    }
+    let mut seen = Vec::new();
+    for config in [Config::reference(), parse(&every_section())] {
+        let text = printed(&config);
+        let document = knus::parse_ast::<Span>("printed.kdl", &text).expect("syntax");
+        walk(&document.nodes, "", &mut seen);
+    }
+    for (path, children) in SCHEMA {
+        for child in *children {
+            if (*path, *child) == ("window-rule", "draw-border-with-background") {
+                continue;
+            }
+            assert!(
+                seen.iter().any(|(p, c)| p == path && c == child),
+                "config get never writes {path} › {child}"
+            );
+        }
+    }
+}
+
+/// Kai, 2026-10-16: "print out settings back in KDL for consistency". Each setting is printed under
+/// the name the file gives it and with the value the file would write, never inverted.
+#[test]
+fn config_get_prints_each_setting_as_the_file_writes_it() {
+    let reference = printed(&Config::reference());
+    for line in [
+        "input {\n    mod-key \"Alt\"\n",
+        "    warp-mouse-to-focus false\n",
+        "    drag-swap-overlap 0.3\n",
+        "    slowdown 1\n",
+        "    off false\n",
+        "workspace \"Main\" { focus-at-startup; }\nworkspace \"Development\"\n",
+        "window-rule {\n    match is-modal=true\n    open-floating true\n}\n",
+        "activate-spaces-by-default false\n",
+        "    Mod+Z { toggle-space-activated; }\n",
+        "    Mod+Shift+1 { move-window-to-workspace 1 focus=false; }\n",
+        "    Mod+Shift+Equal { set-column-width \"+5%\"; }\n",
+        "    Mod+Return { spawn \"/usr/bin/open\" \"-a\" \"/System/Applications/Utilities/Terminal.app\"; }\n",
+        "        active-color \"#7fc8ff\"\n",
+    ] {
+        assert!(reference.contains(line), "no {line:?} in\n{reference}");
+    }
+    let changed = printed(&parse(concat!(
+        "activate-spaces-by-default\n",
+        "bar {\n    off\n}\n",
+        "animations {\n    slowdown 0.3\n}\n",
+        "binds {\n    Mod+J { set-column-width \"+7.5%\"; }\n}\n",
+    )));
+    for line in [
+        "activate-spaces-by-default true\n",
+        "bar {\n    off true\n}\n",
+        "    slowdown 0.3\n",
+        "    Mod+J { set-column-width \"+7.5%\"; }\n",
+    ] {
+        assert!(changed.contains(line), "no {line:?} in\n{changed}");
+    }
+}
+
+/// A colour prints as the hex the file most likely wrote, and one hex cannot hold reads back to the
+/// same channels.
+#[test]
+fn a_colour_prints_as_hex_when_hex_holds_it() {
+    use crate::app::config::kdl::value::ColourValue;
+    let text = |colour: Colour| ColourValue(colour).text();
+    assert_eq!(text(Colour::rgb(0x7fc8ff)), "#7fc8ff");
+    assert_eq!(
+        text(Colour {
+            a: 0x80 as f32 / 255.0,
+            ..Colour::rgb(0x112233)
+        }),
+        "#11223380"
+    );
+    for css in [
+        "hsl(120 33% 41%)",
+        "rgb(10.5 20 30 / 0.5)",
+        "rgba(1%, 2%, 3%, 0.123)",
+    ] {
+        let [r, g, b, a] = csscolorparser::parse(css).unwrap().to_array();
+        let colour = Colour { r, g, b, a };
+        let printed = text(colour);
+        let [r, g, b, a] = csscolorparser::parse(&printed).unwrap().to_array();
+        assert_eq!(Colour { r, g, b, a }, colour, "{css} printed as {printed}");
+    }
+}
+
+/// Every `hsl()` and `hwb()` over a grid, opaque and not, prints as a colour that reads back to the
+/// same channels, `hsl(0 72% 99%)` among them, whose red no number out of 255 reads back to.
+#[test]
+fn every_colour_on_an_hsl_and_hwb_grid_prints_as_one_that_reads_back() {
+    use crate::app::config::kdl::value::ColourValue;
+    let read = |css: &str| {
+        let [r, g, b, a] = csscolorparser::parse(css).unwrap().to_array();
+        Colour { r, g, b, a }
+    };
+    let mut misses = Vec::new();
+    let mut check = |css: String| {
+        let colour = read(&css);
+        let printed = ColourValue(colour).text();
+        if read(&printed) != colour {
+            misses.push(format!("{css} printed as {printed}"));
+        }
+    };
+    check("hsl(0 72% 99%)".to_string());
+    assert_eq!(
+        ColourValue(read("hsl(0 72% 99%)")).text(),
+        "rgb(99.72% 250.614 250.614)"
+    );
+    for alpha in ["", " / 0.37"] {
+        for h in (0..360).step_by(7) {
+            for s in (0..=100).step_by(9) {
+                for l in (0..=100).step_by(9) {
+                    check(format!("hsl({h} {s}% {l}%{alpha})"));
+                    check(format!("hwb({h} {s}% {l}%{alpha})"));
+                }
+            }
+        }
+    }
+    assert!(
+        misses.is_empty(),
+        "{} misses, first {:?}",
+        misses.len(),
+        &misses[..misses.len().min(5)]
+    );
 }

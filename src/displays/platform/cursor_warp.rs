@@ -62,7 +62,6 @@ use objc2_core_graphics::{CGDisplayBounds, CGError, CGEvent};
 use rini_core::ids::ScreenId;
 use rini_geometry::CGRectExt;
 use rini_runloop::channel;
-use serde::Serialize;
 use tracing::{debug, info};
 
 use crate::displays::domain::screen::ScreenInfo;
@@ -70,8 +69,7 @@ use crate::displays::domain::screen::ScreenInfo;
 /// Which side of a side-by-side pair is the upper one when the pair is stacked. Settings vocabulary.
 /// Which side of the desk the logically-upper display sits on; macOS cannot tell us. Semantics in
 /// `rini.default.kdl` under `warp-mouse-across-stacked-outputs`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StackedUpperSide {
     #[default]
     Left,

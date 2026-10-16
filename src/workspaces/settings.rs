@@ -1,12 +1,11 @@
 //! What the workspace list can be told about itself: which workspaces there are, which one shows at
 //! launch, and the window rules that route windows into them. Plain data with defaults.
-use serde::Serialize;
 
 use crate::windows::domain::rules::WindowRule;
 
 pub const MAX_WORKSPACES: usize = 128;
 
-#[derive(Serialize, Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct VirtualWorkspaceSettings {
     /// The workspaces, top to bottom. There are as many as there are names.
     pub workspace_names: Vec<String>,

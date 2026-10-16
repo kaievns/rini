@@ -3,11 +3,9 @@
 use std::collections::BTreeMap;
 
 use rini_core::ids::DisplayUuid;
-use serde::Serialize;
 
 /// How the strip follows focus. niri's `center-focused-column`, without its `on-overflow`.
-#[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum CenterFocusedColumn {
     /// The strip moves only as far as it must to show the focused column.
     #[default]
@@ -16,13 +14,13 @@ pub enum CenterFocusedColumn {
     Always,
 }
 
-#[derive(Serialize, Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct LayoutSettings {
     pub gaps: GapSettings,
     pub scrolling: ScrollingLayoutSettings,
 }
 
-#[derive(Serialize, Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ScrollingLayoutSettings {
     pub column_width_ratio: f64,
     pub min_column_width_ratio: f64,
@@ -53,7 +51,7 @@ impl ScrollingLayoutSettings {
 }
 
 /// Space at each edge of a display, in logical pixels.
-#[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub struct Edges {
     pub top: f64,
     pub left: f64,
@@ -63,7 +61,7 @@ pub struct Edges {
 
 /// The gaps as configured: niri's `gaps`, between windows and at the edges, and `struts`, extra
 /// space at each edge on top of `gaps`. A display can replace either one as a whole.
-#[derive(Serialize, Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct GapSettings {
     pub gaps: f64,
     pub struts: Edges,
@@ -71,7 +69,7 @@ pub struct GapSettings {
     pub per_display: BTreeMap<DisplayUuid, GapOverride>,
 }
 
-#[derive(Serialize, Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct GapOverride {
     pub gaps: Option<f64>,
     pub struts: Option<Edges>,

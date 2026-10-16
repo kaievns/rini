@@ -92,6 +92,58 @@ impl<S: ErrorSpan> knus::DecodeScalar<S> for ColourValue {
     }
 }
 
+impl ColourValue {
+    /// The colour as a string `ColourValue` reads back to the same channels: `#rrggbb`, with its
+    /// alpha when it has one, or `rgb()` with each channel in the fewest decimals that read back to
+    /// it, out of 255 or, when no number out of 255 does, as a percentage.
+    pub fn text(self) -> String {
+        let Colour { r, g, b, a } = self.0;
+        let byte = |channel: f32| (channel * 255.0).round().clamp(0.0, 255.0) as u8;
+        let mut hex = format!("#{:02x}{:02x}{:02x}", byte(r), byte(g), byte(b));
+        if a != 1.0 {
+            hex.push_str(&format!("{:02x}", byte(a)));
+        }
+        let reads_back = |text: &str| {
+            csscolorparser::parse(text).is_ok_and(|parsed| parsed.to_array() == [r, g, b, a])
+        };
+        if reads_back(&hex) {
+            return hex;
+        }
+        let channel =
+            |value: f32| channel_over(value, 255.0, "").or_else(|| channel_over(value, 100.0, "%"));
+        let alpha = if a == 1.0 {
+            String::new()
+        } else {
+            format!(" / {a}")
+        };
+        if let [Some(r), Some(g), Some(b)] = [r, g, b].map(channel) {
+            let rgb = format!("rgb({r} {g} {b}{alpha})");
+            if reads_back(&rgb) {
+                return rgb;
+            }
+        }
+        hex
+    }
+}
+
+/// `value` as a number `t` that csscolorparser reads back to it as `t / scale`, in the fewest
+/// decimals, then among the floats beside `value * scale`, since the decimals near it can all miss.
+fn channel_over(value: f32, scale: f32, unit: &str) -> Option<String> {
+    let reads_back = |t: f32| t / scale == value;
+    let exact = f64::from(value) * f64::from(scale);
+    (0..=9)
+        .map(|places| format!("{exact:.places$}"))
+        .find(|text| text.parse::<f32>().is_ok_and(reads_back))
+        .or_else(|| {
+            let near = exact as f32;
+            (-4..=4)
+                .map(|step: i32| f32::from_bits(near.to_bits().wrapping_add_signed(step)))
+                .find(|&t| t.is_finite() && reads_back(t))
+                .map(|t| t.to_string())
+        })
+        .map(|text| format!("{text}{unit}"))
+}
+
 /// A gradient's `in`, as niri writes it: `srgb`, `srgb-linear`, `oklab`, or `oklch` with
 /// optionally the way round its hue goes, as `"oklch longer hue"` (`niri:niri-config/src/appearance.rs:725-780`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -153,6 +205,19 @@ fn colour_space(text: &str) -> Result<ColourSpace, String> {
     Ok(ColourSpace::Oklch(hue))
 }
 
+/// `space` as `colour_space` reads it.
+pub fn colour_space_text(space: ColourSpace) -> &'static str {
+    match space {
+        ColourSpace::Srgb => "srgb",
+        ColourSpace::SrgbLinear => "srgb-linear",
+        ColourSpace::Oklab => "oklab",
+        ColourSpace::Oklch(Hue::Shorter) => "oklch",
+        ColourSpace::Oklch(Hue::Longer) => "oklch longer hue",
+        ColourSpace::Oklch(Hue::Increasing) => "oklch increasing hue",
+        ColourSpace::Oklch(Hue::Decreasing) => "oklch decreasing hue",
+    }
+}
+
 macro_rules! bounds {
     ($($name:ident: $min:expr, $max:expr $(, above = $above:expr)?;)*) => {
         $(
@@ -176,10 +241,23 @@ bounds! {
     Slowdown: 0.0, 100.0;
 }
 
-/// Decodes a string enum the config spells in kebab-case into a type that lives with its feature.
-/// Values listed under `not_yet` are niri's and refused by name.
+/// A value the config spells as one word, as `kebab_scalar!` reads it.
+pub trait Word {
+    fn word(self) -> &'static str;
+}
+
+/// Decodes a string enum the config spells in kebab-case into a type that lives with its feature,
+/// and spells it back. Values listed under `not_yet` are niri's and refused by name.
 macro_rules! kebab_scalar {
-    ($ty:ty { $($text:literal => $value:expr),* $(,)? } $(not_yet { $($later:literal),* })?) => {
+    ($ty:ty { $($text:literal => $value:path),* $(,)? } $(not_yet { $($later:literal),* })?) => {
+        impl Word for $ty {
+            fn word(self) -> &'static str {
+                match self {
+                    $($value => $text,)*
+                }
+            }
+        }
+
         impl<S: knus::traits::ErrorSpan> knus::DecodeScalar<S> for $ty {
             fn type_check(
                 type_name: &Option<knus::span::Spanned<knus::ast::TypeName, S>>,

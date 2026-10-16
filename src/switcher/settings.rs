@@ -4,9 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
-
-#[derive(Serialize, Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct SwitcherSettings {
     /// An image to badge a tile with in place of its application's own icon, by bundle identifier.
     ///

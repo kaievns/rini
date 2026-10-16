@@ -4,11 +4,10 @@
 //! `src/decorations/docs/README.md`.
 
 use rini_geometry::space::{Contents, Point, TileSize};
-use serde::Serialize;
 
 /// An sRGB colour with its alpha, each channel in `0.0..=1.0`, unpremultiplied, as niri and the
 /// parser it shares with niri hold one.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Colour {
     pub r: f32,
     pub g: f32,
@@ -33,7 +32,7 @@ const fn channel(rgb: u32, shift: u32) -> f32 { ((rgb >> shift) & 0xff) as f32 /
 /// What a band is filled with: a colour, or a gradient. A gradient written beside a colour is drawn
 /// instead of it, and a colour written later replaces the gradient, so a band has one paint, as niri
 /// selects it (`niri:src/layout/focus_ring.rs:73-98`, `niri:niri-config/src/macros.rs:31-57`).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Paint {
     Solid(Colour),
     Gradient(Gradient),
@@ -41,7 +40,7 @@ pub enum Paint {
 
 /// niri's linear gradient over the band's own outer rect: `from` to `to` along `angle`, in degrees
 /// as CSS has them, 0 pointing up and 90 right, mixed in `space`.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Gradient {
     pub from: Colour,
     pub to: Colour,
@@ -50,7 +49,7 @@ pub struct Gradient {
 }
 
 /// The space niri mixes a gradient's two colours in (`niri:src/render_helpers/shaders/border.frag`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ColourSpace {
     #[default]
     Srgb,
@@ -60,7 +59,7 @@ pub enum ColourSpace {
 }
 
 /// Which way round the hue circle an `oklch` gradient goes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Hue {
     #[default]
     Shorter,
