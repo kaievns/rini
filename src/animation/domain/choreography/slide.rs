@@ -405,6 +405,7 @@ mod tests {
                 seconds: PLAIN,
                 cue: Cue::Plain,
                 accents: &[],
+                viewport: VIEWPORT,
             });
             Flight { slide, plan, drawn, score }
         }
@@ -423,6 +424,7 @@ mod tests {
                 seconds,
                 cue: Cue::Plain,
                 accents,
+                viewport: VIEWPORT,
             };
             let edits = self.slide.compose(&self.score, &stage, BEGIN);
             self.fold(&edits);

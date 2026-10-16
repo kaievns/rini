@@ -99,9 +99,12 @@ is a file under `src/animation/domain/choreography/`, a `Look` variant in `ALL` 
 `src/animation/docs/README.md` ("Adding a look") and the reactor's choice of it; capture, swaps and
 handover never see what a score contains. A zoom of the strip is such a look: the score's strip node
 holds a `Zoom`, a scale and a shift that say a scale about a centre through a camera
-(`src/animation/domain/motion/score.rs`), and the overlay plays it on the layer every container but the
-floating one hangs under, so a zoom look needs only its choreography and staging, its `retarget`
-bending the strip's zoom beside `Merged::bend`, which bends containers and tiles alone. A container
+(`src/animation/domain/motion/score.rs`), the overlay plays it on the layer every container but the
+floating one hangs under, and frame zero, the motion and each pass are staged on the display the
+overlay covers (`Stage` and `Pass` carry it as `viewport`), what a zoom is centred on, so a zoom look
+needs only its choreography and staging
+(`a_look_zooms_the_strip_about_the_display_it_is_staged_on`), its `retarget` bending the strip's
+zoom beside `Merged::bend`, which bends containers and tiles alone. A container
 scaled on its own, as the parked spike lifted the moved window, is not in the score.
 
 ## `transitions`

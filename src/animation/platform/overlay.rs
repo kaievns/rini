@@ -3861,6 +3861,7 @@ mod tests {
                 seconds: 0.35,
                 cue: Cue::Plain,
                 accents: &[],
+                viewport: VIEWPORT,
             });
             score.apply(&Edit::Bank(Banding {
                 focus_off_strip: true,
@@ -3886,6 +3887,7 @@ mod tests {
                 seconds: 0.35,
                 cue: Cue::Plain,
                 accents: &steps,
+                viewport: VIEWPORT,
             };
             let mut started = choreography.compose(&score, &stage, 100.0);
             started.extend(zoom_arc(100.0, 0.35));
@@ -4030,6 +4032,7 @@ mod tests {
                 seconds: 0.35,
                 cue: Cue::Plain,
                 accents: &[],
+                viewport: VIEWPORT,
             };
             let mut score = choreography.pose(&stage);
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);

@@ -83,7 +83,8 @@ in [`animation-smoothness.md`](animation-smoothness.md)).
 
 ## Adding a look
 
-A look touches these files, and nothing in `transitions`:
+A look touches these files, and nothing in `transitions`, which stages every flight and pass on the
+display the overlay covers (`viewport`):
 
 1. `domain/choreography/<name>.rs`: a `Choreography` and a `stage`. Its `retarget` calls
    `Merged::new` and `Merged::bend` with a `Bending` of its own, and adds only motion; `linear.rs`

@@ -33,6 +33,16 @@ impl FlightScore {
         }
     }
 
+    /// A flight moved by `choreography`, a look only the tests build.
+    #[cfg(test)]
+    pub fn of(choreography: Box<dyn Choreography>) -> FlightScore {
+        FlightScore {
+            choreography,
+            score: Score::default(),
+            waiting: Vec::new(),
+        }
+    }
+
     pub fn score(&self) -> &Score { &self.score }
 
     /// The flight's plan from its first pass, as its look makes it.
@@ -274,6 +284,7 @@ mod tests {
             seconds: PLAIN,
             cue: Cue::Plain,
             accents: &[],
+            viewport: VIEWPORT,
         }
     }
 

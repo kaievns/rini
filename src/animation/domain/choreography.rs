@@ -133,6 +133,8 @@ pub struct Stage<'a> {
     pub cue: Cue,
     /// What waited for the motion to start: at most one of each kind.
     pub accents: &'a [Accent],
+    /// The display the overlay covers: what a zoom of the strip is centred on.
+    pub viewport: OverlayRect,
 }
 
 /// A later pass, folded into a flight before it moves or bending one that moves.
@@ -602,6 +604,7 @@ mod tests {
             seconds: PLAIN,
             cue: Cue::Plain,
             accents,
+            viewport: VIEWPORT,
         }
     }
 
