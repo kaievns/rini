@@ -109,7 +109,9 @@ piece and steps with the strip; pinned by
 `a_still_window_joining_mid_step_steps_with_the_strip`. Before the flight moves, a pass is folded in
 by the same function, every container drawn where frame zero installs it and its leg taken to be where
 the last pass sends it: nothing has moved, and the pass's frames are places on the strip there. That
-is the look's rule too (`Slide::fold`), and frame zero is posed again from the folded plan. What the flight does about a merge,
+is the look's rule too (`Slide::fold`), and frame zero is posed again from the folded plan. Every look's
+fold sends each window where the pass sends it, and frame zero draws it where the folded plan starts
+it; pinned by `every_look_folds_each_pass_before_the_motion`. What the flight does about a merge,
 the clock, the frames already sent and the entrances still reserved, is "Mid-flight passes" in
 `src/transitions/docs/coordination.md`.
 
@@ -356,7 +358,9 @@ while a bounce plays draws none of it, opened with no tracks, and the next push 
 way out while the strip's goes on from where it is drawn on a shortened one: the two stay apart by
 at most the offset the strip drew, until both are home. Handed the record's bounce, it used to jump
 by up to 72pt into phase with the strip. Both are pinned by
-`a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. A
+`a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. Every look's push keeps both: no window
+jumps as a push reaches it, and every window comes home where its plan sends it
+(`every_look_pushes_out_and_home_without_a_jump`). A
 push of no length is a cut, drawn at rest (`a_push_of_no_length_is_a_cut`). A
 move's nudge (below) is the other out-and-back, on the same containers by the
 same rule, under its own key. Only a step still playing holds a step off (`steps` in

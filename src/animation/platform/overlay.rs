@@ -3638,12 +3638,18 @@ mod tests {
             }
         }
 
-        /// A Slide flight posed and played, then bent by a pan with a window joining and the
+        /// Every look's flight posed and played, then bent by a pan with a window joining and the
         /// floating window leaving: the tree plays exactly its replica, and the replica is the fold
         /// of the edits it was handed.
         #[test]
         fn the_overlay_plays_exactly_its_score() {
             let _core_animation = hold_core_animation();
+            for look in Look::ALL {
+                plays_exactly_its_score(look);
+            }
+        }
+
+        fn plays_exactly_its_score(look: Look) {
             let column = |i: f64, w: f64| -> ScreenRect { typed(4.0 + i * 863.0, 32.0, w, 1081.0) };
             let step = |frame: ScreenRect| -> ScreenRect {
                 typed(
@@ -3672,8 +3678,8 @@ mod tests {
             let plan = FlightPlan::from(reflow_plan(&requests, DISPLAY));
             let windows: Vec<WindowId> = tiles.iter().map(|t| t.window).collect();
 
-            let mut slide = Look::Slide.choreography();
-            let mut score = slide.pose(&Stage {
+            let mut choreography = look.choreography();
+            let mut score = choreography.pose(&Stage {
                 plan: &plan,
                 drawn: &windows,
                 seconds: 0.35,
@@ -3687,8 +3693,11 @@ mod tests {
             }));
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.pose(&score, &tiles);
-            assert_eq!(tree.replica, score);
-            assert!(tree.lifted.is_some(), "e is drawn in front of the strip");
+            assert_eq!(tree.replica, score, "{look:?}");
+            assert!(
+                tree.lifted.is_some(),
+                "{look:?}: e is drawn in front of the strip"
+            );
             plays_exactly(&tree);
 
             let steps = [Accent::Step {
@@ -3702,12 +3711,12 @@ mod tests {
                 cue: Cue::Plain,
                 accents: &steps,
             };
-            let started = slide.compose(&score, &stage, 100.0);
+            let started = choreography.compose(&score, &stage, 100.0);
             for edit in &started {
                 score.apply(edit);
             }
             tree.play(&started, &tiles);
-            assert_eq!(tree.replica, score);
+            assert_eq!(tree.replica, score, "{look:?}");
             plays_exactly(&tree);
 
             let joined = column(3.0, 859.0);
@@ -3732,32 +3741,41 @@ mod tests {
                 cue: Cue::Plain,
                 accent: None,
             };
-            let mut bent = slide.retarget(&score, &plan, &pass, 100.1);
+            let mut bent = choreography.retarget(&score, &plan, &pass, 100.1);
             bent.edits.push(Edit::Bank(banding(&drawn, &bent.plan)));
             for edit in &bent.edits {
                 score.apply(edit);
             }
             assert!(
                 bent.edits.iter().any(|edit| matches!(edit, Edit::Ride(w, _) if *w == f)),
-                "f joins"
+                "{look:?}: f joins"
             );
-            assert!(bent.edits.contains(&Edit::Drop(Node::Container(GroupKey::Floating))));
+            assert!(
+                bent.edits.contains(&Edit::Drop(Node::Container(GroupKey::Floating))),
+                "{look:?}"
+            );
             tree.play(&bent.edits, &tiles);
-            assert_eq!(tree.replica, score);
+            assert_eq!(tree.replica, score, "{look:?}");
             assert!(
                 tree.lifted.is_none(),
-                "the twin goes with the floating container"
+                "{look:?}: the twin goes with the floating container"
             );
             plays_exactly(&tree);
         }
 
-        /// A snap moves where a tile's own leg ends and keeps how the tile is drawn, even where
-        /// the snapped leg judged again would draw it otherwise, so it never turns mid-flight. A
-        /// resize of under a percent whose picture fits both ends stretches; snapped 4pt past the
-        /// plan, its picture misfits where it ends and it stays stretched. A new leg is
+        /// For every look, a snap moves where a tile's own leg ends and keeps how the tile is drawn,
+        /// even where the snapped leg judged again would draw it otherwise, so it never turns
+        /// mid-flight. A resize of under a percent whose picture fits both ends stretches; snapped
+        /// 4pt past the plan, its picture misfits where it ends and it stays stretched. A new leg is
         /// judged again: a shrink then crops the picture it has.
         #[test]
         fn a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again() {
+            for look in Look::ALL {
+                snaps_keeping_how_a_tile_is_drawn(look);
+            }
+        }
+
+        fn snaps_keeping_how_a_tile_is_drawn(look: Look) {
             use crate::animation::domain::motion::tile;
             let window = wid(1);
             let (from, to): (ScreenRect, ScreenRect) = (
@@ -3767,7 +3785,7 @@ mod tests {
             let mut tiles = vec![overlay_tile(window, on(from), on(to), false)];
             tiles[0].snapshot = test_picture(ScreenSize::new(1004.0, 1081.0));
             let plan = FlightPlan::from(reflow_plan(&[Resolved::tiled(window, from, to)], DISPLAY));
-            let mut slide = Look::Slide.choreography();
+            let mut choreography = look.choreography();
             let stage = Stage {
                 plan: &plan,
                 drawn: &[window],
@@ -3775,10 +3793,10 @@ mod tests {
                 cue: Cue::Plain,
                 accents: &[],
             };
-            let mut score = slide.pose(&stage);
+            let mut score = choreography.pose(&stage);
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.pose(&score, &tiles);
-            let started = slide.compose(&score, &stage, 100.0);
+            let started = choreography.compose(&score, &stage, 100.0);
             let mut play = |tree: &mut Tree, edits: &[Edit], tiles: &[OverlayTile]| {
                 for edit in edits {
                     score.apply(edit);
@@ -3787,16 +3805,16 @@ mod tests {
             };
             play(&mut tree, &started, &tiles);
             let stretched = |tree: &Tree| tree.tile_layers[&window].crop_of.is_none();
-            assert!(stretched(&tree), "the picture fits both ends");
+            assert!(stretched(&tree), "{look:?}: the picture fits both ends");
 
             let real = on(typed(4.0, 32.0, 1012.0, 1081.0));
             let snapped = tile::snap(&tree.replica, window, real, 100.15);
             assert!(
                 snapped.iter().any(|edit| matches!(edit, Edit::Add(_))),
-                "on its leg"
+                "{look:?}: on its leg"
             );
             play(&mut tree, &snapped, &tiles);
-            assert!(stretched(&tree), "drawn as it was");
+            assert!(stretched(&tree), "{look:?}: drawn as it was");
 
             let shrink = Track::between(
                 Node::Tile(window),
@@ -3808,7 +3826,7 @@ mod tests {
                 Curve::Bezier(MOTION_CURVE),
             );
             play(&mut tree, &[Edit::Add(shrink)], &tiles);
-            assert!(!stretched(&tree), "a new leg crops the picture it has");
+            assert!(!stretched(&tree), "{look:?}: a new leg crops the picture it has");
         }
 
         /// Every new leg picks its crop's anchors again, a crop-drawn tile staying crop-drawn
