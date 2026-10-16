@@ -27,7 +27,7 @@ use super::motion::accents::Accent;
 use super::motion::plan::{
     FlightPlan, GroupKey, Member, PlanDelta, ReflowPlan, merge_plans, stale_overlay_layers,
 };
-use super::motion::score::{Channel, Edit, Node, Score, Value};
+use super::motion::score::{Edit, Node, Score, Value};
 
 /// How a flight moves, chosen when it begins: a later pass's look is not asked.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -404,9 +404,6 @@ impl<'a> Merged<'a> {
             self.making.open(to_key, at);
             self.making.push(Edit::Ride(window, to_key));
             self.making.push(Edit::Place(Node::Tile(window), Value::Rect(frame.rounded())));
-            if self.making.score.track(Node::Tile(window), Channel::Base).is_some() {
-                self.making.push(Edit::Cut(Node::Tile(window), Channel::Base));
-            }
             placed.push(window);
         }
         placed
@@ -497,7 +494,7 @@ mod tests {
         EDGE_BOUNCE_OVERSHOOT, GROUP_TOLERANCE, GroupKey, Member, Resolved, carries_out_and_back,
         on_overlay, overlay_of, reflow_plan,
     };
-    use crate::animation::domain::motion::score::{Curve, SAMPLE_STEP, Track};
+    use crate::animation::domain::motion::score::{Channel, Curve, SAMPLE_STEP, Track};
     use crate::animation::domain::motion::testing::{
         DISPLAY, Gen, RUNS, VIEWPORT, random_requests, rect,
     };
@@ -700,6 +697,7 @@ mod tests {
         newcomer: WindowId,
         playing: &'a Score,
         sent: &'a FlightPlan,
+        delta: &'a PlanDelta,
         bent: &'a Flight,
     }
 
@@ -722,7 +720,7 @@ mod tests {
                     let newcomer = wid(500 + step as u32);
                     let (incoming, pan) = random_pass(&mut rng, &mut flight, newcomer);
                     let (playing, sent) = (flight.score.clone(), flight.plan.clone());
-                    flight.merge(&incoming, pan, None, now);
+                    let delta = flight.merge(&incoming, pan, None, now).delta;
                     check(&Bend {
                         tag: format!("seed {seed} run {run} step {step}"),
                         now,
@@ -730,6 +728,7 @@ mod tests {
                         newcomer,
                         playing: &playing,
                         sent: &sent,
+                        delta: &delta,
                         bent: &flight,
                     })?;
                 }
@@ -739,15 +738,30 @@ mod tests {
     }
 
     /// The seeds of the bend contracts' flights: 163, and 2, which moves members of two containers
-    /// into one a pass opens, a member from the other drawn 0.82pt from where it was while
-    /// `Merged::bend` started the container's movement at the whole point nearest where it installs.
+    /// into one a pass opens, a member from the other drawn 0.82pt from where it was under Slide,
+    /// which starts the container's movement at the whole point nearest where it installs.
     const BEND_SEEDS: [u64; 2] = [163, 2];
+
+    /// How far a window a pass moves into a container it opens may be drawn from where it was: Slide
+    /// starts the container's movement on a whole point where its first member's container is drawn,
+    /// and a member from another container sat at another fraction, a half point each. See "Whole
+    /// points" in `src/animation/docs/animation-smoothness.md`.
+    const OPENED_SLACK: f64 = 1.0;
+
+    /// Whether the merge that left `delta` moved `window` into a container it opened.
+    fn moved_into_an_opened(delta: &PlanDelta, window: WindowId) -> bool {
+        delta.reparented.iter().any(|&(moved, _, to)| {
+            moved == window && delta.new_groups.iter().any(|group| group.key == to)
+        })
+    }
 
     /// The bend contract, over `bent_flights`: whatever a pass brings and whenever it lands, every
     /// window the flight drew before it is drawn where it was, and a window it brings rides beside
     /// the windows it sits beside in the layout: drawn where the pass has it, moved by as far as the
     /// container it rides is drawn from where the last pass sent it. Each edge within the half point
-    /// placing on whole points allows.
+    /// placing on whole points allows, and within a point for a window the pass moves into a
+    /// container it opens (`OPENED_SLACK`). No rigid member's tile has a track of its own:
+    /// `Merged::bend` moves one to another container by riding and placing it alone.
     fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
         let mut brought = 0;
         bent_flights(make, &mut |bend| {
@@ -788,8 +802,20 @@ mod tests {
                     return Err(format!("{tag}: {window:?} gone"));
                 };
                 let apart = edges_apart(is, was);
-                if apart > 0.5 + 1e-6 {
+                let slack = if moved_into_an_opened(bend.delta, window) {
+                    OPENED_SLACK
+                } else {
+                    0.5
+                };
+                if apart > slack + 1e-6 {
                     return Err(format!("{tag}: {window:?} jumped {apart}: {was:?} then {is:?}"));
+                }
+            }
+            for window in flight.plan.windows() {
+                if matches!(flight.plan.member(window), Some(Member::Rigid { .. }))
+                    && flight.score.track(Node::Tile(window), Channel::Base).is_some()
+                {
+                    return Err(format!("{tag}: rigid {window:?} has a track of its own"));
                 }
             }
             Ok(())
@@ -871,12 +897,16 @@ mod tests {
         }
     }
 
-    /// The bend contract rejects a look that cuts every node the pass moves to where it ends.
+    /// The bend contract rejects a look that cuts every node the pass moves to where it ends, and
+    /// one that gives a rigid member's tile a track of its own.
     #[test]
-    fn the_bend_contract_rejects_a_look_that_cuts_to_the_pass() {
+    fn the_bend_contract_rejects_a_look_that_cuts_to_the_pass_or_tracks_a_rigid_tile() {
         let cut = bends_without_a_jump(&|| Flawed::boxed(Flaw::CutsTheBend))
             .expect_err("a bend that cuts to the pass");
         assert!(cut.contains("jumped"), "{cut}");
+        let tracked = bends_without_a_jump(&|| Flawed::boxed(Flaw::TracksRigidTiles))
+            .expect_err("a rigid tile with a track of its own");
+        assert!(tracked.contains("track of its own"), "{tracked}");
     }
 
     /// Every look keeps the speed contract.
@@ -1141,8 +1171,8 @@ mod tests {
     /// reaching a flight that moves, each 10-300ms after the one before. No window the flight draws
     /// jumps as a push reaches it, within the half point placing on whole points allows; against each
     /// of the four walls, some push draws a window more than a point further toward it than the
-    /// flight without it draws it; and once every track has ended, every window is home where its
-    /// plan sends it.
+    /// flight without it draws it; and every window is home where its plan sends it once every track
+    /// has ended, which is no later than one bounce after the last push or the end of the motion.
     fn pushes_out_and_home_without_a_jump(
         make: &dyn Fn() -> Box<dyn Choreography>,
     ) -> Result<(), String> {
@@ -1157,6 +1187,7 @@ mod tests {
         for run in 0..RUNS {
             let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
             flight.start(&[]);
+            let motion_end = BEGIN + flight.score.remaining(BEGIN);
             let mut now = BEGIN;
             for step in 0..1 + rng.below(3) {
                 let tag = format!("seed 173 run {run} step {step}");
@@ -1193,6 +1224,12 @@ mod tests {
                 toward[side] += usize::from(pushed);
             }
             lands_on_its_plan(&flight, now, &format!("seed 173 run {run}"))?;
+            let (lands, due) = (now + flight.score.remaining(now), motion_end.max(now + PLAIN));
+            if lands > due + 1e-6 {
+                return Err(format!(
+                    "seed 173 run {run}: home at {lands:.3}s, due by {due:.3}s, one bounce after the last push or the motion's end"
+                ));
+            }
         }
         if let Some(side) = toward.iter().position(|pushed| *pushed == 0) {
             let wall = walls[side];
@@ -1240,9 +1277,10 @@ mod tests {
     }
 
     /// The push contract rejects a look that plays no push, one that pushes only against the left
-    /// and right walls, and one that starts every bounce from rest wherever the one before is drawn.
+    /// and right walls, one that starts every bounce from rest wherever the one before is drawn, and
+    /// one whose bounce plays ten times as long as it is given.
     #[test]
-    fn the_push_contract_rejects_a_look_that_skips_a_wall_or_pushes_from_rest() {
+    fn the_push_contract_rejects_a_look_that_skips_a_wall_pushes_from_rest_or_lands_late() {
         let still = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PlaysNoPush))
             .expect_err("a push that plays nothing");
         assert!(still.contains("toward its wall"), "{still}");
@@ -1255,6 +1293,9 @@ mod tests {
         let from_rest = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PushesFromRest))
             .expect_err("a push from rest over a bounce");
         assert!(from_rest.contains("jumped"), "{from_rest}");
+        let slow = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PushesSlowly))
+            .expect_err("a push that bounces ten times as long");
+        assert!(slow.contains("after the last push"), "{slow}");
     }
 
     /// The digest of what Slide draws over seed 163's flights, posed, composed with the accents
@@ -1262,7 +1303,7 @@ mod tests {
     /// half of them bringing a step: the score after the motion starts and after each pass, and each
     /// pass's edits. A change to how Slide moves changes it; one that only moves code between Slide
     /// and what every look shares keeps it.
-    const SLIDE_SCORES: u64 = 0x6373_4c6a_e8c8_829e;
+    const SLIDE_SCORES: u64 = 0xf63d_137b_00ac_6966;
 
     /// Slide draws over seed 163's flights what `SLIDE_SCORES` holds: every node's place, ride and
     /// tracks, and every edit a pass answers; some flights start stepping or pushed, and some passes
@@ -1381,11 +1422,15 @@ mod tests {
         PushesSideways,
         /// Its push starts every carrier's bounce from rest, wherever the one before is drawn.
         PushesFromRest,
+        /// Its push plays a bounce ten times as long as it is given.
+        PushesSlowly,
         /// Its bend moves nothing: every node it would carry is cut to where it ends.
         CutsTheBend,
         /// Its bend starts every container it carries on `MOTION_CURVE` from where it is, at the
         /// curve's speed, whatever speed it had.
         RestartsTheBend,
+        /// Its motion holds every rigid member's tile at its frame on a track of its own.
+        TracksRigidTiles,
     }
 
     /// Slide but for one flaw, so a contract's check is seen to reject a look that breaks it.
@@ -1424,15 +1469,33 @@ mod tests {
                 Flaw::PlaysNoPush
                 | Flaw::PushesSideways
                 | Flaw::PushesFromRest
+                | Flaw::PushesSlowly
                 | Flaw::CutsTheBend
-                | Flaw::RestartsTheBend => self.slide.fold(plan, pass),
+                | Flaw::RestartsTheBend
+                | Flaw::TracksRigidTiles => self.slide.fold(plan, pass),
             }
         }
 
         fn pose(&self, stage: &Stage) -> Score { self.slide.pose(stage) }
 
         fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
-            self.slide.compose(playing, stage, begin)
+            let mut edits = self.slide.compose(playing, stage, begin);
+            if let Flaw::TracksRigidTiles = self.flaw {
+                let members = stage.plan.groups.iter().flat_map(|group| &group.members);
+                for member in members.filter(|m| stage.drawn.contains(&m.window)) {
+                    let frame = Value::Rect(member.rel.rounded());
+                    edits.push(Edit::Add(Track::between(
+                        Node::Tile(member.window),
+                        Channel::Base,
+                        frame,
+                        frame,
+                        begin,
+                        stage.seconds,
+                        Curve::Bezier(MOTION_CURVE),
+                    )));
+                }
+            }
+            edits
         }
 
         fn retarget(
@@ -1488,7 +1551,9 @@ mod tests {
                 | Flaw::StartsAtTheEnd
                 | Flaw::PushesSideways
                 | Flaw::CutsTheBend
-                | Flaw::RestartsTheBend => self.slide.push(playing, cue, wall, seconds, now),
+                | Flaw::RestartsTheBend
+                | Flaw::TracksRigidTiles => self.slide.push(playing, cue, wall, seconds, now),
+                Flaw::PushesSlowly => self.slide.push(playing, cue, wall, seconds * 10.0, now),
                 Flaw::PushesFromRest => playing
                     .containers()
                     .filter(|key| carries_out_and_back(*key, wall))

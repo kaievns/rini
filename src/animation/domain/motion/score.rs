@@ -54,7 +54,9 @@ impl Zoom {
     };
 
     /// `scale` about `centre` through `camera`: a point `p` drawn at
-    /// `centre + scale * (p - camera - centre)`.
+    /// `centre + scale * (p - camera - centre)`. A track lerps the scale and the shift, so between
+    /// keys changing both the camera keeps its line but not its pace: a look wanting an even pan
+    /// samples it (`Track::samples`), one key a frame.
     pub fn about(scale: f64, centre: OverlayPoint, camera: OverlayVector) -> Zoom {
         Zoom {
             scale,
@@ -1186,6 +1188,31 @@ mod tests {
         );
         assert_eq!(Zoom::about(1.0, CENTRE, OverlayVector::zero()), Zoom::REST);
         assert_eq!(Zoom::REST.draw(p), p);
+    }
+
+    /// Halfway between a zoom at rest and one at half scale looking 800pt along, the strip is drawn
+    /// at three quarters through a camera on the same line but 800/3pt along, not 400pt.
+    #[test]
+    fn a_track_between_two_zooms_lerps_the_shift_not_the_camera() {
+        let mut score = Score::default();
+        score.place(Node::Strip, zoom(0.5, 800.0));
+        score.add(Track::between(
+            Node::Strip,
+            Channel::Base,
+            Value::Zoom(Zoom::REST),
+            zoom(0.5, 800.0),
+            0.0,
+            1.0,
+            Curve::Linear,
+        ));
+        let Some(Value::Zoom(half)) = score.sample(Node::Strip, 0.5) else {
+            panic!("the strip holds a zoom");
+        };
+        assert!((half.scale - 0.75).abs() < 1e-12);
+        let looked_at = (CENTRE - half.shift).to_vector() / half.scale;
+        let camera = looked_at - CENTRE.to_vector();
+        assert!(camera.y.abs() < 1e-9, "{camera:?}");
+        assert!((camera.x - 800.0 / 3.0).abs() < 1e-9, "{camera:?}");
     }
 
     /// The strip's zoom samples as any track does: on its curve between two keys, exactly at each
