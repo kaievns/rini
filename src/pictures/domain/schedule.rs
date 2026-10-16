@@ -5,8 +5,9 @@
 //! windows on screen captured as a transition asks and watches, `crate::pictures::domain::watch`, and
 //! windows pictured afresh at rest, `crate::pictures::domain::refresh`; this orders it ahead of the
 //! ScreenCaptureKit half, and a handover check ahead of both. `crate::pictures::platform::service`
-//! makes the calls, on its own thread. The rules and why each holds: "The schedule" and "The watches"
-//! in `src/pictures/docs/README.md`.
+//! makes the calls, on its own thread. The rules: "The schedule" and "The watches" in
+//! `src/pictures/docs/README.md`; each in full and why it holds, the same sections in
+//! `src/pictures/docs/capture-research.md`.
 
 use std::time::{Duration, Instant};
 

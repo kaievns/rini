@@ -62,7 +62,7 @@ failing, as the night's scratch comparison did over the same runs.
 - **Drains applied p90, ring on:** 2.47ms in `F1-on` against 1.89-2.34ms with it off, and 3.00ms
   in `final-on`. The excess sits in the in-flight drains, where the place drain ahead of each lift
   falls: `phase.flight.applied` fails stage 1 at p50, p90 and max, and `phase.lift.applied` passes.
-  What a place costs is in `src/decorations/docs/README.md` ("What a place costs").
+  What a place costs is in `src/decorations/docs/rest-windows.md` ("What a place costs").
 - **Across sessions, ring off:** N1 and F1 fail stage 1 on pan overlay up p50 by 0.1-0.5ms against
   4cddd692. Those runs came 4.5-6h after `B-ringoff`, under a different load. Stage 2 would decide
   it; it was not run.

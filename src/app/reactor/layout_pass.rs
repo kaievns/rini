@@ -562,7 +562,7 @@ fn bound_frame_to_screen(frame: CGRect, screen: CGRect) -> CGRect {
 // A scrolled-away column keeps the stacking it had, so a parked sliver can sit on top of a window
 // on screen. AX has AXRaise and no lower, and the sliver is another app's window: SkyLight orders
 // and levels only the caller's own windows, and AppKit orders rini's own against another
-// process's (src/decorations/docs/README.md, "Ordering a rest window"), which cannot lower that
+// process's (src/decorations/docs/rest-windows.md, "Ordering a rest window"), which cannot lower that
 // app's. Keeping the sliver small is the mitigation.
 
 fn bound_scrolling_tiled_frames_to_screen(

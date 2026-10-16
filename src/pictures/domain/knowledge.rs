@@ -162,8 +162,8 @@ const MATERIAL_BORDER: usize = 6;
 const MATERIAL_ABOVE: f64 = 2.0;
 /// A sample's RGB difference, summed over the three channels, above which the baked picture changed
 /// it, and the share of samples, in parts per thousand, that has to change for part of the window to
-/// be a material, set clear of Messages' sidebar, which captures whole: "One SkyLight call, two ways of
-/// making it" in `src/pictures/docs/README.md`.
+/// be a material, set clear of Messages' sidebar, which captures whole: "A window's translucency and
+/// material, learned" in `src/pictures/docs/capture-research.md`.
 const MATERIAL_SAMPLE_ABOVE: u32 = 12;
 const MATERIAL_PER_MILLE: usize = 10;
 

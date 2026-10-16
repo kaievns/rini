@@ -22,7 +22,7 @@ pub const PARK_PATIENCE: Duration = Duration::from_millis(250);
 
 /// How long a flight that has not shown holds the rest windows before they let go and draw what
 /// waited: past the engine's wait for frame zero and the slowest show measured ("The handover" in
-/// `src/decorations/docs/README.md`).
+/// `src/decorations/docs/rest-windows.md`).
 pub const FLIGHT_PATIENCE: Duration = Duration::from_millis(250);
 
 /// Why a window shows no band wherever it is, as rini's own stores have it. A window on a Space its

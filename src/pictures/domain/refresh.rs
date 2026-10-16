@@ -5,8 +5,9 @@
 //! each settled on, and those owed a ScreenCaptureKit capture instead, come out. Every window due is
 //! looked at in one round, and each is pictured once, with the capture its face settled on. A press
 //! cancels every refresh, and the release asks again for each its flight did not picture;
-//! `crate::pictures::domain::schedule` makes the looks before any ScreenCaptureKit call. The rules and
-//! why each holds: "The schedule" in `src/pictures/docs/README.md`.
+//! `crate::pictures::domain::schedule` makes the looks before any ScreenCaptureKit call. The rules:
+//! "The schedule" in `src/pictures/docs/README.md`; each in full and why it holds, "The schedule" in
+//! `src/pictures/docs/capture-research.md`.
 
 use std::time::{Duration, Instant};
 

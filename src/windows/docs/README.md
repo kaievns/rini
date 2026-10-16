@@ -11,7 +11,8 @@ or layout: everything else depends on it and it depends on nothing.
 | **Which apps have a thread** | `domain/app_threads.rs` — when a running application gets its Accessibility thread: launched, observed ready, seen ready when the window server reports a new window of it, or seen ready when it next becomes frontmost; and never a second one |
 | **The catalogue** | `domain/catalogue.rs` — every window rini has seen, keyed by `WindowId { pid, idx }`, with its window-server id and what that id is seen doing (visible, observed, on which space), the last rule decision, and the native-fullscreen records that let a window come back |
 | **What a window IS** | `domain/info.rs` (`WindowInfo`, `AppInfo`, `WindowServerInfo`, and `reported_radius`, the one corner radius a window rounds at from the four the window server reports) and `domain/state.rs` (`WindowState`, the reactor's record of a window and whether it is managed) |
-| **Whether rini manages a window** | `domain/manageable.rs` — `manageable(Facts)`, over what Accessibility says (minimized, standard, top-level) and what the window server says (layer, sticky, level), an unanswered window-server fact turning no window away, and the window server asked nothing more once `turned_away_before_accessibility` says the facts in hand turn a window away (`no_read_is_made_once_the_facts_in_hand_turn_the_window_away`); and `looks_gone`, whether a window the app no longer lists is gone, over its frame and layer and what the window server answers of its `Liveness` (suitable, ordered in), only on an explicit negative observation |
+| **Whether rini manages a window** | `domain/manageable.rs` — `manageable(Facts)`, over what Accessibility says (minimized, standard, top-level) and what the window server says (layer, sticky, level), an unanswered window-server fact turning no window away, and the window server asked nothing more once `turned_away_before_accessibility` says the facts in hand turn a window away (`no_read_is_made_once_the_facts_in_hand_turn_the_window_away`) |
+| **Whether a window is gone** | `domain/manageable.rs` — `looks_gone`: whether a window the app no longer lists is gone, over its frame and layer and what the window server answers of its `Liveness` (suitable, ordered in), only on an explicit negative observation |
 | **A window's place in the stack** | `domain/stack.rs` — `StackPlace`, a window's frame, level and sub-level; `covered_by_peer_above`, whether raising a window would put it over a peer the user has on top inside it; and `stack_place_writes`, the level and sub-level writes that put a window of rini's own in another's place |
 | **A window's home space** | `domain/home_space.rs` — of the spaces the window server places a window on, the first user space, else the first: a window mid-fullscreen-transition is on its Desktop and a fullscreen space at once |
 | **The AX boundary's rules** | `domain/ax_events.rs` — whether a failed Accessibility request means the window is gone, and the codec for the one `usize` an observer callback carries |
@@ -151,3 +152,12 @@ was raised first instead of last and ended up behind the strip.
 
 Cross-feature detail is at the top of the tree: [`docs/architecture.md`](../../../docs/architecture.md),
 [`docs/testing.md`](../../../docs/testing.md).
+
+## Known debt
+
+**One request has no test of its own.** `WindowMaybeDestroyed`, which the reactor sends when a
+tracked window leaves a fullscreen space, or leaves its user space without the window server
+reporting it ordered out (`src/app/reactor/events/space.rs`), makes the app actor refresh its
+visible windows when the window is its own pid's and one it knows
+(`platform/app_actor/requests.rs`); no test drives it on `FakeAx` (`docs/cleanup-round-1.md`,
+section 2).

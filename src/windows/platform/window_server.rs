@@ -751,8 +751,8 @@ impl WindowServer for LiveWindowServer {
         (read == 0 && frame.size.width > 0.0 && frame.size.height > 0.0).then_some(frame)
     }
 
-    /// In one query, parked and off-screen windows included. Measured in "The corner, measured" in
-    /// `src/decorations/docs/README.md`.
+    /// In one query, parked and off-screen windows included. Measured in
+    /// `src/decorations/docs/corner.md`.
     fn corner_radii(
         &self,
         ids: &[WindowServerId],
@@ -875,7 +875,7 @@ impl WindowServer for LiveWindowServer {
 
     /// The window server levels only a connection's own windows, and AppKit orders one directly above
     /// another process's window only once the two share both level and sub-level ("Ordering a rest
-    /// window" in `src/decorations/docs/README.md`).
+    /// window" in `src/decorations/docs/rest-windows.md`).
     fn take_stack_place(
         &self,
         own: WindowServerId,

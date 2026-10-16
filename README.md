@@ -197,8 +197,8 @@ target/release/rini service restart
 (`toggle-space-activated`) turns it on. Write `activate-spaces-by-default` to manage every Space
 from the start.
 
-Other flags: `--no-restore` (start from a clean layout), `--no-animate`, `--config PATH`. The agent
-logs to `/tmp/rini_<user>.out.log` and `/tmp/rini_<user>.err.log`.
+Other flags: `--no-restore` (start from a clean layout), `--no-animate`, `--config PATH`. Where
+the service logs is under "Debugging".
 
 **`bin/check.sh` is what a change passes,** locally and in CI, which runs nothing else
 (`.github/workflows/rust.yml`): the nightly format check, a build of every target with warnings as
@@ -217,6 +217,41 @@ rustup toolchain install nightly
 bin/check.sh
 RUSTFMT="$(rustup which --toolchain nightly rustfmt)" cargo fmt --all
 ```
+
+## Debugging
+
+**Logs go to `/tmp`.** The service writes its `tracing` output to stderr, which the launch agent
+sends to `/tmp/rini_<user>.err.log`; stdout goes to `/tmp/rini_<user>.out.log`. A panic prints there
+before the hook aborts the process, and macOS keeps the abort's crash report in
+`~/Library/Logs/DiagnosticReports`.
+
+**The log level is the plist's `RUST_LOG`.** It sits under `EnvironmentVariables` in
+`~/Library/LaunchAgents/git.kaievns.rini.plist`, installed as `error,warn,info`
+(`src/app/launch_agent.rs`). Targets are module paths under `rini`, so
+`info,rini::windows=debug` adds the window actors' debug lines, and `rini::animation::trace=trace`
+the overlay's per-frame trace (`src/animation/docs/animation-smoothness.md`). launchd runs the job it
+loaded, so an edited plist takes effect only after a bootout and a bootstrap:
+
+```sh
+launchctl bootout gui/$UID ~/Library/LaunchAgents/git.kaievns.rini.plist
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/git.kaievns.rini.plist
+```
+
+`service start` and `service restart` rewrite the plist from scratch, so either one puts `RUST_LOG`
+back to `error,warn,info`.
+
+**The transitions journal records every flight.** `animations { journal; }` in the config turns it
+on, read live; each flight is written once it settles, to `~/Library/Logs/rini/transitions.jsonl`.
+`python3 tools/focuslab/journal.py summary` reads it: where each press's time to the overlay goes,
+show to landed, and each drain the renderer committed. Its other readers, `probe`, `handover`,
+`pictures` and `turns`, are in `tools/focuslab/README.md` ("Reading rini's journal"); what each mark
+means is `src/transitions/docs/journal.md`.
+
+**`rini-cli query diagnostics` dumps the model.** It prints every space's strip and display state,
+a census per display, workspaces no attached display owns and homes whose window is gone, as JSON
+(`RINI_CLI_PRETTY=1` indents it).
+Use it over `query windows` for anything on more than one display: `windows` answers one space's
+active workspace, so a window on another display looks absent.
 
 ## Configuration
 

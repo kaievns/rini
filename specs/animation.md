@@ -240,8 +240,8 @@ destination for a window already moving.
   colour space and pixel format, and filled in the colour space it was read in, so the fill beside
   the picture takes no tint. Converted whole, a synthetic 1148x1079pt picture in Display P3 took
   11.5ms to read, which the overlay's main thread pays as it fills a crop-drawn tile (measured
-  2026-10-10, "A picture's ground is read only when a crop-drawn tile asks for it" in
-  `src/pictures/docs/README.md`).
+  2026-10-10, "A picture's ground, read in its own format" in
+  `src/pictures/docs/capture-research.md`).
 - A resize MUST start as a strip movement does: from pictures taken at the press, the overlay up
   with them, and the windows written their new frames as it covers them. A resize that grows a
   window on either axis, one shrinking it on the other included, MUST then hold the motion, the
@@ -572,9 +572,9 @@ destination for a window already moving.
   reports it, read when the flight composes the tile and, for a window that opens, when its first
   picture lands, so a window never pictured and a parked one round right on their first flight;
   16pt where it reports none; never past half the tile's shorter side; on the window's own
-  continuous curve at every size the tile passes through. Each is drawn separately,
-  and any two that differ show as a step at the corner. Why the server's radius and why 16pt: "The
-  corner, measured" in `src/decorations/docs/README.md`.
+  continuous curve at every size the tile passes through. Each is drawn separately, and any two
+  that differ show as a step at the corner. Why the server's radius and why 16pt:
+  `src/decorations/docs/corner.md`.
 - The hairline's line and stroke MUST follow the tile through a resize, on the tile's own timing,
   every piece at the one corner of each size it passes through, and onto its window's real frame
   when the tile snaps there. The outline MUST stay whole on a tile whose picture is clipped to

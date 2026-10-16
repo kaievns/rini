@@ -7,7 +7,8 @@
 //! Pure. Frames and prints come in with `now`; the windows to look at, and what to deliver to whom, go
 //! out. `crate::pictures::domain::schedule` orders this work against ScreenCaptureKit's, and
 //! `crate::pictures::platform::service` reads the frames, makes the calls and prints the pictures. The
-//! rules and why each holds: "The watches" in `src/pictures/docs/README.md`.
+//! rules: "The watches" in `src/pictures/docs/README.md`; each in full and why it holds, "The watches"
+//! in `src/pictures/docs/capture-research.md`.
 //!
 //! This file is the asks, the types every watch shares and `Watches`, which hands each watch's work
 //! to its kind: `watch/landing.rs`, `watch/change.rs` and `watch/live.rs`.
