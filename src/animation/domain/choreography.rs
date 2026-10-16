@@ -572,11 +572,12 @@ mod tests {
             self.fold(&edits);
         }
 
-        /// `incoming` merged at `now`, and what the look answered.
+        /// `incoming` merged at `now`, with `accent` riding it, and what the look answered.
         fn merge(
             &mut self,
             incoming: &ReflowPlan,
             pan: Option<OverlayVector>,
+            accent: Option<Accent>,
             now: f64,
         ) -> Retarget {
             let pass = Pass {
@@ -587,7 +588,7 @@ mod tests {
                 drawn: &self.drawn,
                 seconds: PLAIN,
                 cue: Cue::Plain,
-                accent: None,
+                accent,
             };
             let retarget = self.choreography.retarget(&self.score, &self.plan, &pass, now);
             self.fold(&retarget.edits);
@@ -702,7 +703,7 @@ mod tests {
                     .filter_map(|w| Some((*w, flight.score.drawn(*w, now)?)))
                     .collect();
                 let sent = flight.plan.clone();
-                let delta = flight.merge(&incoming, pan, now).delta;
+                let delta = flight.merge(&incoming, pan, None, now).delta;
                 if let Some(Member::Rigid { key, .. }) = flight.plan.member(newcomer)
                     && let Some(start) = sent.positions.get(&key)
                 {
@@ -1144,32 +1145,75 @@ mod tests {
         assert!(from_rest.contains("jumped"), "{from_rest}");
     }
 
-    /// The digest of what Slide draws over seed 163's flights, posed, composed and bent by one to
-    /// four passes as `random_pass` builds them: the score after the motion starts and after each
-    /// pass, and each pass's edits. A change to how Slide moves changes it; one that only moves code
-    /// between Slide and what every look shares keeps it.
-    const SLIDE_SCORES: u64 = 0xb3e5_dde7_a6c7_691b;
+    /// The digest of what Slide draws over seed 163's flights, posed, composed with the accents
+    /// seed 181 has wait for the motion and bent by one to four passes as `random_pass` builds them,
+    /// half of them bringing a step: the score after the motion starts and after each pass, and each
+    /// pass's edits. A change to how Slide moves changes it; one that only moves code between Slide
+    /// and what every look shares keeps it.
+    const SLIDE_SCORES: u64 = 0xf63d_137b_00ac_6966;
 
     /// Slide draws over seed 163's flights what `SLIDE_SCORES` holds: every node's place, ride and
-    /// tracks, and every edit a pass answers.
+    /// tracks, and every edit a pass answers; some flights start stepping or pushed, and some passes
+    /// take a step while none plays.
     #[test]
     fn slide_draws_every_seeded_flight_as_it_did() {
         let mut rng = Gen(163);
+        let mut accents = Gen(181);
         let mut digest = Digest::default();
+        let (mut started, mut stepped) = (0, 0);
         for _ in 0..RUNS {
             let mut flight =
                 Flight::posed(Look::Slide.choreography(), &random_requests(&mut rng), |_| true);
-            flight.start(&[]);
+            let waiting = waiting_accents(&mut accents);
+            flight.start(&waiting);
+            started += usize::from(flight.score.plays(Channel::Nudge, BEGIN));
             digest.score(&flight.score);
             let mut now = BEGIN;
             for step in 0..1 + rng.below(4) {
                 now += rng.pt(10.0, 400.0) / 1000.0;
                 let (incoming, pan) = random_pass(&mut rng, &mut flight, wid(500 + step as u32));
-                digest.edits(&flight.merge(&incoming, pan, now).edits);
+                let accent = accents.coin().then(|| a_step(&mut accents));
+                let edits = flight.merge(&incoming, pan, accent, now).edits;
+                stepped += usize::from(edits.iter().any(
+                    |edit| matches!(edit, Edit::Add(track) if track.channel() == Channel::Nudge),
+                ));
+                digest.edits(&edits);
                 digest.score(&flight.score);
             }
         }
+        assert!(
+            started > 0 && stepped > 0,
+            "{started} started, {stepped} stepped"
+        );
         assert_eq!(digest.0, SLIDE_SCORES, "{:#x}", digest.0);
+    }
+
+    /// A move's step left or right, of a third of the viewport, at the plain length.
+    fn a_step(rng: &mut Gen) -> Accent {
+        let offset = if rng.coin() { 576.0 } else { -576.0 };
+        Accent::Step {
+            offset: OverlayVector::new(offset, 0.0),
+            seconds: PLAIN,
+        }
+    }
+
+    /// What waits for the motion: nothing, a step, a push against a side wall, or both.
+    fn waiting_accents(rng: &mut Gen) -> Vec<Accent> {
+        let wall = if rng.coin() {
+            EDGE_BOUNCE_OVERSHOOT
+        } else {
+            -EDGE_BOUNCE_OVERSHOOT
+        };
+        let push = Accent::Push {
+            wall: OverlayVector::new(wall, 0.0),
+            seconds: PLAIN,
+        };
+        match rng.below(4) {
+            0 => Vec::new(),
+            1 => vec![a_step(rng)],
+            2 => vec![push],
+            _ => vec![a_step(rng), push],
+        }
     }
 
     /// FNV-1a over every score and edit list folded in, each read in one order: a score's maps and
