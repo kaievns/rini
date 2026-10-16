@@ -240,8 +240,8 @@ destination for a window already moving.
   colour space and pixel format, and filled in the colour space it was read in, so the fill beside
   the picture takes no tint. Converted whole, a synthetic 1148x1079pt picture in Display P3 took
   11.5ms to read, which the overlay's main thread pays as it fills a crop-drawn tile (measured
-  2026-10-10, "A picture's ground is read only when a crop-drawn tile asks for it" in
-  `src/pictures/docs/README.md`).
+  2026-10-10, "A picture's ground, read in its own format" in
+  `src/pictures/docs/capture-research.md`).
 - A resize MUST start as a strip movement does: from pictures taken at the press, the overlay up
   with them, and the windows written their new frames as it covers them. A resize that grows a
   window on either axis, one shrinking it on the other included, MUST then hold the motion, the
