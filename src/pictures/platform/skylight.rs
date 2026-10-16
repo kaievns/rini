@@ -37,6 +37,8 @@ fn composite(windows: &[WindowServerId]) -> Option<CFRetained<CGImage>> {
         return None;
     }
     let ids: Vec<u32> = windows.iter().map(|w| w.as_u32()).collect();
+    // SAFETY: `ids` holds the `ids.len()` window numbers the call is told of and outlives it, on the
+    // read connection, which lives for the process.
     let array: *mut CFArray<CGImage> = unsafe {
         SLSHWCaptureWindowList(
             *READ_CONNECTION,
@@ -160,7 +162,7 @@ pub struct BatchCall<'a> {
 pub struct Batch {
     pub pictures: Vec<(WindowId, Picture)>,
     /// The baked call came back another shape than its windows, the desktop listed after them
-    /// included: a desktop window listed is no longer there.
+    /// included: a desktop window listed has gone.
     pub desktop_stale: bool,
     /// The windows whose call `halt` stopped before it was made.
     pub halted: Vec<WindowId>,
@@ -484,6 +486,8 @@ fn rgba_context(
 fn active_display_bounds() -> Vec<CGRect> {
     let mut ids = [0u32; 16];
     let mut count = 0u32;
+    // SAFETY: `ids` has room for the `ids.len()` displays the call may write, and `count` is a live
+    // out-parameter.
     let err = unsafe {
         objc2_core_graphics::CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count)
     };
@@ -573,9 +577,9 @@ mod tests {
         );
     }
 
-    /// The reported regression: during a strip pan the real windows move while the flight flies, and
-    /// a framed capture of one half past the display edge came back full-size, half transparent, and
-    /// was cut onto its tile as a half-missing window. It must not count as covering the window.
+    /// During a strip pan the real windows move while the flight flies, and a framed capture of one
+    /// half past the display edge comes back full-size and half transparent: cut onto its tile, it
+    /// would show a half-missing window. It must not count as covering the window.
     #[test]
     fn a_framed_capture_of_a_window_not_wholly_on_a_display_covers_nothing() {
         let laptop = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0));

@@ -405,7 +405,7 @@ impl<P: TilePicture> RunningAnimation<P> {
         drawn.is_some_and(|drawn| !grows(press, drawn.respace()) && !grows(press, to.respace()))
     }
 
-    /// Each picture a tile holds for a corner it no longer waits for at `at`, its leg in one movement
+    /// Each picture a tile holds for a corner it has stopped waiting for at `at`, its leg in one movement
     /// now or past its corner, made the tile's own: called as a leg is made, so a new one starts
     /// from what its tile shows.
     fn turn_corners(&mut self, at: f64) {
@@ -566,7 +566,7 @@ impl<P: TilePicture> RunningAnimation<P> {
     }
 
     /// The motion starting at `at` on the media clock, for `seconds`: the look composes it from frame
-    /// zero with the accents that waited, and each picture held for a corner no longer ahead is its
+    /// zero with the accents that waited, and each picture held for a corner left behind is its
     /// tile's own. The edits that play it.
     pub(in crate::transitions) fn start_moving(&mut self, seconds: f64, at: f64) -> Vec<Edit> {
         self.flown = true;
@@ -1739,7 +1739,7 @@ mod tests {
         }
 
         /// A pass moving focus on: the window focused as the flight began is still drawn as its own
-        /// turn left it, focused until then, the target before it no longer is, and nothing flies a
+        /// turn left it, focused until then, the target before it stops being so, and nothing flies a
         /// focused face until the new target is given its own. Focus moving back to it, or on again,
         /// leaves it as its turn left it.
         #[test]

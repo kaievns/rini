@@ -45,7 +45,7 @@ impl LayoutEngine {
     }
 
     /// `assign_window_with_app_info` with the window's own title, role, subrole and modality read
-    /// from the store. `Err(AssignmentFailed)` when the store no longer has the window.
+    /// from the store. `Err(AssignmentFailed)` when the store lacks the window.
     pub fn assign_window_by_rules(
         &mut self,
         window_store: &mut WindowStore,

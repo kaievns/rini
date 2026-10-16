@@ -240,7 +240,7 @@ impl Change {
         }
     }
 
-    /// `window` is gone: the window losing focus is no longer watched, and the watch is over when it
+    /// `window` is gone: the window losing focus stops being watched, and the watch is over when it
     /// was the target. Whether it goes on.
     pub(super) fn forget(&mut self, window: WindowId) -> bool {
         self.losing = self.losing.take().filter(|end| end.target.window != window);
@@ -303,7 +303,7 @@ impl Change {
         let mut found = true;
         match looked.at(window, Accept::Near { end: end.end, slack: END_SLACK }) {
             Some((frame, Capture::Taken(taken))) => end.judge(tag, frame, &taken.band, prints, out),
-            // Every later capture at this size is refused too.
+            // Every later capture at this size is refused as well.
             Some((_, Capture::Refused)) => end.state = end.state.next(EndEdge::Ended),
             Some((_, Capture::Missed)) | None => match looked.cut(window, end.end, END_SLACK) {
                 Some(frame) => {
@@ -486,7 +486,7 @@ mod tests {
     }
 
     /// A change capture the cache refuses finishes the watch, delivering nothing: every later capture
-    /// of the window at that size is refused too. The windows behind the strip that wait on it refresh
+    /// of the window at that size is refused as well. The windows behind the strip that wait on it refresh
     /// at once, and nothing judges the window's face again, a retarget of it included.
     #[test]
     fn a_change_capture_the_cache_refuses_finishes_the_watch() {

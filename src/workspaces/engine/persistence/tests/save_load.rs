@@ -349,7 +349,7 @@ fn app_close_removes_saved_fingerprints() {
 }
 
 /// Each native space id macOS stops using left four empty strips in the file for good. A save forgets
-/// a space only when macOS no longer lists it, no display is remembered on it and no window is on it.
+/// a space only when macOS stops listing it, no display is remembered on it and no window is on it.
 #[test]
 fn a_save_forgets_only_the_spaces_nothing_lists_remembers_or_holds() {
     let mut engine = test_engine();

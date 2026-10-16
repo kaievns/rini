@@ -408,7 +408,7 @@ impl Watches {
     /// whether it is done, the window losing focus given up on reported lost again under the new tag,
     /// and the background keeps its pace. A window watched to
     /// land somewhere new starts its print afresh: what the client was delivered of it was taken for
-    /// the end before, which the client no longer draws.
+    /// the end before, which the client stops drawing.
     pub fn retarget(&mut self, id: WatchId, watch: Watch, now: Instant) {
         let Some(at) = self.watches.iter().position(|(held, _)| *held == id) else {
             return self.watch(id, watch, now);

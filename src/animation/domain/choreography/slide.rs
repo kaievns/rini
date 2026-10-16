@@ -278,7 +278,7 @@ impl Choreography for Slide {
     /// their new one where they start; every retargeted container bent from where the score has its
     /// movement on a spring as fast as its leg is going; a container opened for a member leaving
     /// another carrying on that one's leg, and one opened for a newcomer on `MOTION_CURVE`; tiles
-    /// joining; loose tiles bent from where the score draws them; what the flight no longer draws
+    /// joining; loose tiles bent from where the score draws them; what the flight stops drawing
     /// dropped; and a step the pass brings, taken only while none plays, over its press's length
     /// stretched by `NUDGE_STRETCH`, every leg of the merge at least as long.
     fn retarget(&mut self, playing: &Score, plan: &FlightPlan, pass: &Pass, now: f64) -> Retarget {
@@ -428,7 +428,7 @@ impl Slide {
         }
     }
 
-    /// What the flight no longer draws dropped, with the legs of the containers it emptied.
+    /// What the flight stops drawing dropped, with the legs of the containers it emptied.
     fn drop_stale(&mut self, making: &mut Making, drawn: &[WindowId]) {
         let tiles: Vec<(WindowId, GroupKey)> = making.score.tiles().collect();
         let containers: Vec<GroupKey> = making.score.containers().collect();
@@ -1220,7 +1220,7 @@ mod tests {
         ]);
     }
 
-    /// A window the flight no longer draws leaves the score with its tracks, and so does a container
+    /// A window the flight stops drawing leaves the score with its tracks, and so does a container
     /// it leaves empty, with its leg.
     #[test]
     fn a_dropped_window_and_the_container_it_emptied_leave_the_score() {

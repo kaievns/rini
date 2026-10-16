@@ -205,7 +205,7 @@ pub struct BeforeRules {
 /// What the layout has to do once a window's rules have been re-evaluated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AfterRules {
-    /// Its place in the layout changed (newly assigned, float flipped, or no longer ignored).
+    /// Its place in the layout changed (newly assigned, float flipped, or ignored no more).
     RefreshLayout,
     /// The rules now leave it unmanaged while the layout still holds it.
     RemoveFromLayout,

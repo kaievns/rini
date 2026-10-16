@@ -4,11 +4,10 @@
 //! window belongs to ([`DisplayAffinity`]), and where an application's windows belong under a key
 //! that survives the application ([`LaunchMemory`]).
 //!
-//! They used to be two fields of `LayoutEngine`, saved in the same file section as the workspace
-//! layouts and validated with them. That made one lifetime out of two: an unreadable layout, or a
-//! layout written by a newer schema, discarded the display memory as well, and then every window was
-//! re-homed from scratch on the next display change and every relaunched application landed in a
-//! default slot. The memory is about the hardware; the layout is about the windows, and a layout can
+//! They are kept apart from the workspace layouts, saved and validated on their own. Sharing the
+//! layouts' lifetime, an unreadable layout, or one written by a newer schema, would discard the
+//! display memory as well: every window re-homed from scratch on the next display change and every
+//! relaunched application landed in a default slot. The memory is about the hardware; the layout is about the windows, and a layout can
 //! be thrown away without forgetting which monitor a window lives on.
 //!
 //! The fields are public on purpose. This is a place to keep two records together, not a facade over

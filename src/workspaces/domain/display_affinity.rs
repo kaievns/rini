@@ -226,7 +226,7 @@ impl DisplayAffinity {
         if old_space == new_space {
             return;
         }
-        // The display arriving on new_space wins over whatever previously claimed it, for
+        // The display arriving on new_space wins over whatever claimed it before, for
         // the same one-display-per-space reason as set_display_space.
         let arriving: Vec<DisplayUuid> = self
             .display_space
@@ -858,9 +858,9 @@ mod observation_tests {
 
     fn uuid(uuid: &str) -> DisplayUuid { DisplayUuid::new(uuid) }
 
-    /// The bug behind "windows teleport between displays". A window homed to the built-in is SEEN on
-    /// the external — because rini parked it there, or evacuated it, or laid it out there — and the
-    /// settled-topology pass used to make that its new home. It then never came back on a replug.
+    /// "Windows teleport between displays". A window homed to the built-in is SEEN on the external —
+    /// because rini parked it there, or evacuated it, or laid it out there — and the settled-topology
+    /// pass must not make that its new home, or it never comes back on a replug.
     ///
     /// Every real way a window changes display writes the home at the moment the user asks: a drag,
     /// an explicit move, a first sighting, a restore. An observation is not one of those; it is the

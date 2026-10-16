@@ -57,7 +57,7 @@ pub struct AppWindows {
     pub app_info: Option<AppInfo>,
 }
 
-/// The entry for `wid`. A window the store no longer has is resizable, sized zero, untitled.
+/// The entry for `wid`. A window the store lacks is resizable, sized zero, untitled.
 pub fn on_screen_entry(wid: WindowId, window: Option<&WindowState>) -> OnScreenEntry {
     OnScreenEntry {
         wid,
@@ -1453,8 +1453,8 @@ mod tests {
         fx.float(space, float_b);
         fx.centers.insert(space, CGPoint::new(0.0, 0.0));
 
-        // Walk right repeatedly from a floating window. Without the fix this only
-        // ever alternates between float_a and float_b.
+        // Walk right repeatedly from a floating window: it reaches a tiled one rather than only
+        // ever alternating between float_a and float_b.
         fx.engine.focused_window = Some(float_a);
         let mut reached_tiled = false;
         for _ in 0..6 {

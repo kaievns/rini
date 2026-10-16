@@ -1257,18 +1257,14 @@ mod tests {
         });
         commits.recv().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
-        // SAFETY: a read of the layer's own animation.
-        assert!(
-            unsafe { layer.animationForKey(&key) }.is_some(),
-            "the commit waits for the hold"
-        );
-        drop(held);
+        // SAFETY: a read of the layer's own animation, which retains what it returns.
+        let waiting = unsafe { layer.animationForKey(&key) };
+        assert!(waiting.is_some(), "the commit waits for the hold");
+        drop((waiting, held));
         committer.join().unwrap();
         // SAFETY: as above.
-        assert!(
-            unsafe { layer.animationForKey(&key) }.is_none(),
-            "then drops the animation"
-        );
+        let committed = unsafe { layer.animationForKey(&key) };
+        assert!(committed.is_none(), "then drops the animation");
     }
 
     #[test]
@@ -1757,12 +1753,9 @@ mod tests {
             TileSize::new(0.5, 400.0),
         ] {
             layers.place(size);
-            // SAFETY: Core Animation's constant string.
-            assert_eq!(
-                &*layers.hairline.cornerCurve(),
-                unsafe { kCACornerCurveContinuous },
-                "{size:?}"
-            );
+            // SAFETY: an immutable `NSString` constant exported by Core Animation.
+            let continuous = unsafe { kCACornerCurveContinuous };
+            assert_eq!(&*layers.hairline.cornerCurve(), continuous, "{size:?}");
         }
     }
 }

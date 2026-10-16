@@ -860,9 +860,9 @@ mod tests {
         assert_eq!(captures(&mut schedule, now).len(), MAX_CONCURRENT);
     }
 
-    /// The reported case: a warm listed just before a flight sat through it with a buffer sized at
-    /// the listing, so a window the flight resized was captured into the old size at the release, and
-    /// the warm the flight asked for it was folded into that stale job. Held, it is listed again.
+    /// A warm listed just before a flight sits through it with a buffer sized at the listing: kept,
+    /// a window the flight resized would be captured into the old size at the release, and the warm
+    /// the flight asks for it folded into that stale job. Held, it is listed again.
     #[test]
     fn a_capture_listed_before_a_hold_is_listed_again_at_the_release() {
         let now = Instant::now();
@@ -1180,10 +1180,10 @@ mod tests {
         );
     }
 
-    /// A display change used to ask for its render before invalidating the one in flight, so the
-    /// render it asked for was thrown away when it landed and every flight after a display change
-    /// paid for a composite on the main thread. The render of the display left is refused, and the one
-    /// asked for after the change is the new display's, and kept.
+    /// A display change invalidates the render in flight before it asks for its own: asked for
+    /// first, that render would be thrown away when it landed, and every flight after the change
+    /// would pay for a composite on the main thread. The render of the display left is refused, and
+    /// the one asked for after the change is the new display's, and kept.
     #[test]
     fn a_display_change_renders_the_new_displays_desktop_after_the_old_one_is_refused() {
         let now = Instant::now();

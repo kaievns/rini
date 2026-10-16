@@ -418,9 +418,9 @@ mod tests {
         );
     }
 
-    /// The reported case: Outlook with its sidebar was 1.99 levels from the window alone on average
-    /// over the whole window, under the threshold, so the average found no material. A material on
-    /// part of the window counts as much as one over all of it.
+    /// A material on part of the window counts as much as one over all of it: Outlook with its
+    /// sidebar is 1.99 levels from the window alone averaged over the whole window, under the
+    /// threshold, so an average would find no material.
     #[test]
     fn a_material_over_part_of_the_window_is_a_material() {
         let stride = MATERIAL_SIDE * 4;

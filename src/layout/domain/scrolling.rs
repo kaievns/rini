@@ -144,7 +144,7 @@ impl Column {
         }
     }
 
-    /// Equal shares, and no longer a deliberate split.
+    /// Equal shares, and the deliberate split dropped.
     fn equalise_heights(&mut self) {
         let count = self.windows.len();
         self.height_weights.clear();
@@ -851,10 +851,9 @@ impl ScrollingLayoutSystem {
         // Column widths are stored as `width_offset` relative to
         // `column_width_ratio`, so a restored layout keeps reproducing its old
         // absolute width after the default changes in config: the offset is
-        // faithfully re-applied against a new base. Moving the ratio from 0.49 to 0.5
-        // left every restored window at the old 842pt instead of the new 859pt — a
-        // width matching no preset, so Mod+R could never return a window to it and
-        // every window looked subtly wrong.
+        // faithfully re-applied against a new base. Left as it is, moving the ratio from
+        // 0.49 to 0.5 would leave every restored window at 842pt instead of 859pt — a
+        // width matching no preset, so Mod+R could never return a window to it.
         //
         // Columns the user deliberately resized (a `width` of their own) keep their chosen
         // absolute width by re-basing the offset. Everything else returns to the new
@@ -2723,11 +2722,9 @@ mod tests {
 
     /// A column's width must not depend on how many OTHER columns share its workspace.
     ///
-    /// This inverts the former `single_column_fills_full_width`, which asserted that a lone
-    /// column expands to the whole viewport. That rule made a window's size a function of its
-    /// neighbours, so a full-size window moved from a populated workspace to an empty one
-    /// changed size with nothing having been done to it — reported as an Outlook window going
-    /// half-size on workspace 2 and full again on 3.
+    /// A lone column expanding to the whole viewport would make a window's size a function of its
+    /// neighbours: a full-size window sent from a populated workspace to an empty one would change
+    /// size with nothing done to it.
     ///
     /// niri behaves as asserted here: one column keeps its preset width and leaves the rest
     /// of the strip empty. Full width is `maximize-column`
@@ -2830,8 +2827,8 @@ mod tests {
     }
 
     /// A full-width column must keep its strip-relative x, not be pinned to the
-    /// viewport origin. Regression test for `frame = tiling`, which lifted the
-    /// window out of the strip so it stayed put while everything scrolled past.
+    /// viewport origin. Framed as `tiling`, the window would leave the strip and
+    /// stay put while everything scrolls past.
     #[test]
     fn fullscreen_within_gaps_column_scrolls_with_the_strip() {
         let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
@@ -2914,8 +2911,8 @@ mod tests {
     }
 
     /// An app reporting its own size while its column is full width does not replace the width the
-    /// column goes back to. Found 2026-09-30: an app that put its zoom frame back after rini's write,
-    /// or a terminal snapping to its cell grid, left the toggle back at the clamped maximum ratio
+    /// column goes back to: an app that puts its zoom frame back after rini's write, or a terminal
+    /// snapping to its cell grid, must not leave the toggle back at the clamped maximum ratio
     /// instead of the width it had.
     #[test]
     fn a_resize_report_under_full_width_keeps_the_width_to_return_to() {
@@ -3095,7 +3092,7 @@ mod tests {
         );
     }
 
-    /// Growing a maximised column used to write a width nothing read. It cannot grow — there is
+    /// Growing a maximised column writes no width, since nothing would read it. It cannot grow — there is
     /// nothing wider than the viewport — so it stays maximised rather than unmaximising onto
     /// `max_column_width_ratio`, which is NARROWER than what it has and would read as a shrink.
     #[test]
@@ -3314,8 +3311,8 @@ mod tests {
         );
     }
 
-    /// Found 2026-09-30: raising the gap between windows from 2 to 4 left a full-width column two
-    /// columns along the strip at left 6 / right 2 instead of 4 / 4. The scroll offset is in strip
+    /// Raising the gap between windows from 2 to 4 must not leave a full-width column two columns
+    /// along the strip at left 6 / right 2 instead of 4 / 4. The scroll offset is in strip
     /// points and each column's start includes the gaps before it, so the columns ahead of the
     /// selected one pushed it right. The selected column MUST stay where it was on screen.
     #[test]
@@ -3485,8 +3482,8 @@ mod tests {
         (system, layout, w)
     }
 
-    /// Maximizing a stacked window used to leave it in the column, where it covered the siblings it
-    /// was sharing with: the tree said three windows abreast and the screen showed one.
+    /// A maximized window left in its stack would cover the siblings it shares the column with: the
+    /// tree would say three windows abreast and the screen show one.
     #[test]
     fn maximizing_a_stacked_window_pulls_it_out_of_the_stack() {
         let (mut system, layout, w) = column_of(ScrollingLayoutSettings::default(), 3);
@@ -3728,10 +3725,9 @@ mod tests {
     /// Folding two windows together divides the height evenly, and it has to do that whether or not
     /// macOS happened to report a minimum height for either of them.
     ///
-    /// The reported minimum used to be subtracted from the weight. Weights are 1.0 in a freshly
-    /// folded column and minima are pixels, so a window with a minimum got 0.001 and a window
-    /// without got 1.0: the first was left at its minimum, which on screen is its title bar. Two
-    /// windows that both reported one, or neither, split evenly — which is why this came and went.
+    /// The reported minimum is never subtracted from the weight. Weights are 1.0 in a freshly
+    /// folded column and minima are pixels, so a window with a minimum would get 0.001 and one
+    /// without 1.0: the first would be left at its minimum, which on screen is its title bar.
     #[test]
     fn folding_divides_the_height_evenly_even_when_one_window_reports_a_minimum() {
         let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
@@ -3930,7 +3926,7 @@ mod tests {
 
     /// The first column has nothing to its left, and the left key does NOT quietly fold right
     /// instead: with a key bound per side, doing that would make the two keys agree at the ends of
-    /// the strip, which is the surprise this replaced.
+    /// the strip.
     #[test]
     fn folding_left_from_the_first_column_does_nothing() {
         let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
@@ -4409,7 +4405,7 @@ mod tests {
     }
 
     /// A stack's heights made its own: the top window's bottom edge dragged 100pt down, so the rows
-    /// are no longer the even split a fold leaves. A lone window is left as it is.
+    /// differ from the even split a fold leaves. A lone window is left as it is.
     fn heights_dragged_apart(
         system: &mut ScrollingLayoutSystem,
         layout: LayoutId,
@@ -6144,7 +6140,7 @@ mod tests {
     }
 
     /// Either fold key, out of a right stack and back. `Mod+Comma` lands the window right of it and
-    /// scrolls one column, and its fold back used to leave A1 at x=-860 with half the screen empty;
+    /// scrolls one column, and its fold back must not leave A1 at x=-860 with half the screen empty;
     /// `Mod+Period` lands it in the stack's place and scrolls nothing.
     #[test]
     fn a_fold_round_trip_puts_the_strip_back_where_it_was() {
@@ -6768,8 +6764,8 @@ mod tests {
         }
     }
 
-    /// A1 of [A1,A2,A3] and B of [A][B]. Ghostty's 1pt short in height used to come back as a width
-    /// of 859, and the stack's even split as pixel heights of [367, 369, 369].
+    /// A1 of [A1,A2,A3] and B of [A][B]. Ghostty's 1pt short in height must not come back as a width
+    /// of 859, nor the stack's even split as pixel heights of [367, 369, 369].
     #[test]
     fn a_report_of_the_frame_rini_gave_changes_nothing() {
         let shortfalls = [(0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0), (-1.0, -1.0)];
@@ -6808,8 +6804,8 @@ mod tests {
 
     /// Each row of [A][B1,B2] and [A][B1,B2,B3] folded out and back ten times by either key, the
     /// moved window answering every pass with its frame or 1pt short of it. The answer to the
-    /// fold-out used to drop the view the fold back returns to, and every answer to narrow the
-    /// column by a point and turn the even split into pixel heights.
+    /// fold-out must keep the view the fold back returns to, and no answer narrows the column by a
+    /// point or turns the even split into pixel heights.
     #[test]
     fn ten_fold_round_trips_answered_by_the_app_leave_the_stack_as_it_was() {
         for rows in [2, 3] {
@@ -6895,7 +6891,7 @@ mod tests {
     }
 
     /// B of [A][B][C] centred, maximized and restored, then the app's answer to the restore: the
-    /// answer's scroll request used to drop the centring, and B went flush left.
+    /// answer's scroll request keeps the centring, rather than sending B flush left.
     #[test]
     fn a_centred_column_keeps_its_centring_through_its_own_report() {
         let mut system = ScrollingLayoutSystem::new(&preset_settings());

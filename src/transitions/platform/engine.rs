@@ -1665,7 +1665,7 @@ mod tests {
                 );
             }
 
-            /// The window server knows no window `wid(id)` any more.
+            /// The window server knows no window `wid(id)` from now on.
             fn forget(&self, id: u32) { self.ws.set_window(WindowServerId::new(id), None); }
 
             fn advance(&mut self, by: Duration) { *self.now.lock().unwrap() += by }
@@ -1991,7 +1991,7 @@ mod tests {
             assert!(h.engine.delivered.is_empty(), "left to the cache");
         }
 
-        /// A picture taken for where a merge no longer ends its window: no tile takes it, then or later.
+        /// A picture taken for where a merge stopped ending its window: no tile takes it, then or later.
         #[test]
         fn a_picture_delivered_for_an_end_a_merge_moved_is_not_kept() {
             let mut h = Harness::new();

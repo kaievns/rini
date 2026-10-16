@@ -176,7 +176,7 @@ impl DisplayPictures {
 }
 
 /// The overlay now flies on `display`. A change leaves nothing of the display left behind; a bar
-/// no longer pictured is dropped.
+/// left unpictured is dropped.
 fn set_display<P, O, C>(
     schedule: &mut Schedule<P, O, C>,
     held: &mut DisplayPictures,
@@ -1677,7 +1677,7 @@ mod tests {
     }
 
     /// A display change leaves nothing of the display left behind, its desktop's windows included,
-    /// and a bar no longer pictured goes on its own.
+    /// and a bar left unpictured goes on its own.
     #[test]
     fn a_display_change_empties_what_is_held_and_a_bar_turned_off_drops_only_the_bar() {
         let now = Instant::now();
@@ -2127,7 +2127,7 @@ mod tests {
     }
 
     /// A refresh's capture the cache would refuse, one without the blur of the blurred picture held at
-    /// the same size, ends the refresh with nothing put: every later capture there is refused too.
+    /// the same size, ends the refresh with nothing put: every later capture there is refused as well.
     #[test]
     fn a_refresh_the_cache_would_refuse_ends_with_nothing_put() {
         let now = Instant::now();

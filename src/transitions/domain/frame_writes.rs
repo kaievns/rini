@@ -143,10 +143,9 @@ mod tests {
         assert!(!is_park_to_park(right_park, row_below, d));
     }
 
-    /// Regression: a full Ghostty window sat on the right half of the display under the strip
-    /// because the model said "parked" (the app had dropped an earlier write) and the skip trusted
-    /// the model. The write is judged from the window server's frame; a window that is really on
-    /// screen is always sent to its park, and an unknown real frame never suppresses a write.
+    /// A model that says parked is not trusted, since the app may have dropped the write: the write
+    /// is judged from the window server's frame, a window that is really on screen is always sent
+    /// to its park, and an unknown real frame never suppresses a write.
     #[test]
     fn park_write_is_judged_from_the_real_frame_not_the_model() {
         let d = display();

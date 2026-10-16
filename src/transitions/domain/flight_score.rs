@@ -430,7 +430,7 @@ mod tests {
     }
 
     /// The clock a merge restarts covers everything the score plays: a bounce outlasting the pass
-    /// holds it, where it used to restart at the pass's legs and lift before the bounce came home.
+    /// holds it, rather than restarting at the pass's legs and lifting before the bounce comes home.
     #[test]
     fn the_clock_after_a_merge_covers_the_score() {
         let mut flight = Flight::posed(&strip(1, 2, 1.0, -863.0));

@@ -1,7 +1,7 @@
 //! Changing a column's width or a window's height.
 //!
-//! One arm per command, lifted out of `handle_command` unchanged. `impl LayoutEngine` across modules
-//! is the pattern `engine/persistence/` already uses.
+//! One arm per command. `impl LayoutEngine` across modules is the pattern `engine/persistence/`
+//! already uses.
 
 use super::CommandTarget;
 use crate::workspaces::domain::command::ResizeCommand;

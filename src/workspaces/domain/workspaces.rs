@@ -373,7 +373,7 @@ mod tests {
         assert!(vacant_spaces(&saved, &spaces(&[110]), &spaces(&[])).is_empty());
     }
 
-    /// A window on a space no display owns any more may still come back to it.
+    /// A window on a space no display owns now may still come back to it.
     #[test]
     fn an_occupied_space_is_not_vacant_however_dead() {
         let saved = [494].map(SpaceId::new).into_iter().collect();

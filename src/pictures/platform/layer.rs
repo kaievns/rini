@@ -49,7 +49,8 @@ pub fn ground_colour(picture: &Picture) -> Option<CFRetained<CGColor>> {
     let Ground { r, g, b, a } = picture.ground();
     let space = ground_space(&picture.image).or_else(CGColorSpace::new_device_rgb);
     let components = [r, g, b, a];
-    // SAFETY: the four components an RGB space with alpha takes, read during the call.
+    // SAFETY: `space` is RGB, as `sample_format` reads no other and device RGB is, so the call reads
+    // three components and alpha, all four alive during it.
     unsafe { CGColor::new(space.as_deref(), components.as_ptr()) }
 }
 
@@ -58,6 +59,15 @@ pub fn ground_colour(picture: &Picture) -> Option<CFRetained<CGColor>> {
 pub fn clear_contents(layer: &CALayer) {
     // SAFETY: no contents is a layer's own default.
     unsafe { layer.setContents(None) }
+}
+
+/// `colour`'s components, as many as it has.
+#[cfg(test)]
+pub(crate) fn test_components(colour: &CGColor) -> Vec<f64> {
+    let count = CGColor::number_of_components(Some(colour));
+    let components = CGColor::components(Some(colour));
+    // SAFETY: `components` points at the colour's `count` components, alive while it is borrowed.
+    unsafe { std::slice::from_raw_parts(components, count) }.to_vec()
 }
 
 #[cfg(test)]
@@ -70,23 +80,10 @@ mod tests {
     use crate::pictures::domain::region::WHOLE;
     use crate::pictures::platform::bitmap::rgba_bitmap_context;
     use crate::pictures::platform::picture::{LazyGround, test_picture};
+    use crate::pictures::platform::surface::{Layout, new_surface};
 
     fn test_surface() -> CFRetained<objc2_io_surface::IOSurfaceRef> {
-        use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
-        use objc2_io_surface::{
-            IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceHeight, kIOSurfaceWidth,
-        };
-        let keys: [&CFString; 3] =
-            unsafe { [kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement] };
-        let values = [
-            CFNumber::new_i64(1),
-            CFNumber::new_i64(1),
-            CFNumber::new_i64(4),
-        ];
-        let value_refs: [&CFNumber; 3] = std::array::from_fn(|i| &*values[i]);
-        // SAFETY: the three keys an IOSurface needs, each with a number.
-        unsafe { IOSurfaceRef::new(CFDictionary::from_slices(&keys, &value_refs).as_opaque()) }
-            .expect("a surface")
+        new_surface(1, 1, Layout::default(), |_, _| Some(())).expect("a surface")
     }
 
     fn contents_address(layer: &CALayer) -> Option<usize> {
@@ -108,8 +105,7 @@ mod tests {
         set_layer_ground(&layer, &picture);
         let colour = layer.backgroundColor().expect("filled");
         assert_eq!(CGColor::number_of_components(Some(&colour)), 4);
-        // SAFETY: the colour's own four components, read while it is held.
-        let got = unsafe { std::slice::from_raw_parts(CGColor::components(Some(&colour)), 4) };
+        let got = test_components(&colour);
         assert_eq!(got, [0.1, 0.2, 0.3, 0.95]);
     }
 
@@ -140,8 +136,7 @@ mod tests {
             Some(p3),
             "in P3"
         );
-        // SAFETY: the colour's own four components, read while it is held.
-        let got = unsafe { std::slice::from_raw_parts(CGColor::components(Some(&colour)), 4) };
+        let got = test_components(&colour);
         assert_eq!(got, [0.2, 0.5, 0.8, 1.0]);
     }
 

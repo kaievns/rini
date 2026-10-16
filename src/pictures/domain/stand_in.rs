@@ -64,7 +64,7 @@ mod tests {
     }
 
     /// A strip movement holds every window of the workspace, and after a restart the parked ones have
-    /// no picture: each flies as the stand-in, where it used to be left out and show as a hole.
+    /// no picture: each flies as the stand-in, never left out to show as a hole.
     #[test]
     fn a_parked_window_with_no_picture_is_drawn_as_the_stand_in() {
         let display = rect(0.0, 0.0, 1728.0, 1117.0);

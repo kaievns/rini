@@ -109,7 +109,7 @@ mod tests {
         );
     }
 
-    /// The rigidity property the old canvas layer guaranteed structurally: every unpinned window
+    /// The rigidity property: every unpinned window
     /// of a strip movement translates by exactly the same vector, so tiles animated per-tile from
     /// these rects cannot drift apart. If this ever fails, the strip tears.
     #[test]

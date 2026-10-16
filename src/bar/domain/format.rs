@@ -37,8 +37,7 @@ pub fn clock_label(hour: u32, minute: u32) -> String { format!("{hour:02}:{minut
 
 /// How long until the minute turns over, from how far into the minute it is.
 ///
-/// A timer on a fixed 30s period, which is what the bar used before, shows the old minute for up to
-/// half a minute. This lands on the boundary.
+/// A timer on a fixed 30s period shows the old minute for up to half a minute. This lands on the boundary.
 pub fn until_next_minute(seconds_into_minute: f64) -> Duration {
     let into = seconds_into_minute.clamp(0.0, 60.0);
     Duration::from_secs_f64((60.0 - into).max(0.001))

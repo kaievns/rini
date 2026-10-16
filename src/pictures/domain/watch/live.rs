@@ -290,7 +290,7 @@ mod tests {
         assert!(polls >= 45, "the old window still polled for: {polls}");
     }
 
-    /// A stopped change watch holds the background up no longer.
+    /// A stopped change watch stops holding the background up.
     #[test]
     fn the_background_follows_a_change_watch_that_was_stopped() {
         let start = Instant::now();

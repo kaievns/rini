@@ -207,7 +207,7 @@ mod tests {
         }
     }
 
-    /// A resize means the old picture no longer fits the window, blur or not.
+    /// A resize means the old picture misfits the window, blur or not.
     #[test]
     fn a_resized_window_takes_the_new_picture_even_without_its_blur() {
         assert!(!keeps_blur(blurred(859.0, 1081.0), flat(1720.0, 1081.0)));

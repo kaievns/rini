@@ -416,8 +416,8 @@ impl Rest {
     }
 
     /// The window server's introductions of windows asked: each the model names is known from now,
-    /// and one whose model waits under the overlay is kept for it. One not asked, or no longer
-    /// named by the model taken since it was asked, is dropped.
+    /// and one whose model waits under the overlay is kept for it. One not asked, or left unnamed
+    /// by the model taken since it was asked, is dropped.
     pub fn introduce(&mut self, intros: &[(WindowServerId, Introduction)]) {
         for (window, intro) in intros {
             if let Some(waiting) = self.introducing.get_mut(window) {
@@ -452,7 +452,7 @@ impl Rest {
         }
     }
 
-    /// The reactor's word at `now`: a window it no longer names is forgotten, one whose introduction
+    /// The reactor's word at `now`: a window it stops naming is forgotten, one whose introduction
     /// came is known, each park waits for its window's move, and the window focus came to is named,
     /// when it changed, so its rest window is ordered again.
     pub fn take_model(&mut self, model: RestModel, now: Instant) -> Option<WindowServerId> {
