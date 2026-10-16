@@ -41,12 +41,14 @@ Every other requirement in this spec holds whatever the look.
 - Every look MUST pass one contract, checked alike for each: frame zero draws each window where it
   is on screen at the press ("The pictures a flight starts with", "Correctness the user can see");
   the motion lands each window on its layout frame, so the lift hands over to windows standing where
-  their tiles end; a pass arriving mid-flight bends the flight without a jump in place or speed
-  ("Arriving mid-flight"); and a move stages only the pair it is given ("Moving a window along the
-  strip").
+  their tiles end; a pass before the motion folds into it as one movement from frame zero, and a
+  pass arriving mid-flight bends the flight without a jump in place, nor in speed for a window
+  riding a container ("Arriving mid-flight"); a push draws each window toward its wall without a
+  jump, and every window is home within one bounce of the last push ("Pushing past an end"); and a
+  move stages only the pair it is given ("Moving a window along the strip").
 - A look MUST keep what every flight owes beyond the contract: the pictures it starts from and waits
-  for ("The pictures a flight starts with"), a resize's content against the edge that moves less,
-  never stretched ("Resizing"), and the bounce at an end ("Pushing past an end").
+  for ("The pictures a flight starts with") and a resize's content against the edge that moves
+  less, never stretched ("Resizing").
 - The config MUST choose the look, one for every flight, and it MUST be slide unless the config names
   another. A name that is no look MUST be refused as any unknown name is (`config.md`, "When a file
   cannot be used").
@@ -180,6 +182,9 @@ destination for a window already moving.
   so a burst of presses reads as one movement that settles after the last. That holds for a window a
   pass takes out of the piece it rode, as a second move of a narrower column does with the column it
   passes.
+  Not yet met: a loose tile a pass bends (a resize, an entrance, a floating window) starts
+  `MOTION_CURVE` again from where it is drawn, so its speed jumps
+  (`src/animation/docs/animation-smoothness.md`).
 
 > **Reported 2026-09-29.** "as a general rule animation should not get interrupted mid-filight and
 > restarted a new, the target should fluidly move to the next window and feel like one smooth extended
@@ -897,8 +902,10 @@ where its picture ends and the edges it stands still against are
 `src/animation/domain/choreography/slide.rs`) compose a flight's score, fold a press before its motion
 into it and bend it at a press after, and stage a press on the strip. The contract every look passes
 is the tests there: `every_look_poses_each_drawn_window_where_it_starts`,
-`every_look_lands_each_node_on_its_plan`, `every_look_bends_a_flight_without_a_jump` and
-`every_look_stages_only_the_pair_it_is_given`. The config's `animations › look` is decoded in
+`every_look_lands_each_node_on_its_plan`, `every_look_folds_each_pass_before_the_motion`,
+`every_look_bends_a_flight_without_a_jump`, `every_look_bends_a_flight_at_the_speed_it_moves`,
+`every_look_pushes_out_and_home_without_a_jump` and `every_look_stages_only_the_pair_it_is_given`,
+and the `the_*_contract_rejects_*` tests beside them show each contract fails a flawed look. The config's `animations › look` is decoded in
 `src/app/config/kdl/value.rs`, held by `the_look_is_picked_by_name_and_slide_unless_written`, and
 the reactor hands it to every flight it asks for, held by
 `every_flight_takes_the_look_the_config_picks`; `FlightScore` keeps the look a flight began with,

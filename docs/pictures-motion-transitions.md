@@ -95,9 +95,10 @@ renderer plays a score's edits, the snap of a tile onto its window's frame among
 pictures, cuts holes over windows that end on screen, draws each tile's decorations, and lifts. A
 bend's structure, what rides where and where every node ends, is every look's alike
 (`Merged::bend`), so a look gives only motion. A new look
-is a file under `src/animation/domain/choreography/`, a `Look` variant in `ALL` there, a row in
-`src/animation/docs/README.md` ("Adding a look") and the reactor's choice of it; capture, swaps and
-handover never see what a score contains. A zoom of the strip is such a look: the score's strip node
+is a file under `src/animation/domain/choreography/`, a `Look` variant in `ALL` there with its arms
+in `choreography` and `stage`, a row in `src/animation/docs/README.md` ("Adding a look") and its
+config word in `kebab_scalar!(Look …)` in `src/app/config/kdl/value.rs`, which `animations › look`
+decodes; capture, swaps and handover never see what a score contains. A zoom of the strip is such a look: the score's strip node
 holds a `Zoom`, a scale and a shift that say a scale about a centre through a camera
 (`src/animation/domain/motion/score.rs`), the overlay plays it on the layer every container but the
 floating one hangs under, and frame zero, the motion and each pass are staged on the display the

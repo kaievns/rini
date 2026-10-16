@@ -97,6 +97,8 @@ display the overlay covers (`viewport`):
 4. Its name: a word in `kebab_scalar!(Look …)` in `src/app/config/kdl/value.rs`, which
    `animations › look` decodes and `config get` prints. Every flight the reactor sends takes the
    look the config names (`specs/animation.md`, "Looks").
+5. `rini.default.kdl`'s comment over `animations › look` and the "Not yet met" line under "Looks"
+   in `specs/animation.md`, both of which name slide as the only look.
 
 A zoom of the strip is a look like any other: its tracks on `Node::Strip` hold a `Zoom`, and its
 `retarget` bends them beside `Merged::bend` (`docs/pictures-motion-transitions.md`). A track lerps

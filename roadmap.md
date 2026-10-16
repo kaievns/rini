@@ -36,6 +36,9 @@ requirement itself; this list only collects them.
   resolver looks for the key window on that space, probed only with one display. A comment
   inherited from rift said it "does not work", with no case recorded (`specs/focus.md`, "Which
   window is focused").
+- **A loose tile's speed jumps when a pass bends it.** Slide starts a resize, an entrance or a
+  floating window again on `MOTION_CURVE` from where it is drawn, so its speed jumps at the pass
+  (`specs/animation.md`, "Arriving mid-flight").
 - **A display with no UUID leaves records that are never pruned.** CoreGraphics reports no UUID
   for it, so it is named `cgdisplay-{id}` from its `ScreenId` (`DisplayUuid::fallback`). The id can
   change across a reconnect, and each new one leaves the old name's records behind in the layout
@@ -68,7 +71,10 @@ check, then a spec or deletion:
 - **One picture per window.** Each window keeps a focused face beside its picture
   (`specs/animation.md`, "Focus changing during a flight"). Dropping it saves memory. I parked it
   on 2026-10-06, to come back to.
-- **A zoom and arc look for moves and navigation.** Spiked and parked on 2026-10-01.
+- **A second look: zoom and arc for moves and navigation.** Spiked 2026-10-01, wanted back
+  2026-10-15 (`specs/animation.md`, "Looks", not yet met). The score's strip zoom, the viewport a
+  look is staged on and `animations › look` are in place, so it needs only its choreography,
+  staging, a `Look` variant and a config word (`src/animation/docs/README.md`, "Adding a look").
 - **Unplug and replug verified end to end,** per arrangement and with role pins, by a
   `query diagnostics` capture before and after into `docs/data/`. Nothing there covers displays yet.
 - **Per-display overrides by display name.** `output "UUID"` takes a UUID only, and only `gaps` and

@@ -43,8 +43,6 @@ pub enum Look {
 }
 
 impl Look {
-    #[cfg(not(test))]
-    pub const ALL: [Look; 1] = [Look::Slide];
     #[cfg(test)]
     pub const ALL: [Look; 3] = [Look::Slide, Look::Linear, Look::Probe];
 
