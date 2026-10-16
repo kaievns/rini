@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use objc2_application_services::{AXError, AXObserver, AXUIElement as RawAXUIElement};
 use objc2_core_foundation::{
-    CFRetained, CFRunLoop, CFRunLoopMode, CFString, kCFRunLoopCommonModes,
+    CFRetained, CFRunLoop, CFRunLoopMode, CFRunLoopSource, CFString, kCFRunLoopCommonModes,
 };
 use rini_core::ids::pid_t;
 
@@ -15,8 +15,8 @@ use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
 
 /// An observer for accessibility events.
 ///
-/// Drop it only once the run loop it was installed on has stopped for good: the drop frees the
-/// contexts its callbacks read and leaves its run-loop source in place.
+/// Its drop invalidates its run-loop source before it frees the contexts its callbacks read, so
+/// it can drop at any time on its own thread, from inside one of its own callbacks included.
 pub struct Observer {
     callback: Callback,
     observer: CFRetained<AXObserver>,
@@ -114,8 +114,7 @@ impl<F: Fn(AXUIElement, &'static str) + 'static> ObserverBuilder<F> {
 
 impl<F> ObserverBuilder<F> {
     fn install_inner(self, callback: Callback) -> Observer {
-        // SAFETY: `self.0` is a live observer; its source comes back retained.
-        let run_loop_source = unsafe { self.0.run_loop_source() };
+        let run_loop_source = source_of(&self.0);
         if let Some(run_loop) = CFRunLoop::current() {
             // SAFETY: a CoreFoundation constant, set when the framework loads and never written.
             let mode: &CFRunLoopMode =
@@ -128,6 +127,17 @@ impl<F> ObserverBuilder<F> {
             subscription_ctx: RefCell::new(HashMap::new()),
         }
     }
+}
+
+/// The one run-loop source an observer delivers its notifications through.
+fn source_of(observer: &AXObserver) -> CFRetained<CFRunLoopSource> {
+    // SAFETY: `observer` is a live AXObserver for the call, and the binding retains the source
+    // AXObserverGetRunLoopSource answers under the Get rule.
+    unsafe { observer.run_loop_source() }
+}
+
+impl Drop for Observer {
+    fn drop(&mut self) { source_of(&self.observer).invalidate(); }
 }
 
 impl Clone for Callback {
@@ -168,7 +178,7 @@ impl Observer {
         let observer: &AXObserver = &self.observer;
         let callback_data = Rc::as_ptr(&callback_ctx).cast_mut().cast();
         // SAFETY: `elem` and the name are live for the call, and the refcon is a context
-        // `subscription_ctx` keeps until the observer drops, which a callback only reads.
+        // `subscription_ctx` keeps until the observer's drop has invalidated its source.
         make_result(unsafe {
             observer.add_notification(
                 elem.as_concrete_TypeRef(),
@@ -222,9 +232,9 @@ unsafe extern "C-unwind" fn internal_callback(
     _notif: NonNull<CFString>,
     data: *mut c_void,
 ) {
-    // SAFETY: `data` is a context the `!Send` observer keeps on this run loop's thread until it
-    // drops, and each owner drops it only once this run loop has stopped for good.
-    let Some(ctx) = (unsafe { data.cast::<SubscriptionContext>().as_ref() }) else {
+    // SAFETY: AX calls this trampoline only through the source of the observer it was created
+    // for, with a refcon `add_notification_inner` registered on it.
+    let Some(ctx) = (unsafe { context_for_call(data) }) else {
         return;
     };
     // SAFETY: AX hands the callback a live element under the Get rule.
@@ -240,15 +250,33 @@ unsafe extern "C-unwind" fn internal_callback_with_notification(
     _notif: NonNull<CFString>,
     data: *mut c_void,
 ) {
-    // SAFETY: `data` is a context the `!Send` observer keeps on this run loop's thread until it
-    // drops, and each owner drops it only once this run loop has stopped for good.
-    let Some(ctx) = (unsafe { data.cast::<SubscriptionContext>().as_ref() }) else {
+    // SAFETY: AX calls this trampoline only through the source of the observer it was created
+    // for, with a refcon `add_notification_inner` registered on it.
+    let Some(ctx) = (unsafe { context_for_call(data) }) else {
         return;
     };
     // SAFETY: AX hands the callback a live element under the Get rule.
     let elem = unsafe { AXUIElement::from_get_rule(elem.as_ptr()) };
     if let Callback::Notification(callback) = &ctx.callback {
         callback(elem, ctx.notification);
+    }
+}
+
+/// Takes a strong count on the context behind `data` for the length of one callout, so a callback
+/// that drops its own [`Observer`] does not free the context it runs on.
+///
+/// # Safety
+///
+/// `data` is null or a refcon `add_notification_inner` registered, called from the run-loop
+/// source of the observer that holds it.
+unsafe fn context_for_call(data: *mut c_void) -> Option<Rc<SubscriptionContext>> {
+    let data = NonNull::new(data)?.cast::<SubscriptionContext>().as_ptr().cast_const();
+    // SAFETY: `data` came from `Rc::as_ptr` on a context the observer's map holds until the
+    // observer drops, and that drop invalidates this source first, so no callout starts after it
+    // and the count is at least one here.
+    unsafe {
+        Rc::increment_strong_count(data);
+        Some(Rc::from_raw(data))
     }
 }
 
@@ -280,5 +308,38 @@ mod tests {
         assert_eq!(first.data.get(), 2, "with the new data");
         assert!(!Rc::ptr_eq(&first, &other), "another notification has its own");
         assert_eq!(other.data.get(), 3);
+    }
+
+    /// A dropped observer leaves no run-loop source that could call out with the contexts it
+    /// freed.
+    #[test]
+    fn dropping_an_observer_invalidates_its_run_loop_source() {
+        let pid = std::process::id() as pid_t;
+        let observer = Observer::new(pid).expect("an observer of this process").install(|_, _| {});
+        let source = source_of(&observer.observer);
+        assert!(source.is_valid(), "installed");
+
+        drop(observer);
+
+        assert!(!source.is_valid(), "invalidated by the drop");
+    }
+
+    /// A callout holds its own count on the context, so a callback that drops its observer
+    /// still reads a live context until it returns.
+    #[test]
+    fn a_callout_keeps_its_context_alive_past_its_observer() {
+        let pid = std::process::id() as pid_t;
+        let observer = Observer::new(pid).expect("an observer of this process").install(|_, _| {});
+        let app = AXUIElement::application(pid);
+        let ctx = observer.subscription_context(&app, "AXFocusedWindowChanged", 7);
+        let refcon = Rc::as_ptr(&ctx).cast_mut().cast::<c_void>();
+        drop(ctx);
+
+        // SAFETY: `refcon` is a context the live observer's map holds.
+        let held = unsafe { context_for_call(refcon) }.expect("a non-null refcon");
+        drop(observer);
+
+        assert_eq!(Rc::strong_count(&held), 1, "the callout's own count");
+        assert_eq!(held.data.get(), 7);
     }
 }
