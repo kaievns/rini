@@ -135,9 +135,9 @@ mod tests {
         assert!(!DecorationSettings { rules: Vec::new(), ..settings }.draws_bands());
     }
 
-    /// Kai, 2026-10-08: "not make it transparrent, i mean disable the feature". Nothing is decorated
-    /// while the ring and the border are off and no rule turns either on for any window; one rule
-    /// turning one window's ring on, or the border on alone, keeps the feature running.
+    /// Nothing is decorated while the ring and the border are off and no rule turns either on for
+    /// any window; one rule turning one window's ring on, or the border on alone, keeps the feature
+    /// running (`specs/decorations.md`, "Off").
     #[test]
     fn nothing_is_decorated_until_the_layout_or_a_rule_turns_a_band_on() {
         use crate::windows::domain::rules::RuleMatch;

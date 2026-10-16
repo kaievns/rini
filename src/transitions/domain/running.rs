@@ -1921,10 +1921,10 @@ mod tests {
             Some((group.key, group.travel))
         }
 
-        /// Kai, 2026-10-03: "rapid press navigation messes things up, i periodically see missing
-        /// tiles". A switch pressed again before the first moves travels the whole stack as one
-        /// surface: the floating window rides its container both rows, and the row the second press
-        /// brings starts below the one the first brought, where the stack has it, not on top of it.
+        /// A switch pressed again before the first moves travels the whole stack as one surface
+        /// (`specs/animation.md`, "Arriving mid-flight"): the floating window rides its container
+        /// both rows, and the row the second press brings starts below the one the first brought,
+        /// where the stack has it, not on top of it.
         #[test]
         fn a_second_switch_before_the_flight_moves_carries_the_floating_window_with_the_surface() {
             let (a, b, floater, c) = (wid(1), wid(2), wid(3), wid(4));

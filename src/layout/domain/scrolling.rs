@@ -4091,7 +4091,7 @@ mod tests {
 
     // ── a mouse drag on an edge ─────────────────────────────────────────────
 
-    /// Kai's display on 2026-10-06: 1728pt wide with `gaps 3`, so the tiling area is x=3, w 1722.
+    /// A display 1728pt wide with `gaps 3`, so the tiling area is x=3, w 1722.
     const KAI_SCREEN: CGRect = CGRect {
         origin: CGPoint { x: 0.0, y: 0.0 },
         size: CGSize { width: 1728.0, height: 1117.0 },
@@ -4426,8 +4426,8 @@ mod tests {
         w.iter().map(|&id| laid_out_yh(system, layout, id)).collect()
     }
 
-    /// Kai, 2026-10-10: `Mod+R` from two thirds makes the whole column the tiling area wide, its
-    /// stack, heights and place kept, and is no full-width mode.
+    /// `Mod+R` from two thirds makes the whole column the tiling area wide, its stack, heights and
+    /// place kept, and is no full-width mode (`specs/strip.md`, "Columns and widths").
     #[test]
     fn the_cycle_s_full_viewport_is_a_width_that_keeps_the_column_and_its_stack() {
         for rows in 1..=3 {
@@ -5274,8 +5274,8 @@ mod tests {
         (system, layout, w)
     }
 
-    /// Kai's report of 2026-10-11: two thirds on the left, a third on the right and selected. The
-    /// strip is 1722.99pt, so the reveal leaves the third flush with the right edge.
+    /// Two thirds on the left, a third on the right and selected (`specs/strip.md`, "Columns and
+    /// widths"). The strip is 1722.99pt, so the reveal leaves the third flush with the right edge.
     fn kai_s_two_thirds_and_a_third() -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>) {
         let (mut system, layout, w) = kai_s_widths(&[0.66667, 0.33333], 1);
         assert_eq!(laid_out_xw(&mut system, layout, w[1]), (1153.0, 572.0));
@@ -5751,8 +5751,9 @@ mod tests {
         assert!(system.toggle_full_width(layout, wid));
     }
 
-    /// Kai's report of 2026-10-09 on their display: Z a half, A and B a third, the strip reached by
-    /// walking focus right and back, so A sits at x=578 with the strip at 287.48852.
+    /// Z a half, A and B a third on a 1728pt display, the strip reached by walking focus right and
+    /// back, so A sits at x=578 with the strip at 287.48852 (`specs/strip.md`, "Full width and
+    /// height").
     fn kai_s_thirds() -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
         let mut system = ScrollingLayoutSystem::new(&preset_settings());
         let layout = system.create_layout();
@@ -5976,8 +5977,8 @@ mod tests {
         })
     }
 
-    /// Kai's 2026-10-11 columns through full width and back: each lands where it stood, as it
-    /// would stepping back to its width by `Mod+R`.
+    /// Each column through full width and back lands where it stood, as it would stepping back to
+    /// its width by `Mod+R` (`specs/strip.md`, "Full width and height").
     #[test]
     fn full_width_and_back_lands_a_column_where_it_stood() {
         type Setup = fn() -> (ScrollingLayoutSystem, LayoutId, Vec<WindowId>);

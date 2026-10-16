@@ -125,6 +125,8 @@ context is arranged differently depending on what is plugged in, and rini rememb
   before anything reads them.
 - A window MUST NOT be followed onto a login or fullscreen space. Assigning one there strands it
   somewhere the user cannot reach and no layout pass will touch.
+- A screen-parameters change that names a fullscreen space, as waking from sleep with a fullscreen
+  video up does, MUST leave the user space's windows and layout as they were for its return.
 - A refresh MUST retry a snapshot it cannot forward at most 10 times. While a wake or an unlock is
   still owed a snapshot it MUST start over until one is forwarded, since only a forwarded one
   releases the reactor. A display churn MUST check a topology it has already sampled at most 10

@@ -437,8 +437,8 @@ fn user_space_switch_is_allowed_while_other_display_already_fullscreen() {
 
 #[test]
 fn fullscreen_screen_params_preserves_window_layout() {
-    // Regression test for #308: waking from sleep while a fullscreen video is
-    // active should not wipe workspace assignments.
+    // Waking from sleep with a fullscreen video up keeps the workspace assignments
+    // (`specs/displays.md`, "What a display change must not do").
     let (mut apps, mut reactor) = test_context();
 
     let user_space = SpaceId::new(1);

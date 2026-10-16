@@ -887,11 +887,11 @@ mod tests {
         }
     }
 
-    /// Kai's geometry (2026-10-09): a 1728x1080 screen, 3pt gaps, two 860pt columns at x=3 and
-    /// x=866, a 2-stack's rows at y=3 and 542, a 3-stack's at 3, 362 and 721. A stacked window
-    /// maximized or restored, folded in or out: every other window parked at either end keeps the
-    /// row and size it is seen at and moves only along x, with its column. The strip frames are
-    /// inputs, so this holds whichever side the maximized column goes in.
+    /// A 1728x1080 screen, 3pt gaps, two 860pt columns at x=3 and x=866, a 2-stack's rows at y=3 and
+    /// 542, a 3-stack's at 3, 362 and 721. A stacked window maximized or restored, folded in or out:
+    /// every other window parked at either end keeps the row and size it is seen at and moves only
+    /// along x, with its column (`specs/animation.md`, "Correctness the user can see"). The strip
+    /// frames are inputs, so this holds whichever side the maximized column goes in.
     mod strip_place {
         use super::*;
         use crate::animation::domain::motion::plan::{GroupKey, reflow_plan};
@@ -1285,8 +1285,8 @@ mod tests {
         assert!(changes_visibly(&[vertical]));
     }
 
-    /// Kai's report of 2026-10-09: `alt-R` on a column at the strip's left edge with nothing beside it
-    /// on screen resizes it where it stands, and that is shown like a move.
+    /// `alt-R` on a column at the strip's left edge with nothing beside it on screen resizes it where
+    /// it stands, and that is shown like a move (`specs/animation.md`, "What animates").
     #[test]
     fn a_column_resized_where_it_stands_changes_visibly() {
         let full = ScreenRect::new(ScreenPoint::new(3.0, 35.0), ScreenSize::new(1722.0, 1079.0));
