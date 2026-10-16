@@ -280,8 +280,8 @@ pub enum Event {
         generation: Generation,
         window: WindowId,
     },
-    /// The score plays this much longer from now: composed as the motion starts, or added to by a
-    /// push or a merge that moves nothing. The clock runs on to cover it.
+    /// The score plays this much longer from now: added to by a push or a merge that moves nothing.
+    /// The clock runs on to cover it.
     Extend(Duration),
     /// The score composed as the motion starts plays this much longer from now: the clock is set to
     /// end with it, shorter than the stage's length or longer. Nothing to play leaves it as it is.

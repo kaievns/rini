@@ -90,15 +90,15 @@ folds a press before the motion and retargets a playing score from wherever it i
 movement reaches the flight engine, a look stages its press (`Look::stage`): the reactor names the
 press as a `Cue`, `transitions` finds where a moved pair starts and hands it to the look of the
 flight the movement joins, else the one it asks for, without matching on look or cue, and the look
-says which windows cross, which are held and which accent rides the movement. An `Accent` adds an additive track (the bounce re-kicks from where it is drawn). The
-renderer plays a score's edits, the snap of a tile onto its window's frame among them, swaps
-pictures, cuts holes over windows that end on screen, draws each tile's decorations, and lifts. A
-bend's structure, what rides where and where every node ends, is every look's alike
-(`Merged::bend`), so a look gives only motion. A new look
-is a file under `src/animation/domain/choreography/`, a `Look` variant in `ALL` there with its arms
-in `choreography` and `stage`, a row in `src/animation/docs/README.md` ("Adding a look") and its
-config word in `kebab_scalar!(Look …)` in `src/app/config/kdl/value.rs`, which `animations › look`
-decodes; capture, swaps and handover never see what a score contains. Zoom
+says which windows cross, which are held and which accent rides the movement. An `Accent` adds an
+additive track (the bounce re-kicks from where it is drawn). The renderer plays a score's edits, the
+snap of a tile onto its window's frame among them, swaps pictures, cuts holes over windows that end
+on screen, draws each tile's decorations, and lifts. A bend's structure, what rides where and where
+every node ends, is every look's alike (`Merged::bend`), so a look gives only motion. A new look is
+a file under `src/animation/domain/choreography/`, a `Look` variant in `ALL` there with its arms in
+`choreography` and `stage`, a row in `src/animation/docs/README.md` ("Adding a look") and its config
+word in `kebab_scalar!(Look …)` in `src/app/config/kdl/value.rs`, which `animations › look` decodes;
+capture, swaps and handover never see what a score contains. Zoom
 (`src/animation/domain/choreography/zoom.rs`) is such a look: the score's strip node holds a `Zoom`,
 a scale and a shift that say a scale about a centre through a camera
 (`src/animation/domain/motion/score.rs`), the overlay plays it on the layer every container but the
@@ -108,9 +108,10 @@ overlay covers (`Stage` and `Pass` carry it as `viewport`), what a zoom is centr
 carries the travel a camera would in each container's own track, so `Merged::bend` bends it with the
 rest of every container's movement and the strip's zoom is left playing through a bend; its press
 rides the movement as an `Accent::Arc`. The reactor names every press along the strip it plays, a
-focus press that scrolls as `Cue::Focus` and the press a bounce at a side of the strip ran into,
-and the flight's clock ends with the arc (`Event::Fit`). A container scaled on its own, as the parked spike lifted
-the moved window, is not in the score.
+focus press that scrolls as `Cue::Focus` and the press a bounce at a side of the strip ran into, and
+the flight's clock ends with the arc as the motion starts (`Event::Fit`); a merge still restarts it
+at the plain length (`specs/animation.md`, "The zoom look", not yet met). A container scaled on its
+own, as the parked spike lifted the moved window, is not in the score.
 
 ## `transitions`
 
