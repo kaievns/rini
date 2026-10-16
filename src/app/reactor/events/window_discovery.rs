@@ -9,7 +9,7 @@ use crate::app::reactor::LayoutEvent;
 use crate::app::system_reads::server_facts;
 use crate::windows::domain::focus::MainWindowTracker;
 use crate::windows::domain::info::{AppInfo, WindowInfo};
-use crate::windows::domain::manageable::{Facts, looks_gone, manageable};
+use crate::windows::domain::manageable::{Facts, Liveness, looks_gone, manageable};
 use crate::windows::domain::state::{WindowFilter, WindowState};
 use crate::windows::domain::transaction::WindowTxStore;
 use crate::windows::platform::window_server::WindowServer;
@@ -176,8 +176,7 @@ pub(crate) enum MidChange {
 #[derive(Debug)]
 pub(crate) struct StaleWindowObservation {
     pub(crate) info: Option<crate::windows::domain::info::WindowServerInfo>,
-    pub(crate) suitable: Option<bool>,
-    pub(crate) ordered_in: Option<bool>,
+    pub(crate) liveness: Liveness,
 }
 
 pub(crate) fn identify_stale_windows(
@@ -242,7 +241,7 @@ pub(crate) fn identify_stale_windows(
                 }
             };
 
-            looks_gone(info, observation.suitable, observation.ordered_in).then_some(wid)
+            looks_gone(info, observation.liveness).then_some(wid)
         })
         .collect();
 
@@ -730,16 +729,20 @@ mod tests {
                 min_frame: CGSize::new(0.0, 0.0),
                 max_frame: CGSize::new(0.0, 0.0),
             }),
-            suitable: Some(true),
-            ordered_in: Some(true),
+            liveness: Liveness {
+                suitable: Some(true),
+                ordered_in: Some(true),
+            },
         }
     }
 
     /// The server answers, and its answer is that the window is neither suitable nor on screen.
     fn gone(wsid: u32) -> StaleWindowObservation {
         StaleWindowObservation {
-            suitable: Some(false),
-            ordered_in: Some(false),
+            liveness: Liveness {
+                suitable: Some(false),
+                ordered_in: Some(false),
+            },
             ..present(wsid)
         }
     }
@@ -748,8 +751,10 @@ mod tests {
     fn unanswered() -> StaleWindowObservation {
         StaleWindowObservation {
             info: None,
-            suitable: None,
-            ordered_in: None,
+            liveness: Liveness {
+                suitable: None,
+                ordered_in: None,
+            },
         }
     }
 

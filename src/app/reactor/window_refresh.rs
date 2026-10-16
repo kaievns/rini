@@ -10,7 +10,7 @@ use super::layout_pass::Pass;
 use super::{Reactor, StaleCleanupState, WindowFilter};
 use crate::app::system_reads::server_facts;
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
-use crate::windows::domain::manageable::{Facts, manageable};
+use crate::windows::domain::manageable::{Facts, Liveness, manageable};
 use crate::windows::domain::request::Request;
 use crate::workspaces::LayoutEvent;
 
@@ -200,8 +200,10 @@ impl Reactor {
                 let known = self.state.windows.get_window_server_info(wsid);
                 (wsid, window_discovery::StaleWindowObservation {
                     info: known.or_else(|| ws.get_window(wsid)),
-                    suitable: ws.app_window_suitability(wsid),
-                    ordered_in: ws.window_ordered_in(wsid),
+                    liveness: Liveness {
+                        suitable: ws.app_window_suitability(wsid),
+                        ordered_in: ws.window_ordered_in(wsid),
+                    },
                 })
             })
             .collect();

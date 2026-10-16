@@ -58,17 +58,22 @@ pub fn turned_away_before_accessibility(facts: &Facts) -> bool {
         || level.is_some_and(|level| level != NORMAL_WINDOW_LEVEL)
 }
 
+/// What the window server answers of whether a window is still there: whether it is a suitable
+/// window for its application and whether it is ordered in, each `None` when the query failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Liveness {
+    pub suitable: Option<bool>,
+    pub ordered_in: Option<bool>,
+}
+
 /// Whether the window server's picture of a window the app no longer lists says it is gone: not a
 /// suitable window, off layer 0, too small to be real, or ordered out. A failed query (`None`) is
 /// not evidence; only an explicit negative observation retires a window.
-pub fn looks_gone(
-    info: &WindowServerInfo,
-    suitable: Option<bool>,
-    ordered_in: Option<bool>,
-) -> bool {
+pub fn looks_gone(info: &WindowServerInfo, liveness: Liveness) -> bool {
     const MIN_REAL_WINDOW_DIMENSION: f64 = 2.0;
     let too_small = info.frame.size.width.abs() < MIN_REAL_WINDOW_DIMENSION
         || info.frame.size.height.abs() < MIN_REAL_WINDOW_DIMENSION;
+    let Liveness { suitable, ordered_in } = liveness;
     suitable == Some(false) || info.layer != 0 || too_small || ordered_in == Some(false)
 }
 
@@ -197,19 +202,26 @@ mod tests {
         }
     }
 
+    fn said(suitable: Option<bool>, ordered_in: Option<bool>) -> Liveness {
+        Liveness { suitable, ordered_in }
+    }
+
     #[test]
     fn a_window_is_gone_only_on_an_explicit_negative_observation() {
         let real = info(0, 800.0, 600.0);
         assert!(
-            !looks_gone(&real, None, None),
+            !looks_gone(&real, said(None, None)),
             "unknown suitability and order are not evidence"
         );
-        assert!(!looks_gone(&real, Some(true), Some(true)));
-        assert!(looks_gone(&real, Some(false), None));
-        assert!(looks_gone(&real, None, Some(false)));
-        assert!(looks_gone(&info(1, 800.0, 600.0), None, None), "off layer 0");
+        assert!(!looks_gone(&real, said(Some(true), Some(true))));
+        assert!(looks_gone(&real, said(Some(false), None)));
+        assert!(looks_gone(&real, said(None, Some(false))));
         assert!(
-            looks_gone(&info(0, 1.0, 600.0), None, None),
+            looks_gone(&info(1, 800.0, 600.0), said(None, None)),
+            "off layer 0"
+        );
+        assert!(
+            looks_gone(&info(0, 1.0, 600.0), said(None, None)),
             "a sliver is not a window"
         );
     }

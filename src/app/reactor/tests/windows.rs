@@ -8,6 +8,7 @@ use crate::app::reactor::events::window_discovery;
 use crate::app::reactor::managers::QuarantineSignal;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
+use crate::windows::domain::manageable::Liveness;
 use crate::windows::domain::request::Request;
 use crate::workspaces::{LayoutCommand, LayoutEvent};
 
@@ -190,8 +191,7 @@ fn stale_cleanup_uses_ordered_state_instead_of_cached_visibility() {
         inactive_windows: Default::default(),
         server_observations: [(wsid, window_discovery::StaleWindowObservation {
             info: Some(info),
-            suitable,
-            ordered_in,
+            liveness: Liveness { suitable, ordered_in },
         })]
         .into_iter()
         .collect(),
