@@ -12,12 +12,11 @@ use knus::errors::DecodeError;
 use knus::span::Spanned;
 use knus::traits::ErrorSpan;
 pub use rini_ipc::protocol::SwitchScope;
-use serde::Serialize;
 
 use crate::input::domain::key::{ModKey, substitute_mod};
 
 /// One `binds` entry.
-#[derive(Serialize, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Bind {
     /// The key as written, canonicalised, with `Mod` still standing for `input › mod-key`.
     pub key: String,
@@ -32,9 +31,8 @@ impl Bind {
     pub fn resolved_key(&self, mod_key: ModKey) -> String { substitute_mod(&self.key, mod_key) }
 }
 
-#[derive(knus::Decode, strum::VariantNames, Serialize, Debug, Clone, PartialEq)]
+#[derive(knus::Decode, strum::VariantNames, strum::IntoStaticStr, Debug, Clone, PartialEq)]
 #[strum(serialize_all = "kebab-case")]
-#[serde(rename_all = "kebab-case")]
 pub enum Action {
     FocusColumnLeft,
     FocusColumnRight,
@@ -143,8 +141,7 @@ pub fn switch_scope(scope: Option<SwitcherScope>, filter: Option<SwitcherFilter>
 }
 
 /// A number written as an integer or a decimal.
-#[derive(Serialize, Debug, Clone, Copy, PartialEq)]
-#[serde(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Decimal(pub f64);
 
 impl<S: ErrorSpan> knus::DecodeScalar<S> for Decimal {
@@ -169,16 +166,14 @@ impl<S: ErrorSpan> knus::DecodeScalar<S> for Decimal {
 }
 
 /// A workspace: an integer is its position, 1 being the first; a string is its name.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum WorkspaceReference {
     Index(usize),
     Name(String),
 }
 
 /// A display: an integer is its position in physical order, 1 being the first; a string its UUID.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MonitorReference {
     Index(usize),
     Uuid(String),
@@ -228,8 +223,7 @@ impl<S: ErrorSpan> knus::DecodeScalar<S> for MonitorReference {
 }
 
 /// A relative change of a proportion: `"+5%"` or `"-5%"`.
-#[derive(Serialize, Debug, Clone, Copy, PartialEq)]
-#[serde(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SizeChange(pub f64);
 
 impl FromStr for SizeChange {
@@ -254,8 +248,7 @@ impl FromStr for SizeChange {
 }
 
 /// Which windows the switcher steps through.
-#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwitcherScope {
     All,
     Workspace,
@@ -278,8 +271,7 @@ impl FromStr for SwitcherScope {
     }
 }
 
-#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwitcherFilter {
     /// The focused application's windows, most recently focused first.
     AppId,

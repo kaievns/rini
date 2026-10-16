@@ -8,7 +8,6 @@ use rini_ipc::protocol::{
     self as reactor, DisplaySelector, RiniCommand, RiniRequest, RiniResponse, SwitchScope,
     WorkspaceSelector,
 };
-use serde::Serialize;
 
 #[derive(Parser)]
 #[command(name = "rini-cli")]
@@ -259,7 +258,8 @@ enum ConfigCommands {
         kdl: String,
     },
 
-    /// Print the running config as JSON
+    /// Print the running config as KDL, every setting in config.kdl's own words, defaults
+    /// included; the text reads back as the same config
     Get,
 
     /// Read the config file again now
@@ -331,10 +331,9 @@ fn main() {
     match client.send_request(&request) {
         Ok(resp) => match resp {
             RiniResponse::Success { data } => {
-                if let Err(e) = write_json(
-                    &data,
-                    std::env::var("RINI_CLI_PRETTY").map(|v| v != "0").unwrap_or(false),
-                ) {
+                let pretty = std::env::var("RINI_CLI_PRETTY").map(|v| v != "0").unwrap_or(false);
+                if let Err(e) = rendered(&request, &data, pretty).and_then(|text| write_out(&text))
+                {
                     eprintln!("Failed to handle response: {}", e);
                     process::exit(1);
                 }
@@ -612,18 +611,28 @@ fn parse_direction(value: &str) -> Result<rini_ipc::protocol::Direction, String>
     }
 }
 
-fn write_json<T: Serialize>(value: &T, pretty: bool) -> Result<(), String> {
-    let stdout = io::stdout();
-    let mut handle = stdout.lock();
-    let mut writer = io::BufWriter::new(&mut handle);
-
-    if pretty {
-        serde_json::to_writer_pretty(&mut writer, value).map_err(|e| e.to_string())?;
-    } else {
-        serde_json::to_writer(&mut writer, value).map_err(|e| e.to_string())?;
+/// What a successful reply prints: `config get`'s KDL as it is, so it can be read or saved as a
+/// config file, and every other reply as JSON.
+fn rendered(
+    request: &RiniRequest,
+    data: &serde_json::Value,
+    pretty: bool,
+) -> Result<String, String> {
+    if let (RiniRequest::GetConfig, serde_json::Value::String(kdl)) = (request, data) {
+        return Ok(kdl.clone());
     }
-    writer.write_all(b"\n").map_err(|e| e.to_string())?;
-    writer.flush().map_err(|e| e.to_string())
+    let json = if pretty {
+        serde_json::to_string_pretty(data)
+    } else {
+        serde_json::to_string(data)
+    };
+    json.map(|json| json + "\n").map_err(|e| e.to_string())
+}
+
+fn write_out(text: &str) -> Result<(), String> {
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    stdout.flush().map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -896,6 +905,31 @@ mod tests {
         })
         .unwrap();
         assert_eq!(request, RiniRequest::GetConfig);
+    }
+
+    /// `config get` prints its KDL as it is, to read or save as a config file; every other reply
+    /// prints as JSON, a string one quoted.
+    #[test]
+    fn config_get_prints_kdl_and_every_other_reply_json() {
+        let kdl = serde_json::json!("input {\n    mod-key \"Alt\"\n}\n");
+        assert_eq!(
+            rendered(&RiniRequest::GetConfig, &kdl, false).unwrap(),
+            "input {\n    mod-key \"Alt\"\n}\n"
+        );
+        let done = serde_json::json!("Command executed successfully");
+        assert_eq!(
+            rendered(&RiniRequest::GetDisplays, &done, false).unwrap(),
+            "\"Command executed successfully\"\n"
+        );
+        let displays = serde_json::json!([{ "id": 1 }]);
+        assert_eq!(
+            rendered(&RiniRequest::GetDisplays, &displays, false).unwrap(),
+            "[{\"id\":1}]\n"
+        );
+        assert_eq!(
+            rendered(&RiniRequest::GetDisplays, &displays, true).unwrap(),
+            "[\n  {\n    \"id\": 1\n  }\n]\n"
+        );
     }
 
     #[test]

@@ -277,7 +277,8 @@ Not bound by default: `switch-preset-column-width` (the `Mod+R` the specs name),
 ## Interop
 
 Mach-port IPC, as in rift, under `git.kaievns.rini`. `rini-cli` prints compact JSON;
-`RINI_CLI_PRETTY=1` indents it.
+`RINI_CLI_PRETTY=1` indents it. `rini-cli execute config get` prints the running config as KDL
+instead, every setting in `config.kdl`'s words, which reads back as the same config.
 
 ```sh
 rini-cli query diagnostics             # every display, workspace, column and parked window

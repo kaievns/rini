@@ -1,11 +1,9 @@
 //! Running programs: the config's `spawn-at-startup` and `spawn-sh-at-startup`, and the `spawn`
 //! and `spawn-sh` actions.
-use serde::Serialize;
 use tracing::{error, trace};
 
 /// A command the config asks rini to run once at launch.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StartupCommand {
     /// A program and its arguments, as written.
     Spawn(Vec<String>),

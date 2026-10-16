@@ -4,8 +4,6 @@
 //! (`windows::domain::rules::applies`) and apply continuously, as niri's do: each window is folded
 //! afresh whenever what it wears is asked for.
 
-use serde::Serialize;
-
 use crate::decorations::domain::paint::Paint;
 use crate::decorations::domain::shape;
 use crate::decorations::domain::style::{Band, Decoration, Urgency};
@@ -15,7 +13,7 @@ use crate::windows::domain::rules::{RuleMatch, RuleState, WindowRuleContext, app
 /// What one rule says of a band: each part it leaves out keeps what came before it. A paint it
 /// writes, colour or gradient, replaces the one before whole, so a colour clears a gradient, as
 /// niri's `merge_color_gradient` has it (`niri:niri-config/src/macros.rs:31-57`).
-#[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub struct BandRule {
     pub on: Option<bool>,
     pub width: Option<f64>,
@@ -40,7 +38,7 @@ impl BandRule {
 }
 
 /// The part of a `window-rule` that says what a window wears.
-#[derive(Serialize, Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct DecorationRule {
     pub matches: Vec<RuleMatch>,
     pub excludes: Vec<RuleMatch>,

@@ -11,7 +11,6 @@ use std::str::FromStr;
 
 use regex::Regex;
 pub use rini_ipc::protocol::WorkspaceSelector;
-use serde::{Serialize, Serializer};
 
 use crate::workspaces::domain::display_pin::DisplayRole;
 
@@ -39,14 +38,8 @@ impl fmt::Debug for RegexEq {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{:?}", self.as_str()) }
 }
 
-impl Serialize for RegexEq {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
 /// One `match` or `exclude` line: every matcher it names must hold.
-#[derive(Serialize, Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct RuleMatch {
     /// The bundle id.
     pub app_id: Option<RegexEq>,
@@ -110,8 +103,7 @@ fn exact_holds(rule: Option<&str>, actual: Option<&str>) -> bool {
 }
 
 /// Which corner or side of the display a floating position is measured from.
-#[derive(Serialize, Debug, PartialEq, Eq, Clone, Copy, Default)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum RelativeTo {
     #[default]
     TopLeft,
@@ -125,7 +117,7 @@ pub enum RelativeTo {
 }
 
 /// Where a floating window first appears: logical pixels from a corner, or from the middle of a side.
-#[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub struct FloatingPosition {
     pub x: f64,
     pub y: f64,
@@ -133,14 +125,14 @@ pub struct FloatingPosition {
 }
 
 /// A window's first size in logical pixels, either dimension or both.
-#[derive(Serialize, Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct AppRuleSize {
     pub w: Option<f64>,
     pub h: Option<f64>,
 }
 
 /// One `window-rule`. Every property is optional, so a later rule can leave what an earlier one said.
-#[derive(Serialize, Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct WindowRule {
     pub matches: Vec<RuleMatch>,
     pub excludes: Vec<RuleMatch>,

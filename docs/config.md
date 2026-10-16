@@ -53,8 +53,35 @@ fragment leaves.
 The format lives in `app/config/kdl`, except for what a bind names. `input::domain::binding` derives
 knus's `Decode` for `Action` and decodes the values its actions take: `Decimal`,
 `WorkspaceReference` and `MonitorReference` as knus scalars, and `SizeChange`, `SwitcherScope` and
-`SwitcherFilter` from the config's spelling with `FromStr`. The features' settings types carry no
-parsing.
+`SwitcherFilter` from the config's spelling with `FromStr`; `kdl/print.rs` spells them back. The
+features' settings types carry no parsing.
+
+## How a config is printed
+
+`rini-cli execute config get` prints the running config as the file it would be read from:
+`kdl/print.rs`, the inverse of `apply`, run in rini, its text carried over the wire as one string
+and printed by the CLI as it is. Every setting is written, a default too, in `rini.default.kdl`'s
+section order, so the output is the whole running config and can be saved as a `config.kdl`. A
+config holds no comments, so none are printed.
+
+What it prints reads back to the same `Config`. Where the text differs from what was written:
+
+- **Colours** print as `#rrggbb`, with `aa` when the alpha is not 1, so a name or an `hsl()` comes
+  back as hex. A colour hex cannot hold prints as `rgb()`, each channel in the fewest decimals that
+  read back to it.
+- **Window rules** are held as two lists, what a window opens with and what it wears, each folded on
+  its own. Each list is written back in its order, and an opening rule and a dressing rule with the
+  same matchers are written as one `window-rule`. The order between the two lists can differ from
+  the file's, which changes nothing a window gets.
+- **`slowdown`** is held as the movement's length and a `set-column-width` step as a fraction; each
+  prints in the fewest decimals that read back to it, `slowdown 0.3` and `"+7.5%"`.
+- **Bands** always write `on` or `off`, since a `layout › border` without either turns the border on.
+- **Keys** print as they are held: canonicalised, with `Mod` kept.
+- **Left out**, because they hold nothing: `draw-border-with-background false`, the only value
+  accepted, and a gradient's `relative-to="window"`, the only one rini draws.
+
+`config_get_writes_every_node_the_file_takes` holds that every node `SCHEMA` lists is printed by
+some config, and the round-trip tests in `src/app/config/tests.rs` that the text reads back.
 
 ## Naming
 

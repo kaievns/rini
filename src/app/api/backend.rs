@@ -84,9 +84,9 @@ impl rini_ipc::Backend for IpcBackend {
         self.reactor.try_send(Event::Command(command)).map_err(|e| e.to_string())
     }
 
-    fn config(&self) -> Result<serde_json::Value, String> {
+    fn config(&self) -> Result<String, String> {
         let config = self.ask_config(config::actor::Event::QueryConfig)?;
-        serde_json::to_value(&config).map_err(|e| format!("Failed to serialize config: {e}"))
+        Ok(config::kdl::print::print(&config))
     }
 
     fn apply_config(&self, command: ConfigCommand) -> Result<Result<(), String>, String> {

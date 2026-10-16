@@ -5,7 +5,6 @@
 use std::path::Path;
 
 pub use rini_ipc::protocol::ConfigCommand;
-use serde::Serialize;
 
 use crate::app::startup::StartupCommand;
 use crate::displays::platform::cursor_warp::StackedUpperSide;
@@ -27,7 +26,7 @@ pub const DEFAULT_KDL: &str = include_str!("../../../rini.default.kdl");
 /// The movement animation's length at `slowdown 1.0`, in seconds.
 pub const BASE_ANIMATION_SECONDS: f64 = 0.35;
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub settings: Settings,
     /// `binds`, in file order.
@@ -37,7 +36,7 @@ pub struct Config {
     pub virtual_workspaces: VirtualWorkspaceSettings,
 }
 
-#[derive(Serialize, Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "each is a switch the config file sets on its own"

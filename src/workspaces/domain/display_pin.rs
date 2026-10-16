@@ -11,13 +11,11 @@
 //! lid does not strand a window on a display that is not there.
 
 use rini_core::ids::DisplayUuid;
-use serde::Serialize;
 
 use crate::displays::domain::screen::ScreenInfo;
 
 /// The display a rule pins a window to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayRole {
     /// The machine's own screen.
     Internal,

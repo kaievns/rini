@@ -9,6 +9,7 @@ pub mod error;
 pub mod gestures;
 pub mod input;
 pub mod layout;
+pub mod print;
 pub mod suggest;
 pub mod value;
 pub mod window_rule;

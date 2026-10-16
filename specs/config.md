@@ -96,22 +96,24 @@
 - The config a fragment leaves MUST pass every check a file does. A fragment that changes `mod-key`
   so two running binds become one key, or replaces the workspaces so a running bind or rule names one
   that is gone, MUST be refused, naming them.
-- `rini-cli execute config get` MUST print the running config.
-- A setting `config get` prints MUST carry its value as the file has it, never inverted, and the
-  four renamed on 2026-10-16 MUST print under their config key, snake-cased:
-  `activate-spaces-by-default` as `settings.activate_spaces_by_default`, `warp-mouse-to-focus` as
-  `settings.warp_mouse_to_focus`, `ignore-app-activation` as `settings.ignore_app_activation` and
-  `gestures › drag-swap-overlap` as `settings.window_snapping.drag_swap_overlap`.
+- `rini-cli execute config get` MUST print the running config as KDL the config file accepts: every
+  section and every setting, a default too, under the name the file gives it.
+- What `config get` prints MUST read back as the same config.
+- A setting `config get` prints MUST carry its value as the file has it, never inverted:
+  `activate-spaces-by-default true` when Spaces start activated, `bar { off true; }` when the bar is
+  off.
 
-> **Changed 2026-10-16, in the Phase 4 type work, not asked for.** `config get` printed these as
-> `default_disable` (the inverse of `activate-spaces-by-default`), `mouse_follows_focus`,
-> `auto_focus_denylist` and `window_snapping.drag_swap_fraction`. A script that read the old names
-> now reads `null`, not an error. The file loads as before. `the_config_serialises_for_config_get`
-> holds the new names.
+> **Reported 2026-10-16.** "print out settings back in KDL for consistency". `config get` printed the
+> internal settings as JSON, under Rust field names; it now prints the file's own words.
+> `the_reference_config_prints_as_kdl_that_reads_back_the_same`,
+> `every_section_and_every_kind_of_value_prints_and_reads_back`,
+> `config_get_writes_every_node_the_file_takes` and
+> `config_get_prints_each_setting_as_the_file_writes_it` hold it.
 
 ## Where it lives
 
 `src/app/config/` reads and applies the file: `kdl/` decodes each section and `kdl/apply.rs` lays it
-over the settings; `kdl/suggest.rs` holds the name tables: the names each section takes, niri's
-names and actions rini refuses with the reason, and rini's former actions with what does their job
-now. The decisions behind the format are `docs/config.md`.
+over the settings; `kdl/print.rs` writes a config back as the file, for `config get`;
+`kdl/suggest.rs` holds the name tables: the names each section takes, niri's names and actions rini
+refuses with the reason, and rini's former actions with what does their job now. The decisions
+behind the format are `docs/config.md`.

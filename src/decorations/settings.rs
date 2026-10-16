@@ -1,14 +1,12 @@
 //! What the config can say about the decorations rini draws: `layout › focus-ring`,
 //! `layout › border`, and what each `window-rule` says of them. Plain data.
 
-use serde::Serialize;
-
 use crate::decorations::domain::paint::{Colour, Paint};
 use crate::decorations::domain::rules::DecorationRule;
 use crate::decorations::domain::style::Band;
 
 /// A band the config turns on or off, and how it is drawn while on.
-#[derive(Serialize, Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct BandSetting {
     pub on: bool,
     pub band: Band,
@@ -19,7 +17,7 @@ impl BandSetting {
     pub fn worn(&self) -> Option<Band> { self.on.then_some(self.band) }
 }
 
-#[derive(Serialize, Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct DecorationSettings {
     pub focus_ring: BandSetting,
     pub border: BandSetting,

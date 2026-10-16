@@ -31,8 +31,9 @@ pub trait Backend: Send + 'static {
     fn diagnostics(&self) -> crate::protocol::DiagnosticsData;
     /// Queue a command; `Err` only when the reactor is gone.
     fn execute(&self, command: crate::protocol::Command) -> Result<(), String>;
-    /// The live configuration, serialised. `Err` when the config actor did not answer.
-    fn config(&self) -> Result<serde_json::Value, String>;
+    /// The live configuration, as the KDL a config file would hold. `Err` when the config actor
+    /// did not answer.
+    fn config(&self) -> Result<String, String>;
     /// Apply a config command. Outer `Err` when the config actor did not answer; inner `Err` is
     /// the actor's own rejection.
     fn apply_config(&self, command: ConfigCommand) -> Result<Result<(), String>, String>;
@@ -92,7 +93,9 @@ impl<B: Backend> MachHandler<B> {
             RiniRequest::GetDiagnostics => success(self.reactor.diagnostics()),
 
             RiniRequest::GetConfig => match self.reactor.config() {
-                Ok(value) => RiniResponse::Success { data: value },
+                Ok(text) => RiniResponse::Success {
+                    data: serde_json::Value::String(text),
+                },
                 Err(e) => {
                     error!("{}", e);
                     RiniResponse::Error {
@@ -289,9 +292,7 @@ mod tests {
             Ok(())
         }
 
-        fn config(&self) -> Result<serde_json::Value, String> {
-            Ok(serde_json::json!({ "fake": true }))
-        }
+        fn config(&self) -> Result<String, String> { Ok("fake true\n".into()) }
 
         fn apply_config(&self, _: ConfigCommand) -> Result<Result<(), String>, String> {
             Ok(Ok(()))
@@ -316,6 +317,16 @@ mod tests {
             panic!("expected success")
         };
         assert_eq!(data["m"], 1);
+    }
+
+    /// `config get` is answered with the backend's KDL as one string, for the CLI to print as it is.
+    #[test]
+    fn the_config_is_answered_as_its_text() {
+        let (handler, _) = handler();
+        let RiniResponse::Success { data } = handler.handle_request(RiniRequest::GetConfig) else {
+            panic!("expected success")
+        };
+        assert_eq!(data, serde_json::json!("fake true\n"));
     }
 
     #[test]

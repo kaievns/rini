@@ -1,8 +1,6 @@
 //! What the bar can be told about itself. Plain data; the config file fills it from `bar`.
 
-use serde::Serialize;
-
-#[derive(Serialize, Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct BarSettings {
     /// Draw rini's bar. Off, no bar is drawn and windows get the band back, for running another bar
     /// in its place.
