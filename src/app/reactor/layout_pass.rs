@@ -533,10 +533,8 @@ impl Pass {
 /// visible at the edge. 1pt is the smallest value that still satisfies the window
 /// server while being visually negligible.
 ///
-/// Was 10pt, which is individually small but stacks: with a dozen scrolled-away
-/// columns parked at the same edge the result is a conspicuous ~10pt band of
-/// overlapping window edges on both sides of the screen, and it is worse on a
-/// wide external display where more columns are off-strip.
+/// Any wider and it stacks: a dozen columns parked at one edge make a visible band
+/// of overlapping edges, worse on a wide external display.
 const WINDOW_HIDDEN_THRESHOLD: f64 = 1.0;
 
 fn bound_frame_to_screen(frame: CGRect, screen: CGRect) -> CGRect {

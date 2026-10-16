@@ -793,10 +793,8 @@ fn it_preserves_layout_after_login_screen() {
     let default = test_layout(&mut reactor, space, full_screen);
 
     assert!(selected_window(&reactor, space).is_some());
-    // Was MoveNode(Up), a tree operation. In a scrolling strip of single-window columns
-    // there is nothing above a window, so that command is a no-op and the layout never
-    // changed — the assert_ne below then failed for the wrong reason. Moving a column
-    // sideways is the equivalent rearrangement here.
+    // Moved sideways: a strip of single-window columns has nothing above a window, so
+    // MoveNode(Up) would leave the layout unchanged.
     reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
     apps.simulate_until_quiet(&mut reactor);
     let modified = test_layout(&mut reactor, space, full_screen);

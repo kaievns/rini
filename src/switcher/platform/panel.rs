@@ -47,9 +47,8 @@ use crate::windows::platform::app::{NSRunningApplicationExt, image_file_pixels};
 
 /// The pop-up menu level, which is where macOS draws its own switcher and its menus.
 ///
-/// Was 21, chosen only to clear rini's animation overlay at 18. That is too low: an application is free
-/// to keep a window at the floating (3), modal (8) or status (25) level, and at 21 the popup went under
-/// anything at 25 or above. A switcher that can be covered is a switcher that cannot be read.
+/// Above every level an application may keep a window at, floating (3), modal (8) and status (25)
+/// among them, and above rini's overlay at 18: a switcher that can be covered cannot be read.
 const PANEL_LEVEL: isize = 101;
 
 // Colours and radii from the Okibi design system, dark theme. Named tokens rather than chosen values:

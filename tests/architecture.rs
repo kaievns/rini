@@ -2571,6 +2571,10 @@ const HISTORY: [&str; 9] = [
     "# history",
 ];
 
+/// A sentence opening that narrates what a value or a call once was: "Was 10pt, which ...". Found
+/// only where a comment run or a sentence after ". " starts, since "was" is plain English elsewhere.
+const HISTORY_OPENING: &str = "was";
+
 /// Comments that quote an external API's own words, by path and the quote, which a history
 /// phrasing inside the quote does not fail and one beside it in the same comment still does.
 const QUOTED_HISTORY: [(&str, &str); 0] = [];
@@ -2632,26 +2636,35 @@ impl HistoryPhrasing {
 }
 
 /// Every history phrasing a comment in `source` holds as whole words, a line break inside the
-/// phrasing included, in line order.
+/// phrasing included, and every sentence a comment opens with [`HISTORY_OPENING`], in line order.
 fn history_phrasings(source: &str) -> Vec<HistoryPhrasing> {
     let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
     let mut found = Vec::new();
     for (run, lines) in comment_runs(source) {
-        for phrase in HISTORY {
-            for (at, _) in run.match_indices(phrase) {
-                let before = run[..at].chars().next_back();
-                let after = run[at + phrase.len()..].chars().next();
-                if word(before) || word(after) {
-                    continue;
-                }
-                let line = lines.iter().rev().find(|(start, _)| *start <= at).map_or(0, |l| l.1);
-                found.push(HistoryPhrasing {
-                    line,
-                    phrase,
-                    run: run.clone(),
-                    at,
-                });
-            }
+        let opening = format!("{HISTORY_OPENING} ");
+        let after_a_stop = format!(". {opening}");
+        let openings = run
+            .starts_with(&opening)
+            .then_some(0)
+            .into_iter()
+            .chain(run.match_indices(&after_a_stop).map(|(at, _)| at + 2))
+            .map(|at| (at, HISTORY_OPENING));
+        let phrasings = HISTORY.iter().flat_map(|&phrase| {
+            run.match_indices(phrase)
+                .filter(|&(at, _)| {
+                    !word(run[..at].chars().next_back())
+                        && !word(run[at + phrase.len()..].chars().next())
+                })
+                .map(move |(at, _)| (at, phrase))
+        });
+        for (at, phrase) in phrasings.chain(openings).collect::<Vec<_>>() {
+            let line = lines.iter().rev().find(|(start, _)| *start <= at).map_or(0, |l| l.1);
+            found.push(HistoryPhrasing {
+                line,
+                phrase,
+                run: run.clone(),
+                at,
+            });
         }
     }
     found.sort_by_key(|found| (found.line, found.phrase));
@@ -2704,6 +2717,10 @@ fn unused_to() {}
 // Written out any more often than once.
 // An earlier
 // attempt sorted these.
+// Was 21, chosen to clear the overlay.
+// It is 1pt. Was 10pt before.
+// It was wide, and was
+// narrowed. The value was 3.
 "#;
     let found: Vec<(usize, &str)> = history_phrasings(source)
         .into_iter()
@@ -2716,6 +2733,8 @@ fn unused_to() {}
         (7, "# history"),
         (8, "any more"),
         (9, "an earlier attempt"),
+        (11, "was"),
+        (12, "was"),
     ]);
 }
 
