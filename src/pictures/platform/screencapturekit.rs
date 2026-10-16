@@ -99,7 +99,8 @@ fn content_reaches_edges(buffer: &CVPixelBuffer) -> Option<bool> {
 }
 
 /// Copies a capture's pixels into an IOSurface this process owns: ScreenCaptureKit recycles its pool
-/// surfaces once the completion returns. See "Cached surfaces have to be marked in use" in the research doc.
+/// surfaces once the completion returns, so a capture's surface is copied inside its completion. See
+/// "Cached surfaces have to be marked in use" in the research doc.
 fn own_copy(source: &IOSurfaceRef) -> Option<CFRetained<IOSurfaceRef>> {
     let (width, height) = (source.width(), source.height());
     let stride = source.bytes_per_row();

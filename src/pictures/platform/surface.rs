@@ -60,11 +60,14 @@ pub fn new_surface(
 }
 
 /// Hands `read` the bytes of `surface`, every row, `bytes_per_row` apart, under a read-only lock.
-/// `None` when the lock fails or the surface is smaller than its rows.
-pub fn read_locked<R>(surface: &IOSurfaceRef, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
+/// `None` when the lock fails or the surface is smaller than its rows. `surface` is one
+/// `new_surface` made, or a capture's surface read inside its delivery completion: nothing writes
+/// either while it is read.
+pub(super) fn read_locked<R>(surface: &IOSurfaceRef, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
     with_locked(surface, IOSurfaceLockOptions::ReadOnly, |base, length| {
         // SAFETY: `with_locked` hands the `length` bytes the surface holds at `base`, locked. This
-        // process writes a surface only inside `new_surface`, before anything else holds it.
+        // process writes a surface only inside `new_surface`, before anything else holds it, and
+        // ScreenCaptureKit rewrites a delivered surface only after its completion returns.
         read(unsafe { std::slice::from_raw_parts(base, length) })
     })
 }
