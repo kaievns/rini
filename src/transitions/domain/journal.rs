@@ -86,6 +86,9 @@ pub enum Mark {
     Extend {
         ms: u32,
     },
+    Fit {
+        ms: u32,
+    },
     Abandon,
     Quiet {
         of: Generation,
@@ -479,6 +482,7 @@ impl Journal {
                 window: *window,
             }),
             Event::Extend(needs) => Pending::One(Mark::Extend { ms: millis(*needs) }),
+            Event::Fit(plays) => Pending::One(Mark::Fit { ms: millis(*plays) }),
             Event::Tick { settled, landed } if reads_landing => Pending::Tick(Arrived {
                 settled: *settled,
                 landed: *landed,
@@ -1106,6 +1110,7 @@ mod tests {
         assert_eq!(held, Mark::HoldMerge { grows: 1, writes: 2 });
         assert_eq!(marks_of(Event::Lost { generation: g, window: w(1) }), ["lost"]);
         assert_eq!(marks_of(Event::Extend(Duration::from_millis(5))), ["extend"]);
+        assert_eq!(marks_of(Event::Fit(Duration::from_millis(5))), ["fit"]);
         assert_eq!(marks_of(Event::Tick { settled: true, landed: true }), [
             "at_rest", "landed"
         ]);

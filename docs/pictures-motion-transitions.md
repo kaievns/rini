@@ -107,7 +107,9 @@ overlay covers (`Stage` and `Pass` carry it as `viewport`), what a zoom is centr
 (`a_look_zooms_the_strip_about_the_display_it_is_staged_on`). Zoom keeps the camera at rest and
 carries the travel a camera would in each container's own track, so `Merged::bend` bends it with the
 rest of every container's movement and the strip's zoom is left playing through a bend; its press
-rides the movement as an `Accent::Arc`. A container scaled on its own, as the parked spike lifted
+rides the movement as an `Accent::Arc`. The reactor names every press along the strip it plays, a
+focus press that scrolls as `Cue::Focus` and the press a bounce at a side of the strip ran into,
+and the flight's clock ends with the arc (`Event::Fit`). A container scaled on its own, as the parked spike lifted
 the moved window, is not in the score.
 
 ## `transitions`

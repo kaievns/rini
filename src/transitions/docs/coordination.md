@@ -331,7 +331,7 @@ folded by the flight's look (`FlightScore::fold`; Slide's is `merge_plans`, as a
 with every container where frame zero installs it and taken to be where the last pass sends it: the
 reactor builds a pass from the layout where the press before left it, so its frames are places on the
 strip there. A burst of presses then composes as one movement from frame zero, which the look is
-told shows the latest press (its `Cue`, plain or a move). Rebuilt
+told shows the latest press (its `Cue`: plain, a move or a focus press along the strip). Rebuilt
 from the merged tiles, as it was, each window rode its own path from where frame zero drew it to where
 the last press sends it. On two steps along the strip, the column the second brought started under
 the one the first brought, and the column the second left behind was outrun and covered by its
@@ -661,7 +661,7 @@ places report it: `move_focus_internal`'s fallback (`focus_strip_end`) and `Move
 left/right only, and `handle_workspace_command` and
 `move_window_to_workspace`, both up/down. Moving reports it because moving
 without a cue was indistinguishable from a stuck key — the same reason
-navigating does. A `MoveWindowToWorkspace` naming a workspace outright reports
+a focus press does. A `MoveWindowToWorkspace` naming a workspace outright reports
 nothing: not finding workspace 7 is a request that cannot be honoured, not a
 push against an end, so `workspace_stack_direction` answers only for
 `next`/`prev`. The reactor (`start_edge_bounce`) sends `Event::Bounce` with the
@@ -669,12 +669,17 @@ active workspace's surface and `edge_bounce_overshoot`
 (`src/animation/domain/motion/plan.rs`): `EDGE_BOUNCE_OVERSHOOT` (72pt) the way the
 content would have gone, so going right pulls the strip left and the next
 workspace pulls the row up. It was 36pt and was reported as too small to
-notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. The actor (`start_bounce`) composes a transition of
+notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. A bounce at a side of the
+strip names the press that ran into it, the move by the window it pushed (`EventResponse::pushed`)
+and the focus press by the window focus stayed on (`EventResponse::stepped`), and one at an end of
+the stack names none (`edge_press` in `src/app/reactor/layout_pass.rs`): the look plays the bounce
+as it plays that press. The actor (`start_bounce`) composes a transition of
 the bounce kind when none is running: every tile at rest, nothing written and nothing watched, the
 bounce played as the motion starts, once frame zero is up. On a flight that moves it adds the bounce at
 once; on one that does not move yet it waits for the motion (`RunningAnimation::push`, which keeps it
-with `FlightScore::wait`), the latest push in place of any before it, and plays as the motion starts. Either way the coordinator's clock runs on for
-as long as the score plays (`Event::Extend`). Every push that reaches a moving flight shows: each
+with `FlightScore::wait`), the latest push in place of any before it, and plays as the motion starts. Either way the coordinator's clock runs for
+as long as the score plays: set to end with it as the motion starts (`Event::Fit`), run on for a
+push on a moving flight (`Event::Extend`). Every push that reaches a moving flight shows: each
 container's bounce is a track in the flight's score, and a push while it plays starts that
 container's next from where it is drawn, the clock extended to the new ones' return. Frame zero posed
 again has nothing playing, and the lift drops the score, so the next push starts every bounce from
@@ -706,7 +711,8 @@ now, in the order they had before. For W of width a and N of width b with gap
 g, moving right, W started at N's new x and N at N's new x + a + g; moving
 left, W at W's new x + b + g and N at W's new x. Every window of a stacked N
 shifts by one amount. What is done with the pair is the look's: the reactor
-names the press (`Cue::Move`), and as the movement reaches the flight engine,
+names the press (`Cue::Move`; a focus press along the strip is `Cue::Focus`, from
+`EventResponse::stepped`, a move before it), and as the movement reaches the flight engine,
 `stage_move` hands the strip and the pair to the look of the flight it joins,
 else the one it asks for (`Look::stage`, `src/animation/domain/choreography.rs`),
 and puts what it staged on the surface. Slide, the default look
@@ -748,8 +754,8 @@ the step over its own press's plain duration stretched by `NUDGE_STRETCH` (1.3x)
 carries, and the flight that takes it over that or its own duration, whichever is longer, so a flight
 that does not step keeps its length, and a longer press folded in after the step, a switch of two or
 more rows, neither stretches it nor is stretched itself; the reactor asked for the stretch with every step it
-sent, stepped or not. The clock and lift wait for the step to come home (`Event::Extend` over the
-score, `FlightScore::settled`).
+sent, stepped or not. The clock and lift wait for the step to come home (`Event::Fit` over the
+score as the motion starts, `Event::Extend` for a merge, `FlightScore::settled`).
 
 **Pictures.** The column a full-width move passes is parked at both ends, so a
 cold cache had no picture of it, and the strip surface drew nothing for a

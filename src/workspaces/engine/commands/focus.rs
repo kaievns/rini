@@ -50,6 +50,8 @@ impl LayoutEngine {
                         raise_windows: vec![windows[next]],
                         edge_hit: None,
                         moved: None,
+                        stepped: None,
+                        pushed: None,
                     };
                     self.apply_focus_response(space, workspace_id, layout, &response);
                     response
@@ -66,6 +68,8 @@ impl LayoutEngine {
                         raise_windows,
                         edge_hit: None,
                         moved: None,
+                        stepped: None,
+                        pushed: None,
                     };
                     self.apply_focus_response(space, workspace_id, layout, &response);
                     response

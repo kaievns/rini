@@ -1229,7 +1229,7 @@ impl FlightEngine {
     }
 
     /// The motion starts: the look composes it from frame zero, with the accents that waited for it,
-    /// and the renderer plays it in one transaction; the clock runs on for as long as the score does.
+    /// and the renderer plays it in one transaction; the clock runs for as long as the score does.
     fn start_moving(&mut self, now: Instant) {
         let duration = self.flights.coordinator().remaining(now).unwrap_or_default();
         let at = self.media.at(now);
@@ -1247,7 +1247,7 @@ impl FlightEngine {
         let edits = running.start_moving(viewport, duration.as_secs_f64(), at);
         let remaining = running.score.remaining(at);
         self.play(edits);
-        self.drive(lifecycle::Event::Extend(remaining));
+        self.drive(lifecycle::Event::Fit(remaining));
     }
 
     /// One frame of the clock: where the tiles are drawn and where the windows are, read only from a
@@ -1957,8 +1957,8 @@ mod tests {
 
         /// A flight keeps the look it began with: a full-width move merged into it is staged by the
         /// flight's look, whatever look the move asks for, so it steps the strip only on a Slide
-        /// flight, Probe staging no step; the next flight takes the move's own ("Looks" in
-        /// `specs/animation.md`).
+        /// flight, Probe and Zoom staging no step; the next flight takes the move's own, as a
+        /// reload of the config's look does ("Looks" in `specs/animation.md`).
         #[test]
         fn a_move_merged_into_a_flight_is_staged_by_the_flights_look() {
             let panned = |mut event: Event, chosen: Look| {
@@ -2007,7 +2007,12 @@ mod tests {
                 let steps = running.score.score().plays(Channel::Nudge, h.media.at(h.at()));
                 Some((running.score.look(), steps))
             };
-            for (begun, asked) in [(Look::Slide, Look::Probe), (Look::Probe, Look::Slide)] {
+            for (begun, asked) in [
+                (Look::Slide, Look::Probe),
+                (Look::Probe, Look::Slide),
+                (Look::Slide, Look::Zoom),
+                (Look::Zoom, Look::Slide),
+            ] {
                 let mut h = Harness::new();
                 h.step(panned(h.pan(), begun));
                 h.advance(Duration::from_millis(5));
@@ -3684,6 +3689,35 @@ mod tests {
                 h.engine.viewport(),
                 OverlayRect::new(Point::origin(), Size::new(2560.0, 1440.0))
             );
+        }
+
+        /// The clock ends with the score the motion starts with: a zoom's arc, 2.2/3 of the press's
+        /// length, lifts as it lands, and a slide keeps the press's length ("The zoom look" in
+        /// `specs/animation.md`).
+        #[test]
+        fn the_clock_ends_with_the_motion_the_look_composes() {
+            for (look, plays) in [(Look::Zoom, 0.3 * 2.2 / 3.0), (Look::Slide, 0.3)] {
+                let mut h = Harness::new();
+                let mut pan = h.pan();
+                if let Event::AnimateSurface { look: chosen, cue, .. } = &mut pan {
+                    *chosen = look;
+                    *cue = Cue::Focus { from: wid(1), to: wid(1) };
+                }
+                h.step(pan);
+                h.advance(Duration::from_millis(5));
+                let frame_zero = h.frame_zero();
+                let shown = only_batch(&h.step(frame_zero)).seq;
+                h.commit(shown);
+                let left = h.engine.flights.coordinator().remaining(h.at()).expect("moving");
+                assert!(
+                    (left.as_secs_f64() - plays).abs() < 1e-3,
+                    "{look:?}: {left:?}, not {plays}s"
+                );
+                let arcs = h.engine.running.as_ref().is_some_and(|running| {
+                    running.score.score().tracks(Node::Strip).next().is_some()
+                });
+                assert_eq!(arcs, look == Look::Zoom, "{look:?}");
+            }
         }
 
         #[test]

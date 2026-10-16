@@ -153,6 +153,8 @@ fn handle_layout_response_includes_handles_for_raise_and_focus_windows() {
             focus_window: Some(WindowId::new(2, 1)),
             edge_hit: None,
             moved: None,
+            stepped: None,
+            pushed: None,
         },
         None,
     );
@@ -497,9 +499,12 @@ fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_who
 
 /// Pushing past an end bounces the view instead of doing nothing: focus right at the last column
 /// nudges the strip left; the previous workspace at the top of the stack nudges the row up. Focus
-/// stays where it was in both cases. See "Edge bounce" in `src/transitions/docs/coordination.md`.
+/// stays where it was in both cases. The strip's bounce names the focus press, which a look may
+/// play zoomed out ("The zoom look" in `specs/animation.md`); the stack's names none. See "Edge
+/// bounce" in `src/transitions/docs/coordination.md`.
 #[test]
 fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
+    use crate::animation::domain::choreography::Cue;
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
     use crate::transitions::platform::engine::Event as Anim;
     let (mut apps, mut reactor) = test_context();
@@ -517,8 +522,8 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     let bounces = |rx: &mut channels::Receiver<Anim>| {
         let mut out = Vec::new();
         while let Ok((_, event)) = rx.try_recv() {
-            if let Anim::Bounce { overshoot, windows, .. } = event {
-                out.push((overshoot, windows.len()));
+            if let Anim::Bounce { overshoot, windows, cue, .. } = event {
+                out.push((overshoot, windows.len(), cue));
             }
         }
         out
@@ -527,16 +532,21 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
-        "the strip's end: one bounce to the left carrying both columns"
+        vec![
+            (OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2, Cue::Focus {
+                from: last_column,
+                to: last_column
+            })
+        ],
+        "the strip's end: one bounce to the left carrying both columns, a focus press staying put"
     );
     assert_eq!(reactor.layout().focused_window(), Some(last_column));
 
     reactor.handle_test_layout_command(LayoutCommand::PrevWorkspace(None));
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
-        "the top of the stack: one bounce downward"
+        vec![(OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2, Cue::Plain)],
+        "the top of the stack: one bounce downward, no press along the strip"
     );
     assert_eq!(reactor.layout().focused_window(), Some(last_column));
 
@@ -546,10 +556,12 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
 }
 
 /// Reported: MOVING a window past an end had no cue at all, so it read as a stuck key. It bounces the
-/// same way navigating does — the strip for a column that cannot go further, the row for a workspace
-/// stack with nothing beyond it.
+/// same way a focus press does — the strip for a column that cannot go further, the row for a
+/// workspace stack with nothing beyond it. The strip's bounce names the window pushed, the stack's
+/// names none.
 #[test]
 fn moving_a_window_past_an_end_bounces_the_view_too() {
+    use crate::animation::domain::choreography::Cue;
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
     use crate::transitions::platform::engine::Event as Anim;
     let (mut apps, mut reactor) = test_context();
@@ -567,8 +579,8 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     let bounces = |rx: &mut channels::Receiver<Anim>| {
         let mut out = Vec::new();
         while let Ok((_, event)) = rx.try_recv() {
-            if let Anim::Bounce { overshoot, windows, .. } = event {
-                out.push((overshoot, windows.len()));
+            if let Anim::Bounce { overshoot, windows, cue, .. } = event {
+                out.push((overshoot, windows.len(), cue));
             }
         }
         out
@@ -579,8 +591,13 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
-        "the strip's end: one bounce to the left carrying both columns"
+        vec![
+            (OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2, Cue::Move {
+                window: last_column,
+                direction: Direction::Right
+            })
+        ],
+        "the strip's end: one bounce to the left carrying both columns, the window pushed named"
     );
     assert_eq!(
         reactor.layout().focused_window(),
@@ -598,8 +615,8 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     });
     assert_eq!(
         bounces(&mut animation_rx),
-        vec![(OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
-        "the top of the stack: one bounce downward"
+        vec![(OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2, Cue::Plain)],
+        "the top of the stack: one bounce downward, no press along the strip"
     );
 
     // A move that lands somewhere is a move, not a bounce.

@@ -197,6 +197,8 @@ impl LayoutEngine {
                 focus_window: Some(window),
                 edge_hit: None,
                 moved: None,
+                stepped: None,
+                pushed: None,
             };
         }
         EventResponse {

@@ -934,6 +934,8 @@ mod strip_regroup {
                 focus_window: Some(WindowId::new(1, 1)),
                 edge_hit: None,
                 moved: None,
+                stepped: None,
+                pushed: None,
             },
             None,
         );
@@ -962,6 +964,8 @@ mod strip_regroup {
                     focus_window: Some(WindowId::new(left, 1)),
                     edge_hit: None,
                     moved: None,
+                    stepped: None,
+                    pushed: None,
                 },
                 None,
             );
@@ -1060,6 +1064,8 @@ mod strip_regroup {
                 focus_window: Some(WindowId::new(1, 4)),
                 edge_hit: None,
                 moved: None,
+                stepped: None,
+                pushed: None,
             },
             None,
         );
@@ -1079,6 +1085,8 @@ mod strip_regroup {
                 focus_window: Some(WindowId::new(1, 1)),
                 edge_hit: None,
                 moved: None,
+                stepped: None,
+                pushed: None,
             },
             None,
         );
@@ -2959,14 +2967,84 @@ fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
         "a half-width column is seen moving and never steps"
     );
 
-    // The move is spent: the next scroll is a plain pan.
+    // The move is spent: the next scroll is a focus press, which moves no window.
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
     for flight in strip_movements(&mut rx) {
         assert!(flight.windows.iter().all(|w| w.from.is_none()));
-        assert_eq!(flight.cue, crate::animation::domain::choreography::Cue::Plain);
+        assert_eq!(flight.cue.moved(), None);
         assert_eq!(flight.accent, None);
     }
+}
+
+/// A focus press that scrolls the strip names itself to the look, the window it left and the one it
+/// reached, and under zoom pans on an arc as deep as a move of the two: 0.88 for halves, deeper for
+/// two columns wider than the display together ("The zoom look" in `specs/animation.md`).
+#[test]
+fn a_focus_press_that_scrolls_the_strip_names_itself_and_zooms_under_zoom() {
+    use crate::animation::domain::choreography::zoom::zoom_depth;
+    use crate::animation::domain::choreography::{Cue, Look};
+    use crate::animation::domain::motion::accents::Accent;
+    let zoomed = |ratio: f64, count: usize| {
+        let (apps, mut reactor, mut rx) = moving_strip(ratio, count);
+        let mut config = reactor.config().clone();
+        config.settings.look = Look::Zoom;
+        let scrolling = &mut config.settings.layout.scrolling;
+        scrolling.column_width_ratio = ratio;
+        scrolling.max_column_width_ratio = ratio.max(scrolling.max_column_width_ratio);
+        reactor.handle_event(Event::ConfigUpdated(Box::new(config)));
+        strip_movements(&mut rx);
+        (apps, reactor, rx)
+    };
+    let (w1, w2, w3) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+
+    let (_apps, mut reactor, mut rx) = zoomed(0.5, 4);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    strip_movements(&mut rx);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1, "one strip movement for the press");
+    let flight = &flights[0];
+    assert!(
+        flight.from_offset.x.abs() >= 1.0,
+        "it scrolled: {:?}",
+        flight.from_offset
+    );
+    assert_eq!(flight.cue, Cue::Focus { from: w2, to: w3 });
+    assert!(
+        flight.windows.iter().all(|w| w.from.is_none()),
+        "nothing changes places"
+    );
+    assert_eq!(
+        flight.accent,
+        Some(Accent::Arc {
+            depth: 0.88,
+            share: 0.5,
+            swap: None,
+            seconds: flight.duration.as_secs_f64(),
+        })
+    );
+
+    let (_apps, mut reactor, mut rx) = zoomed(1.0, 3);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1);
+    assert_eq!(flights[0].cue, Cue::Focus { from: w1, to: w2 });
+    let Some(Accent::Arc { depth, share, swap: None, .. }) = flights[0].accent else {
+        panic!("a press across a whole display zooms: {:?}", flights[0].accent);
+    };
+    let frame = |window| flights[0].windows.iter().find(|w| w.window == window).unwrap().frame;
+    let (a, b) = (frame(w1), frame(w2));
+    let pair = b.max().x - a.min().x;
+    let narrower = a.size.width.min(b.size.width);
+    assert!(pair > 1728.0, "two columns wider than the display: {pair}");
+    assert_eq!(
+        depth,
+        zoom_depth(1728.0, pair, narrower),
+        "as deep as a move of the two"
+    );
+    assert!(depth < 0.88, "{depth}");
+    assert_eq!(share, 0.5);
 }
 
 /// Only a full-size window steps, away from where it goes ("Moving a window along the strip" in

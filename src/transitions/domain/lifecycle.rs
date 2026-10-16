@@ -283,6 +283,9 @@ pub enum Event {
     /// The score plays this much longer from now: composed as the motion starts, or added to by a
     /// push or a merge that moves nothing. The clock runs on to cover it.
     Extend(Duration),
+    /// The score composed as the motion starts plays this much longer from now: the clock is set to
+    /// end with it, shorter than the stage's length or longer. Nothing to play leaves it as it is.
+    Fit(Duration),
     /// The frame clock. `settled`: every tile is drawn where it ends. `landed`: the real windows are where
     /// they were written.
     Tick { settled: bool, landed: bool },
@@ -863,6 +866,17 @@ impl Coordinator {
                     && let Some((started, duration)) = &mut f.clock
                 {
                     *duration = (*duration).max(now - *started + needs);
+                    if f.phase == Phase::Landing {
+                        f.phase = Phase::Playing;
+                    }
+                }
+            }
+            Event::Fit(plays) => {
+                if let State::Flying(f) = &mut self.state
+                    && let Some((started, duration)) = &mut f.clock
+                    && !plays.is_zero()
+                {
+                    *duration = now.saturating_duration_since(*started) + plays;
                     if f.phase == Phase::Landing {
                         f.phase = Phase::Playing;
                     }
@@ -5558,6 +5572,40 @@ mod tests {
         c.on(Event::Extend(Duration::from_millis(200)), started + PLAYS);
         assert!(!c.wants_landing(started + PLAYS), "an accent stretched it");
         assert_eq!(Coordinator::default().remaining(now), None);
+    }
+
+    /// The clock fits the score composed as the motion starts, shorter than the stage's length as a
+    /// zoom's arc is or longer, and a score with nothing to play leaves it at the stage's length
+    /// ("The zoom look" in `specs/animation.md`).
+    #[test]
+    fn the_clock_fits_the_score_the_motion_starts_with() {
+        let now = Instant::now();
+        let mut stage = pan();
+        stage.start = Start::Coalesced;
+        stage.kind = Kind::LayoutPass;
+        let arc = Duration::from_secs_f64(PLAYS.as_secs_f64() * 2.2 / 3.0);
+        let started = now + COALESCE_WINDOW;
+        for (plays, ends) in [
+            (arc, arc),
+            (
+                PLAYS + Duration::from_millis(80),
+                PLAYS + Duration::from_millis(80),
+            ),
+            (Duration::ZERO, PLAYS),
+        ] {
+            let mut c = running(stage.clone(), now);
+            c.on(Event::Tick { settled: false, landed: false }, started);
+            c.on(Event::Fit(plays), started);
+            assert_eq!(c.remaining(started), Some(ends), "{plays:?}");
+            assert!(c.wants_landing(started + ends), "{plays:?}");
+            assert!(
+                !c.wants_landing(started + ends - FRAME_INTERVAL - Duration::from_millis(1)),
+                "{plays:?}"
+            );
+        }
+        let mut idle = Coordinator::default();
+        idle.on(Event::Fit(arc), now);
+        assert_eq!(idle.remaining(now), None, "no flight, no clock");
     }
 
     #[test]

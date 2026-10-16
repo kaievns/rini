@@ -84,6 +84,8 @@ impl LayoutEngine {
             raise_windows: tiled_windows,
             edge_hit: None,
             moved: None,
+            stepped: None,
+            pushed: None,
         };
         self.apply_focus_response(space, ws_id, layout, &response);
         response
@@ -121,12 +123,15 @@ impl LayoutEngine {
         let raise_windows =
             self.filter_active_workspace_windows(window_store, space, raise_windows);
         if focus_window.is_some() {
+            let along = strip_edge(direction).is_some();
             let response = EventResponse {
                 changed: true,
                 focus_window,
                 raise_windows,
                 edge_hit: None,
                 moved: None,
+                stepped: previous_selection.zip(focus_window).filter(|_| along),
+                pushed: None,
             };
             self.apply_focus_response(space, ws_id, layout, &response);
             return response;
@@ -191,6 +196,8 @@ impl LayoutEngine {
             raise_windows: windows_in_new_space,
             edge_hit: None,
             moved: None,
+            stepped: None,
+            pushed: None,
         };
         self.apply_focus_response(new_space, new_ws_id, new_layout, &response);
         Some(response)
@@ -224,6 +231,8 @@ impl LayoutEngine {
             raise_windows: vec![],
             edge_hit: strip_edge(direction),
             moved: None,
+            stepped: strip_edge(direction).map(|_| (fallback_focus, fallback_focus)),
+            pushed: None,
         };
         self.apply_focus_response(space, ws_id, layout, &response);
         response
@@ -315,6 +324,8 @@ impl LayoutEngine {
                 focus_window,
                 edge_hit: None,
                 moved: None,
+                stepped: None,
+                pushed: None,
             };
             self.apply_focus_response(space, workspace_id, layout, &response);
             response
@@ -333,6 +344,8 @@ impl LayoutEngine {
                 focus_window,
                 edge_hit: None,
                 moved: None,
+                stepped: None,
+                pushed: None,
             };
             self.apply_focus_response(space, workspace_id, layout, &response);
             response

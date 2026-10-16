@@ -259,6 +259,10 @@ is borrowed.
   the way it went, so the flight can draw the two changing places; a move out
   of a stacked column makes a new column instead and sets nothing. See "The
   move flight, staged" in `src/transitions/docs/coordination.md`.
+- **A press along the strip names itself.** Focus left or right sets `stepped`,
+  the window it left and the one it reached, and at an end the window it stayed
+  on, twice; a move into an end sets `pushed`, the window it pushed. A look plays
+  each press as it chooses ("The zoom look" in `specs/animation.md`).
 
 ## Joining
 

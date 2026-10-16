@@ -48,7 +48,7 @@ until it has a mark.
 | `Event::Begin(stage)` | `begin` | `kind`, `coalesced` (the stage waits for the reactor's follow-up passes), `tiles`, `awaiting`, `repainting`, `focus`, `losing_focus`, `key`, `duration_ms` |
 | `Event::Merge { stage, moved }` | `merge` | `kind`, `moved`, `tiles`, `awaiting`, `repainting`, `focus`, `focused_look` (the stage's `focused_face`), `duration_ms` |
 | `Event::HoldMerge { grows, writes }` | `hold_merge` | `grows`, `writes` (counts) |
-| `Event::Extend(d)` / `Abandon` / `Quiet(g)` | `extend` / `abandon` / `quiet` | `ms` / none / `of` |
+| `Event::Extend(d)` / `Fit(d)` / `Abandon` / `Quiet(g)` | `extend` / `fit` / `abandon` / `quiet` | `ms` / `ms` / none / `of` |
 | `Event::Tick { settled, landed }`, from `FRAME_INTERVAL` before the clock runs out, or from its end with nothing drawn at rest | `at_rest`, `landed`: each once a generation, at its first `true` | |
 | `Event::Lost { generation, window }` | `lost` | `of`, `window` |
 | `Event::FacesTurned(windows)` | `looks_turned`, one for each window | `window` |
@@ -117,7 +117,7 @@ How to read them:
 - **Marks are in the order they were pushed, and `t` is not:** a delivery's as the engine hears it, an
   event's and its commands' as its drive runs. A `press` carries when the reactor took the event, so
   it can come before marks the engine pushed while the request waited for it. A drive nested in
-  carrying out a command (`StartMoving`'s `Extend`) comes after every command of the drive it is
+  carrying out a command (`StartMoving`'s `Fit`) comes after every command of the drive it is
   nested in. Group by `g`, and never assume `t` is sorted.
 - **`Picture` and `FrameZero` have no mark:** they restate a delivery of the pictures service, which is
   marked whole where the engine hears it. An empty frame-zero delivery is a `delivery` with no

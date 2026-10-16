@@ -86,7 +86,10 @@ in [`animation-smoothness.md`](animation-smoothness.md)).
 
 A look touches these files, and nothing in `transitions`, which stages every flight and pass on the
 display the overlay covers (`viewport`), unless it adds an `Accent`, which the tests there match on
-by kind:
+by kind. Nor the reactor, unless it needs a press no `Cue` names yet: a `Cue` is a move or a focus
+press along the strip (`EventResponse::moved`, `stepped` and `pushed` in `src/workspaces/engine.rs`),
+and a bounce at a side of the strip carries the press that ran into it. The flight's clock ends with
+the score the motion starts with (`Event::Fit`), so a look shorter than its press lifts as it lands:
 
 1. `domain/choreography/<name>.rs`: a `Choreography` and a `stage`. Its `retarget` calls
    `Merged::new` and `Merged::bend` with a `Bending` of its own, and adds only motion; `linear.rs`

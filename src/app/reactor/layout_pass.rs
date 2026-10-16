@@ -8,6 +8,7 @@ use tracing::{debug, trace};
 
 use super::events::ArrangeRequest;
 use super::{Reactor, RefocusState, WorkspaceSwitchOrigin, WorkspaceSwitchState};
+use crate::animation::domain::choreography::Cue;
 use crate::displays::domain::screen::order_visible_spaces_by_position;
 use crate::windows::domain::raise::{self, RaiseRequest};
 use crate::windows::domain::raise_order;
@@ -92,13 +93,19 @@ impl Reactor {
             mut focus_window,
             edge_hit,
             moved,
+            stepped,
+            pushed,
         } = response;
         if moved.is_some() {
             self.moved_along_strip = moved;
         }
+        if stepped.is_some() && edge_hit.is_none() {
+            self.stepped_along_strip = stepped;
+        }
 
         let blocked = !changed && raise_windows.is_empty() && focus_window.is_none();
-        if self.bounce_at_edge(edge_hit, workspace_switch_space, blocked) {
+        let press = edge_press(pushed, stepped, edge_hit);
+        if self.bounce_at_edge(edge_hit, press, workspace_switch_space, blocked) {
             return;
         }
 
@@ -163,13 +170,14 @@ impl Reactor {
     fn bounce_at_edge(
         &mut self,
         edge_hit: Option<workspaces::Direction>,
+        press: Cue,
         workspace_switch_space: Option<SpaceId>,
         blocked: bool,
     ) -> bool {
         let Some(direction) = edge_hit else { return false };
         let space = workspace_switch_space.or_else(|| self.command_context_space());
         if let Some(space) = space {
-            self.start_edge_bounce(space, direction);
+            self.start_edge_bounce(space, direction, press);
         }
         if blocked {
             self.workspace_switch_manager.mark_workspace_switch_inactive();
@@ -536,6 +544,23 @@ impl Pass {
 /// Any wider and it stacks: a dozen columns parked at one edge make a visible band
 /// of overlapping edges, worse on a wide external display.
 const WINDOW_HIDDEN_THRESHOLD: f64 = 1.0;
+
+/// The press a bounce at `edge_hit` plays: a move into a side of the strip by the window it pushed,
+/// a focus press there by the window focus stayed on, and anything else, an end of the workspace
+/// stack among them, plain.
+fn edge_press(
+    pushed: Option<WindowId>,
+    stepped: Option<(WindowId, WindowId)>,
+    edge_hit: Option<workspaces::Direction>,
+) -> Cue {
+    let along = edge_hit
+        .filter(|d| matches!(d, workspaces::Direction::Left | workspaces::Direction::Right));
+    match (along, pushed, stepped) {
+        (Some(direction), Some(window), _) => Cue::Move { window, direction },
+        (Some(_), None, Some((from, to))) => Cue::Focus { from, to },
+        _ => Cue::Plain,
+    }
+}
 
 fn bound_frame_to_screen(frame: CGRect, screen: CGRect) -> CGRect {
     let screen_left = screen.origin.x;

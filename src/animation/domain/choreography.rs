@@ -1407,7 +1407,8 @@ mod tests {
 
     /// Slide draws over seed 163's flights what `SLIDE_SCORES` holds: every node's place, ride and
     /// tracks, and every edit a pass answers; some flights start stepping or pushed, and some passes
-    /// take a step while none plays.
+    /// take a step while none plays. Each starts playing nothing or for at least its plain length,
+    /// so the clock fitted to it (`Event::Fit`) is a slide's as it was.
     #[test]
     fn slide_draws_every_seeded_flight_as_it_did() {
         let mut rng = Gen(163);
@@ -1420,6 +1421,11 @@ mod tests {
             let waiting = waiting_accents(&mut accents);
             flight.start(&waiting);
             started += usize::from(flight.score.plays(Channel::Nudge, BEGIN));
+            let plays = flight.score.remaining(BEGIN);
+            assert!(
+                plays == 0.0 || plays >= PLAIN - 1e-9,
+                "the clock keeps a slide's length: {plays}"
+            );
             digest.score(&flight.score);
             let mut now = BEGIN;
             for step in 0..1 + rng.below(4) {

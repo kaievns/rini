@@ -114,6 +114,13 @@ pub struct EventResponse {
     /// move onto another display.
     #[serde(default)]
     pub moved: Option<(WindowId, Direction)>,
+    /// Focus went left or right along the strip: the window it left and the one it reached. At an
+    /// end, with `edge_hit`, both are the window it stayed on.
+    #[serde(default)]
+    pub stepped: Option<(WindowId, WindowId)>,
+    /// A move ran into an end of the strip, with `edge_hit` naming it: the window it pushed.
+    #[serde(default)]
+    pub pushed: Option<WindowId>,
 }
 
 #[must_use]
@@ -224,6 +231,8 @@ impl LayoutEngine {
                 focus_window: None,
                 edge_hit: None,
                 moved: None,
+                stepped: None,
+                pushed: None,
             }
         }
     }
@@ -375,6 +384,8 @@ impl LayoutEngine {
             raise_windows: vec![],
             edge_hit: None,
             moved: None,
+            stepped: None,
+            pushed: None,
         }
     }
 
@@ -682,6 +693,8 @@ impl LayoutEngine {
             focus_window: Some(wid),
             edge_hit: None,
             moved: None,
+            stepped: None,
+            pushed: None,
         }
     }
 
@@ -1637,6 +1650,37 @@ mod tests {
         let stopped = fx.command(space, LayoutCommand::MoveNode(Direction::Right));
         assert_eq!(stopped.edge_hit, Some(Direction::Right));
         assert_eq!(stopped.moved, None, "at the end nothing changed places");
+        assert_eq!(stopped.pushed, Some(first), "the window pushed against the end");
+        assert_eq!(
+            (moved.stepped, stopped.stepped),
+            (None, None),
+            "a move steps no focus"
+        );
+    }
+
+    /// A focus press left or right names the window it left and the one it reached, and at an end
+    /// the window it stayed on, twice; one up or down its column names none. The reactor plays a
+    /// press along the strip as the look draws one ("The zoom look" in `specs/animation.md`).
+    #[test]
+    fn a_focus_press_along_the_strip_names_where_it_went_and_one_at_an_end_where_it_stayed() {
+        let (mut fx, space, first, second) = two_columns();
+        let on = fx.command(space, LayoutCommand::MoveFocus(Direction::Right));
+        assert_eq!(on.stepped, Some((first, second)));
+        assert_eq!((on.edge_hit, on.pushed), (None, None));
+
+        let stopped = fx.command(space, LayoutCommand::MoveFocus(Direction::Right));
+        assert_eq!(stopped.edge_hit, Some(Direction::Right));
+        assert_eq!(
+            stopped.stepped,
+            Some((second, second)),
+            "focus stayed at the end"
+        );
+        assert_eq!(stopped.pushed, None, "a focus press pushes no window");
+
+        let up = fx.command(space, LayoutCommand::MoveFocus(Direction::Up));
+        assert_eq!(up.stepped, None, "not along the strip");
+        let back = fx.command(space, LayoutCommand::MoveFocus(Direction::Left));
+        assert_eq!(back.stepped, Some((second, first)));
     }
 
     /// Pulling a window out of a stacked column makes a new column and resizes the ones it leaves: not

@@ -71,11 +71,11 @@ check, then a spec or deletion:
 - **One picture per window.** Each window keeps a focused face beside its picture
   (`specs/animation.md`, "Focus changing during a flight"). Dropping it saves memory. I parked it
   on 2026-10-06, to come back to.
-- **The zoom look's presses and clock.** `look "zoom"` plays a move's arc. The reactor names no
-  focus press and sends every bounce as a plain press, so neither zooms, and the flight's clock runs
-  the plain length past the arc (`specs/animation.md`, "The zoom look", not yet met). The moved
-  window's lift shadow, and whether a zoomed-out strip draws every window it brings into view, are
-  open there too.
+- **The zoom look's open ends.** `look "zoom"` plays a move, a focus press that scrolls and a
+  bounce at a side of the strip on its arc. Three are open (`specs/animation.md`, "The zoom look"):
+  a press merged into a flight restarts its clock at the plain length, past the arc; the moved
+  window has no lift shadow; and whether a zoomed-out strip draws every window it brings into view
+  needs checking on screen. Kai has not judged the arc on screen since the spike's 3x speed-up.
 - **Unplug and replug verified end to end,** per arrangement and with role pins, by a
   `query diagnostics` capture before and after into `docs/data/`. Nothing there covers displays yet.
 - **Per-display overrides by display name.** `output "UUID"` takes a UUID only, and only `gaps` and

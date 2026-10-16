@@ -349,7 +349,7 @@ fn animations_map_onto_animate_and_the_movement_length() {
 
 /// Kai, 2026-10-15: "i want to support different animations generally". The look is picked by its
 /// name, slide when none is written, zoom when written, and a name that is no look is refused with
-/// the nearest one ("Looks" in `specs/animation.md`).
+/// the nearest one ("Looks" in `specs/animation.md`). `config get` prints each as it is written.
 #[test]
 fn the_look_is_picked_by_name_and_slide_unless_written() {
     let look = |text: &str| parse(text).settings.look;
@@ -358,6 +358,9 @@ fn the_look_is_picked_by_name_and_slide_unless_written() {
     for each in Look::ALL {
         let text = format!("animations {{\n    look \"{}\"\n}}\n", each.word());
         assert_eq!(look(&text), each, "{text}");
+        let config = parse(&text);
+        assert!(printed(&config).contains(&format!("    look \"{}\"\n", each.word())));
+        assert_prints_and_reads_back(&config);
     }
     assert!(
         refused("animations {\n    look \"slid\"\n}\n")

@@ -29,6 +29,7 @@ pub(super) struct StripPan<'a> {
     pub(super) final_frames: Vec<(WindowId, CGRect)>,
     pub(super) delta: CGPoint,
     pub(super) moved: Option<(WindowId, Direction)>,
+    pub(super) stepped: Option<(WindowId, WindowId)>,
     pub(super) standing: &'a [crate::transitions::domain::request::AnimationRequest],
     pub(super) laid_out: &'a [(WindowId, CGRect)],
 }
@@ -198,6 +199,7 @@ impl Reactor {
             final_frames,
             delta,
             moved,
+            stepped,
             standing,
             laid_out,
         } = pan;
@@ -237,10 +239,9 @@ impl Reactor {
         // compounded the error on every press, which is what made rapid next/prev jerk back and forth.
         let from_offset = SurfacePoint::new(delta.x, delta.y);
         let to_offset = SurfacePoint::origin();
-        use crate::animation::domain::choreography::Cue;
-        let cue = moved.map_or(Cue::Plain, |(window, direction)| Cue::Move { window, direction });
+        let cue = pan_cue(moved, stepped);
         // A move's pair starts where the look stages it.
-        if cue == Cue::Plain {
+        if cue.moved().is_none() {
             start_where_standing(
                 &mut windows,
                 standing,
@@ -315,8 +316,15 @@ impl Reactor {
     /// Bounces the view against the end a command ran into: the strip's first or last column
     /// (`Left`/`Right`), or the top or bottom of the workspace stack (`Up`/`Down`). The active
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
-    /// the real windows do not move. See "Edge bounce" in `src/transitions/docs/coordination.md`.
-    pub(super) fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
+    /// the real windows do not move. `press` is the move or focus press that ran into a side of the
+    /// strip, for the look to play it as it plays that press, and plain at the stack's ends. See
+    /// "Edge bounce" in `src/transitions/docs/coordination.md`.
+    pub(super) fn start_edge_bounce(
+        &mut self,
+        space: SpaceId,
+        direction: Direction,
+        press: crate::animation::domain::choreography::Cue,
+    ) {
         if !self.config.settings.animate || (self.reads.low_power)() {
             return;
         }
@@ -371,7 +379,7 @@ impl Reactor {
             focus: self.layout_engine.focused_window(),
             duration,
             look: self.config.settings.look,
-            cue: crate::animation::domain::choreography::Cue::Plain,
+            cue: press,
             cause: self.cause,
         });
     }
@@ -620,6 +628,20 @@ impl Reactor {
         Some((screen, gaps))
     }
 
+    /// The focus press the current command made along the strip, if this pass lays out both of its
+    /// windows; taken, so only one pass draws it.
+    pub(crate) fn take_step_in(
+        &mut self,
+        layout: &[(WindowId, CGRect)],
+    ) -> Option<(WindowId, WindowId)> {
+        let (from, to) = self.stepped_along_strip?;
+        let laid_out = |window: WindowId| layout.iter().any(|(wid, _)| *wid == window);
+        if !laid_out(from) || !laid_out(to) {
+            return None;
+        }
+        self.stepped_along_strip.take()
+    }
+
     /// The window the current command moved along the strip, if this pass lays it out; taken, so
     /// only one pass draws the move.
     pub(crate) fn take_move_in(
@@ -740,8 +762,21 @@ fn report_target_out_of_view(
     }
 }
 
-/// Each window of a plain pan started where it stands if on screen, else where the strip had it,
-/// both on the surface at rest (`strip_move::start_where_standing`).
+/// The press a strip movement names to its look: a move before a focus press, either before none.
+fn pan_cue(
+    moved: Option<(WindowId, Direction)>,
+    stepped: Option<(WindowId, WindowId)>,
+) -> crate::animation::domain::choreography::Cue {
+    use crate::animation::domain::choreography::Cue;
+    match (moved, stepped) {
+        (Some((window, direction)), _) => Cue::Move { window, direction },
+        (None, Some((from, to))) => Cue::Focus { from, to },
+        (None, None) => Cue::Plain,
+    }
+}
+
+/// Each window of a pan that moves no window started where it stands if on screen, else where the
+/// strip had it, both on the surface at rest (`strip_move::start_where_standing`).
 fn start_where_standing(
     windows: &mut [SurfaceWindow],
     standing: &[crate::transitions::domain::request::AnimationRequest],

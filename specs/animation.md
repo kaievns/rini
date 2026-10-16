@@ -194,8 +194,7 @@ Zoom never steps; the step above is slide's.
 > that the active window got back in focus."
 
 - A focus press that scrolls the strip MUST pan on an arc too, as deep as a move of the same two
-  columns, the view half way at the middle. Not yet met: the reactor names no focus press to the
-  look, so under zoom one pans as slide pans.
+  columns, the view half way at the middle.
 
 > **Reported 2026-09-30.** "can you try to change the normal navigation as well to zoom out, move,
 > and then zoom back in? same end of the strip wiggle in zoomed out state"
@@ -209,16 +208,18 @@ Zoom never steps; the step above is slide's.
 > it moved and zoomed back in.
 
 - The arc MUST run 2.2/3 of the movement's plain length, 0.257s at the default 0.35s, and every
-  window it carries MUST run as long. Not yet met: the flight's clock runs the plain length, so the
-  overlay is up 93ms after the arc lands, and a press in that time merges into a flight with no arc.
+  window it carries MUST run as long, and the flight MUST end with it, not at the plain length. Not
+  yet met: a press merged into the flight restarts its clock at the plain length or the score's,
+  whichever is longer, so after a merge the overlay can stay up past the arc, and a press in that
+  time merges into a flight with no arc playing.
 
 > **Reported 2026-10-01.** "speed it up 3x". The arc ran 0.77s. Kai parked the spike 19 minutes
 > later, before judging it: "lets park this for a second, and come back to it shortly."
 
 - A push against a side of the strip, by a move or a focus press, MUST bounce with the strip zoomed
   out to 0.88 over an arc no longer than the bounce, and the bounce MUST reach its 72pt on screen.
-  A push while an arc plays MUST bounce at the strip's zoom and start no second arc. Not yet met: the
-  reactor sends every bounce flight as a plain press, so under zoom a push bounces at rest.
+  A push while an arc plays MUST bounce at the strip's zoom and start no second arc. A push at an end
+  of the workspace stack is no press along the strip and bounces at rest.
 
 > **Reported 2026-09-30.** "also the little bounce at the ends of the strip, can you make it work in
 > the zoomed out state, please?"
@@ -1001,7 +1002,15 @@ and the `the_*_contract_rejects_*` tests beside them show each contract fails a 
 each look draws. Zoom's arc, its depth, its view and its merges are held by the tests in its file,
 `a_wide_pair_is_centred_at_the_middle_clipped_alike_on_both_sides` and
 `a_press_the_same_way_folds_into_the_arc_and_lands_with_it` among them, and the overlay plays its arc
-in `a_zoom_flight_plays_its_arc_exactly`. The config's `animations › look` is decoded in
+in `a_zoom_flight_plays_its_arc_exactly`. The reactor names each press along the strip to the look:
+a focus press that scrolls the strip, held by
+`a_focus_press_along_the_strip_names_where_it_went_and_one_at_an_end_where_it_stayed` and
+`a_focus_press_that_scrolls_the_strip_names_itself_and_zooms_under_zoom`, and the move or focus
+press a bounce at a side of the strip plays, held by
+`pushing_past_an_end_bounces_the_strip_and_keeps_focus` and
+`moving_a_window_past_an_end_bounces_the_view_too`. The flight's clock ends with the score the motion
+starts with, held by `the_clock_fits_the_score_the_motion_starts_with` and
+`the_clock_ends_with_the_motion_the_look_composes`. The config's `animations › look` is decoded in
 `src/app/config/kdl/value.rs`, held by `the_look_is_picked_by_name_and_slide_unless_written`, and
 the reactor hands it to every flight it asks for, held by
 `every_flight_takes_the_look_the_config_picks`; `FlightScore` keeps the look a flight began with,

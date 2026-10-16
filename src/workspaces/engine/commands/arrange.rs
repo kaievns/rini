@@ -65,6 +65,7 @@ impl LayoutEngine {
                     // rather than a dropped keypress.
                     return EventResponse {
                         edge_hit: strip_edge(direction),
+                        pushed: selected.filter(|_| swapping),
                         ..EventResponse::default()
                     };
                 };

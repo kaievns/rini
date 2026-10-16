@@ -489,6 +489,9 @@ pub struct Reactor {
     /// The window the current command moved along its strip, and which way, for the passes that
     /// command asked for: they draw the two columns crossing. See `animate_layout`.
     moved_along_strip: Option<(WindowId, Direction)>,
+    /// The window the current command's focus press left along the strip and the one it reached,
+    /// for the passes that command asked for: a pass that scrolls the strip is that press.
+    stepped_along_strip: Option<(WindowId, WindowId)>,
     space_activation_policy: SpaceActivationPolicy,
     main_window_tracker: MainWindowTracker,
     /// The focus reports rini's own raises are about to produce, so they are not mistaken for the user
@@ -631,6 +634,7 @@ impl Reactor {
             last_strip_origin: HashMap::default(),
             last_strip_layout: HashMap::default(),
             moved_along_strip: None,
+            stepped_along_strip: None,
             space_activation_policy: SpaceActivationPolicy::new(),
             main_window_tracker: MainWindowTracker::default(),
             raise_echo: crate::windows::domain::focus::RaiseEcho::default(),
@@ -1083,8 +1087,9 @@ impl Reactor {
                 layout_changed |= self.update_layout(pass, outcome.arrange.space_scope);
             }
         }
-        // A move is only a move for the passes its command asked for.
+        // A move is only a move for the passes its command asked for, a focus press likewise.
         self.moved_along_strip = None;
+        self.stepped_along_strip = None;
 
         for request in outcome.raise_requests {
             self.dispatch_raise(request);

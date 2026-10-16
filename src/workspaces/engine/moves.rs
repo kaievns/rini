@@ -287,6 +287,8 @@ impl LayoutEngine {
             focus_window: Some(window_id),
             edge_hit: None,
             moved: None,
+            stepped: None,
+            pushed: None,
         };
         if source_space == target_space {
             return moved;

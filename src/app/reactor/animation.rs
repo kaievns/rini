@@ -120,6 +120,7 @@ impl Reactor {
             self.take_strip_layout(space).unwrap_or_default();
         let strip_before = before.unwrap_or_default();
         let moved = self.take_move_in(layout);
+        let stepped = self.take_step_in(layout);
 
         let placements = self.commit_pass_moves(&plan.moves);
         if placements.is_empty() {
@@ -174,6 +175,7 @@ impl Reactor {
             && self.communication_manager.transitions_tx.is_some();
 
         let moved = moved.filter(|_| !any_resize);
+        let stepped = stepped.filter(|_| !any_resize);
         let change = if any_resize {
             PassChange::Resize
         } else if moved.is_some() {
@@ -190,6 +192,7 @@ impl Reactor {
                 final_frames: moves,
                 delta,
                 moved,
+                stepped,
                 standing: &overlay_requests,
                 laid_out: &strip_before,
             })
