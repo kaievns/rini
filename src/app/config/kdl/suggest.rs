@@ -58,7 +58,7 @@ pub const SCHEMA: &[(&str, &[&str])] = &[
     ("layout/min-column-width", &["proportion"]),
     ("layout/max-column-width", &["proportion"]),
     ("layout/preset-column-widths", &["proportion"]),
-    ("animations", &["off", "slowdown", "journal"]),
+    ("animations", &["off", "slowdown", "look", "journal"]),
     ("animations/journal", &["measure-handover"]),
     ("gestures", &["drag-swap-overlap"]),
     ("recent-windows", &["icons", "binds"]),
@@ -107,8 +107,8 @@ const NOT_IN_RINI: &str = "niri has this and rini does not";
 const MACOS_DISPLAYS: &str = "macOS owns the display's mode, scale and arrangement; an `output` \
                               here only overrides `layout`'s gaps and struts";
 const MACOS_DEVICES: &str = "macOS owns the keyboard and pointing devices; see System Settings";
-const ONE_ANIMATION: &str = "rini has one movement animation, timed by `slowdown`; per-animation \
-                             settings are not supported";
+const ONE_ANIMATION: &str = "rini has one movement animation, drawn in its `look` and timed by \
+                             `slowdown`; per-animation settings are not supported";
 
 /// niri's node names that rini refuses, by section path, with the reason.
 pub const NIRI: &[(&str, &str, &str)] = &[
@@ -592,6 +592,16 @@ fn unknown_node(path: &str, name: &str, span: &Span, children: &[&str]) -> Probl
             children.join(", ")
         )),
     }
+}
+
+/// Why a word is not one of `words`, the values a setting takes, with the nearest if one is near.
+pub fn unknown_word<'a>(word: &str, words: impl IntoIterator<Item = &'a str> + Clone) -> String {
+    let expected = words.clone().into_iter().map(|w| format!("`{w}`")).collect::<Vec<_>>();
+    let mut why = format!("expected one of {}, found `{word}`", expected.join(", "));
+    if let Some(near) = suggest(word, words) {
+        why.push_str(&format!("; did you mean `{near}`?"));
+    }
+    why
 }
 
 /// A bind's child that names no rini action.

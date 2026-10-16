@@ -241,8 +241,8 @@ impl Reactor {
         // compounded the error on every press, which is what made rapid next/prev jerk back and forth.
         let from_offset = SurfacePoint::new(delta.x, delta.y);
         let to_offset = SurfacePoint::origin();
-        use crate::animation::domain::choreography::{Cue, Look};
-        let look = Look::default();
+        use crate::animation::domain::choreography::Cue;
+        let look = self.config.settings.look;
         let cue = moved.map_or(Cue::Plain, |(window, direction)| Cue::Move { window, direction });
         // A move's pair starts where the look stages it.
         if cue == Cue::Plain {
@@ -384,7 +384,7 @@ impl Reactor {
                 .collect(),
             focus: self.layout_engine.focused_window(),
             duration,
-            look: crate::animation::domain::choreography::Look::default(),
+            look: self.config.settings.look,
             cue: crate::animation::domain::choreography::Cue::Plain,
             cause: self.cause,
         });
@@ -477,7 +477,7 @@ impl Reactor {
                 focused_before: self.focused_as_event_began,
                 key: self.main_window_tracker.key_window(),
                 duration,
-                look: crate::animation::domain::choreography::Look::default(),
+                look: self.config.settings.look,
                 cue: crate::animation::domain::choreography::Cue::Plain,
                 accent: None,
                 cause: self.cause,

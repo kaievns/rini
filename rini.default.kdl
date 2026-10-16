@@ -135,6 +135,10 @@ animations {
     // Multiplies the length of every animation. 1.0 is a 0.35s movement; below 1 is faster.
     slowdown 1.0
 
+    // How every movement is drawn. "slide", the only look so far, slides each window along the
+    // strip to its place. A flight keeps the look it began with; a reload's takes the next one.
+    look "slide"
+
     // Uncomment `journal` to write every step of every transition to
     // ~/Library/Logs/rini/transitions.jsonl once it has settled (src/transitions/docs/journal.md).
     // It is off unless uncommented; the last steps are kept in memory either way, and written once

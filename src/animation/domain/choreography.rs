@@ -2,8 +2,9 @@
 //! (`Look::stage`), and for each flight its `Choreography` makes the plan, poses frame zero, composes
 //! the motion, folds a press before it and bends the flight at a press after it, answering with the
 //! score's edits (`motion::score::Edit`), which the renderer plays as they are. `Look::ALL` is every
-//! look, and the tests below are the contract each keeps; `slide` is the default. See "The overlay
-//! engine" in `src/animation/docs/animation-smoothness.md`.
+//! look, and the tests below are the contract each keeps; `slide` is the default, and the config's
+//! `animations › look` picks the one every flight takes. See "The overlay engine" in
+//! `src/animation/docs/animation-smoothness.md`.
 
 pub mod slide;
 
@@ -23,15 +24,23 @@ use super::motion::score::{Edit, Score};
 pub enum Look {
     #[default]
     Slide,
+    /// Slide's choreography under another name, so a test can tell a chosen look from the default.
+    #[cfg(test)]
+    Probe,
 }
 
 impl Look {
+    #[cfg(not(test))]
     pub const ALL: [Look; 1] = [Look::Slide];
+    #[cfg(test)]
+    pub const ALL: [Look; 2] = [Look::Slide, Look::Probe];
 
     /// The look's choreography for one flight.
     pub fn choreography(self) -> Box<dyn Choreography> {
         match self {
             Look::Slide => Box::new(Slide::default()),
+            #[cfg(test)]
+            Look::Probe => Box::new(Slide::default()),
         }
     }
 
@@ -40,6 +49,8 @@ impl Look {
     pub fn stage(self, cue: &Cue, strip: &Strip) -> Staging {
         match self {
             Look::Slide => slide::stage(cue, strip),
+            #[cfg(test)]
+            Look::Probe => slide::stage(cue, strip),
         }
     }
 }

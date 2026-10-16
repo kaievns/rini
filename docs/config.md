@@ -27,7 +27,9 @@ the format, and every place rini knowingly differs from niri.
    when the name is niri's. knus's own report of the same node, an unexpected node in a struct or a
    failed conversion in an enum, is matched by where the node starts and dropped.
 3. Each section decodes into a part type (`kdl/{input,layout,gestures,bar,binds,window_rule}.rs`)
-   whose every field is optional. Ranges are checked here, with the span. knus keeps no value of a
+   whose every field is optional. Ranges are checked here, with the span, and a word a setting
+   does not take, as `center-focused-column "alway"` or `look "slid"`, is reported by
+   `suggest::unknown_word` with the words it takes and the nearest one. knus keeps no value of a
    node with an error anywhere in it and stops a struct at its first bad child, as niri's knuffel
    does, so a section with a problem is left out of the part. A bind block is the exception: it
    decodes each bind on its own and carries their errors, so one bad bind leaves the rest. A bind
@@ -105,6 +107,7 @@ take niri's default: off. They were on, and a default-on flag can only be writte
 |---|---|---|
 | `input › mod-key` | `"Alt"` unless written | on macOS Cmd, niri's `Super`, belongs to the applications |
 | `animations › slowdown` | the one movement's length is 0.35s times `slowdown` | rini has one movement animation; niri scales each animation's own base |
+| `animations › look "slide"` | rini's own: how every movement is drawn, `"slide"` unless written; a name that is no look is refused with the nearest | niri has no looks: it sets each animation's curve, as `curve "ease-out-expo"`, or a `custom-shader`. A look is a string argument in that form, in the section niri would put it (`specs/animation.md`, "Looks") |
 | `layout › preset-column-widths` | the default adds `proportion 1.0` | 1.0 is the whole viewport as a width `max-column-width` does not hold, never the maximise mode, so a maximised column can be stepped back down (`src/layout/docs/strip.md`) |
 | `layout › center-focused-column "always"` | the first and last columns sit flush with the display edge | there is nothing beyond them to scroll to; niri centres them. `"on-overflow"` is refused, not yet supported |
 | `layout › focus-ring` | as niri, on unless `off`, but 2pt wide by default; `on` and `off` both written is refused | Kai's width, niri's is 4 (`specs/decorations.md`); niri takes `on` of the pair, and every rini block with both refuses it. `urgent-color` and `urgent-gradient` paint every window of an application asking for attention, not the one window niri marks, since macOS asks per application; a gradient's `relative-to="workspace-view"` is refused, not yet supported |

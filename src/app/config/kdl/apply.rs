@@ -165,6 +165,9 @@ fn apply_animations(animations: AnimationsPart, settings: &mut Settings) {
     if let Some(slowdown) = animations.slowdown {
         settings.animation_duration = BASE_ANIMATION_SECONDS * slowdown.get();
     }
+    if let Some(look) = animations.look {
+        settings.look = look;
+    }
     if let Some(journal) = animations.journal {
         settings.journal.write = journal.on;
         if let Some(Flag(on)) = journal.measure_handover {

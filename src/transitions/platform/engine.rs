@@ -1931,6 +1931,37 @@ mod tests {
             assert!(placed(&h.commit(shown)).is_empty(), "written once");
         }
 
+        /// A flight keeps the look it began with: a pass of another look merged into it moves by
+        /// the flight's, and the next flight takes its own ("Looks" in `specs/animation.md`).
+        #[test]
+        fn a_pass_merged_into_a_flight_moves_by_the_flights_look() {
+            let looked = |mut event: Event, chosen: Look| {
+                if let Event::AnimateSurface { look, .. } = &mut event {
+                    *look = chosen;
+                }
+                event
+            };
+            let flying =
+                |h: &Harness| h.engine.running.as_ref().map(|running| running.score.look());
+            for (begun, merged) in [(Look::Slide, Look::Probe), (Look::Probe, Look::Slide)] {
+                let mut h = Harness::new();
+                h.step(looked(h.pan(), begun));
+                h.advance(Duration::from_millis(5));
+                let shown = only_batch(&h.step(h.frame_zero())).seq;
+                h.commit(shown);
+                h.advance(Duration::from_millis(50));
+                let sent = h.step(looked(h.pan_on(), merged));
+                assert!(!placed(&sent).is_empty(), "{begun:?}: merged and written");
+                assert_eq!(flying(&h), Some(begun), "{merged:?} merged");
+
+                h.advance(Duration::from_millis(1000));
+                h.step(Event::Tick);
+                assert_eq!(flying(&h), None, "{begun:?}: lifted");
+                h.step(looked(h.pan(), merged));
+                assert_eq!(flying(&h), Some(merged), "the next flight");
+            }
+        }
+
         #[test]
         fn a_merge_after_the_show_is_committed_writes_at_once() {
             let mut h = Harness::new();

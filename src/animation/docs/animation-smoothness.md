@@ -13,7 +13,7 @@ landed; anything marked *estimated* has not been measured yet. When each step of
 
 Every overlay flight is a `FlightPlan` (`crate::animation::domain::motion::plan`): a
 set of rigid groups (`RigidGroup`, keyed `GroupKey::Rigid`), a loose set (resizes and entrances), and the
-floating windows. The flight's look, chosen as it begins (`Look` in
+floating windows. The flight's look, the config's `animations › look` as it begins (`Look` in
 `src/animation/domain/choreography.rs`), composes it into the flight's score, which the flight keeps
 (`src/transitions/domain/flight_score.rs`) and the overlay plays: Slide, the default look
 (`src/animation/domain/choreography/slide.rs`). Frame zero is its pose, every group with a drawn

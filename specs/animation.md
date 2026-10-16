@@ -30,6 +30,35 @@ only the transitions are missing.
 > nothing beside it on screen to move. Each `alt-R` changed its width at once and flew nothing: a pass
 > was judged worth flying only by how far a window's origin travelled, and this one's stood still.
 
+## Looks
+
+How a flight moves is its look: which pieces move, along which paths, and how the view follows them.
+Every other requirement in this spec holds whatever the look.
+
+- rini MUST support more than one look. A look MUST choose only how a flight is drawn: the frames
+  written to the windows MUST be the layout's under every look ("Correctness the user can see").
+  Not yet met: slide is the only look.
+- Every look MUST pass one contract, checked alike for each: frame zero draws each window where it
+  is on screen at the press ("The pictures a flight starts with", "Correctness the user can see");
+  the motion lands each window on its layout frame, so the lift hands over to windows standing where
+  their tiles end; a pass arriving mid-flight bends the flight without a jump in place or speed
+  ("Arriving mid-flight"); and a move stages only the pair it is given ("Moving a window along the
+  strip").
+- A look MUST keep what every flight owes beyond the contract: the pictures it starts from and waits
+  for ("The pictures a flight starts with"), a resize's content against the edge that moves less,
+  never stretched ("Resizing"), and the bounce at an end ("Pushing past an end").
+- The config MUST choose the look, one for every flight, and it MUST be slide unless the config names
+  another. A name that is no look MUST be refused as any unknown name is (`config.md`, "When a file
+  cannot be used").
+- A flight MUST keep the look it began with, whatever a later pass brings. A reload that changes the
+  look MUST take effect from the next flight.
+
+> **Reported 2026-10-15.** "zoom spike is coming back, i want to support different animations
+> generally". Kai's decision the same day: keep the seam between a look and the flight it moves,
+> and what a look is told of the press and of the strip's travel. Slide was the only look, and
+> nothing chose it: every flight asked for the default. The zoom spike, parked on 2026-10-01 as a
+> motion of its own outside that seam, is to come back as a second look.
+
 ## Pushing past an end
 
 - A command that runs into an end MUST bounce the view: the ends of a strip, and the ends of the
@@ -866,7 +895,14 @@ where its picture ends and the edges it stands still against are
 `src/pictures/domain/settle.rs`. The looks
 (`src/animation/domain/choreography.rs`, Slide the default in
 `src/animation/domain/choreography/slide.rs`) compose a flight's score, fold a press before its motion
-into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/renderer.rs`
+into it and bend it at a press after, and stage a press on the strip. The contract every look passes
+is the tests there: `every_look_poses_each_drawn_window_where_it_starts`,
+`every_look_lands_each_node_on_its_plan`, `every_look_bends_a_flight_without_a_jump` and
+`every_look_stages_only_the_pair_it_is_given`. The config's `animations › look` is decoded in
+`src/app/config/kdl/value.rs`, held by `the_look_is_picked_by_name_and_slide_unless_written`, and
+the reactor hands it to every flight it asks for, held by
+`every_flight_takes_the_look_the_config_picks`; `FlightScore` keeps the look a flight began with,
+held by `a_pass_merged_into_a_flight_moves_by_the_flights_look`. `src/animation/platform/renderer.rs`
 plays the score on Core Animation on the main thread, on the overlay in
 `src/animation/platform/overlay.rs`, which lets go of the tiles and the desktop at the lift.
 `src/decorations/domain/` is what each tile wears: the hairline's, the shadow's, the focus ring's and

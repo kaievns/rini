@@ -5,7 +5,9 @@ use rini_core::ids::DisplayUuid;
 use strum::VariantNames;
 
 use super::*;
+use crate::animation::domain::choreography::Look;
 use crate::app::config::kdl::suggest::{NIRI, NIRI_ACTIONS, SCHEMA};
+use crate::app::config::kdl::value::Word;
 use crate::decorations::domain::paint::{Colour, ColourSpace, Gradient, Hue, Paint};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::{Action, SwitcherFilter, SwitcherScope, WorkspaceReference};
@@ -247,6 +249,20 @@ fn niri_values_rini_lacks_are_refused_by_name() {
     assert!(refused("layout {\n    default-column-width {}\n}\n").contains("expected a size"));
 }
 
+/// A word a setting does not take is refused with the words it takes and, when one is near, which
+/// (`specs/config.md`, "When a file cannot be used").
+#[test]
+fn a_word_a_setting_does_not_take_names_the_nearest() {
+    let report = refused("layout {\n    center-focused-column \"alway\"\n}\n");
+    assert!(
+        report.contains("expected one of `never`, `always`, found `alway`; did you mean `always`?"),
+        "{report}"
+    );
+    let report = refused("window-rule {\n    open-on-output \"laptop\"\n}\n");
+    assert!(report.contains("found `laptop`"), "{report}");
+    assert!(!report.contains("did you mean"), "{report}");
+}
+
 #[test]
 fn column_widths_must_nest_and_the_report_points_at_them() {
     let report = refused(concat!(
@@ -328,6 +344,31 @@ fn animations_map_onto_animate_and_the_movement_length() {
     assert!(
         refused("animations {\n    window-open { duration-ms 150; }\n}\n")
             .contains("one movement animation")
+    );
+}
+
+/// Kai, 2026-10-15: "i want to support different animations generally". The look is picked by its
+/// name, slide when none is written, and a name that is no look is refused with the nearest one
+/// ("Looks" in `specs/animation.md`).
+#[test]
+fn the_look_is_picked_by_name_and_slide_unless_written() {
+    let look = |text: &str| parse(text).settings.look;
+    assert_eq!(look(""), Look::Slide, "absent");
+    assert_eq!(look("animations {\n}\n"), Look::Slide, "no node");
+    for each in Look::ALL {
+        let text = format!("animations {{\n    look \"{}\"\n}}\n", each.word());
+        assert_eq!(look(&text), each, "{text}");
+    }
+    assert!(
+        refused("animations {\n    look \"slid\"\n}\n")
+            .contains("found `slid`; did you mean `slide`?")
+    );
+    let far = refused("animations {\n    look \"wobble\"\n}\n");
+    assert!(far.contains("expected one of `slide`"), "{far}");
+    assert!(!far.contains("did you mean"), "{far}");
+    assert!(refused("animations {\n    look 1\n}\n").contains("expected a look, one of `slide`"));
+    assert!(
+        refused("animations {\n    look\n}\n").contains("additional argument `look` is required")
     );
 }
 
@@ -1845,6 +1886,7 @@ output "AAAAAAAA-0000-0000-0000-000000000000" {{
 animations {{
     off
     slowdown 0.3
+    look "probe"
     journal {{ measure-handover; }}
 }}
 gestures {{
@@ -2013,6 +2055,7 @@ fn config_get_prints_each_setting_as_the_file_writes_it() {
         "    warp-mouse-to-focus false\n",
         "    drag-swap-overlap 0.3\n",
         "    slowdown 1\n",
+        "    look \"slide\"\n",
         "    off false\n",
         "workspace \"Main\" { focus-at-startup; }\nworkspace \"Development\"\n",
         "window-rule {\n    match is-modal=true\n    open-floating true\n}\n",

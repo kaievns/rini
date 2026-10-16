@@ -10,6 +10,8 @@ use knus::span::Spanned;
 use knus::traits::ErrorSpan;
 
 use super::layout::GradientRelativeTo;
+use super::suggest::unknown_word;
+use crate::animation::domain::choreography::Look;
 use crate::decorations::domain::paint::{Colour, ColourSpace, Hue};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
 use crate::input::domain::binding::Decimal;
@@ -241,6 +243,38 @@ bounds! {
     Slowdown: 0.0, 100.0;
 }
 
+impl Word for Look {
+    fn word(self) -> &'static str {
+        match self {
+            Look::Slide => "slide",
+            #[cfg(test)]
+            Look::Probe => "probe",
+        }
+    }
+}
+
+/// `animations › look`, one of `Look::ALL` by its word.
+impl<S: ErrorSpan> knus::DecodeScalar<S> for Look {
+    fn type_check(type_name: &Option<Spanned<TypeName, S>>, ctx: &mut Context<S>) {
+        Decimal::type_check(type_name, ctx);
+    }
+
+    fn raw_decode(value: &Spanned<Literal, S>, _: &mut Context<S>) -> Result<Self, DecodeError<S>> {
+        let words = Look::ALL.map(Look::word);
+        let Literal::String(text) = &**value else {
+            let expected = words.map(|word| format!("`{word}`")).join(", ");
+            return Err(DecodeError::conversion(
+                value,
+                format!("expected a look, one of {expected}"),
+            ));
+        };
+        Look::ALL
+            .into_iter()
+            .find(|look| look.word() == &**text)
+            .ok_or_else(|| DecodeError::conversion(value, unknown_word(text, words)))
+    }
+}
+
 /// A value the config spells as one word, as `kebab_scalar!` reads it.
 pub trait Word {
     fn word(self) -> &'static str;
@@ -285,7 +319,7 @@ macro_rules! kebab_scalar {
                     )),)*)?
                     other => Err(knus::errors::DecodeError::conversion(
                         value,
-                        format!("expected one of {expected}, found `{other}`"),
+                        crate::app::config::kdl::suggest::unknown_word(other, [$($text),*]),
                     )),
                 }
             }
