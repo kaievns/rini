@@ -30,8 +30,9 @@ pub struct WakeupHandle(CFRetained<CFRunLoopSource>, CFRetained<CFRunLoop>);
 
 // SAFETY: the handle holds two retained CF objects, whose retain and release are atomic, and
 // reaches the handler only through `wake`: CFRunLoopSourceSignal and CFRunLoopWakeUp may be called
-// from any thread, and the handler runs on the run loop it was added to, which holds the source,
-// and so the handler, until its thread ends.
+// from any thread, and the handler runs only on the run loop it was added to. A handle dropped last
+// on another thread after that loop's thread ended frees the source there, through the run loop it
+// retains, and `release` then leaks the non-`Send` closure rather than drop it off its thread.
 unsafe impl Send for WakeupHandle {}
 // SAFETY: as for `Send`: `wake`, the one thing a shared handle does, is callable from any thread.
 unsafe impl Sync for WakeupHandle {}
@@ -39,6 +40,15 @@ unsafe impl Sync for WakeupHandle {}
 struct Handler<F> {
     ref_count: isize,
     func: F,
+    /// The thread that made it, the one `func` may be dropped on.
+    owner: libc::pthread_t,
+}
+
+/// The calling thread. It needs no thread-local, so it reads while the thread's run loop is torn
+/// down; only a thread begun after this one ended can share it.
+fn this_thread() -> libc::pthread_t {
+    // SAFETY: names the calling thread; no pointer is passed or read.
+    unsafe { libc::pthread_self() }
 }
 
 impl WakeupHandle {
@@ -51,7 +61,11 @@ impl WakeupHandle {
     /// run in relative to other run loop sources, and should normally be set to
     /// 0.
     pub fn for_current_thread<F: Fn() + 'static>(order: CFIndex, handler: F) -> WakeupHandle {
-        let handler_ptr = Box::into_raw(Box::new(Handler { ref_count: 0, func: handler }));
+        let handler_ptr = Box::into_raw(Box::new(Handler {
+            ref_count: 0,
+            func: handler,
+            owner: this_thread(),
+        }));
 
         // `info` is a *mut Handler<F>; retain/release keep its count and free the box at zero.
         unsafe extern "C-unwind" fn perform<F: Fn() + 'static>(info: *mut c_void) {
@@ -75,7 +89,11 @@ impl WakeupHandle {
             handler.ref_count -= 1;
             if handler.ref_count == 0 {
                 // SAFETY: the count retain raised is back to zero, so this is the box's last use.
-                mem::drop(unsafe { Box::from_raw(info as *mut Handler<F>) });
+                let handler = unsafe { Box::from_raw(info as *mut Handler<F>) };
+                let Handler { func, owner, .. } = *handler;
+                if owner != this_thread() {
+                    mem::forget(func);
+                }
             }
         }
 
@@ -301,10 +319,62 @@ impl Drop for TurnObserver {
 mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     use super::*;
     use crate::executor::{Executor, sleep};
+
+    /// Records each thread it is dropped on.
+    struct DropProbe(Arc<Mutex<Vec<libc::pthread_t>>>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) { self.0.lock().unwrap().push(this_thread()); }
+    }
+
+    #[test]
+    fn a_handler_is_never_dropped_on_a_thread_other_than_the_one_that_made_it() {
+        let drops = Arc::new(Mutex::new(Vec::new()));
+        let handle = thread::spawn({
+            let drops = drops.clone();
+            move || {
+                let probe = DropProbe(drops);
+                WakeupHandle::for_current_thread(0, move || {
+                    let _ = &probe;
+                })
+            }
+        })
+        .join()
+        .unwrap();
+        assert!(
+            drops.lock().unwrap().is_empty(),
+            "the ended thread's loop still holds it"
+        );
+        drop(handle);
+        assert_eq!(
+            *drops.lock().unwrap(),
+            [],
+            "not dropped here, off the thread that made it"
+        );
+
+        let owner = thread::spawn({
+            let drops = drops.clone();
+            move || {
+                let probe = DropProbe(drops);
+                drop(WakeupHandle::for_current_thread(0, move || {
+                    let _ = &probe;
+                }));
+                this_thread()
+            }
+        })
+        .join()
+        .unwrap();
+        assert_eq!(
+            *drops.lock().unwrap(),
+            [owner],
+            "dropped as its own thread ended"
+        );
+    }
 
     #[test]
     fn a_turn_over_a_frame_is_handed_over_with_the_actor_that_held_it() {
