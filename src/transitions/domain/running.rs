@@ -642,7 +642,8 @@ impl<P: TilePicture> RunningAnimation<P> {
     }
 
     /// A push against `wall` reaching the flight: waiting for the motion until the flight moves, the
-    /// latest push winning (`None`), and played on the score at `at` once it does.
+    /// latest push winning, its press the latest frame zero shows unless it is plain (`None`), and
+    /// played on the score at `at` once it does.
     pub(in crate::transitions) fn push(
         &mut self,
         cue: &Cue,
@@ -652,6 +653,9 @@ impl<P: TilePicture> RunningAnimation<P> {
     ) -> Option<Vec<Edit>> {
         if !self.flown {
             self.score.wait(Accent::Push { wall, seconds });
+            if *cue != Cue::Plain {
+                self.cue = *cue;
+            }
             return None;
         }
         Some(self.score.push(cue, wall, seconds, at))
@@ -1083,7 +1087,7 @@ mod tests {
     mod composed {
         use super::super::zooming::{Zooming, deep};
         use super::*;
-        use crate::animation::domain::motion::score::{Node, Value, Zoom};
+        use crate::animation::domain::motion::score::{Channel, Node, Value, Zoom};
 
         #[test]
         fn frame_zeros_pictures_are_worn_by_their_tiles_and_a_window_with_none_is_the_caches() {
@@ -1387,6 +1391,25 @@ mod tests {
                 let score = running.score.score();
                 assert_eq!(score.sample(Node::Strip, 10.0), Some(deep(viewport)));
                 assert_eq!(score.sample(Node::Strip, 10.35), Some(Value::Zoom(Zoom::REST)));
+            }
+        }
+
+        /// A push waiting for the motion keeps the press it came with as the one frame zero shows,
+        /// unless it is plain: under the zoom look, a focus press at an end joining a plain flight
+        /// before it moves bounces over an arc, and a plain push leaves the flight plain.
+        #[test]
+        fn a_push_waiting_for_the_motion_shows_its_press() {
+            let wall = OverlayVector::new(-72.0, 0.0);
+            let at_end = Cue::Focus { from: wid(2), to: wid(2) };
+            for (cue, arcs) in [(at_end, true), (Cue::Plain, false)] {
+                let (mut running, _) = posed();
+                running.score = FlightScore::new(Look::Zoom);
+                pose(&mut running);
+                assert!(running.push(&cue, wall, 0.35, 10.0).is_none(), "waits");
+                assert_eq!(running.cue, if arcs { at_end } else { Cue::Plain });
+                running.start_moving(VIEWPORT, 0.35, 10.0);
+                let arc = running.score.score().track(Node::Strip, Channel::Base);
+                assert_eq!(arc.is_some(), arcs, "{cue:?}");
             }
         }
 

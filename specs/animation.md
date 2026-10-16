@@ -43,10 +43,11 @@ holds whatever the look, but for one that names a look, which holds for that loo
   the motion lands each window on its layout frame, so the lift hands over to windows standing where
   their tiles end; a pass before the motion folds into it as one movement from frame zero, and a
   pass arriving mid-flight bends the flight without a jump in place, nor in speed for a window
-  riding a container, its speed on the strip and the strip's zoom each read apart, as a window
-  drawn through a zoom moves at both ("Arriving mid-flight"); a push draws each window toward its wall without a
-  jump, and every window is home within one bounce of the last push ("Pushing past an end"); and a
-  move stages only the pair it is given ("Moving a window along the strip").
+  riding a container, its speed on the strip and the strip's zoom each read apart, as a window drawn
+  through a zoom moves at both ("Arriving mid-flight"); a push draws each window toward its wall
+  without a jump, and every window is home within one bounce of the last push
+  ("Pushing past an end"); and a move stages only the pair it is given
+  ("Moving a window along the strip").
 - A look MUST keep what every flight owes beyond the contract: the pictures it starts from and waits
   for ("The pictures a flight starts with") and a resize's content against the edge that moves
   less, never stretched ("Resizing").
@@ -105,10 +106,11 @@ holds whatever the look, but for one that names a look, which holds for that loo
 - Every window MUST start from where it was on screen. The view moves wherever the strip moves on
   screen, not only when it scrolls: a centred column that loses its centring as it moves shifts the
   whole strip with the scroll offset unchanged.
-- Under slide, only a moved column that fills the viewport MUST step: one as wide as the tiling area, the
-  display's usable width less both outer gaps, within a point, whether the full-width toggle or a
-  width preset made it so. The view follows such a column, so nothing else on screen shows it moved.
-  A narrower column, half or two-thirds of the display, is seen moving and MUST NOT step.
+- Under slide, only a moved column that fills the viewport MUST step: one as wide as the tiling
+  area, the display's usable width less both outer gaps, within a point, whether the full-width
+  toggle or a width preset made it so. The view follows such a column, so nothing else on screen
+  shows it moved. A narrower column, half or two-thirds of the display, is seen moving and MUST NOT
+  step.
 - The step MUST go away from where the window goes, a third of the display and back: a move right
   steps left and opens the right side, where the column it passes was.
 - The whole strip MUST step: every tiled window MUST step; floating windows MUST stay where they
@@ -129,16 +131,16 @@ holds whatever the look, but for one that names a look, which holds for that loo
 - The step and the bounce at an end MUST NOT hold each other off.
 - The step is drawn only. Real windows go to the layout's frames, the column passed included.
 
-> **Reported 2026-09-29.** "what i have two 50/50 windows at the beginning of a strip, when i move one
-> of them in place of the other there is a nice transition animation where two windows are moving to
-> take each other's places. everywhere else though the window just jumps to new place and then there
-> is a focus navigation animation on top of it, the transition is instant and confusing, it is
-> especially problematic for full sized windows where the movement is generally invisible and it
-> doesn't feel like anything is actually happening, which feels broken." And on 2026-09-30: "maby
-> moving full-size windows 1/3 to either side temporarily to show the swap animation and then bounce it back in focus
-> would be an option too". Every move that scrolled the strip was drawn as the finished layout panning
-> into view, so the two windows had changed places by the first frame. The 50/50 pair at the start of
-> a strip was the one case that did not scroll.
+> **Reported 2026-09-29.** "what i have two 50/50 windows at the beginning of a strip, when i move
+> one of them in place of the other there is a nice transition animation where two windows are
+> moving to take each other's places. everywhere else though the window just jumps to new place and
+> then there is a focus navigation animation on top of it, the transition is instant and confusing,
+> it is especially problematic for full sized windows where the movement is generally invisible and
+> it doesn't feel like anything is actually happening, which feels broken." And on 2026-09-30: "maby
+> moving full-size windows 1/3 to either side temporarily to show the swap animation and then bounce
+> it back in focus would be an option too". Every move that scrolled the strip was drawn as the
+> finished layout panning into view, so the two windows had changed places by the first frame. The
+> 50/50 pair at the start of a strip was the one case that did not scroll.
 
 > **Reported 2026-09-30.** "two fixes for the moving animation. 1. only full-size windows should
 > cause the wobble (ecause you can't see otherwise it's movement) currently smaller windows do that
@@ -191,7 +193,8 @@ Zoom never steps; the step above is slide's.
 > you'll need to move them so that both of them would be clipped on opposite sides, for two
 > full-sized windows swap i imagine both of them clipped by 1/3-1/4 or so. then animate the swap
 > between the windows and then zoom back in with shifting the strip in the direction of the swap so
-> that the active window got back in focus."
+> that the active window got back in focus." At 10:10, of the view so moved: "interesting, i kind of
+> like it."
 
 - A focus press that scrolls the strip MUST pan on an arc too, as deep as a move of the same two
   columns, the view half way at the middle.
@@ -217,9 +220,12 @@ Zoom never steps; the step above is slide's.
 > later, before judging it: "lets park this for a second, and come back to it shortly."
 
 - A push against a side of the strip, by a move or a focus press, MUST bounce with the strip zoomed
-  out to 0.88 over an arc no longer than the bounce, and the bounce MUST reach its 72pt on screen.
-  A push while an arc plays MUST bounce at the strip's zoom and start no second arc. A push at an end
-  of the workspace stack is no press along the strip and bounces at rest.
+  out to 0.88 where the bounce turns, over an arc no longer than the bounce, and the bounce MUST
+  reach its 72pt on screen. Every press of a burst MUST bounce zoomed out: a push reaching an arc
+  drawn deeper where its bounce turns than where it lands MUST bounce at the strip's zoom and start
+  no second arc, and any other MUST zoom the strip out again from where it is drawn. A push joining
+  a flight before it moves MUST bring its press with it. A push at an end of the workspace stack is
+  no press along the strip and bounces at rest.
 
 > **Reported 2026-09-30.** "also the little bounce at the ends of the strip, can you make it work in
 > the zoomed out state, please?"
@@ -232,8 +238,12 @@ Zoom never steps; the step above is slide's.
   going, with a quarter of the arc left, MUST fold into the arc and land with it, adding its travel
   from rest. A press against it, or with less left, MUST turn the strip on a spring from where it is
   drawn as fast as it is drawn moving: folded in, the strip would carry on the old way before
-  turning. A move merged into a flight with no arc playing MUST play a shallow arc of its own from
-  rest; any press merged into an arc playing MUST leave the arc as it is.
+  turning. A move or a focus press that scrolls, merged into a flight with no arc playing, MUST play
+  a shallow arc of its own from rest; any press merged into an arc playing MUST leave the arc as it
+  is.
+
+> **Reported 2026-09-30.** "can you try to change the normal navigation as well to zoom out, move,
+> and then zoom back in?" A focus press merged into a flight whose arc had landed panned flat.
 - A zoomed-out strip MUST NOT show the desktop where the strip has a window. Not yet checked on
   screen: which windows a flight draws is judged against the display at full size, so a window the
   zoom brings into view may not be drawn.
@@ -982,18 +992,16 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 > the reader's own, none stalled in 6, the worst 29.1ms. macOS's own window list, read the same way,
 > stalled 41 times in 4 runs of 10s, the worst 501.7 to 504.3ms.
 
-## Where it lives
-
-`src/animation/domain/motion/` is how things move: the rigid pieces and their merge, the curves, the
-depth bands, the edge bounce and the nudge; how a resizing tile is cropped, the ground it shows
-where its picture ends and the edges it stands still against are
+## Where it lives  `src/animation/domain/motion/` is how things move: the rigid pieces and their
+merge, the curves, the depth bands, the edge bounce and the nudge; how a resizing tile is cropped,
+the ground it shows where its picture ends and the edges it stands still against are
 `src/animation/domain/motion/tile.rs`, a window's ground is read off its picture in
 `src/pictures/domain/ground.rs`, and when a resized window has repainted is
-`src/pictures/domain/settle.rs`. The looks
-(`src/animation/domain/choreography.rs`, Slide the default in
-`src/animation/domain/choreography/slide.rs`, Zoom in `src/animation/domain/choreography/zoom.rs`) compose a flight's score, fold a press before its motion
-into it and bend it at a press after, and stage a press on the strip. The contract every look passes
-is the tests there: `every_look_poses_each_drawn_window_where_it_starts`,
+`src/pictures/domain/settle.rs`. The looks (`src/animation/domain/choreography.rs`, Slide the
+default in `src/animation/domain/choreography/slide.rs`, Zoom in
+`src/animation/domain/choreography/zoom.rs`) compose a flight's score, fold a press before its
+motion into it and bend it at a press after, and stage a press on the strip. The contract every look
+passes is the tests there: `every_look_poses_each_drawn_window_where_it_starts`,
 `every_look_lands_each_node_on_its_plan`, `every_look_folds_each_pass_before_the_motion`,
 `every_look_bends_a_flight_without_a_jump`, `every_look_bends_a_flight_at_the_speed_it_moves`,
 `every_look_pushes_out_and_home_without_a_jump` and `every_look_stages_only_the_pair_it_is_given`,
@@ -1001,15 +1009,15 @@ and the `the_*_contract_rejects_*` tests beside them show each contract fails a 
 `slide_draws_every_seeded_flight_as_it_did` and `zoom_draws_every_seeded_flight_as_it_did` pin what
 each look draws. Zoom's arc, its depth, its view and its merges are held by the tests in its file,
 `a_wide_pair_is_centred_at_the_middle_clipped_alike_on_both_sides` and
-`a_press_the_same_way_folds_into_the_arc_and_lands_with_it` among them, and the overlay plays its arc
-in `a_zoom_flight_plays_its_arc_exactly`. The reactor names each press along the strip to the look:
-a focus press that scrolls the strip, held by
+`a_press_the_same_way_folds_into_the_arc_and_lands_with_it` among them, and the overlay plays its
+arc in `a_zoom_flight_plays_its_arc_exactly`. The reactor names each press along the strip to the
+look: a focus press that scrolls the strip, held by
 `a_focus_press_along_the_strip_names_where_it_went_and_one_at_an_end_where_it_stayed` and
 `a_focus_press_that_scrolls_the_strip_names_itself_and_zooms_under_zoom`, and the move or focus
 press a bounce at a side of the strip plays, held by
 `pushing_past_an_end_bounces_the_strip_and_keeps_focus` and
-`moving_a_window_past_an_end_bounces_the_view_too`. The flight's clock ends with the score the motion
-starts with, held by `the_clock_fits_the_score_the_motion_starts_with` and
+`moving_a_window_past_an_end_bounces_the_view_too`. The flight's clock ends with the score the
+motion starts with, held by `the_clock_fits_the_score_the_motion_starts_with` and
 `the_clock_ends_with_the_motion_the_look_composes`. The config's `animations › look` is decoded in
 `src/app/config/kdl/value.rs`, held by `the_look_is_picked_by_name_and_slide_unless_written`, and
 the reactor hands it to every flight it asks for, held by
@@ -1018,39 +1026,36 @@ and the flight engine stages a strip movement by the look of the flight it joins
 `a_move_merged_into_a_flight_is_staged_by_the_flights_look`. `src/animation/platform/renderer.rs`
 plays the score on Core Animation on the main thread, on the overlay in
 `src/animation/platform/overlay.rs`, which lets go of the tiles and the desktop at the lift.
-`src/decorations/domain/` is what each tile wears: the hairline's, the shadow's, the focus ring's and
-the border's shape, style and depth, which the overlay draws on the layers in
+`src/decorations/domain/` is what each tile wears: the hairline's, the shadow's, the focus ring's
+and the border's shape, style and depth, which the overlay draws on the layers in
 `src/decorations/platform/layers.rs`. A window's corner radius is read in
-`src/windows/platform/window_server.rs`, decoded in
-`src/windows/domain/info.rs` and resolved, with the fallback and the clamp, in
-`src/decorations/domain/shape.rs`. When each step happens is `src/transitions/`:
-`src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`
-finds where a moved pair starts and puts the look's staging of it on the strip,
-`src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,
-`src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted and how a window's
-picture where it ends is waited for,
-`src/transitions/domain/frame_writes.rs` which frames are written and in what order,
-`src/transitions/domain/travel.rs` where each tile starts and ends, a parked window's along its place
-on the strip, and whether a pass moves or resizes anything far enough to fly,
-`src/transitions/domain/running.rs` what a flight composed, how a later pass, an entrance and each
-picture change it and how its tiles band in depth, and `src/transitions/platform/engine.rs` is the
-actor that carries them out, on a thread of its own,
-which touches no Core Animation. The journal is kept with the
-lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
-what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/journal.py` reads it.
-The main thread's turns are timed in `crates/rini-runloop/src/turns.rs`, from the observer in
-`crates/rini-runloop/src/run_loop.rs` that `src/main.rs` installs.
-A measured lift's handover is compared in `src/pictures/domain/handover.rs`.
-Every read of windows that waits on Core Animation is made on the read connection in
-`src/windows/platform/window_server.rs`; which reads wait, and the measurements, are in
-`src/windows/docs/window-server-reads.md`.
-The pictures a flight draws are `src/pictures/`: whether one covers and fits its window, the
-stand-in, the blur, and the schedule that holds background capture off while a flight runs in
-`src/pictures/domain/`; the captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs`
-for the framed capture with its blur, `src/pictures/platform/screencapturekit.rs` for the background
-captures and those of a window cut by the display's edge, a focus target's or a grow's repaint), and the service that makes them and keeps the cache, `src/pictures/platform/service.rs`.
-Measurements are in `src/transitions/docs/coordination.md` (when a flight does what),
+`src/windows/platform/window_server.rs`, decoded in `src/windows/domain/info.rs` and resolved, with
+the fallback and the clamp, in `src/decorations/domain/shape.rs`. When each step happens is
+`src/transitions/`: `src/transitions/domain/flight_score.rs` keeps a flight's score,
+`src/transitions/domain/strip_move.rs` finds where a moved pair starts and puts the look's staging
+of it on the strip, `src/transitions/domain/lifecycle.rs` decides when every step of a flight
+happens, `src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted and how a
+window's picture where it ends is waited for, `src/transitions/domain/frame_writes.rs` which frames
+are written and in what order, `src/transitions/domain/travel.rs` where each tile starts and ends, a
+parked window's along its place on the strip, and whether a pass moves or resizes anything far
+enough to fly, `src/transitions/domain/running.rs` what a flight composed, how a later pass, an
+entrance and each picture change it and how its tiles band in depth, and
+`src/transitions/platform/engine.rs` is the actor that carries them out, on a thread of its own,
+which touches no Core Animation. The journal is kept with the lifecycle in
+`src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`; what each
+line says is `src/transitions/docs/journal.md`, and `tools/focuslab/journal.py` reads it. The main
+thread's turns are timed in `crates/rini-runloop/src/turns.rs`, from the observer in
+`crates/rini-runloop/src/run_loop.rs` that `src/main.rs` installs. A measured lift's handover is
+compared in `src/pictures/domain/handover.rs`. Every read of windows that waits on Core Animation is
+made on the read connection in `src/windows/platform/window_server.rs`; which reads wait, and the
+measurements, are in `src/windows/docs/window-server-reads.md`. The pictures a flight draws are
+`src/pictures/`: whether one covers and fits its window, the stand-in, the blur, and the schedule
+that holds background capture off while a flight runs in `src/pictures/domain/`; the captures in
+`src/pictures/platform/` (`src/pictures/platform/skylight.rs` for the framed capture with its blur,
+`src/pictures/platform/screencapturekit.rs` for the background captures and those of a window cut by
+the display's edge, a focus target's or a grow's repaint), and the service that makes them and keeps
+the cache, `src/pictures/platform/service.rs`. Measurements are in
+`src/transitions/docs/coordination.md` (when a flight does what),
 `src/animation/docs/animation-smoothness.md` (how it moves),
 `src/animation/docs/capture-overlay-research.md` (the overlay, and "The handover, measured", which a
-measured lift is sampled as) and
-`src/pictures/docs/capture-research.md` (the captures).
+measured lift is sampled as) and `src/pictures/docs/capture-research.md` (the captures).

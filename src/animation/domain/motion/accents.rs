@@ -1,8 +1,9 @@
 //! The accents a flight carries on top of its movement, the edge bounce, a move's step and a zoom
-//! look's arc, and the tracks the bounce and the step play on the containers that carry them. A push against an end re-kicks every
-//! carrier's bounce from where that carrier's is drawn (`push_tracks`), never held off; a step is
-//! taken only while none plays (`steps`), or a burst of moves steps the strip once per press, and
-//! plays on every carrier (`step_tracks`). Their shapes are `bounce` and `nudge`.
+//! look's arc, and the tracks the bounce and the step play on the containers that carry them. A
+//! push against an end re-kicks every carrier's bounce from where that carrier's is drawn
+//! (`push_tracks`), never held off; a step is taken only while none plays (`steps`), or a burst of
+//! moves steps the strip once per press, and plays on every carrier (`step_tracks`). Their shapes
+//! are `bounce` and `nudge`.
 
 use std::time::Duration;
 

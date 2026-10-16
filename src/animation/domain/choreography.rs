@@ -1,12 +1,13 @@
 //! Looks: how a flight moves. A look stages a press on the strip as the strip movement reaches the
-//! flight engine, the look of the flight it joins or begins (`Look::stage`), and for each flight its
-//! `Choreography` makes the plan, poses frame zero, composes the motion, folds a press before it and
-//! bends the flight at a press after it, answering with the score's edits (`motion::score::Edit`),
-//! which the renderer plays as they are. A bend's structure is every look's alike (`Merged::bend`),
-//! and a look gives only each node's movement in it (`Bending`). `Look::ALL` is every look, and the
-//! tests below are the contract each keeps; `slide` is the default, `zoom` the arc a press along the
-//! strip plays zoomed out, the config's `animations › look` picks the one every flight takes, and
-//! `linear` and `probe`, looks only the tests build, keep the contract through the same seam. See "The overlay engine" in
+//! flight engine, the look of the flight it joins or begins (`Look::stage`), and for each flight
+//! its `Choreography` makes the plan, poses frame zero, composes the motion, folds a press before
+//! it and bends the flight at a press after it, answering with the score's edits
+//! (`motion::score::Edit`), which the renderer plays as they are. A bend's structure is every
+//! look's alike (`Merged::bend`), and a look gives only each node's movement in it (`Bending`).
+//! `Look::ALL` is every look, and the tests below are the contract each keeps; `slide` is the
+//! default, `zoom` the arc a press along the strip plays zoomed out, the config's
+//! `animations › look` picks the one every flight takes, and `linear` and `probe`, looks only the
+//! tests build, keep the contract through the same seam. See "The overlay engine" in
 //! `src/animation/docs/animation-smoothness.md`.
 
 #[cfg(test)]
@@ -784,11 +785,12 @@ mod tests {
 
     /// The bend contract, over `bent_flights`: whatever a pass brings and whenever it lands, every
     /// window the flight drew before it is drawn where it was, and a window it brings rides beside
-    /// the windows it sits beside in the layout: drawn where the pass has it, moved by as far as the
-    /// container it rides is drawn from where the last pass sent it, through the strip's zoom. Each edge within the half point
-    /// placing on whole points allows, and within a point for a window the pass moves into a
-    /// container it opens (`OPENED_SLACK`). No rigid member's tile has a track of its own:
-    /// `Merged::bend` moves one to another container by riding and placing it alone.
+    /// the windows it sits beside in the layout: drawn where the pass has it, moved by as far as
+    /// the container it rides is drawn from where the last pass sent it, through the strip's zoom.
+    /// Each edge within the half point placing on whole points allows, and within a point for a
+    /// window the pass moves into a container it opens (`OPENED_SLACK`). No rigid member's tile has
+    /// a track of its own: `Merged::bend` moves one to another container by riding and placing it
+    /// alone.
     fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
         let mut brought = 0;
         bent_flights(make, &mut |bend| {
@@ -907,12 +909,12 @@ mod tests {
     /// The speed contract, over `bent_flights`: every window the flight drew before a pass that the
     /// pass leaves riding a container goes on at the speed it is drawn moving. A window is drawn
     /// through the strip's zoom, so each is read apart: each edge's speed as the window is laid out
-    /// on the strip, and the zoom's scale and shift, each `Crossed` the bend within what the motions
-    /// change it, a laid-out edge with the half point a bend may move it as slack, and a strip the
-    /// score holds no zoom for read at rest. Read drawn, a window's speed and the zoom's turning
-    /// opposite ways cancel the allowance though neither jumps. A loose tile is outside it: Slide starts each one a pass bends from where it is drawn
-    /// on `MOTION_CURVE` again, so its speed jumps, against "Arriving mid-flight" in
-    /// `specs/animation.md`.
+    /// on the strip, and the zoom's scale and shift, each `Crossed` the bend within what the
+    /// motions change it, a laid-out edge with the half point a bend may move it as slack, and a
+    /// strip the score holds no zoom for read at rest. Read drawn, a window's speed and the zoom's
+    /// turning opposite ways cancel the allowance though neither jumps. A loose tile is outside it:
+    /// Slide starts each one a pass bends from where it is drawn on `MOTION_CURVE` again, so its
+    /// speed jumps, against "Arriving mid-flight" in `specs/animation.md`.
     fn bends_at_the_speed_it_moves(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
         let edges =
             |frame: OverlayRect| [frame.min().x, frame.min().y, frame.max().x, frame.max().y];
@@ -1257,11 +1259,12 @@ mod tests {
 
     /// The push contract, over flights of the look `make` gives: one to three pushes against an end
     /// reaching a flight that moves, each 10-300ms after the one before, each with a press of its
-    /// own (`a_cue`), the flight at times started on an arc or by a push of its own. No window the flight draws
-    /// jumps as a push reaches it, within the half point placing on whole points allows; against each
-    /// of the four walls, some push draws a window more than a point further toward it than the
-    /// flight without it draws it; and every window is home where its plan sends it once every track
-    /// has ended, which is no later than one bounce after the last push or the end of the motion.
+    /// own (`a_cue`), the flight at times started on an arc or by a push of its own. No window the
+    /// flight draws jumps as a push reaches it, within the half point placing on whole points
+    /// allows; against each of the four walls, some push draws a window more than a point further
+    /// toward it than the flight without it draws it; and every window is home where its plan sends
+    /// it once every track has ended, which is no later than one bounce after the last push or the
+    /// end of the motion.
     fn pushes_out_and_home_without_a_jump(
         make: &dyn Fn() -> Box<dyn Choreography>,
     ) -> Result<(), String> {
@@ -1520,7 +1523,7 @@ mod tests {
     /// `random_pass` builds them, some bringing an arc and some reached by a push first: the score
     /// after the motion starts and after each pass or push, and each one's edits. A change to how
     /// Zoom moves changes it.
-    const ZOOM_SCORES: u64 = 0xed99_e770_d1b2_eeec;
+    const ZOOM_SCORES: u64 = 0xbbeb_6ba6_71d6_9e05;
 
     /// Zoom draws over seed 163's flights what `ZOOM_SCORES` holds: the strip's zoom and every
     /// node's place, ride and tracks, and every edit a pass or a push answers; some passes fold into

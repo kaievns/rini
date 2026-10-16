@@ -247,6 +247,18 @@ pub(super) fn strip_arc(
     begin: f64,
     length: f64,
 ) {
+    strip_zoom(making, centre, begin, length, |f| arc_scale(depth, f));
+}
+
+/// The strip zoomed about `centre` over `length` from `begin` through `scale` of the progress,
+/// sampled, and placed at rest; nothing for no length.
+fn strip_zoom(
+    making: &mut Making,
+    centre: OverlayPoint,
+    begin: f64,
+    length: f64,
+    scale: impl Fn(f64) -> f64,
+) {
     if length <= 0.0 {
         return;
     }
@@ -255,8 +267,7 @@ pub(super) fn strip_arc(
         Value::Zoom(if k == count {
             Zoom::REST
         } else {
-            let scale = arc_scale(depth, k as f64 / count as f64);
-            Zoom::about(scale, centre, OverlayVector::zero())
+            Zoom::about(scale(k as f64 / count as f64), centre, OverlayVector::zero())
         })
     });
     making.push(Edit::Place(Node::Strip, Value::Zoom(Zoom::REST)));
@@ -269,14 +280,57 @@ pub(super) fn strip_arc(
     )));
 }
 
+/// The strip's scale at progress `f` of a push's arc from `from`, where it is drawn, deepest at
+/// `STRIP_ZOOM` where the bounce turns, `turn` of the way, and at rest at the end: each half on a
+/// quarter of `sin²`, still at both ends.
+pub fn push_scale(from: f64, turn: f64, f: f64) -> f64 {
+    let half = |u: f64| nudge_displacement(u.clamp(0.0, 1.0) / 2.0);
+    if f <= turn {
+        from + (STRIP_ZOOM - from) * half(f / turn)
+    } else {
+        1.0 - (1.0 - STRIP_ZOOM) * (1.0 - half((f - turn) / (1.0 - turn)))
+    }
+}
+
+/// The strip's scale as `score` draws it at `at`, 1 for none.
+fn scale_drawn(score: &Score, at: f64) -> f64 {
+    match score.sample(Node::Strip, at) {
+        Some(Value::Zoom(zoom)) if zoom.scale.is_finite() && zoom.scale > 0.0 => zoom.scale,
+        _ => 1.0,
+    }
+}
+
+/// Whether the strip `score` draws at `now` is zoomed out further where a bounce of `seconds`
+/// turns than it is at `now`.
+fn deepening(score: &Score, seconds: f64, now: f64) -> bool {
+    let turn = scale_drawn(score, now + BOUNCE_TURN * seconds);
+    turn < 1.0 && turn <= scale_drawn(score, now)
+}
+
+/// Whether a push against `wall` is against a side of the strip.
+fn sideways(wall: OverlayVector) -> bool { wall.y == 0.0 && wall.x != 0.0 }
+
+/// A push's arc at `now` from where the strip is drawn (`push_scale`), over the push's `seconds`
+/// stretched by `ZOOM_STRETCH`, or over `seconds` for a stretch past one.
+fn push_arc(making: &mut Making, centre: OverlayPoint, seconds: f64, now: f64) {
+    let from = scale_drawn(&making.score, now);
+    let length = seconds.min(seconds * ZOOM_STRETCH);
+    let turn = BOUNCE_TURN * seconds / length;
+    strip_zoom(making, centre, now, length, |f| push_scale(from, turn, f));
+}
+
+/// Whether the strip's zoom plays at `now` on `score`.
+fn arcing(score: &Score, now: f64) -> bool {
+    score
+        .track(Node::Strip, Channel::Base)
+        .is_some_and(|track| track.at(now).is_some())
+}
+
 /// A push against `wall` at `at` on `score`, each carrier from where its own bounce is drawn: the
 /// strip's containers pushed as far as the strip is zoomed where the bounce turns, so it reaches the
 /// wall's distance on screen, and the floating one, drawn unzoomed, by the wall.
 fn zoomed_push(score: &Score, wall: OverlayVector, seconds: f64, at: f64) -> Vec<Track> {
-    let scale = match score.sample(Node::Strip, at + BOUNCE_TURN * seconds) {
-        Some(Value::Zoom(zoom)) if zoom.scale.is_finite() && zoom.scale > 0.0 => zoom.scale,
-        _ => 1.0,
-    };
+    let scale = scale_drawn(score, at + BOUNCE_TURN * seconds);
     if scale == 1.0 {
         return push_tracks(score, wall, seconds, at);
     }
@@ -379,10 +433,12 @@ struct Bell {
     length: f64,
 }
 
-/// The zoom look, and the swap its arc carries.
+/// The zoom look, the swap its arc carries, and the centre of the display the flight is staged on,
+/// which a push zooms the strip about.
 #[derive(Debug, Default)]
 pub struct ZoomArc {
     swap: Option<Crossing>,
+    centre: Option<OverlayPoint>,
 }
 
 impl ZoomArc {
@@ -622,6 +678,7 @@ impl Choreography for ZoomArc {
     /// stretched, ending by the time the push does, the strip zoomed as it bounces.
     fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
         self.swap = None;
+        self.centre = Some(stage.viewport.center());
         let arc = stage.accents.iter().find_map(|accent| match *accent {
             Accent::Arc { depth, share, swap, seconds } => Some(Bell {
                 depth,
@@ -635,9 +692,7 @@ impl Choreography for ZoomArc {
             return self.arc(playing, stage, begin, bell);
         }
         let wall = stage.accents.iter().find_map(|accent| match *accent {
-            Accent::Push { wall, seconds } if wall.y == 0.0 && wall.x != 0.0 => {
-                Some((wall, seconds))
-            }
+            Accent::Push { wall, seconds } if sideways(wall) => Some((wall, seconds)),
             _ => None,
         });
         let Some((wall, seconds)) = wall.filter(|_| stage.cue != Cue::Plain) else {
@@ -654,8 +709,7 @@ impl Choreography for ZoomArc {
         for edit in slid {
             making.push(edit);
         }
-        let length = seconds.min(seconds * ZOOM_STRETCH);
-        strip_arc(&mut making, STRIP_ZOOM, stage.viewport.center(), begin, length);
+        push_arc(&mut making, stage.viewport.center(), seconds, begin);
         for track in zoomed_push(&making.score, wall, seconds, begin) {
             making.push(Edit::Add(track));
         }
@@ -666,19 +720,20 @@ impl Choreography for ZoomArc {
     /// stretched by `ZOOM_STRETCH` when it brings an arc: a pan folded into the arc playing
     /// (`folds`), or every container on a spring from where the score has it at the speed it is
     /// drawn moving; a container opened for a member leaving another as fast as that one, and one
-    /// opened for a newcomer on `MOTION_CURVE`; every loose tile on `MOTION_CURVE`. A move brought
-    /// with no arc playing plays a shallow one from now; one playing is left as it is.
+    /// opened for a newcomer on `MOTION_CURVE`; every loose tile on `MOTION_CURVE`. A move or a
+    /// focus press brought with no arc playing plays a shallow one from now; one playing is left as
+    /// it is.
     fn retarget(&mut self, playing: &Score, plan: &FlightPlan, pass: &Pass, now: f64) -> Retarget {
+        self.centre = Some(pass.viewport.center());
         let mut merged = Merged::new(playing, plan, pass, now);
         let arced = matches!(pass.accent, Some(Accent::Arc { .. }));
-        let moved = matches!(pass.accent, Some(Accent::Arc { swap: Some(_), .. }));
         let seconds = if arced {
             pass.seconds * ZOOM_STRETCH
         } else {
             pass.seconds
         };
         let fold = self.folds(playing, &merged, pass, now);
-        let arcing = playing.track(Node::Strip, Channel::Base).is_some_and(|t| t.at(now).is_some());
+        let arcing = arcing(playing, now);
         merged.bend(&mut Bent {
             playing,
             now,
@@ -687,7 +742,7 @@ impl Choreography for ZoomArc {
             fold,
             swap: &mut self.swap,
         });
-        if moved && !arcing {
+        if arced && !arcing {
             strip_arc(
                 &mut merged.making,
                 STRIP_ZOOM,
@@ -700,16 +755,27 @@ impl Choreography for ZoomArc {
     }
 
     /// A push against `wall` at `now`, on every container that carries it, each from where its own
-    /// bounce is drawn, with the strip zoomed as it is where the bounce turns (`zoomed_push`).
+    /// bounce is drawn, with the strip zoomed as it is where the bounce turns (`zoomed_push`). A
+    /// press along the strip against a side wall first zooms the strip out again from where it is
+    /// drawn (`push_arc`), unless the strip is drawn deeper where the bounce turns than now.
     fn push(
         &mut self,
         playing: &Score,
-        _cue: &Cue,
+        cue: &Cue,
         wall: OverlayVector,
         seconds: f64,
         now: f64,
     ) -> Vec<Edit> {
-        zoomed_push(playing, wall, seconds, now).into_iter().map(Edit::Add).collect()
+        let mut making = Making::from(playing);
+        if let Some(centre) = self.centre.filter(|_| *cue != Cue::Plain && sideways(wall))
+            && !deepening(playing, seconds, now)
+        {
+            push_arc(&mut making, centre, seconds, now);
+        }
+        for track in zoomed_push(&making.score, wall, seconds, now) {
+            making.push(Edit::Add(track));
+        }
+        making.edits
     }
 }
 
@@ -1322,8 +1388,9 @@ mod tests {
 
     /// Kai, 2026-09-30 10:10: "the little bounce at the ends of the strip, can you make it work in
     /// the zoomed out state, please?" A push at an end with a press along the strip plays over a
-    /// shallow arc ending by the time the bounce does, nothing else moving, and reaches the edge bounce's 72pt
-    /// on screen where it turns. A plain push, or one against the top or bottom, plays no arc.
+    /// shallow arc ending by the time the bounce does, nothing else moving, and reaches the edge
+    /// bounce's 72pt on screen where it turns. A plain push, or one against the top or bottom, plays
+    /// no arc.
     #[test]
     fn a_push_at_an_end_bounces_zoomed_out_as_far_as_at_rest() {
         let wall = OverlayVector::new(-72.0, 0.0);
@@ -1337,10 +1404,10 @@ mod tests {
             close(strip.seconds(), ARC, 1e-9, "its length");
             assert!(strip.ends() <= BEGIN + PLAIN, "no longer than the bounce");
             close(
-                scale_at(&flight.score, BEGIN + ARC / 2.0),
+                scale_at(&flight.score, BEGIN + BOUNCE_TURN * PLAIN),
                 STRIP_ZOOM,
                 1e-3,
-                "shallow",
+                "shallow, deepest where it turns",
             );
             let key = key_of(&flight.plan, wid(N));
             assert!(flight.score.track(Node::Container(key), Channel::Base).is_none());
@@ -1371,40 +1438,74 @@ mod tests {
 
     /// Kai, 2026-10-03: "if you can make it react to every single press like a pure CSS based
     /// bouncer would, that'd be fantastic". A burst at the end re-kicks each bounce from where it is
-    /// drawn, at once, and starts no second arc.
+    /// drawn, at once, with the strip zoomed where it turns. A press while the arc zooms out starts
+    /// no second one; one while it zooms back in, or after it lands, zooms the strip out again from
+    /// where it is drawn, and the strip is home an arc after the last. A plain burst zooms once.
     #[test]
-    fn a_burst_at_an_end_bounces_from_where_it_is_drawn_and_zooms_once() {
+    fn a_burst_at_an_end_bounces_from_where_it_is_drawn_zoomed_out_at_every_turn() {
         let wall = OverlayVector::new(-72.0, 0.0);
-        let mut flight = bounce(wall, Cue::Focus { from: wid(N), to: wid(N) });
-        let arc = flight.score.track(Node::Strip, Channel::Base).cloned();
-        let key = key_of(&flight.plan, wid(N));
-        for now in [BEGIN + 0.05, BEGIN + 0.09, BEGIN + 0.2] {
-            let before = flight.score.drawn(wid(N), now).expect("drawn");
-            let drawn = match flight.score.track(Node::Container(key), Channel::Bounce) {
-                Some(track) => match track.at(now) {
-                    Some(Value::Point(p)) => p.to_vector(),
-                    _ => OverlayVector::zero(),
-                },
-                None => OverlayVector::zero(),
-            };
-            let edits = flight.zoom.push(&flight.score, &Cue::Plain, wall, PLAIN, now);
-            for edit in &edits {
-                flight.score.apply(edit);
+        let at_end = Cue::Focus { from: wid(N), to: wid(N) };
+        for cue in [at_end, Cue::Plain] {
+            let mut flight = bounce(wall, at_end);
+            let first = flight.score.track(Node::Strip, Channel::Base).cloned();
+            let key = key_of(&flight.plan, wid(N));
+            let burst = [0.05, 0.09, 0.2, 0.3, 0.5].map(|t| BEGIN + t);
+            for now in burst {
+                let tag = format!("{cue:?} at {:.2}", now - BEGIN);
+                let before = flight.score.drawn(wid(N), now).expect("drawn");
+                let (playing, scale_before) = (
+                    flight.score.track(Node::Strip, Channel::Base).cloned(),
+                    scale_at(&flight.score, now),
+                );
+                let deeper = deepening(&flight.score, PLAIN, now);
+                let drawn = match flight.score.track(Node::Container(key), Channel::Bounce) {
+                    Some(track) => match track.at(now) {
+                        Some(Value::Point(p)) => p.to_vector(),
+                        _ => OverlayVector::zero(),
+                    },
+                    None => OverlayVector::zero(),
+                };
+                let edits = flight.zoom.push(&flight.score, &cue, wall, PLAIN, now);
+                for edit in &edits {
+                    flight.score.apply(edit);
+                }
+                let after = flight.score.drawn(wid(N), now).expect("drawn");
+                close(after.origin.x, before.origin.x, 1e-9, &format!("{tag}: no jump"));
+                close(scale_at(&flight.score, now), scale_before, 1e-9, &tag);
+                let bounce =
+                    flight.score.track(Node::Container(key), Channel::Bounce).expect("kicked");
+                assert_eq!(bounce.begin(), now, "{tag}: at once");
+                let turn = now + BOUNCE_TURN * PLAIN;
+                let scale = scale_at(&flight.score, turn);
+                let want = Bounce::from_drawn(
+                    drawn,
+                    wall / scale,
+                    std::time::Duration::from_secs_f64(PLAIN),
+                )
+                .track(key, now);
+                assert_eq!(*bounce, want, "{tag}");
+                let arc = flight.score.track(Node::Strip, Channel::Base).cloned();
+                if cue == Cue::Plain {
+                    assert_eq!(arc, first, "{tag}: one arc");
+                } else if deeper {
+                    assert_eq!(arc, playing, "{tag}: no second arc");
+                } else {
+                    close(
+                        scale,
+                        STRIP_ZOOM,
+                        1e-3,
+                        &format!("{tag}: zoomed out where it turns"),
+                    );
+                    let arc = arc.expect("an arc");
+                    assert_eq!(arc.begin(), now, "{tag}: from now");
+                    assert!(arc.ends() <= now + ARC + 1e-9, "{tag}: no longer than an arc");
+                }
             }
-            let after = flight.score.drawn(wid(N), now).expect("drawn");
-            close(after.origin.x, before.origin.x, 1e-9, "no jump");
-            let bounce = flight.score.track(Node::Container(key), Channel::Bounce).expect("kicked");
-            assert_eq!(bounce.begin(), now, "at once");
-            let scale = scale_at(&flight.score, now + BOUNCE_TURN * PLAIN);
-            let want =
-                Bounce::from_drawn(drawn, wall / scale, std::time::Duration::from_secs_f64(PLAIN))
-                    .track(key, now);
-            assert_eq!(*bounce, want);
-            assert_eq!(
-                flight.score.track(Node::Strip, Channel::Base).cloned(),
-                arc,
-                "one arc"
-            );
+            if cue != Cue::Plain {
+                let last = burst[burst.len() - 1];
+                let ends = flight.score.track(Node::Strip, Channel::Base).map(Track::ends);
+                assert!(ends.is_some_and(|end| end > last && end <= last + ARC + 1e-9));
+            }
         }
     }
 
@@ -1636,10 +1737,11 @@ mod tests {
         }
     }
 
-    /// A move merged into a flight with no arc playing plays a shallow one from now, at rest at its
-    /// first frame; merged into one playing, it leaves that arc as it is.
+    /// A move or a focus press that scrolls, merged into a flight with no arc playing, plays a
+    /// shallow arc from now, at rest at its first frame; merged into one playing, it leaves that arc
+    /// as it is.
     #[test]
-    fn a_move_merged_mid_flight_zooms_only_when_no_arc_plays() {
+    fn a_press_merged_mid_flight_zooms_only_when_no_arc_plays() {
         let moved = Accent::Arc {
             depth: 0.7516,
             share: 0.5,
@@ -1651,29 +1753,75 @@ mod tests {
             }),
             seconds: PLAIN,
         };
-        let mut plain = focus_right(859.5).flown(Cue::Plain);
-        assert!(
-            plain.score.track(Node::Strip, Channel::Base).is_none(),
-            "a plain pan"
-        );
-        let now = BEGIN + 0.1;
-        let incoming = pan(&plain, 0.0);
-        plain.merge(&incoming, None, Some(moved), now);
-        let arc = plain.score.track(Node::Strip, Channel::Base).expect("a shallow arc").clone();
-        assert_eq!(arc.begin(), now);
-        close(arc.seconds(), ARC, 1e-9, "its length");
-        assert_eq!(arc.keys()[0].1, Value::Zoom(Zoom::REST), "from rest");
-        close(
-            scale_at(&plain.score, now + ARC / 2.0),
-            STRIP_ZOOM,
-            1e-3,
-            "shallow",
-        );
+        let focused = Accent::Arc {
+            depth: 0.7516,
+            share: 0.5,
+            swap: None,
+            seconds: PLAIN,
+        };
+        for accent in [moved, focused] {
+            let mut plain = focus_right(859.5).flown(Cue::Plain);
+            assert!(
+                plain.score.track(Node::Strip, Channel::Base).is_none(),
+                "a plain pan"
+            );
+            let now = BEGIN + 0.1;
+            let incoming = pan(&plain, 0.0);
+            plain.merge(&incoming, None, Some(accent), now);
+            let arc = plain.score.track(Node::Strip, Channel::Base).expect("a shallow arc").clone();
+            assert_eq!(arc.begin(), now, "{accent:?}");
+            close(arc.seconds(), ARC, 1e-9, "its length");
+            assert_eq!(arc.keys()[0].1, Value::Zoom(Zoom::REST), "from rest");
+            close(
+                scale_at(&plain.score, now + ARC / 2.0),
+                STRIP_ZOOM,
+                1e-3,
+                "shallow",
+            );
 
-        let mut zoomed = focus_right(859.5).flown(Cue::Focus { from: wid(W), to: wid(N) });
-        let playing = zoomed.score.track(Node::Strip, Channel::Base).cloned();
-        let incoming = pan(&zoomed, 0.0);
-        zoomed.merge(&incoming, None, Some(moved), BEGIN + 0.05);
-        assert_eq!(zoomed.score.track(Node::Strip, Channel::Base).cloned(), playing);
+            let mut zoomed = focus_right(859.5).flown(Cue::Focus { from: wid(W), to: wid(N) });
+            let playing = zoomed.score.track(Node::Strip, Channel::Base).cloned();
+            let incoming = pan(&zoomed, 0.0);
+            zoomed.merge(&incoming, None, Some(accent), BEGIN + 0.05);
+            assert_eq!(
+                zoomed.score.track(Node::Strip, Channel::Base).cloned(),
+                playing,
+                "{accent:?}"
+            );
+        }
+    }
+
+    /// A push's arc leaves from where the strip is drawn, is at `STRIP_ZOOM` where the bounce turns
+    /// and at rest at its end, still at all three, and goes one way on each side of the turn.
+    #[test]
+    fn a_push_arc_is_deepest_where_the_bounce_turns() {
+        let turn = BOUNCE_TURN / ZOOM_STRETCH;
+        for from in [1.0, 0.95, STRIP_ZOOM, 0.8] {
+            close(
+                push_scale(from, turn, 0.0),
+                from,
+                1e-12,
+                "from where it is drawn",
+            );
+            close(push_scale(from, turn, turn), STRIP_ZOOM, 1e-12, "at the turn");
+            close(push_scale(from, turn, 1.0), 1.0, 1e-12, "at rest");
+            let still =
+                |f: f64| (push_scale(from, turn, f + 1e-6) - push_scale(from, turn, f)) / 1e-6;
+            for f in [0.0, turn - 1e-6, 1.0 - 1e-6] {
+                assert!(still(f).abs() < 1e-3, "{from} still at {f}: {}", still(f));
+            }
+            let samples: Vec<f64> =
+                (0..=100).map(|k| push_scale(from, turn, k as f64 / 100.0)).collect();
+            let split = (turn * 100.0) as usize;
+            let toward = |a: f64, b: f64| (b - a) * (STRIP_ZOOM - from) >= -1e-12;
+            assert!(
+                samples[..=split].windows(2).all(|w| toward(w[0], w[1])),
+                "{from} out"
+            );
+            assert!(
+                samples[split + 1..].windows(2).all(|w| w[1] >= w[0]),
+                "{from} home"
+            );
+        }
     }
 }
