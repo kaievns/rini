@@ -10,7 +10,6 @@ use knus::span::Spanned;
 use knus::traits::ErrorSpan;
 
 use super::layout::GradientRelativeTo;
-use super::suggest::unknown_word;
 use crate::animation::domain::choreography::Look;
 use crate::decorations::domain::paint::{Colour, ColourSpace, Hue};
 use crate::displays::platform::cursor_warp::StackedUpperSide;
@@ -243,38 +242,6 @@ bounds! {
     Slowdown: 0.0, 100.0;
 }
 
-impl Word for Look {
-    fn word(self) -> &'static str {
-        match self {
-            Look::Slide => "slide",
-            #[cfg(test)]
-            Look::Probe => "probe",
-        }
-    }
-}
-
-/// `animations › look`, one of `Look::ALL` by its word.
-impl<S: ErrorSpan> knus::DecodeScalar<S> for Look {
-    fn type_check(type_name: &Option<Spanned<TypeName, S>>, ctx: &mut Context<S>) {
-        Decimal::type_check(type_name, ctx);
-    }
-
-    fn raw_decode(value: &Spanned<Literal, S>, _: &mut Context<S>) -> Result<Self, DecodeError<S>> {
-        let words = Look::ALL.map(Look::word);
-        let Literal::String(text) = &**value else {
-            let expected = words.map(|word| format!("`{word}`")).join(", ");
-            return Err(DecodeError::conversion(
-                value,
-                format!("expected a look, one of {expected}"),
-            ));
-        };
-        Look::ALL
-            .into_iter()
-            .find(|look| look.word() == &**text)
-            .ok_or_else(|| DecodeError::conversion(value, unknown_word(text, words)))
-    }
-}
-
 /// A value the config spells as one word, as `kebab_scalar!` reads it.
 pub trait Word {
     fn word(self) -> &'static str;
@@ -283,11 +250,13 @@ pub trait Word {
 /// Decodes a string enum the config spells in kebab-case into a type that lives with its feature,
 /// and spells it back. Values listed under `not_yet` are niri's and refused by name.
 macro_rules! kebab_scalar {
-    ($ty:ty { $($text:literal => $value:path),* $(,)? } $(not_yet { $($later:literal),* })?) => {
+    ($ty:ty {
+        $($(#[$meta:meta])* $text:literal => $value:path),* $(,)?
+    } $(not_yet { $($later:literal),* })?) => {
         impl Word for $ty {
             fn word(self) -> &'static str {
                 match self {
-                    $($value => $text,)*
+                    $($(#[$meta])* $value => $text,)*
                 }
             }
         }
@@ -304,7 +273,7 @@ macro_rules! kebab_scalar {
                 value: &knus::span::Spanned<knus::ast::Literal, S>,
                 _: &mut knus::decode::Context<S>,
             ) -> Result<Self, knus::errors::DecodeError<S>> {
-                let expected = [$(concat!("`", $text, "`")),*].join(", ");
+                let expected = [$($(#[$meta])* concat!("`", $text, "`")),*].join(", ");
                 let knus::ast::Literal::String(text) = &**value else {
                     return Err(knus::errors::DecodeError::conversion(
                         value,
@@ -312,20 +281,21 @@ macro_rules! kebab_scalar {
                     ));
                 };
                 match &**text {
-                    $($text => Ok($value),)*
+                    $($(#[$meta])* $text => Ok($value),)*
                     $($($later => Err(knus::errors::DecodeError::conversion(
                         value,
                         format!("`{}` is niri's and not supported yet; expected one of {expected}", $later),
                     )),)*)?
                     other => Err(knus::errors::DecodeError::conversion(
                         value,
-                        crate::app::config::kdl::suggest::unknown_word(other, [$($text),*]),
+                        crate::app::config::kdl::suggest::unknown_word(other, [$($(#[$meta])* $text),*]),
                     )),
                 }
             }
         }
     };
 }
+kebab_scalar!(Look { "slide" => Look::Slide, #[cfg(test)] "probe" => Look::Probe });
 kebab_scalar!(StackedUpperSide { "left" => StackedUpperSide::Left, "right" => StackedUpperSide::Right });
 kebab_scalar!(CenterFocusedColumn {
     "never" => CenterFocusedColumn::Never,

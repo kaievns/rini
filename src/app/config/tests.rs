@@ -366,7 +366,7 @@ fn the_look_is_picked_by_name_and_slide_unless_written() {
     let far = refused("animations {\n    look \"wobble\"\n}\n");
     assert!(far.contains("expected one of `slide`"), "{far}");
     assert!(!far.contains("did you mean"), "{far}");
-    assert!(refused("animations {\n    look 1\n}\n").contains("expected a look, one of `slide`"));
+    assert!(refused("animations {\n    look 1\n}\n").contains("expected one of `slide`"));
     assert!(
         refused("animations {\n    look\n}\n").contains("additional argument `look` is required")
     );
