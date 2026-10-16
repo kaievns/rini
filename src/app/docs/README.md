@@ -49,7 +49,7 @@ knows the features and converts what they emit.
 | `reactor/diagnostics.rs` | What a query answers about when it was not told (`default_query_space`), and what the diagnostics dump counts as wrong (`orphaned_windows`, `stale_display_homes`) |
 | `reactor/testing.rs` | Built only for tests: the reactors, screens and space-state events the reactor's tests start from, and the accessors they read and arrange the reactor through |
 | `reactor/tests/` | The integration tests, one file per subject, over `reactor/tests/fixtures.rs` |
-| `config/` | `config.kdl`: `config/kdl/` decodes each section into a part type and `kdl/apply.rs` lays the parts over each feature's settings, with the checks that span sections; then watching and reload. The format's decisions are [`docs/config.md`](../../../docs/config.md) |
+| `config/` | `config.kdl`: `config/kdl/` decodes each section into a part type and `kdl/apply.rs` lays the parts over each feature's settings, with the checks that span sections; written back as KDL for `config get` by `kdl/print.rs`; then watching and reload. The format's decisions are [`docs/config.md`](../../../docs/config.md) |
 | `api/` | The Mach IPC backend bound to the reactor, and the shapes a query answers in |
 | `controller/` | The controller: app launches and which apps get a thread (the rule is `windows::domain::app_threads`), hotkey registration, config reload. `controller/lower.rs` is the translation from a bound `Action` to a `reactor::Command`, which is where the tests are |
 | `notifications.rs` | The NSWorkspace demultiplexer |

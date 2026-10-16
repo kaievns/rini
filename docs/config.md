@@ -68,7 +68,9 @@ What it prints reads back to the same `Config`. Where the text differs from what
 
 - **Colours** print as `#rrggbb`, with `aa` when the alpha is not 1, so a name or an `hsl()` comes
   back as hex. A colour hex cannot hold prints as `rgb()`, each channel in the fewest decimals that
-  read back to it.
+  read back to it, out of 255 or, when no number out of 255 does, as a percentage: some channels an
+  `hsl()` gives are `t / 255` for no `t` csscolorparser reads, and `hsl(0 72% 99%)` prints as
+  `rgb(99.72% 250.614 250.614)`.
 - **Window rules** are held as two lists, what a window opens with and what it wears, each folded on
   its own. Each list is written back in its order, and an opening rule and a dressing rule with the
   same matchers are written as one `window-rule`. The order between the two lists can differ from

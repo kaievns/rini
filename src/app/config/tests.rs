@@ -2069,3 +2069,43 @@ fn a_colour_prints_as_hex_when_hex_holds_it() {
         assert_eq!(Colour { r, g, b, a }, colour, "{css} printed as {printed}");
     }
 }
+
+/// Every `hsl()` and `hwb()` over a grid, opaque and not, prints as a colour that reads back to the
+/// same channels, `hsl(0 72% 99%)` among them, whose red no number out of 255 reads back to.
+#[test]
+fn every_colour_on_an_hsl_and_hwb_grid_prints_as_one_that_reads_back() {
+    use crate::app::config::kdl::value::ColourValue;
+    let read = |css: &str| {
+        let [r, g, b, a] = csscolorparser::parse(css).unwrap().to_array();
+        Colour { r, g, b, a }
+    };
+    let mut misses = Vec::new();
+    let mut check = |css: String| {
+        let colour = read(&css);
+        let printed = ColourValue(colour).text();
+        if read(&printed) != colour {
+            misses.push(format!("{css} printed as {printed}"));
+        }
+    };
+    check("hsl(0 72% 99%)".to_string());
+    assert_eq!(
+        ColourValue(read("hsl(0 72% 99%)")).text(),
+        "rgb(99.72% 250.614 250.614)"
+    );
+    for alpha in ["", " / 0.37"] {
+        for h in (0..360).step_by(7) {
+            for s in (0..=100).step_by(9) {
+                for l in (0..=100).step_by(9) {
+                    check(format!("hsl({h} {s}% {l}%{alpha})"));
+                    check(format!("hwb({h} {s}% {l}%{alpha})"));
+                }
+            }
+        }
+    }
+    assert!(
+        misses.is_empty(),
+        "{} misses, first {:?}",
+        misses.len(),
+        &misses[..misses.len().min(5)]
+    );
+}
