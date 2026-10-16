@@ -627,15 +627,12 @@ impl FlightEngine {
             crate::animation::event::Event::Committed {
                 seq,
                 overlay,
-                shown,
-                places,
-                crops,
+                played,
                 sent,
                 began,
                 flushed,
             } => {
-                self.flights
-                    .drawn(self.now(), seq, (shown, places, crops), (sent, began, flushed));
+                self.flights.drawn(self.now(), seq, played, (sent, began, flushed));
                 if overlay.is_some() {
                     self.overlay = overlay;
                 }
@@ -1466,8 +1463,8 @@ mod tests {
 
         use super::*;
         use crate::animation::domain::motion::score::Score;
-        use crate::animation::event::Crops;
         use crate::animation::event::Event::{Committed, Unavailable};
+        use crate::animation::event::{Crops, OverlayTurn, Played, RestPlacement};
         use crate::pictures::domain::route::Route;
         use crate::pictures::platform::service::Command as Asked;
         use crate::transitions::domain::journal::{Burst, Mark, Stamped};
@@ -1686,13 +1683,14 @@ mod tests {
             /// The renderer's answer that every batch up to `seq` is committed, at once.
             fn committed(&self, seq: u64, overlay: Option<WindowServerId>) -> Event {
                 let now = self.at();
-                let crops = Crops::default();
                 Event::Rendered(Committed {
                     seq,
                     overlay,
-                    shown: None,
-                    places: false,
-                    crops,
+                    played: Played {
+                        turn: None,
+                        rest: RestPlacement::Unplaced,
+                        crops: Crops::default(),
+                    },
                     sent: now,
                     began: now,
                     flushed: now,
@@ -3596,9 +3594,11 @@ mod tests {
             let answer = Committed {
                 seq: shown,
                 overlay: Some(OVERLAY),
-                shown: Some(true),
-                places: false,
-                crops,
+                played: Played {
+                    turn: Some(OverlayTurn::Shown),
+                    rest: RestPlacement::Unplaced,
+                    crops,
+                },
                 sent: handed,
                 began: at(400),
                 flushed: at(700),
