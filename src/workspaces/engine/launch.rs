@@ -12,6 +12,20 @@ use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::LayoutEngine;
 
+/// What the layouts of a window's workspace say about its width.
+///
+/// `NotHeld` is not `AtDefault`: a window no layout holds has an unread width, not a default one.
+/// See `ProjectedWidth`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum LayoutWidth {
+    /// A layout holding the window carries this width for it.
+    Carried(ColumnWidth),
+    /// A layout holds the window at the display's configured default.
+    AtDefault,
+    /// No layout of the workspace holds the window.
+    NotHeld,
+}
+
 impl LayoutEngine {
     /// The displays attached right now, which is the topology the launch memory is keyed by.
     pub fn set_connected_displays(&mut self, uuids: Vec<DisplayUuid>) {
@@ -83,11 +97,14 @@ impl LayoutEngine {
                     // remembered full width on the next autosave.
                     let width =
                         match self.width_from_layouts(info.space, info.workspace_id, window_id) {
-                            Some(width) => ProjectedWidth::Known(width),
-                            None => match memory.affinity.window_width(&display, window_id) {
-                                Some(width) => ProjectedWidth::Known(Some(width)),
-                                None => ProjectedWidth::Unknown,
-                            },
+                            LayoutWidth::Carried(width) => ProjectedWidth::Known(Some(width)),
+                            LayoutWidth::AtDefault => ProjectedWidth::Known(None),
+                            LayoutWidth::NotHeld => {
+                                match memory.affinity.window_width(&display, window_id) {
+                                    Some(width) => ProjectedWidth::Known(Some(width)),
+                                    None => ProjectedWidth::Unknown,
+                                }
+                            }
                         };
                     Some(ProjectedSlot {
                         title: (!window.info.title.trim().is_empty())
@@ -104,28 +121,28 @@ impl LayoutEngine {
 
     /// The width `window` has in its workspace, read from the layout that holds it.
     ///
-    /// `None` means no layout of this workspace holds the window at all, which is not the same as the
-    /// window having no deliberate width — see `ProjectedWidth`. `Some(None)` is a window sitting at
-    /// the display's configured default.
-    ///
     /// Every configuration is consulted, not only the active display size: a window made full width
     /// on the external lives in that size's layout, and while the built-in is showing the active
     /// layout knows nothing about it.
-    fn width_from_layouts(
+    pub(super) fn width_from_layouts(
         &self,
         space: SpaceId,
         workspace_id: VirtualWorkspaceId,
         window: WindowId,
-    ) -> Option<Option<ColumnWidth>> {
+    ) -> LayoutWidth {
         let tree = self.workspace_tree(workspace_id);
-        let mut consulted = false;
+        let mut held = false;
         for layout in self.workspace_layouts.configurations_for(space, workspace_id) {
             if let Some(width) = tree.carried_width(layout, window) {
-                return Some(Some(width));
+                return LayoutWidth::Carried(width);
             }
-            consulted |= tree.contains_window(layout, window);
+            held |= tree.contains_window(layout, window);
         }
-        consulted.then_some(None)
+        if held {
+            LayoutWidth::AtDefault
+        } else {
+            LayoutWidth::NotHeld
+        }
     }
 
     /// The slot a window appearing for the first time should take, if its application left one.

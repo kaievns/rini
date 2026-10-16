@@ -807,3 +807,71 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
         "a save that could not read the width must leave the remembered one standing"
     );
 }
+
+/// A window's layouts give one of three answers about its width, and the projection treats each
+/// differently: a carried width, the display default, or no layout holding the window at all, which
+/// leaves the width unread. See `ProjectedWidth`.
+#[test]
+fn the_layouts_tell_a_carried_width_from_the_default_and_from_a_window_none_holds() {
+    use crate::layout::ColumnWidth;
+    use crate::workspaces::engine::launch::LayoutWidth;
+
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(53);
+    let held = WindowId::new(902, 1);
+    let elsewhere = WindowId::new(903, 1);
+
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
+    );
+    let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
+    window_store.insert_window(held, WindowState {
+        info: WindowInfo {
+            is_standard: true,
+            is_root: true,
+            is_minimized: false,
+            is_resizable: true,
+            min_size: None,
+            max_size: None,
+            title: "term".into(),
+            frame,
+            sys_id: Some(WindowServerId::new(9021)),
+            bundle_id: Some("com.mitchellh.ghostty".into()),
+            path: None,
+            ax_role: None,
+            ax_subrole: None,
+            is_modal: false,
+        },
+        frame_monotonic: frame,
+        is_manageable: true,
+        ignore_app_rule: false,
+    });
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::WindowAdded(space, held),
+    );
+    let ws_id = engine.virtual_workspace_manager.active_workspace(space).unwrap();
+
+    assert_eq!(
+        engine.width_from_layouts(space, ws_id, held),
+        LayoutWidth::AtDefault
+    );
+    assert_eq!(
+        engine.width_from_layouts(space, ws_id, elsewhere),
+        LayoutWidth::NotHeld
+    );
+
+    let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
+    engine
+        .workspace_tree_mut(ws_id)
+        .set_carried_width(layout, held, ColumnWidth::FullWidth);
+    assert_eq!(
+        engine.width_from_layouts(space, ws_id, held),
+        LayoutWidth::Carried(ColumnWidth::FullWidth)
+    );
+}
