@@ -272,15 +272,12 @@ mod tests {
     }
 
     fn raised(sink: &Sink) -> bool {
-        sink.0
-            .borrow()
-            .iter()
-            .any(|event| matches!(event, Event::RaiseCompleted { .. }))
+        sink.0.lock().iter().any(|event| matches!(event, Event::RaiseCompleted { .. }))
     }
 
     fn told_the_thread_ended(sink: &Sink) -> bool {
         sink.0
-            .borrow()
+            .lock()
             .iter()
             .any(|event| matches!(event, Event::ApplicationThreadTerminated(PID)))
     }

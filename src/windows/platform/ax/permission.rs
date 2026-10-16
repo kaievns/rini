@@ -43,6 +43,9 @@ const AX_POLL_TIMEOUT: Duration = Duration::from_secs(30);
 ///
 /// macOS shows the dialog at most once per process; later prompting calls return without one.
 fn ax_trusted(prompt: Prompt) -> bool {
+    // SAFETY: the three statics are constants their frameworks set at load and never write; the
+    // arrays hold the one key and one value `count` says; the dictionary is autoreleased, so it lives
+    // until the pool drains after the call.
     unsafe {
         let prompt_value = match prompt {
             Prompt::Yes => kCFBooleanTrue,

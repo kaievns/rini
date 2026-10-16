@@ -280,7 +280,6 @@ An allow over a whole crate or file, `#![allow]`, is one of these, held by
 | `src/displays/platform/cgs_notify.rs` | SkyLight's C names |
 | `src/windows/platform/sub_level.rs` | SkyLight's C names |
 | `src/windows/platform/app_actor/subscriptions.rs` | Accessibility's notification names |
-| `src/windows/platform/carbon.rs` | `missing_safety_doc`, P5.1 |
 
 The quality roadmap the ids come from is a plan kept outside the repo, so the row of every id an
 allow cites is copied here. `every_roadmap_id_an_allow_cites_has_a_row_in_docs_testing` holds the

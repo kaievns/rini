@@ -5,7 +5,6 @@ use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use libc::{RTLD_DEFAULT, dlsym};
 use objc2_application_services::AXError;
 use objc2_core_foundation::{
     CFArray, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, Type,
@@ -26,11 +25,10 @@ pub use port::{Command, LiveWindowServer, WindowServer, live};
 use crate::windows::domain::info::{WindowServerInfo, reported_radius};
 use crate::windows::domain::stack::{StackWrite, WindowLevel, stack_place_writes};
 use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
-use crate::windows::platform::cg_ok;
 use crate::windows::platform::process::ProcessSerialNumber;
 use crate::windows::platform::sub_level::window_sub_level;
+use crate::windows::platform::{cg_ok, symbol};
 
-static G_CONNECTION: Lazy<i32> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 /// A connection of rini's own that no window of rini's belongs to, for every read that waits on the
 /// connection's last Core Animation transaction. On the main one such a read deadlocks with the main
 /// thread's commit for 500ms ("Reads go on a connection of their own" in `src/windows/docs/README.md`).
@@ -38,6 +36,7 @@ static G_CONNECTION: Lazy<i32> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 pub static READ_CONNECTION: Lazy<i32> = Lazy::new(|| {
     let main = *G_CONNECTION;
     let mut cid = 0;
+    // SAFETY: `cid` is a local the call writes the new connection's id into.
     let err = unsafe { SLSNewConnection(0, &mut cid) };
     let read = opened_or(err, cid, main);
     if read == main {
@@ -69,6 +68,7 @@ impl TryFrom<&AXUIElement> for WindowServerId {
 
     fn try_from(element: &AXUIElement) -> Result<Self, Self::Error> {
         let mut id = 0;
+        // SAFETY: `element` holds the AXUIElement alive for the call, and `id` is a local it writes.
         let res = unsafe { _AXUIElementGetWindow(element.raw_ptr().as_ptr(), &mut id) };
         if res != AXError::Success {
             return Err(AxError::Ax(res));
@@ -121,26 +121,56 @@ fn cf_array_from_u64s(ids: &[u64]) -> CFRetained<CFArray<CFNumber>> {
     CFArray::from_retained_objects(&nums)
 }
 
+/// A SkyLight window iterator: a cursor over a query's windows, each read about the one it stands on.
 pub struct WindowIterator {
+    /// Non-null, owned +1 from `SLSWindowQueryResultCopyWindows`, and released on drop.
     iter: *mut CFType,
 }
 
+/// Reads of the window a [`WindowIterator`] stands on, one `SLSWindowIterator*` call each.
+macro_rules! iterator_reads {
+    ($($vis:vis $name:ident: $read:ident -> $out:ty;)*) => {$(
+        #[inline]
+        $vis fn $name(&self) -> $out {
+            // SAFETY: `self.iter` is the live iterator this owns, and the read takes only the
+            // iterator and returns a plain value.
+            unsafe { $read(self.iter) }
+        }
+    )*};
+}
+
 impl WindowIterator {
+    iterator_reads! {
+        pub count: SLSWindowIteratorGetCount -> i32;
+        stepped: SLSWindowIteratorAdvance -> bool;
+        pub window_id: SLSWindowIteratorGetWindowID -> u32;
+        pub level: SLSWindowIteratorGetLevel -> i32;
+        pub pid: SLSWindowIteratorGetPID -> i32;
+        pub parent_id: SLSWindowIteratorGetParentID -> u32;
+        pub bounds: SLSWindowIteratorGetBounds -> CGRect;
+        pub alpha: SLSWindowIteratorGetAlpha -> f32;
+        pub attributes: SLSWindowIteratorGetAttributes -> u64;
+        tag_bits: SLSWindowIteratorGetTags -> u64;
+    }
+
     pub fn new(ids: &[WindowServerId]) -> Option<Self> {
         if ids.is_empty() {
             return None;
         }
-        let cf_numbers = cf_array_from_ids(ids);
-        Self::new_from_cfarray(CFRetained::as_ptr(&cf_numbers).as_ptr(), 0)
+        Self::new_from_cfarray(&cf_array_from_ids(ids), 0)
     }
 
     /// `flags` controls optional result decoding; bit 0 requests window titles.
-    fn new_from_cfarray(cf_numbers: *mut CFArray<CFNumber>, flags: c_int) -> Option<Self> {
+    fn new_from_cfarray(cf_numbers: &CFArray<CFNumber>, flags: c_int) -> Option<Self> {
+        let cf_numbers = NonNull::from(cf_numbers).as_ptr();
+        // SAFETY: `cf_numbers` is a live CFArray of CFNumbers, borrowed for the call.
         let query = unsafe { SLSWindowQueryWindows(*READ_CONNECTION, cf_numbers, flags) };
         if query.is_null() {
             return None;
         }
+        // SAFETY: `query` is the non-null query result just made; the copy is +1 to us.
         let iter = unsafe { SLSWindowQueryResultCopyWindows(query) };
+        // SAFETY: `query` came from a Create call, is ours, and is not used again.
         unsafe { CFRelease(query) };
         if iter.is_null() {
             return None;
@@ -159,53 +189,37 @@ impl WindowIterator {
         Some(iterator)
     }
 
+    /// The iterator moved on to its next window, none when it has no more.
     #[inline]
-    pub fn count(&self) -> i32 { unsafe { SLSWindowIteratorGetCount(self.iter) } }
-
-    #[inline]
-    pub fn advance(&self) -> Option<&Self> {
-        if unsafe { SLSWindowIteratorAdvance(self.iter) } {
-            return Some(self);
-        }
-
-        None
-    }
-
-    #[inline]
-    pub fn window_id(&self) -> u32 { unsafe { SLSWindowIteratorGetWindowID(self.iter) } }
-
-    #[inline]
-    pub fn level(&self) -> i32 { unsafe { SLSWindowIteratorGetLevel(self.iter) } }
-
-    #[inline]
-    pub fn pid(&self) -> i32 { unsafe { SLSWindowIteratorGetPID(self.iter) } }
-
-    #[inline]
-    pub fn parent_id(&self) -> u32 { unsafe { SLSWindowIteratorGetParentID(self.iter) } }
-
-    #[inline]
-    pub fn bounds(&self) -> CGRect { unsafe { SLSWindowIteratorGetBounds(self.iter) } }
+    pub fn advance(&self) -> Option<&Self> { self.stepped().then_some(self) }
 
     /// The current window's title, from a query asked with flag bit 0.
     pub fn title(&self) -> Option<String> {
+        // SAFETY: `self.iter` is the live iterator this owns.
         let title = NonNull::new(unsafe { SLSWindowIteratorCopyTitle(self.iter) })?;
+        // SAFETY: a Copy call, so the title is +1 and the `CFRetained` takes that retain.
         Some(unsafe { CFRetained::from_raw(title) }.to_string())
     }
 
-    #[inline]
-    pub fn alpha(&self) -> f32 { unsafe { SLSWindowIteratorGetAlpha(self.iter) } }
+    /// The current window's SkyLight tags.
+    fn tags(&self) -> SLSWindowTags { SLSWindowTags::from_bits_retain(self.tag_bits()) }
 
-    #[inline]
-    pub fn attributes(&self) -> u64 { unsafe { SLSWindowIteratorGetAttributes(self.iter) } }
+    /// Whether the current window is a top-level application window.
+    fn is_app_window(&self) -> bool {
+        self.parent_id() == 0 && tags_match_app_window_role(self.tags())
+    }
 
     #[inline]
     pub fn constraints(&self) -> (CGSize, CGSize) {
         let mut min = CGSize::ZERO;
         let mut max = CGSize::ZERO;
         let mut cur = CGSize::ZERO;
+        // SAFETY: `self.iter` is the live iterator this owns, and the three sizes are locals the
+        // call writes.
         unsafe { SLSWindowIteratorGetConstraints(self.iter, &mut min, &mut max, &mut cur) };
 
         if min.width == 0.0 && min.height == 0.0 && max.width == 0.0 && max.height == 0.0 {
+            // SAFETY: the three sizes are locals the call writes.
             unsafe {
                 SLSPackagesGetWindowConstraints(
                     *G_CONNECTION,
@@ -226,16 +240,22 @@ impl WindowIterator {
         let Some(read) = *GET_CORNER_RADII else {
             return Vec::new();
         };
+        // SAFETY: `read` is SkyLight's `SLSWindowIteratorGetCornerRadii`, given the live iterator
+        // this owns.
         let Some(radii) = NonNull::new(unsafe { read(self.iter) }) else {
             return Vec::new();
         };
+        // SAFETY: the call answers a CFArray of CFNumbers at +1, which the `CFRetained` takes.
         let radii = unsafe { CFRetained::from_raw(radii) };
         radii.iter().filter_map(|corner| corner.as_f64()).collect()
     }
 }
 
 impl Drop for WindowIterator {
-    fn drop(&mut self) { unsafe { CFRelease(self.iter) } }
+    fn drop(&mut self) {
+        // SAFETY: `self.iter` is the +1 this owns, and nothing uses it after the drop.
+        unsafe { CFRelease(self.iter) }
+    }
 }
 
 /// Server-side filter for `SLSWindowQueryRun`.
@@ -264,18 +284,19 @@ struct WindowQueryKeys {
 }
 
 fn resolve_window_query_key(name: &CStr) -> Option<usize> {
-    let slot = unsafe { dlsym(RTLD_DEFAULT, name.as_ptr()) };
-    if slot.is_null() {
-        return None;
-    }
-    let key = unsafe { *(slot.cast::<*mut CFString>()) };
+    let slot = symbol(name)?;
+    // SAFETY: each name is a SkyLight `CFStringRef` global, so `slot` addresses a readable pointer.
+    let key = unsafe { *(slot.as_ptr().cast::<*mut CFString>()) };
     (!key.is_null()).then_some(key as usize)
 }
 
 static GET_CORNER_RADII: Lazy<Option<SLSWindowIteratorGetCornerRadiiFn>> = Lazy::new(|| {
-    let symbol = unsafe { dlsym(RTLD_DEFAULT, c"SLSWindowIteratorGetCornerRadii".as_ptr()) };
-    (!symbol.is_null()).then(|| unsafe {
-        std::mem::transmute::<*mut std::ffi::c_void, SLSWindowIteratorGetCornerRadiiFn>(symbol)
+    let function = symbol(c"SLSWindowIteratorGetCornerRadii")?;
+    // SAFETY: the symbol is SkyLight's function of this signature; no cast to a fn pointer is checked.
+    Some(unsafe {
+        std::mem::transmute::<*mut std::ffi::c_void, SLSWindowIteratorGetCornerRadiiFn>(
+            function.as_ptr(),
+        )
     })
 });
 
@@ -293,8 +314,13 @@ static WINDOW_QUERY_KEYS: Lazy<Option<WindowQueryKeys>> = Lazy::new(|| {
     })
 });
 
+/// # Safety
+///
+/// `query` is a live query from `SLSWindowQueryCreate`, and `key`, when not 0, a query key resolved
+/// by `resolve_window_query_key` that takes a value of `T`'s CF type.
 unsafe fn set_window_query_value<T: Type>(query: *mut CFType, key: usize, value: &CFRetained<T>) {
     if key != 0 {
+        // SAFETY: the caller's; `value` is a live CF object, which the query retains if it keeps it.
         unsafe {
             SLSWindowQuerySetValue(
                 query,
@@ -315,6 +341,7 @@ fn window_query_run(filter: &WindowQueryFilter<'_>) -> Option<WindowIterator> {
         return None;
     }
 
+    // SAFETY: a null dictionary asks for an empty query, which the call answers +1.
     let query = unsafe { SLSWindowQueryCreate(std::ptr::null_mut()) };
     if query.is_null() {
         return None;
@@ -325,6 +352,7 @@ fn window_query_run(filter: &WindowQueryFilter<'_>) -> Option<WindowIterator> {
     let exclude_tags = CFNumber::new_i64(filter.exclude_tags as i64);
     let window_options =
         (keys.window_options != 0).then(|| CFNumber::new_i32(filter.window_list_options));
+    // SAFETY: `query` is the live query made above, and each key takes a CFNumber.
     unsafe {
         set_window_query_value(query, keys.owner, &owner);
         set_window_query_value(query, keys.include_tags, &include_tags);
@@ -337,6 +365,8 @@ fn window_query_run(filter: &WindowQueryFilter<'_>) -> Option<WindowIterator> {
     let space_array = uses_explicit_spaces.then(|| cf_array_from_u64s(filter.spaces));
     let space_options =
         (!uses_explicit_spaces).then(|| CFNumber::new_i32(filter.space_list_options));
+    // SAFETY: `query` is live; the spaces key takes a CFArray of CFNumbers, the options key a
+    // CFNumber.
     unsafe {
         if let Some(space_array) = &space_array {
             set_window_query_value(query, keys.spaces, space_array);
@@ -345,12 +375,15 @@ fn window_query_run(filter: &WindowQueryFilter<'_>) -> Option<WindowIterator> {
         }
     }
 
+    // SAFETY: `query` is the live query made above; the result is +1 to us.
     let result = unsafe { SLSWindowQueryRun(*READ_CONNECTION, query, filter.query_flags) };
     let iterator = if result.is_null() {
         std::ptr::null_mut()
     } else {
+        // SAFETY: `result` is the non-null result just run; the copy is +1 to us.
         unsafe { SLSWindowQueryResultCopyWindows(result) }
     };
+    // SAFETY: `result`, when made, and `query` are ours, +1, and not used again.
     unsafe {
         if !result.is_null() {
             CFRelease(result);
@@ -407,6 +440,7 @@ fn window_list(on_screen: bool) -> Vec<u32> {
         let mut ids = vec![0u32; room];
         let (list, mut count) = (ids.as_mut_ptr(), 0 as c_int);
         let (mut set_tags, mut clear_tags) = (0u64, 0u64);
+        // SAFETY: `list` heads `room` u32s the call fills at most, and the rest are locals it writes.
         let err = unsafe {
             if on_screen {
                 SLSGetWindowListWithTags(
@@ -442,9 +476,7 @@ fn describe(ids: &[u32], titles: bool) -> Vec<Listed> {
         return Vec::new();
     }
     let cf_numbers = cf_array_from_u64s(&ids.iter().map(|&id| id as u64).collect::<Vec<_>>());
-    let Some(query) =
-        WindowIterator::new_from_cfarray(CFRetained::as_ptr(&cf_numbers).as_ptr(), titles as c_int)
-    else {
+    let Some(query) = WindowIterator::new_from_cfarray(&cf_numbers, titles as c_int) else {
         return Vec::new();
     };
     let mut described = Vec::with_capacity(ids.len());
@@ -473,6 +505,7 @@ fn application_name(pid: pid_t) -> String {
         return name;
     }
     let mut name = [0u8; 256];
+    // SAFETY: the call writes at most `name.len()` bytes into `name`.
     let len = unsafe { libc::proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
     String::from_utf8_lossy(&name[..len.max(0) as usize]).into_owned()
 }
@@ -519,6 +552,7 @@ fn find_window_at_point(point: &mut CGPoint, below_window_id: Option<u32>) -> Op
         None => (0, 1),
     };
 
+    // SAFETY: `point` is borrowed for the call, and the rest are locals it writes.
     unsafe {
         SLSFindWindowAndOwner(
             *G_CONNECTION,
@@ -539,25 +573,14 @@ fn is_own_window(cid: i32) -> bool { *G_CONNECTION == cid }
 
 pub fn current_cursor_location() -> Result<CGPoint, CGError> {
     let mut point = CGPoint::new(0.0, 0.0);
+    // SAFETY: `point` is a local the call writes.
     cg_ok(unsafe { SLSGetCurrentCursorLocation(*G_CONNECTION, &mut point) })?;
     Ok(point)
-}
-
-/// Returns the typed Skylight tags exposed by a window-query iterator.
-fn iterator_window_tags(iterator: *mut CFType) -> SLSWindowTags {
-    SLSWindowTags::from_bits_retain(unsafe { SLSWindowIteratorGetTags(iterator) })
 }
 
 /// Returns whether the tags describe a document or floating app window.
 fn tags_match_app_window_role(tags: SLSWindowTags) -> bool {
     tags.contains(SLSWindowTags::DOCUMENT) || tags.contains(SLSWindowTags::FLOATING)
-}
-
-/// Returns whether the iterator points at a top-level application window.
-fn iterator_window_suitable(iterator: *mut CFType) -> bool {
-    let tags = iterator_window_tags(iterator);
-    let parent_wid = unsafe { SLSWindowIteratorGetParentID(iterator) };
-    parent_wid == 0 && tags_match_app_window_role(tags)
 }
 
 /// The query for the windows on `spaces` of every connection, minimized ones left out: what
@@ -581,10 +604,12 @@ fn on_more_than_one_space(spaces: usize) -> bool { spaces > 1 }
 /// The spaces `SLSCopySpacesForWindows` places `id` on, none when it answers nothing.
 fn copy_spaces(id: WindowServerId) -> Option<CFRetained<CFArray<CFNumber>>> {
     let cf_windows = cf_array_from_ids(&[id]);
+    // SAFETY: `cf_windows` is a live CFArray of CFNumbers, borrowed for the call.
     let space_list_ref = unsafe {
         SLSCopySpacesForWindows(*G_CONNECTION, 0x7, CFRetained::as_ptr(&cf_windows).as_ptr())
     };
     let space_list_ref = NonNull::new(space_list_ref)?;
+    // SAFETY: a Copy call, so the array is +1 and the `CFRetained` takes that retain.
     Some(unsafe { CFRetained::from_raw(space_list_ref) })
 }
 
@@ -660,7 +685,7 @@ impl WindowServer for LiveWindowServer {
     fn app_window_suitability(&self, id: WindowServerId) -> Option<bool> {
         let query = WindowIterator::new(&[id])?;
         if query.count() > 0 && query.advance().is_some() {
-            Some(iterator_window_suitable(query.iter))
+            Some(query.is_app_window())
         } else {
             Some(false)
         }
@@ -672,8 +697,7 @@ impl WindowServer for LiveWindowServer {
         };
         let mut windows = Vec::new();
         while iterator.advance().is_some() {
-            let tags = iterator_window_tags(iterator.iter);
-            if iterator.parent_id() == 0 && tags_match_app_window_role(tags) {
+            if iterator.is_app_window() {
                 windows.push(iterator.window_id());
             }
         }
@@ -698,6 +722,7 @@ impl WindowServer for LiveWindowServer {
     /// time" in `src/animation/docs/capture-overlay-research.md`).
     fn server_frame(&self, id: WindowServerId) -> Option<CGRect> {
         let mut frame = CGRect::default();
+        // SAFETY: `frame` is a local the call writes.
         let read = unsafe { SLSGetWindowBounds(*READ_CONNECTION, id.as_u32(), &mut frame) };
         (read == 0 && frame.size.width > 0.0 && frame.size.height > 0.0).then_some(frame)
     }
@@ -725,11 +750,13 @@ impl WindowServer for LiveWindowServer {
     fn key_focused_window(&self, space: SpaceId) -> Option<WindowId> {
         let mut psn = ProcessSerialNumber::default();
         let mut fallback = 0u8;
+        // SAFETY: `psn` and `fallback` are locals the call writes.
         if cg_ok(unsafe { SLPSGetKeyFocusProcess(&mut psn, &mut fallback) }).is_err() {
             return None;
         }
 
         let mut owner = 0;
+        // SAFETY: `psn` is borrowed for the call, and `owner` is a local it writes.
         if unsafe { SLSGetConnectionIDForPSN(*G_CONNECTION, &psn, &mut owner) } != 0 || owner == 0 {
             return None;
         }
@@ -759,6 +786,7 @@ impl WindowServer for LiveWindowServer {
     fn key_focus_pid(&self) -> Option<pid_t> {
         let mut psn = ProcessSerialNumber::default();
         let mut fallback = 0u8;
+        // SAFETY: `psn` and `fallback` are locals the call writes.
         cg_ok(unsafe { SLPSGetKeyFocusProcess(&mut psn, &mut fallback) }).ok()?;
         crate::windows::platform::process::pid_for_psn(&psn)
     }
@@ -774,7 +802,7 @@ impl WindowServer for LiveWindowServer {
     fn desktop_windows(&self, display_uuid: &DisplayUuid) -> Vec<WindowServerId> {
         let uuid = CFString::from_str(display_uuid.as_str());
         let displays = CFArray::from_objects(&[&*uuid]);
-        // SAFETY: the copied array is ours, and `CFRetained` releases it.
+        // SAFETY: `displays` is a live CFArray of CFStrings, borrowed for the call.
         let Some(windows) = NonNull::new(unsafe {
             SLSManagedDisplaysCopyRoleWindows(
                 *G_CONNECTION,
@@ -784,6 +812,7 @@ impl WindowServer for LiveWindowServer {
         }) else {
             return Vec::new();
         };
+        // SAFETY: a Copy call, so the array of CFNumbers is +1 and the `CFRetained` takes that retain.
         let windows: CFRetained<CFArray<CFNumber>> = unsafe { CFRetained::from_raw(windows) };
         windows
             .iter()
@@ -809,6 +838,8 @@ impl WindowServer for LiveWindowServer {
 
         let psn = crate::windows::platform::process::psn_for_pid(pid)?;
 
+        // SAFETY: `psn` is borrowed for each call, and each event record is 0x100 bytes, more than
+        // the 0xf8 its length byte at 0x04 says is read.
         unsafe {
             cg_ok(_SLPSSetFrontProcessWithOptions(&psn, wsid.0, kCPSUserGenerated))?;
             cg_ok(SLPSPostEventRecordTo(&psn, event1.as_ptr()))?;
@@ -827,7 +858,7 @@ impl WindowServer for LiveWindowServer {
         sub_level: Option<c_int>,
     ) {
         for write in stack_place_writes(level, sub_level) {
-            // SAFETY: plain calls on rini's own connection and one of its own windows.
+            // SAFETY: integer arguments only, so no memory of rini's is at stake.
             unsafe {
                 match write {
                     StackWrite::Level(level) => {

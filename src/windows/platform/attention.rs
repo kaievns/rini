@@ -9,7 +9,6 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::time::Duration;
 
-use libc::{RTLD_DEFAULT, dlsym};
 use objc2_core_foundation::{
     CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType,
 };
@@ -19,6 +18,7 @@ use tracing::warn;
 
 use crate::windows::domain::attention::Attention;
 use crate::windows::event::{Event, EventSink};
+use crate::windows::platform::symbol;
 
 /// `kLSDefaultSessionID`.
 const SESSION: i32 = -2;
@@ -41,10 +41,10 @@ struct LaunchServices {
 }
 
 static LAUNCH_SERVICES: Lazy<Option<LaunchServices>> = Lazy::new(|| {
-    let resolve =
-        |name: &std::ffi::CStr| NonNull::new(unsafe { dlsym(RTLD_DEFAULT, name.as_ptr()) });
-    let applications = resolve(c"_LSCopyApplicationArrayInFrontToBackOrder")?;
-    let information = resolve(c"_LSCopyApplicationInformation")?;
+    let applications = symbol(c"_LSCopyApplicationArrayInFrontToBackOrder")?;
+    let information = symbol(c"_LSCopyApplicationInformation")?;
+    // SAFETY: each symbol is the private function its type above declares, a signature known from
+    // use, not from a header; no cast to a fn pointer is checked.
     Some(unsafe {
         LaunchServices {
             applications: std::mem::transmute::<*mut c_void, CopyApplications>(
@@ -83,6 +83,7 @@ fn read(launch_services: &LaunchServices) -> Attention {
         CFString::from_static_str(WANTS_ATTENTION),
     ]);
     let keys: *const CFArray = CFRetained::as_ptr(&keys).as_ptr().cast();
+    // SAFETY: integer arguments only; the array comes back +1 or null.
     let Some(applications) =
         NonNull::new(unsafe { (launch_services.applications)(SESSION, 0) }.cast_mut())
     else {
@@ -93,6 +94,7 @@ fn read(launch_services: &LaunchServices) -> Attention {
         unsafe { CFRetained::from_raw(applications.cast()) };
     Attention::of(applications.iter().filter_map(|asn| {
         let asn: *const CFType = &*asn;
+        // SAFETY: `asn` and `keys` are live CF objects, borrowed for the call.
         let answer =
             NonNull::new(unsafe { (launch_services.information)(SESSION, asn, keys) }.cast_mut())?;
         // SAFETY: returned retained, its keys the strings asked for.

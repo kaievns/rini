@@ -194,11 +194,11 @@ mod tests {
             .expect("handled");
         assert!(
             sink.0
-                .borrow()
+                .lock()
                 .iter()
                 .any(|event| matches!(event, Event::ApplicationActivated(PID, Quiet::Yes))),
             "the activation is quiet: {:?}",
-            sink.0.borrow()
+            sink.0.lock()
         );
     }
 
@@ -237,11 +237,11 @@ mod tests {
         assert_eq!(main_window_changes(&sink), [(Some(wids[0]), Quiet::Yes)]);
         assert!(
             sink.0
-                .borrow()
+                .lock()
                 .iter()
                 .any(|event| matches!(event, Event::ApplicationActivated(PID, Quiet::Yes))),
             "{:?}",
-            sink.0.borrow()
+            sink.0.lock()
         );
     }
 }

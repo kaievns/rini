@@ -65,8 +65,7 @@ fn server_port() -> Option<mach_port_t> {
     if port != MACH_PORT_NULL {
         return Some(port);
     }
-    // SAFETY: a Mach message whose reply lands in a stack buffer of the size it is sent with.
-    let made = unsafe { create_connection_server_port() };
+    let made = create_connection_server_port();
     if made == MACH_PORT_NULL {
         return None;
     }
@@ -100,41 +99,45 @@ fn answer(kr: kern_return_t, id: i32, expected: i32, sub_level: c_int) -> Result
     Ok(sub_level)
 }
 
-unsafe fn create_connection_server_port() -> mach_port_t {
-    // SAFETY: an all-integer message, zeroed, sent with its own size and received into itself.
-    unsafe {
-        let mut msg = aligned_message_t(zeroed::<create_connection_server_port_message_t>());
-        msg.0.header.msgh_bits = MACH_MSGH_BITS_SET(
-            MACH_MSG_TYPE_COPY_SEND,
-            MACH_MSG_TYPE_MAKE_SEND_ONCE,
-            0,
-            MACH_MSGH_BITS_REMOTE_MASK | MACH_MSGH_BITS_COMPLEX,
+fn create_connection_server_port() -> mach_port_t {
+    // SAFETY: every field is an integer, so all zeroes is a valid message.
+    let mut msg = aligned_message_t(unsafe { zeroed::<create_connection_server_port_message_t>() });
+    msg.0.header.msgh_bits = MACH_MSGH_BITS_SET(
+        MACH_MSG_TYPE_COPY_SEND,
+        MACH_MSG_TYPE_MAKE_SEND_ONCE,
+        0,
+        MACH_MSGH_BITS_REMOTE_MASK | MACH_MSGH_BITS_COMPLEX,
+    );
+    // SAFETY: takes nothing and answers the thread's special reply port.
+    msg.0.header.msgh_local_port = unsafe { mig_get_special_reply_port() };
+    // SAFETY: its one argument is null, as the declaration's `zero` says; it answers a port name.
+    msg.0.header.msgh_remote_port =
+        unsafe { rini_skylight_sys::SLSServerPort(core::ptr::null_mut()) };
+    msg.0.header.msgh_size = size_of::<create_connection_server_port_message_t>() as u32;
+    msg.0.header.msgh_id = CONNECTION_SERVER_PORT_MSG_ID;
+
+    msg.0.magic1 = 2;
+    msg.0.magic2 = 0x110000;
+    msg.0.magic3 = 0x110000;
+
+    let bundle = b"com.kaievns.rini";
+    let copy_len = bundle.len().min(msg.0.bundle_name.len());
+    msg.0.bundle_name[..copy_len].copy_from_slice(&bundle[..copy_len]);
+    if bundle.len() > copy_len {
+        debug!(
+            bundle_len = bundle.len(),
+            max_len = msg.0.bundle_name.len(),
+            "Truncating connection server bundle name"
         );
-        msg.0.header.msgh_local_port = mig_get_special_reply_port();
-        msg.0.header.msgh_remote_port = rini_skylight_sys::SLSServerPort(core::ptr::null_mut());
-        msg.0.header.msgh_size = size_of::<create_connection_server_port_message_t>() as u32;
-        msg.0.header.msgh_id = CONNECTION_SERVER_PORT_MSG_ID;
+    }
+    msg.0.bundle_size = msg.0.bundle_name.len() as i32;
 
-        msg.0.magic1 = 2;
-        msg.0.magic2 = 0x110000;
-        msg.0.magic3 = 0x110000;
-
-        let bundle = b"com.kaievns.rini";
-        let copy_len = bundle.len().min(msg.0.bundle_name.len());
-        msg.0.bundle_name[..copy_len].copy_from_slice(&bundle[..copy_len]);
-        if bundle.len() > copy_len {
-            debug!(
-                bundle_len = bundle.len(),
-                max_len = msg.0.bundle_name.len(),
-                "Truncating connection server bundle name"
-            );
-        }
-        msg.0.bundle_size = msg.0.bundle_name.len() as i32;
-
-        let header_ptr = core::ptr::addr_of_mut!(msg.0.header);
-        let local_port =
-            core::ptr::read_unaligned(core::ptr::addr_of!(msg.0.header.msgh_local_port));
-        let _ = mach_msg(
+    let header_ptr = core::ptr::addr_of_mut!(msg.0.header);
+    let local_port = msg.0.header.msgh_local_port;
+    // SAFETY: `header_ptr` heads the whole message, sent at its own size and received into it at
+    // `CONNECTION_SERVER_PORT_RECV_SIZE`, which is smaller.
+    let _ = unsafe {
+        mach_msg(
             header_ptr,
             MACH_SEND_MSG
                 | MACH_SEND_SYNC_OVERRIDE
@@ -146,10 +149,10 @@ unsafe fn create_connection_server_port() -> mach_port_t {
             local_port,
             0,
             0,
-        );
+        )
+    };
 
-        core::ptr::read_unaligned(core::ptr::addr_of!(msg.0.server_port))
-    }
+    msg.0.server_port
 }
 const WINDOW_SUB_LEVEL_REQUEST_PRE_TAHOE: i32 = 0x73C3;
 const WINDOW_SUB_LEVEL_REQUEST_POST_TAHOE: i32 = 0x76E3;
@@ -159,8 +162,7 @@ const WINDOW_SUB_LEVEL_RESPONSE_POST_TAHOE: i32 = 0x7747;
 /// logged once.
 pub fn window_sub_level(wid: u32) -> Option<c_int> {
     let port = server_port()?;
-    // SAFETY: a Mach message whose reply lands in a stack buffer of the size it is received with.
-    match unsafe { request_sub_level(port, wid) } {
+    match request_sub_level(port, wid) {
         Ok(sub_level) => Some(sub_level),
         Err(Failure::Receive(kr)) => {
             if first_time(&RECEIVE_FAILURE_LOGGED) {
@@ -181,7 +183,7 @@ pub fn window_sub_level(wid: u32) -> Option<c_int> {
     }
 }
 
-unsafe fn request_sub_level(port: mach_port_t, wid: u32) -> Result<c_int, Failure> {
+fn request_sub_level(port: mach_port_t, wid: u32) -> Result<c_int, Failure> {
     let (request, response) = if objc2::available!(macos = 26.0) {
         (
             WINDOW_SUB_LEVEL_REQUEST_POST_TAHOE,
@@ -215,10 +217,7 @@ unsafe fn request_sub_level(port: mach_port_t, wid: u32) -> Result<c_int, Failur
     let recv_size = size_of::<get_window_sub_level_message_t>() as u32;
 
     let header_ptr = core::ptr::addr_of_mut!(msg.0.info.header);
-    // SAFETY: an unaligned read of a field of a packed struct this function owns.
-    let local_port = unsafe {
-        core::ptr::read_unaligned(core::ptr::addr_of!(msg.0.info.header.msgh_local_port))
-    };
+    let local_port = msg.0.info.header.msgh_local_port;
     // SAFETY: `header_ptr` heads a buffer of `recv_size` bytes, at least `send_size`.
     let kr = unsafe {
         mach_msg(
@@ -235,10 +234,7 @@ unsafe fn request_sub_level(port: mach_port_t, wid: u32) -> Result<c_int, Failur
             MACH_PORT_NULL,
         )
     };
-    // SAFETY: unaligned reads of fields of a packed struct this function owns.
-    let id = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(msg.0.info.header.msgh_id)) };
-    let sub_level =
-        unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(msg.0.response.sub_level)) };
+    let (id, sub_level) = (msg.0.info.header.msgh_id, msg.0.response.sub_level);
     let answer = answer(kr, id, response, sub_level);
     match answer {
         // SAFETY: the reply port the failed receive left unusable.

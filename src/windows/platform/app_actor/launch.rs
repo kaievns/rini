@@ -251,7 +251,7 @@ mod tests {
         }
         assert!(
             sink.0
-                .borrow()
+                .lock()
                 .iter()
                 .any(|event| matches!(event, Event::ApplicationLaunched { pid: PID, .. })),
             "and the reactor hears of it"
@@ -265,6 +265,6 @@ mod tests {
         let (mut state, sink) = state_with(ax);
 
         assert!(!launch(&mut state, Duration::ZERO), "given up on");
-        assert!(sink.0.borrow().is_empty(), "and the reactor hears nothing");
+        assert!(sink.0.lock().is_empty(), "and the reactor hears nothing");
     }
 }
