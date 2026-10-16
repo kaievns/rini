@@ -97,6 +97,17 @@
   so two running binds become one key, or replaces the workspaces so a running bind or rule names one
   that is gone, MUST be refused, naming them.
 - `rini-cli execute config get` MUST print the running config.
+- A setting `config get` prints MUST carry its value as the file has it, never inverted, and the
+  four renamed on 2026-10-16 MUST print under their config key, snake-cased:
+  `activate-spaces-by-default` as `settings.activate_spaces_by_default`, `warp-mouse-to-focus` as
+  `settings.warp_mouse_to_focus`, `ignore-app-activation` as `settings.ignore_app_activation` and
+  `gestures › drag-swap-overlap` as `settings.window_snapping.drag_swap_overlap`.
+
+> **Changed 2026-10-16, in the Phase 4 type work, not asked for.** `config get` printed these as
+> `default_disable` (the inverse of `activate-spaces-by-default`), `mouse_follows_focus`,
+> `auto_focus_denylist` and `window_snapping.drag_swap_fraction`. A script that read the old names
+> now reads `null`, not an error. The file loads as before. `the_config_serialises_for_config_get`
+> holds the new names.
 
 ## Where it lives
 
