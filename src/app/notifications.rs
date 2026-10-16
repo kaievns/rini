@@ -3,12 +3,12 @@
 
 use std::cell::Cell;
 use std::ffi::c_void;
-use std::{future, mem};
+use std::future;
 
 use dispatchr::queue;
 use dispatchr::time::Time;
-use objc2::rc::{Allocated, Retained};
-use objc2::{AnyThread, ClassType, DeclaredClass, Encode, Encoding, define_class, msg_send, sel};
+use objc2::rc::Retained;
+use objc2::{AnyThread, DefinedClass, define_class, msg_send, sel};
 use objc2_app_kit::{self, NSRunningApplication, NSWorkspace, NSWorkspaceApplicationKey};
 use objc2_foundation::{
     NSDistributedNotificationCenter, NSNotification, NSNotificationCenter,
@@ -23,33 +23,23 @@ use crate::app::power::{init_power_state, set_low_power_mode_state};
 use crate::displays::platform::spaces;
 use crate::windows::platform::app::NSRunningApplicationExt;
 
-#[repr(C)]
 struct Instance {
     events_tx: controller::Sender,
     spaces_tx: spaces::Sender,
     session_inactive_hint: Cell<bool>,
 }
 
-unsafe impl Encode for Instance {
-    const ENCODING: Encoding = Encoding::Object;
-}
-
 define_class! {
     // SAFETY:
     // - The superclass NSObject does not have any subclassing requirements.
-    // - `NotificationHandler` does not implement `Drop`.
+    // - `NotificationCenterInner` does not implement `Drop`.
     #[unsafe(super(NSObject))]
-    #[ivars = Box<Instance>]
+    #[ivars = Instance]
     struct NotificationCenterInner;
 
-    // SAFETY: Each of these method signatures must match their invocations.
+    // SAFETY: each method takes `&self` and the `NSNotification` its center delivers, the signature
+    // `addObserver:selector:name:object:` requires of a selector.
     impl NotificationCenterInner {
-        #[unsafe(method_id(initWith:))]
-        fn init(this: Allocated<Self>, instance: Instance) -> Option<Retained<Self>> {
-            let this = this.set_ivars(Box::new(instance));
-            unsafe { msg_send![super(this), init] }
-        }
-
         #[unsafe(method(recvScreenChangedEvent:))]
         fn recv_screen_changed_event(&self, notif: &NSNotification) {
             trace!("{notif:#?}");
@@ -246,11 +236,17 @@ impl NotificationCenterInner {
             spaces_tx,
             session_inactive_hint: Cell::new(false),
         };
-        let handler: Retained<Self> = unsafe { msg_send![Self::alloc(), initWith: instance] };
+        let this = Self::alloc().set_ivars(instance);
+        // SAFETY: `NSObject`'s `init` takes no arguments and returns the receiver, its ivars set.
+        let handler: Retained<Self> = unsafe { msg_send![super(this), init] };
+        // A retain the callback owns and nothing releases, so its pointer is live at every call.
+        let user_info = Retained::into_raw(Retained::clone(&handler)).cast::<c_void>();
+        // SAFETY: the callback's signature is `CGDisplayReconfigurationCallBack`'s, and `user_info` is
+        // the pointer it reads, a `NotificationCenterInner` kept alive by the retain above.
         unsafe {
             CGDisplayRegisterReconfigurationCallback(
                 Some(Self::display_reconfig_callback),
-                Retained::<NotificationCenterInner>::as_ptr(&handler) as *mut c_void,
+                user_info,
             );
         }
         handler
@@ -269,37 +265,23 @@ impl NotificationCenterInner {
     }
 
     fn handle_screen_changed_event(&self, notif: &NSNotification) {
-        use objc2_app_kit::*;
-        let name = &*notif.name();
+        let name = notif.name().to_string();
         let span = info_span!("notification_center::handle_screen_changed_event", ?name);
         let _s = span.enter();
-        if name.to_string() == "NSWorkspaceActiveDisplayDidChangeNotification" {
-            self.send_space_event(spaces::Notification::ActiveDisplayChanged);
-        } else if unsafe { NSWorkspaceActiveSpaceDidChangeNotification } == name {
-            self.send_space_event(spaces::Notification::ActiveSpaceChanged);
-        } else if unsafe { NSApplicationDidChangeScreenParametersNotification } == name {
-            self.send_space_event(spaces::Notification::ScreenRefreshRequested);
-        } else {
-            warn!("Unexpected screen changed event: {notif:?}");
+        match screen_change(&name) {
+            Some(event) => self.send_space_event(event),
+            None => warn!("Unexpected screen changed event: {notif:?}"),
         }
     }
 
     fn handle_session_event(&self, notif: &NSNotification) {
-        use objc2_app_kit::*;
-        let name = &*notif.name();
+        let name = notif.name().to_string();
         let span = info_span!("notification_center::handle_session_event", ?name);
         let _guard = span.enter();
-
-        if unsafe { NSWorkspaceSessionDidResignActiveNotification } == name
-            || name.to_string() == "com.apple.screenIsLocked"
-        {
-            self.enter_session_inactive();
-        } else if unsafe { NSWorkspaceSessionDidBecomeActiveNotification } == name
-            || name.to_string() == "com.apple.screenIsUnlocked"
-        {
-            self.leave_session_inactive();
-        } else {
-            warn!("Unexpected session event: {notif:?}");
+        match session_change(&name) {
+            Some(Session::Inactive) => self.enter_session_inactive(),
+            Some(Session::Active) => self.leave_session_inactive(),
+            None => warn!("Unexpected session event: {notif:?}"),
         }
     }
 
@@ -318,17 +300,16 @@ impl NotificationCenterInner {
     }
 
     fn handle_app_event(&self, notif: &NSNotification) {
-        use objc2_app_kit::*;
-        let Some(app) = self.running_application(notif) else {
+        let Some(app) = running_application(notif) else {
             return;
         };
         let pid = app.pid();
-        let name = &*notif.name();
+        let name = notif.name().to_string();
         let span = info_span!("notification_center::handle_app_event", ?name);
         let _guard = span.enter();
-        if unsafe { NSWorkspaceDidDeactivateApplicationNotification } == name {
+        if name == "NSWorkspaceDidDeactivateApplicationNotification" {
             self.send_event(WmEvent::AppGloballyDeactivated(pid));
-        } else if unsafe { NSWorkspaceDidActivateApplicationNotification } == name {
+        } else if name == "NSWorkspaceDidActivateApplicationNotification" {
             // Do not forward AppGloballyActivated from NSWorkspace here.
             //
             // Rini intentionally treats workspace app-activation notifications as a
@@ -376,25 +357,6 @@ impl NotificationCenterInner {
 
     fn send_space_event(&self, event: spaces::Notification) { self.ivars().spaces_tx.send(event); }
 
-    fn running_application(
-        &self,
-        notif: &NSNotification,
-    ) -> Option<Retained<NSRunningApplication>> {
-        let info = notif.userInfo();
-        let Some(info) = info else {
-            warn!("Got app notification without user info: {notif:?}");
-            return None;
-        };
-        let app = unsafe { info.valueForKey(NSWorkspaceApplicationKey) };
-        let Some(app) = app else {
-            warn!("Got app notification without app object: {notif:?}");
-            return None;
-        };
-        assert!(app.class() == NSRunningApplication::class());
-        let app: Retained<NSRunningApplication> = unsafe { mem::transmute(app) };
-        Some(app)
-    }
-
     fn handle_dock_pref_changed(&self) {
         trace!("Dock preferences changed; scheduling refresh");
         self.send_space_event(spaces::Notification::ScreenRefreshRequested);
@@ -405,6 +367,10 @@ impl NotificationCenterInner {
         self.send_space_event(spaces::Notification::ScreenRefreshRequested);
     }
 
+    /// # Safety
+    ///
+    /// `user_info` is null or the pointer `new` registered: a `NotificationCenterInner` whose retain
+    /// is never released.
     unsafe extern "C" fn display_reconfig_callback(
         _display_id: u32,
         flags: u32,
@@ -413,12 +379,73 @@ impl NotificationCenterInner {
         if user_info.is_null() {
             return;
         }
-        let handler_ptr = user_info as *mut NotificationCenterInner;
+        let handler_ptr = user_info.cast::<NotificationCenterInner>().cast_const();
         let parsed = DisplayReconfigFlags::from_bits_truncate(flags);
-        queue::main().after_f_s(Time::NOW, (handler_ptr, parsed), |(handler_ptr, flags)| unsafe {
-            let handler = &*handler_ptr;
+        queue::main().after_f_s(Time::NOW, (handler_ptr, parsed), |(handler_ptr, flags)| {
+            // SAFETY: the caller's pointer is to a handler whose retain is never released, so it is
+            // still alive when the main queue runs this.
+            let handler = unsafe { &*handler_ptr };
             handler.send_space_event(spaces::Notification::DisplayReconfigured { flags });
         });
+    }
+}
+
+/// What a screen notification tells the spaces actor, by the notification's name.
+fn screen_change(name: &str) -> Option<spaces::Notification> {
+    match name {
+        "NSWorkspaceActiveDisplayDidChangeNotification" => {
+            Some(spaces::Notification::ActiveDisplayChanged)
+        }
+        "NSWorkspaceActiveSpaceDidChangeNotification" => {
+            Some(spaces::Notification::ActiveSpaceChanged)
+        }
+        "NSApplicationDidChangeScreenParametersNotification" => {
+            Some(spaces::Notification::ScreenRefreshRequested)
+        }
+        _ => None,
+    }
+}
+
+/// Which way a session notification turns the session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Session {
+    Inactive,
+    Active,
+}
+
+/// Which way a session notification turns the session, by the notification's name.
+fn session_change(name: &str) -> Option<Session> {
+    match name {
+        "NSWorkspaceSessionDidResignActiveNotification" | "com.apple.screenIsLocked" => {
+            Some(Session::Inactive)
+        }
+        "NSWorkspaceSessionDidBecomeActiveNotification" | "com.apple.screenIsUnlocked" => {
+            Some(Session::Active)
+        }
+        _ => None,
+    }
+}
+
+/// The application an app notification is about, or `None` when its user info holds none.
+fn running_application(notif: &NSNotification) -> Option<Retained<NSRunningApplication>> {
+    let info = notif.userInfo();
+    let Some(info) = info else {
+        warn!("Got app notification without user info: {notif:?}");
+        return None;
+    };
+    // SAFETY: `NSWorkspaceApplicationKey` is an immutable `NSString` constant AppKit exports, and
+    // the value read is an untyped object the downcast below checks.
+    let app = unsafe { info.valueForKey(NSWorkspaceApplicationKey) };
+    let Some(app) = app else {
+        warn!("Got app notification without app object: {notif:?}");
+        return None;
+    };
+    match app.downcast::<NSRunningApplication>() {
+        Ok(app) => Some(app),
+        Err(other) => {
+            warn!("Got app notification whose app is not an NSRunningApplication: {other:?}");
+            None
+        }
     }
 }
 
@@ -503,12 +530,77 @@ impl NotificationCenter {
 
 #[cfg(test)]
 mod tests {
-    use objc2_foundation::NSString;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{NSRunningApplication, NSWorkspaceApplicationKey};
+    use objc2_foundation::{NSDictionary, NSNotification, NSString};
 
     use super::{
-        CLOCK_CHANGED, Center, OBSERVED, Receiver,
-        should_leave_session_inactive_after_non_login_activation,
+        CLOCK_CHANGED, Center, OBSERVED, Receiver, Session, running_application, screen_change,
+        session_change, should_leave_session_inactive_after_non_login_activation,
     };
+    use crate::displays::platform::spaces::Notification;
+
+    /// Each screen notification observed is read as the change it names.
+    #[test]
+    fn each_screen_notification_observed_is_read() {
+        let read: Vec<(&str, Option<Notification>)> = OBSERVED
+            .iter()
+            .filter(|(_, receiver, _)| *receiver == Receiver::ScreenChanged)
+            .map(|&(_, _, name)| (name, screen_change(name)))
+            .collect();
+        assert!(matches!(read.as_slice(), [
+            (_, Some(Notification::ActiveDisplayChanged)),
+            (_, Some(Notification::ActiveSpaceChanged)),
+            (_, Some(Notification::ScreenRefreshRequested)),
+        ]));
+        assert!(screen_change("NSWorkspaceDidWakeNotification").is_none());
+    }
+
+    /// Each session notification observed turns the session one way: a resign or a lock away, a
+    /// return or an unlock back.
+    #[test]
+    fn each_session_notification_observed_turns_the_session() {
+        let read: Vec<Option<Session>> = OBSERVED
+            .iter()
+            .filter(|(_, receiver, _)| *receiver == Receiver::Session)
+            .map(|&(_, _, name)| session_change(name))
+            .collect();
+        assert_eq!(read, [
+            Some(Session::Inactive),
+            Some(Session::Active),
+            Some(Session::Inactive),
+            Some(Session::Active),
+        ]);
+        assert_eq!(session_change("NSWorkspaceDidWakeNotification"), None);
+    }
+
+    /// A workspace app notification whose `NSWorkspaceApplicationKey` holds `app`.
+    fn app_notification(app: Retained<AnyObject>) -> Retained<NSNotification> {
+        // SAFETY: `NSWorkspaceApplicationKey` is an immutable `NSString` constant AppKit exports.
+        let key = unsafe { NSWorkspaceApplicationKey };
+        let info = NSDictionary::<NSString, AnyObject>::from_retained_objects(&[key], &[app]);
+        // SAFETY: erasing a dictionary's key type leaves the same object, and `userInfo` is
+        // declared over untyped keys.
+        let info: Retained<NSDictionary> = unsafe { Retained::cast_unchecked(info) };
+        let name = NSString::from_str("NSWorkspaceDidActivateApplicationNotification");
+        // SAFETY: the user info is a dictionary of objects, the type `userInfo` declares.
+        unsafe { NSNotification::notificationWithName_object_userInfo(&name, None, Some(&info)) }
+    }
+
+    #[test]
+    fn an_app_notification_names_its_running_application() {
+        let app = NSRunningApplication::currentApplication();
+        let notif = app_notification(Retained::into_super(Retained::into_super(app.clone())));
+        assert_eq!(running_application(&notif), Some(app));
+    }
+
+    /// A value of any other class is not read as an application, and does not take rini down.
+    #[test]
+    fn an_app_notification_holding_another_class_names_no_application() {
+        let other = Retained::into_super(Retained::into_super(NSString::from_str("not an app")));
+        assert_eq!(running_application(&app_notification(other)), None);
+    }
 
     unsafe extern "C" {
         static NSSystemClockDidChangeNotification: &'static NSString;
