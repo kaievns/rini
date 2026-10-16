@@ -550,9 +550,10 @@ impl<P: TilePicture> RunningAnimation<P> {
         None
     }
 
-    /// Frame zero posed again, its plan as it is, with the pictures the tiles hold now and banded as
-    /// they are; the accents waiting for the motion keep waiting.
-    pub(in crate::transitions) fn pose(&mut self) -> Score {
+    /// Frame zero posed again on `viewport`, the display the overlay covers, its plan as it is, with
+    /// the pictures the tiles hold now and banded as they are; the accents waiting for the motion
+    /// keep waiting.
+    pub(in crate::transitions) fn pose(&mut self, viewport: OverlayRect) -> Score {
         let banding = band_plan(&self.plan, &self.tiles, self.focus);
         let drawn = self.drawn();
         let stage = Stage {
@@ -561,14 +562,20 @@ impl<P: TilePicture> RunningAnimation<P> {
             seconds: 0.0,
             cue: self.cue,
             accents: &[],
+            viewport,
         };
         self.score.pose(&stage, banding).clone()
     }
 
-    /// The motion starting at `at` on the media clock, for `seconds`: the look composes it from frame
-    /// zero with the accents that waited, and each picture held for a corner left behind is its
-    /// tile's own. The edits that play it.
-    pub(in crate::transitions) fn start_moving(&mut self, seconds: f64, at: f64) -> Vec<Edit> {
+    /// The motion starting at `at` on the media clock, for `seconds`, on `viewport`: the look
+    /// composes it from frame zero with the accents that waited, and each picture held for a corner
+    /// left behind is its tile's own. The edits that play it.
+    pub(in crate::transitions) fn start_moving(
+        &mut self,
+        viewport: OverlayRect,
+        seconds: f64,
+        at: f64,
+    ) -> Vec<Edit> {
         self.flown = true;
         let drawn = self.drawn();
         let stage = Stage {
@@ -577,6 +584,7 @@ impl<P: TilePicture> RunningAnimation<P> {
             seconds,
             cue: self.cue,
             accents: &[],
+            viewport,
         };
         let edits = self.score.start_moving(&stage, at);
         self.turn_corners(at);
@@ -1000,6 +1008,8 @@ mod tests {
     /// What the flight composed, as the coordinator's commands change it.
     mod composed {
         use super::*;
+        use crate::animation::domain::choreography::{Choreography, Retarget};
+        use crate::animation::domain::motion::score::{Channel, Curve, Node, Track, Value, Zoom};
 
         #[test]
         fn frame_zeros_pictures_are_worn_by_their_tiles_and_a_window_with_none_is_the_caches() {
@@ -1233,6 +1243,7 @@ mod tests {
                 seconds: 0.35,
                 cue: Cue::Plain,
                 accents: &[],
+                viewport: VIEWPORT,
             }
         }
 
@@ -1256,13 +1267,13 @@ mod tests {
             running.focus = Some(wid(2));
             let right = OverlayVector::new(72.0, 0.0);
             assert_eq!(running.push(&Cue::Plain, right, 0.35, 10.0), None);
-            let score = running.pose();
+            let score = running.pose(VIEWPORT);
             assert_eq!(
                 *score.banding(),
                 band_plan(&running.plan, &running.tiles, Some(wid(2)))
             );
             assert!(!running.flown);
-            let start = running.start_moving(0.35, 10.0);
+            let start = running.start_moving(VIEWPORT, 0.35, 10.0);
             assert!(running.flown);
             let plays = Duration::from_secs_f64(0.35);
             let key = strip_key(&running);
@@ -1280,10 +1291,91 @@ mod tests {
             let (mut running, _) = posed();
             let repaint = test_picture(ScreenSize::new(600.0, 1081.0));
             running.tiles[0].from_corner = Some(repaint.clone());
-            running.start_moving(0.35, 10.0);
+            running.start_moving(VIEWPORT, 0.35, 10.0);
             let tile = &running.tiles[0];
             assert!(tile.from_corner.is_none());
             assert_eq!(tile.snapshot.coverage, repaint.coverage);
+        }
+
+        /// A test-only look over Slide: the strip drawn at `DEPTH` about the display's centre at
+        /// frame zero, and back to rest over the motion.
+        #[derive(Debug)]
+        struct Zooming(Box<dyn Choreography>);
+
+        const DEPTH: f64 = 0.88;
+
+        fn deep(viewport: OverlayRect) -> Value {
+            Value::Zoom(Zoom::about(DEPTH, viewport.center(), OverlayVector::zero()))
+        }
+
+        impl Choreography for Zooming {
+            fn plan(&self, pass: plan::ReflowPlan, cue: &Cue) -> plan::FlightPlan {
+                self.0.plan(pass, cue)
+            }
+
+            fn fold(&self, plan: &plan::FlightPlan, pass: &Pass) -> plan::FlightPlan {
+                self.0.fold(plan, pass)
+            }
+
+            fn pose(&self, stage: &Stage) -> Score {
+                let mut score = self.0.pose(stage);
+                score.apply(&Edit::Place(Node::Strip, deep(stage.viewport)));
+                score
+            }
+
+            fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
+                let mut edits = self.0.compose(playing, stage, begin);
+                edits.push(Edit::Place(Node::Strip, Value::Zoom(Zoom::REST)));
+                edits.push(Edit::Add(Track::between(
+                    Node::Strip,
+                    Channel::Base,
+                    deep(stage.viewport),
+                    Value::Zoom(Zoom::REST),
+                    begin,
+                    stage.seconds,
+                    Curve::Linear,
+                )));
+                edits
+            }
+
+            fn retarget(
+                &mut self,
+                playing: &Score,
+                plan: &plan::FlightPlan,
+                pass: &Pass,
+                now: f64,
+            ) -> Retarget {
+                self.0.retarget(playing, plan, pass, now)
+            }
+
+            fn push(
+                &mut self,
+                playing: &Score,
+                cue: &Cue,
+                wall: OverlayVector,
+                seconds: f64,
+                now: f64,
+            ) -> Vec<Edit> {
+                self.0.push(playing, cue, wall, seconds, now)
+            }
+        }
+
+        /// A look zooms the strip about the display the flight is drawn on from the stage alone:
+        /// frame zero and the motion each carry the display the overlay covers, on the built-in
+        /// display and on one beside it.
+        #[test]
+        fn a_look_zooms_the_strip_about_the_display_it_is_staged_on() {
+            let beside = OverlayRect::new(Point::new(1728.0, -200.0), Size::new(2560.0, 1440.0));
+            for viewport in [VIEWPORT, beside] {
+                let (mut running, _) = posed();
+                running.score = FlightScore::of(Box::new(Zooming(Look::Slide.choreography())));
+                let score = running.pose(viewport);
+                assert_eq!(score.model(Node::Strip), Some(deep(viewport)), "{viewport:?}");
+                running.start_moving(viewport, 0.35, 10.0);
+                let score = running.score.score();
+                assert_eq!(score.sample(Node::Strip, 10.0), Some(deep(viewport)));
+                assert_eq!(score.sample(Node::Strip, 10.35), Some(Value::Zoom(Zoom::REST)));
+            }
         }
 
         /// A reserved entrance's tile joins frame zero's loose container before the motion, frame
@@ -1313,7 +1405,7 @@ mod tests {
             assert!(running.plan.destination(wid(3)).unwrap().same_as(slot));
 
             let (mut running, _) = posed();
-            running.start_moving(0.35, 10.0);
+            running.start_moving(VIEWPORT, 0.35, 10.0);
             let tile = entering(&mut running);
             let edits = running.join(&tile, VIEWPORT, 0.3, 10.1).expect("merged");
             assert!(running.plan.destination(wid(3)).unwrap().same_as(slot));

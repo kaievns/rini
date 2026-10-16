@@ -867,8 +867,9 @@ impl FlightEngine {
     /// Frame zero posed again, its plan as it is, with the pictures the tiles hold now; the accents
     /// waiting for the motion keep waiting.
     fn reinstall(&mut self) {
+        let viewport = self.viewport();
         let Some(running) = self.running.as_mut() else { return };
-        let score = running.pose();
+        let score = running.pose(viewport);
         let tiles = running.tiles.clone();
         self.render(Render::Stage { score, tiles });
     }
@@ -1222,6 +1223,7 @@ impl FlightEngine {
     fn start_moving(&mut self, now: Instant) {
         let duration = self.flights.coordinator().remaining(now).unwrap_or_default();
         let at = self.media.at(now);
+        let viewport = self.viewport();
         let Some(running) = self.running.as_mut() else { return };
         // The acceptance greps count this line against "overlay lifted".
         let flight = &running.plan;
@@ -1232,7 +1234,7 @@ impl FlightEngine {
             floating = flight.floating.len(),
             "flight composed"
         );
-        let edits = running.start_moving(duration.as_secs_f64(), at);
+        let edits = running.start_moving(viewport, duration.as_secs_f64(), at);
         let remaining = running.score.remaining(at);
         self.play(edits);
         self.drive(lifecycle::Event::Extend(remaining));

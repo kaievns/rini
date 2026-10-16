@@ -1,37 +1,53 @@
 //! Looks: how a flight moves. A look stages a press on the strip before the flight is asked for
 //! (`Look::stage`), and for each flight its `Choreography` makes the plan, poses frame zero, composes
 //! the motion, folds a press before it and bends the flight at a press after it, answering with the
-//! score's edits (`motion::score::Edit`), which the renderer plays as they are. `Look::ALL` is every
-//! look, and the tests below are the contract each keeps; `slide` is the default. See "The overlay
-//! engine" in `src/animation/docs/animation-smoothness.md`.
+//! score's edits (`motion::score::Edit`), which the renderer plays as they are. A bend's structure is
+//! every look's alike (`Merged::bend`), and a look gives only each node's movement in it
+//! (`Bending`). `Look::ALL` is every look, and the tests below are the contract each keeps; `slide`
+//! is the default, and `linear`, a look only the tests build, keeps the contract through the same
+//! seam. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
 
+#[cfg(test)]
+pub mod linear;
 pub mod slide;
 
 use std::fmt::Debug;
 
 use rini_core::ids::WindowId;
-use rini_geometry::space::{OverlayRect, OverlayVector, SurfaceRect};
+use rini_geometry::Round;
+use rini_geometry::space::{
+    GroupRect, OverlayPoint, OverlayRect, OverlayVector, Point, SurfaceRect,
+};
 use rini_ipc::protocol::Direction;
 
 use self::slide::Slide;
 use super::motion::accents::Accent;
-use super::motion::plan::{FlightPlan, PlanDelta, ReflowPlan};
-use super::motion::score::{Edit, Score};
+use super::motion::plan::{
+    FlightPlan, GroupKey, Member, PlanDelta, ReflowPlan, merge_plans, stale_overlay_layers,
+};
+use super::motion::score::{Channel, Edit, Node, Score, Value};
 
 /// How a flight moves, chosen when it begins: a later pass's look is not asked.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Look {
     #[default]
     Slide,
+    #[cfg(test)]
+    Linear,
 }
 
 impl Look {
+    #[cfg(not(test))]
     pub const ALL: [Look; 1] = [Look::Slide];
+    #[cfg(test)]
+    pub const ALL: [Look; 2] = [Look::Slide, Look::Linear];
 
     /// The look's choreography for one flight.
     pub fn choreography(self) -> Box<dyn Choreography> {
         match self {
             Look::Slide => Box::new(Slide::default()),
+            #[cfg(test)]
+            Look::Linear => Box::new(linear::Linear),
         }
     }
 
@@ -40,6 +56,8 @@ impl Look {
     pub fn stage(self, cue: &Cue, strip: &Strip) -> Staging {
         match self {
             Look::Slide => slide::stage(cue, strip),
+            #[cfg(test)]
+            Look::Linear => linear::stage(cue, strip),
         }
     }
 }
@@ -115,6 +133,8 @@ pub struct Stage<'a> {
     pub cue: Cue,
     /// What waited for the motion to start: at most one of each kind.
     pub accents: &'a [Accent],
+    /// The display the overlay covers: what a zoom of the strip is centred on.
+    pub viewport: OverlayRect,
 }
 
 /// A later pass, folded into a flight before it moves or bending one that moves.
@@ -173,16 +193,298 @@ pub trait Choreography: Debug {
     ) -> Vec<Edit>;
 }
 
+/// Edits as they are made, each folded into a copy of the score playing, so the next reads what the
+/// ones before it did.
+struct Making {
+    score: Score,
+    edits: Vec<Edit>,
+}
+
+impl Making {
+    fn from(playing: &Score) -> Self {
+        Making {
+            score: playing.clone(),
+            edits: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, edit: Edit) {
+        self.score.apply(&edit);
+        self.edits.push(edit);
+    }
+
+    /// Where the container `key` ends, if the score has it.
+    fn container(&self, key: GroupKey) -> Option<OverlayPoint> {
+        match self.score.model(Node::Container(key)) {
+            Some(Value::Point(position)) => Some(position),
+            _ => None,
+        }
+    }
+
+    /// The container `key`, opened at `at` unless the score has it.
+    fn open(&mut self, key: GroupKey, at: OverlayPoint) {
+        if self.container(key).is_none() {
+            self.push(Edit::Place(Node::Container(key), Value::Point(at)));
+        }
+    }
+}
+
+/// A container's movement at a bend: from where it is, already placed where it ends.
+#[derive(Clone, Copy, Debug)]
+struct ContainerWay {
+    key: GroupKey,
+    from: OverlayPoint,
+    to: OverlayPoint,
+}
+
+/// A loose tile's movement at a bend, in its container: from where it is, already placed where it
+/// ends.
+#[derive(Clone, Copy, Debug)]
+struct TileWay {
+    window: WindowId,
+    from: GroupRect,
+    to: GroupRect,
+}
+
+/// The motion a look gives a bend, node by node, in the order `Merged::bend` asks for it: the
+/// tracks. What rides where, and where every node ends, is the bend's.
+trait Bending {
+    /// A container the merge retargets, from where the score has its movement.
+    fn retarget(&mut self, making: &mut Making, way: ContainerWay);
+
+    /// A container the merge opens, from where it installs; `leaving` is the container its member
+    /// left, none for a newcomer's.
+    fn open(&mut self, making: &mut Making, way: ContainerWay, leaving: Option<GroupKey>);
+
+    /// A loose tile joining or bent, from where it starts or the score draws it.
+    fn tile(&mut self, making: &mut Making, way: TileWay);
+
+    /// The container `key` opens again or is dropped: any movement the look keeps of it goes.
+    fn forget(&mut self, _key: GroupKey) {}
+}
+
+/// A loose tile placed where it ends, and moved there by `look`.
+fn place_tile(making: &mut Making, look: &mut impl Bending, way: TileWay) {
+    making.push(Edit::Place(Node::Tile(way.window), Value::Rect(way.to)));
+    look.tile(making, way);
+}
+
+/// A pass merged into a flight that moves, at `now`: `merge_plans` over where the score draws every
+/// container, its delta, and the edits made of it so far.
+struct Merged<'a> {
+    before: &'a FlightPlan,
+    plan: FlightPlan,
+    delta: PlanDelta,
+    drawn: &'a [WindowId],
+    now: f64,
+    making: Making,
+}
+
+impl<'a> Merged<'a> {
+    fn new(playing: &Score, plan: &'a FlightPlan, pass: &Pass<'a>, now: f64) -> Self {
+        let (merged, delta) = merge_plans(
+            plan,
+            pass.plan,
+            pass.pan,
+            &playing.presented(now),
+            pass.focus,
+            pass.viewport,
+        );
+        Merged {
+            before: plan,
+            plan: merged,
+            delta,
+            drawn: pass.drawn,
+            now,
+            making: Making::from(playing),
+        }
+    }
+
+    fn drawn(&self, window: WindowId) -> bool { self.drawn.contains(&window) }
+
+    fn position(&self, key: GroupKey) -> Option<OverlayPoint> {
+        self.plan.positions.get(&key).copied()
+    }
+
+    /// The delta as edits, in this order, `look` carrying each node placed where it ends. The
+    /// containers a merge opens at where they install, a newcomer that opened one riding it at its
+    /// frame in it; members moving container placed in their new one where they start; every
+    /// retargeted container, carried on from where the score has its movement; every opened one,
+    /// carried off from where it installs; tiles joining, each riding its container, a rigid one at
+    /// its frame in it and a loose one carried off from where it starts; loose tiles carried on from
+    /// where the score draws them, one `place_moved` just placed from there; and what the flight
+    /// stops drawing dropped.
+    fn bend(&mut self, look: &mut impl Bending) {
+        self.open_groups(look);
+        let placed = self.place_moved();
+        for &(key, to) in &self.delta.retargeted_groups {
+            let Some(Value::Point(from)) = self.making.score.along(Node::Container(key), self.now)
+            else {
+                continue;
+            };
+            let to = to.rounded();
+            self.making.push(Edit::Place(Node::Container(key), Value::Point(to)));
+            look.retarget(&mut self.making, ContainerWay { key, from, to });
+        }
+        for new in &self.delta.new_groups {
+            let key = new.key;
+            let to = self.plan.positions.get(&key).copied().unwrap_or(new.install).rounded();
+            self.making.push(Edit::Place(Node::Container(key), Value::Point(to)));
+            let way = ContainerWay { key, from: new.install, to };
+            look.open(&mut self.making, way, new.leaving);
+        }
+        self.join_tiles(look);
+        self.bend_tiles(look, &placed);
+        self.drop_stale(look);
+    }
+
+    fn open_groups(&mut self, look: &mut impl Bending) {
+        for new in &self.delta.new_groups {
+            self.making.push(Edit::Place(
+                Node::Container(new.key),
+                Value::Point(new.install.rounded()),
+            ));
+            look.forget(new.key);
+            let Some(group) = self.plan.groups.iter().find(|g| g.key == new.key) else {
+                continue;
+            };
+            for member in &group.members {
+                let moved_in = self
+                    .delta
+                    .reparented
+                    .iter()
+                    .any(|(w, _, to)| *w == member.window && *to == new.key);
+                if moved_in || !self.drawn.contains(&member.window) {
+                    continue;
+                }
+                self.making.push(Edit::Ride(member.window, new.key));
+                self.making.push(Edit::Place(
+                    Node::Tile(member.window),
+                    Value::Rect(member.rel.rounded()),
+                ));
+            }
+        }
+    }
+
+    /// A member moving container starts at its plan frame, which its tile sits a rounding from: it
+    /// keeps the tile's, or it jumps by up to a point. Gives the windows it placed.
+    fn place_moved(&mut self) -> Vec<WindowId> {
+        let mut placed: Vec<WindowId> = Vec::new();
+        for &(window, _, to_key) in &self.delta.reparented {
+            let Some(frame) = self.plan.member(window).map(|member| member.start_frame()) else {
+                continue;
+            };
+            let (Some(Member::Rigid { rel, .. }), Some(Value::Rect(drawn))) = (
+                self.before.member(window),
+                self.making.score.model(Node::Tile(window)),
+            ) else {
+                continue;
+            };
+            let frame = GroupRect::new(
+                Point::new(
+                    frame.origin.x + drawn.origin.x - rel.origin.x,
+                    frame.origin.y + drawn.origin.y - rel.origin.y,
+                ),
+                drawn.size,
+            );
+            let at = self.plan.positions.get(&to_key).copied().unwrap_or(OverlayPoint::origin());
+            self.making.open(to_key, at);
+            self.making.push(Edit::Ride(window, to_key));
+            self.making.push(Edit::Place(Node::Tile(window), Value::Rect(frame.rounded())));
+            if self.making.score.track(Node::Tile(window), Channel::Base).is_some() {
+                self.making.push(Edit::Cut(Node::Tile(window), Channel::Base));
+            }
+            placed.push(window);
+        }
+        placed
+    }
+
+    fn join_tiles(&mut self, look: &mut impl Bending) {
+        for &(window, key) in &self.delta.joined_tiles {
+            if !self.drawn(window) {
+                continue;
+            }
+            let Some(member) = self.plan.member(window) else {
+                continue;
+            };
+            let at = self.position(key).unwrap_or(OverlayPoint::origin());
+            self.making.open(key, at);
+            self.making.push(Edit::Ride(window, key));
+            match member {
+                Member::Rigid { rel, .. } => {
+                    self.making.push(Edit::Place(Node::Tile(window), Value::Rect(rel.rounded())))
+                }
+                Member::Changing { from, to }
+                | Member::Entrance { from, to }
+                | Member::Floating { from, to } => {
+                    let way = TileWay {
+                        window,
+                        from: from.rounded(),
+                        to: to.rounded(),
+                    };
+                    place_tile(&mut self.making, look, way);
+                }
+            }
+        }
+    }
+
+    fn bend_tiles(&mut self, look: &mut impl Bending, placed: &[WindowId]) {
+        for &(window, to) in &self.delta.retargeted_tiles {
+            if !self.drawn(window) {
+                continue;
+            }
+            let node = Node::Tile(window);
+            let from = if placed.contains(&window) {
+                self.making.score.model(node)
+            } else {
+                self.making.score.sample(node, self.now)
+            };
+            let Some(Value::Rect(from)) = from else { continue };
+            place_tile(&mut self.making, look, TileWay {
+                window,
+                from,
+                to: to.rounded(),
+            });
+        }
+    }
+
+    fn drop_stale(&mut self, look: &mut impl Bending) {
+        let tiles: Vec<(WindowId, GroupKey)> = self.making.score.tiles().collect();
+        let containers: Vec<GroupKey> = self.making.score.containers().collect();
+        let (stale, empty) = stale_overlay_layers(&tiles, self.drawn, &containers);
+        for window in stale {
+            self.making.push(Edit::Drop(Node::Tile(window)));
+        }
+        for key in empty {
+            self.making.push(Edit::Drop(Node::Container(key)));
+            look.forget(key);
+        }
+    }
+
+    fn retarget(self) -> Retarget {
+        Retarget {
+            plan: self.plan,
+            delta: self.delta,
+            edits: self.making.edits,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use rini_geometry::space::{OverlayPoint, Point, Rect, Respace, ScreenRect, ScreenVector};
-    use rini_geometry::{from_overlay_space, to_overlay_space};
+    use std::time::Duration;
+
+    use rini_geometry::space::{Rect, Respace, ScreenRect, ScreenVector};
+    use rini_geometry::{from_overlay_space, is_off_screen, to_overlay_space};
 
     use super::*;
+    use crate::animation::domain::motion::bounce::Bounce;
+    use crate::animation::domain::motion::easing::MOTION_CURVE;
     use crate::animation::domain::motion::plan::{
-        GroupKey, Member, Resolved, overlay_of, reflow_plan,
+        EDGE_BOUNCE_OVERSHOOT, GROUP_TOLERANCE, GroupKey, Member, Resolved, carries_out_and_back,
+        on_overlay, overlay_of, reflow_plan,
     };
-    use crate::animation::domain::motion::score::{Node, Value};
+    use crate::animation::domain::motion::score::{Curve, SAMPLE_STEP, Track};
     use crate::animation::domain::motion::testing::{
         DISPLAY, Gen, RUNS, VIEWPORT, random_requests, rect,
     };
@@ -240,9 +542,12 @@ mod tests {
     }
 
     impl Flight {
-        /// `requests` posed at frame zero, the windows `drawn` keeps drawn.
-        fn posed(look: Look, requests: &[Resolved], drawn: impl Fn(WindowId) -> bool) -> Flight {
-            let choreography = look.choreography();
+        /// `requests` posed at frame zero by `choreography`, the windows `drawn` keeps drawn.
+        fn posed(
+            choreography: Box<dyn Choreography>,
+            requests: &[Resolved],
+            drawn: impl Fn(WindowId) -> bool,
+        ) -> Flight {
             let plan = choreography.plan(reflow_plan(requests, DISPLAY), &Cue::Plain);
             let drawn: Vec<WindowId> = plan.windows().into_iter().filter(|w| drawn(*w)).collect();
             let score = choreography.pose(&stage(&plan, &drawn, &[]));
@@ -267,8 +572,14 @@ mod tests {
             self.fold(&edits);
         }
 
-        /// `incoming` merged at `now`.
-        fn merge(&mut self, incoming: &ReflowPlan, pan: Option<OverlayVector>, now: f64) {
+        /// `incoming` merged at `now`, with `accent` riding it, and what the look answered.
+        fn merge(
+            &mut self,
+            incoming: &ReflowPlan,
+            pan: Option<OverlayVector>,
+            accent: Option<Accent>,
+            now: f64,
+        ) -> Retarget {
             let pass = Pass {
                 plan: incoming,
                 pan,
@@ -277,11 +588,12 @@ mod tests {
                 drawn: &self.drawn,
                 seconds: PLAIN,
                 cue: Cue::Plain,
-                accent: None,
+                accent,
             };
             let retarget = self.choreography.retarget(&self.score, &self.plan, &pass, now);
             self.fold(&retarget.edits);
-            self.plan = retarget.plan;
+            self.plan = retarget.plan.clone();
+            retarget
         }
     }
 
@@ -292,6 +604,7 @@ mod tests {
             seconds: PLAIN,
             cue: Cue::Plain,
             accents,
+            viewport: VIEWPORT,
         }
     }
 
@@ -306,7 +619,8 @@ mod tests {
                 let requests = random_requests(&mut rng);
                 let left_out: Vec<WindowId> =
                     requests.iter().map(|r| r.window).filter(|_| rng.below(4) == 0).collect();
-                let flight = Flight::posed(look, &requests, |w| !left_out.contains(&w));
+                let flight =
+                    Flight::posed(look.choreography(), &requests, |w| !left_out.contains(&w));
                 assert!(
                     flight.score.settled(BEGIN),
                     "{look:?} run {run}: frame zero plays"
@@ -346,7 +660,8 @@ mod tests {
         for look in Look::ALL {
             let mut rng = Gen(31);
             for run in 0..RUNS {
-                let mut flight = Flight::posed(look, &random_requests(&mut rng), |_| true);
+                let mut flight =
+                    Flight::posed(look.choreography(), &random_requests(&mut rng), |_| true);
                 let accents = &waiting[rng.below(waiting.len() as u64) as usize];
                 flight.start(accents);
                 let end = BEGIN + flight.score.remaining(BEGIN);
@@ -363,155 +678,297 @@ mod tests {
         }
     }
 
-    /// Whatever a pass brings and whenever it lands, every window the flight drew before it is drawn
-    /// where it was, and a window it brings rides beside the windows it sits beside in the layout:
-    /// drawn where the pass has it, moved by as far as the container it rides is drawn from where the
-    /// last pass sent it. Each within the half point placing on whole points allows: passes built as
-    /// the reactor builds them, from where the last pass sends every window, merged into a flight
-    /// playing from its score, 200 cases from a fixed seed.
-    #[test]
-    fn every_look_bends_a_flight_without_a_jump() {
-        for look in Look::ALL {
-            let mut rng = Gen(163);
-            let mut brought = 0;
+    /// One pass of the bend contracts' flights, merged at `now`: the flight playing as it lands and
+    /// the plan it had, and the flight with it in.
+    struct Bend<'a> {
+        tag: String,
+        now: f64,
+        incoming: &'a ReflowPlan,
+        newcomer: WindowId,
+        playing: &'a Score,
+        sent: &'a FlightPlan,
+        bent: &'a Flight,
+    }
+
+    /// Every pass of the bend contracts' flights of the look `make` gives, as `check` sees it: passes
+    /// built as the reactor builds them, from where the last pass sends every window, merged one to
+    /// four times 10-400ms apart into a flight playing from its score, 200 flights from each of
+    /// `BEND_SEEDS`.
+    fn bent_flights(
+        make: &dyn Fn() -> Box<dyn Choreography>,
+        check: &mut dyn FnMut(&Bend) -> Result<(), String>,
+    ) -> Result<(), String> {
+        for seed in BEND_SEEDS {
+            let mut rng = Gen(seed);
             for run in 0..RUNS {
-                let mut flight = Flight::posed(look, &random_requests(&mut rng), |_| true);
+                let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
                 flight.start(&[]);
                 let mut now = BEGIN;
                 for step in 0..1 + rng.below(4) {
-                    let tag = format!("{look:?} seed 163 run {run} step {step}");
                     now += rng.pt(10.0, 400.0) / 1000.0;
-                    let windows = flight.plan.windows();
-                    let position = |plan: &FlightPlan, key: GroupKey| plan.position_of(key);
                     let newcomer = wid(500 + step as u32);
-                    let mut pan = None;
-                    let incoming = match rng.below(3) {
-                        0 => {
-                            let d = OverlayVector::new(rng.pt(-9.0, 9.0) * 100.0 + 50.0, 0.0);
-                            pan = Some(d);
-                            let mut p = ReflowPlan::empty();
-                            let mut requests = Vec::new();
-                            for w in &windows {
-                                if let Some(Member::Rigid { key, rel }) = flight.plan.member(*w) {
-                                    let from = screen(overlay_of(rel, position(&flight.plan, key)));
-                                    requests.push(Resolved::tiled(*w, from, shifted(from, d.x)));
-                                }
-                            }
-                            if rng.coin() {
-                                bring(&mut requests, newcomer, &mut rng);
-                                flight.drawn.push(newcomer);
-                            }
-                            let pieces = reflow_plan(&requests, DISPLAY);
-                            p.groups = pieces.groups;
-                            p
-                        }
-                        _ => {
-                            let v1 = ScreenVector::new(rng.pt(-9.0, 9.0) * 50.0, 0.0);
-                            let (dx, dy) = (rng.pt(-9.0, 9.0), rng.pt(-2.0, 2.0));
-                            let v2 = ScreenVector::new(dx * 50.0, dy * 50.0);
-                            let mut requests = Vec::new();
-                            for w in &windows {
-                                if rng.coin() {
-                                    continue;
-                                }
-                                let v = if rng.coin() { v1 } else { v2 };
-                                match flight.plan.member(*w) {
-                                    Some(Member::Rigid { key, rel }) => {
-                                        let at = position(&flight.plan, key);
-                                        let from = screen(overlay_of(rel, at));
-                                        let to = if rng.below(4) > 0 {
-                                            rect(
-                                                from.origin.x + v.x,
-                                                from.origin.y + v.y,
-                                                from.size.width,
-                                                from.size.height,
-                                            )
-                                        } else {
-                                            rect(
-                                                from.origin.x,
-                                                from.origin.y,
-                                                from.size.width + 300.0,
-                                                from.size.height,
-                                            )
-                                        };
-                                        requests.push(Resolved::tiled(*w, from, to));
-                                    }
-                                    Some(Member::Changing { from, to }) => {
-                                        let loose = position(&flight.plan, GroupKey::Loose);
-                                        let at = |rel| screen(overlay_of(rel, loose));
-                                        requests.push(Resolved::tiled(
-                                            *w,
-                                            at(from),
-                                            shifted(at(to), v.x),
-                                        ));
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            if rng.coin() {
-                                if requests.is_empty() {
-                                    let from = rng.on_screen();
-                                    requests.push(Resolved::tiled(
-                                        newcomer,
-                                        from,
-                                        shifted(from, v1.x),
-                                    ));
-                                } else {
-                                    bring(&mut requests, newcomer, &mut rng);
-                                }
-                                flight.drawn.push(newcomer);
-                            }
-                            reflow_plan(&requests, DISPLAY)
-                        }
-                    };
-                    let before: Vec<(WindowId, OverlayRect)> = windows
-                        .iter()
-                        .filter_map(|w| Some((*w, flight.score.drawn(*w, now)?)))
-                        .collect();
-                    let sent = flight.plan.clone();
-                    flight.merge(&incoming, pan, now);
-                    if let Some(Member::Rigid { key, .. }) = flight.plan.member(newcomer)
-                        && let Some(start) = sent.positions.get(&key)
-                    {
-                        let from = incoming.groups.iter().find_map(|g| {
-                            g.members.iter().find(|m| m.window == newcomer).map(|m| m.rel)
-                        });
-                        let from = from.expect("the pass brings it");
-                        let Some(Value::Point(container)) =
-                            flight.score.sample(Node::Container(key), now)
-                        else {
-                            panic!("{tag}: {key:?} is not drawn");
-                        };
-                        let want = OverlayRect::new(
-                            OverlayPoint::new(
-                                from.origin.x + container.x - start.x,
-                                from.origin.y + container.y - start.y,
-                            ),
-                            from.size.respace(),
-                        );
-                        let is = flight.score.drawn(newcomer, now).expect("drawn");
-                        let gap = gap(is, want);
-                        assert!(
-                            gap <= 0.5 + 1e-6,
-                            "{tag}: {newcomer:?} starts {gap} from beside the strip: {is:?}, wants {want:?}"
-                        );
-                        brought += 1;
-                    }
-                    for (window, was) in before {
-                        let is = flight
-                            .score
-                            .drawn(window, now)
-                            .unwrap_or_else(|| panic!("{tag}: {window:?} gone"));
-                        let gap = gap(is, was);
-                        assert!(
-                            gap <= 0.5 + 1e-6,
-                            "{tag}: {window:?} jumped {gap}: {was:?} then {is:?}"
-                        );
-                    }
+                    let (incoming, pan) = random_pass(&mut rng, &mut flight, newcomer);
+                    let (playing, sent) = (flight.score.clone(), flight.plan.clone());
+                    flight.merge(&incoming, pan, None, now);
+                    check(&Bend {
+                        tag: format!("seed {seed} run {run} step {step}"),
+                        now,
+                        incoming: &incoming,
+                        newcomer,
+                        playing: &playing,
+                        sent: &sent,
+                        bent: &flight,
+                    })?;
                 }
             }
-            assert!(brought > 0, "{look:?} brought no window beside the strip");
         }
+        Ok(())
+    }
+
+    /// The seeds of the bend contracts' flights: 163, and 2, which moves members of two containers
+    /// into one a pass opens, a member from the other drawn 0.82pt from where it was while
+    /// `Merged::bend` started the container's movement at the whole point nearest where it installs.
+    const BEND_SEEDS: [u64; 2] = [163, 2];
+
+    /// The bend contract, over `bent_flights`: whatever a pass brings and whenever it lands, every
+    /// window the flight drew before it is drawn where it was, and a window it brings rides beside
+    /// the windows it sits beside in the layout: drawn where the pass has it, moved by as far as the
+    /// container it rides is drawn from where the last pass sent it. Each edge within the half point
+    /// placing on whole points allows.
+    fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
+        let mut brought = 0;
+        bent_flights(make, &mut |bend| {
+            let (tag, now, newcomer, flight) = (&bend.tag, bend.now, bend.newcomer, bend.bent);
+            if let Some(Member::Rigid { key, .. }) = flight.plan.member(newcomer)
+                && let Some(start) = bend.sent.positions.get(&key)
+            {
+                let from =
+                    bend.incoming.groups.iter().find_map(|g| {
+                        g.members.iter().find(|m| m.window == newcomer).map(|m| m.rel)
+                    });
+                let from = from.expect("the pass brings it");
+                let Some(Value::Point(container)) = flight.score.sample(Node::Container(key), now)
+                else {
+                    return Err(format!("{tag}: {key:?} is not drawn"));
+                };
+                let want = OverlayRect::new(
+                    OverlayPoint::new(
+                        from.origin.x + container.x - start.x,
+                        from.origin.y + container.y - start.y,
+                    ),
+                    from.size.respace(),
+                );
+                let is = flight.score.drawn(newcomer, now).expect("drawn");
+                let apart = edges_apart(is, want);
+                if apart > 0.5 + 1e-6 {
+                    return Err(format!(
+                        "{tag}: {newcomer:?} starts {apart} from beside the strip: {is:?}, wants {want:?}"
+                    ));
+                }
+                brought += 1;
+            }
+            for window in bend.sent.windows() {
+                let Some(was) = bend.playing.drawn(window, now) else {
+                    continue;
+                };
+                let Some(is) = flight.score.drawn(window, now) else {
+                    return Err(format!("{tag}: {window:?} gone"));
+                };
+                let apart = edges_apart(is, was);
+                if apart > 0.5 + 1e-6 {
+                    return Err(format!("{tag}: {window:?} jumped {apart}: {was:?} then {is:?}"));
+                }
+            }
+            Ok(())
+        })?;
+        if brought == 0 {
+            return Err("no window brought beside the strip".to_string());
+        }
+        Ok(())
+    }
+
+    /// The speed contract, over `bent_flights`: every window the flight drew before a pass that the
+    /// pass leaves riding a container goes on at the speed it is drawn moving. Each edge's speed over
+    /// the `SAMPLE_STEP` before the pass, as it was drawn, and over the one after, as it is, differs
+    /// by no more than the motions themselves change it there: the motion before the pass over the
+    /// step before that and over the step after, as it would have gone on, the one after it over its
+    /// second step, and the half point a bend may move an edge, over a step. A loose tile is outside
+    /// it: Slide starts each one a pass bends from where it is drawn on `MOTION_CURVE` again, so its
+    /// speed jumps, against "Arriving mid-flight" in `specs/animation.md`.
+    fn bends_at_the_speed_it_moves(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
+        const STEP: f64 = SAMPLE_STEP;
+        let edges =
+            |frame: OverlayRect| [frame.min().x, frame.min().y, frame.max().x, frame.max().y];
+        let mut moving = 0;
+        bent_flights(make, &mut |bend| {
+            let now = bend.now;
+            for window in bend.sent.windows() {
+                if !matches!(bend.bent.plan.member(window), Some(Member::Rigid { .. })) {
+                    continue;
+                }
+                let was = |k: f64| bend.playing.drawn(window, now + k * STEP).map(edges);
+                let is = |k: f64| bend.bent.score.drawn(window, now + k * STEP).map(edges);
+                let (Some(p2), Some(p1), Some(p0), Some(o1), Some(q0), Some(q1), Some(q2)) = (
+                    was(-2.0),
+                    was(-1.0),
+                    was(0.0),
+                    was(1.0),
+                    is(0.0),
+                    is(1.0),
+                    is(2.0),
+                ) else {
+                    continue;
+                };
+                for edge in 0..4 {
+                    let earlier = (p1[edge] - p2[edge]) / STEP;
+                    let before = (p0[edge] - p1[edge]) / STEP;
+                    let unbent = (o1[edge] - p0[edge]) / STEP;
+                    let after = (q1[edge] - q0[edge]) / STEP;
+                    let later = (q2[edge] - q1[edge]) / STEP;
+                    let change = (after - before).abs();
+                    let allowed = (before - earlier).abs()
+                        + (unbent - before).abs()
+                        + (later - after).abs()
+                        + 0.5 / STEP;
+                    if change > allowed {
+                        return Err(format!(
+                            "{}: {window:?}'s speed jumped from {before:.0} to {after:.0}pt/s, \
+                             allowed {allowed:.0}",
+                            bend.tag
+                        ));
+                    }
+                    moving += usize::from(before.abs() > 100.0);
+                }
+            }
+            Ok(())
+        })?;
+        if moving == 0 {
+            return Err("no window was moving as a pass landed".to_string());
+        }
+        Ok(())
+    }
+
+    /// Every look keeps the bend contract.
+    #[test]
+    fn every_look_bends_a_flight_without_a_jump() {
+        for look in Look::ALL {
+            if let Err(broken) = bends_without_a_jump(&|| look.choreography()) {
+                panic!("{look:?}: {broken}");
+            }
+        }
+    }
+
+    /// The bend contract rejects a look that cuts every node the pass moves to where it ends.
+    #[test]
+    fn the_bend_contract_rejects_a_look_that_cuts_to_the_pass() {
+        let cut = bends_without_a_jump(&|| Flawed::boxed(Flaw::CutsTheBend))
+            .expect_err("a bend that cuts to the pass");
+        assert!(cut.contains("jumped"), "{cut}");
+    }
+
+    /// Every look keeps the speed contract.
+    #[test]
+    fn every_look_bends_a_flight_at_the_speed_it_moves() {
+        for look in Look::ALL {
+            if let Err(broken) = bends_at_the_speed_it_moves(&|| look.choreography()) {
+                panic!("{look:?}: {broken}");
+            }
+        }
+    }
+
+    /// The speed contract rejects a look that starts every container a pass bends on a fresh curve
+    /// from where it is drawn, keeping the bend contract.
+    #[test]
+    fn the_speed_contract_rejects_a_look_that_restarts_the_motion_at_a_pass() {
+        let restarted = bends_at_the_speed_it_moves(&|| Flawed::boxed(Flaw::RestartsTheBend))
+            .expect_err("a bend that restarts the motion");
+        assert!(restarted.contains("speed jumped"), "{restarted}");
+        bends_without_a_jump(&|| Flawed::boxed(Flaw::RestartsTheBend)).expect("drawn where it was");
+    }
+
+    /// A pass as the reactor builds one for `flight`, from where its last pass sends every window: a
+    /// pan of every rigid window, or a layout pass over some of the windows, moving or resizing each;
+    /// either at times bringing `newcomer`, which the flight then draws. The pan, for a pan.
+    fn random_pass(
+        rng: &mut Gen,
+        flight: &mut Flight,
+        newcomer: WindowId,
+    ) -> (ReflowPlan, Option<OverlayVector>) {
+        let windows = flight.plan.windows();
+        let position = |plan: &FlightPlan, key: GroupKey| plan.position_of(key);
+        let mut pan = None;
+        let incoming = match rng.below(3) {
+            0 => {
+                let d = OverlayVector::new(rng.pt(-9.0, 9.0) * 100.0 + 50.0, 0.0);
+                pan = Some(d);
+                let mut p = ReflowPlan::empty();
+                let mut requests = Vec::new();
+                for w in &windows {
+                    if let Some(Member::Rigid { key, rel }) = flight.plan.member(*w) {
+                        let from = screen(overlay_of(rel, position(&flight.plan, key)));
+                        requests.push(Resolved::tiled(*w, from, shifted(from, d.x)));
+                    }
+                }
+                if rng.coin() {
+                    bring(&mut requests, newcomer, rng);
+                    flight.drawn.push(newcomer);
+                }
+                let pieces = reflow_plan(&requests, DISPLAY);
+                p.groups = pieces.groups;
+                p
+            }
+            _ => {
+                let v1 = ScreenVector::new(rng.pt(-9.0, 9.0) * 50.0, 0.0);
+                let (dx, dy) = (rng.pt(-9.0, 9.0), rng.pt(-2.0, 2.0));
+                let v2 = ScreenVector::new(dx * 50.0, dy * 50.0);
+                let mut requests = Vec::new();
+                for w in &windows {
+                    if rng.coin() {
+                        continue;
+                    }
+                    let v = if rng.coin() { v1 } else { v2 };
+                    match flight.plan.member(*w) {
+                        Some(Member::Rigid { key, rel }) => {
+                            let at = position(&flight.plan, key);
+                            let from = screen(overlay_of(rel, at));
+                            let to = if rng.below(4) > 0 {
+                                rect(
+                                    from.origin.x + v.x,
+                                    from.origin.y + v.y,
+                                    from.size.width,
+                                    from.size.height,
+                                )
+                            } else {
+                                rect(
+                                    from.origin.x,
+                                    from.origin.y,
+                                    from.size.width + 300.0,
+                                    from.size.height,
+                                )
+                            };
+                            requests.push(Resolved::tiled(*w, from, to));
+                        }
+                        Some(Member::Changing { from, to }) => {
+                            let loose = position(&flight.plan, GroupKey::Loose);
+                            let at = |rel| screen(overlay_of(rel, loose));
+                            requests.push(Resolved::tiled(*w, at(from), shifted(at(to), v.x)));
+                        }
+                        _ => {}
+                    }
+                }
+                if rng.coin() {
+                    if requests.is_empty() {
+                        let from = rng.on_screen();
+                        requests.push(Resolved::tiled(newcomer, from, shifted(from, v1.x)));
+                    } else {
+                        bring(&mut requests, newcomer, rng);
+                    }
+                    flight.drawn.push(newcomer);
+                }
+                reflow_plan(&requests, DISPLAY)
+            }
+        };
+        (incoming, pan)
     }
 
     /// A window brought beside the last rigid one of `requests` as the last pass left it, three
@@ -533,6 +990,499 @@ mod tests {
             beside.size,
         );
         requests.push(Resolved::tiled(newcomer, beside, lands));
+    }
+
+    /// Where `incoming` sends `window` on the overlay.
+    fn sent_by(incoming: &ReflowPlan, window: WindowId) -> Option<OverlayRect> {
+        Some(match incoming.member(window)? {
+            Member::Rigid { key, rel } => {
+                let group = incoming.groups.iter().find(|g| g.key == key)?;
+                overlay_of(rel, group.travel.to_point())
+            }
+            Member::Changing { to, .. }
+            | Member::Entrance { to, .. }
+            | Member::Floating { to, .. } => on_overlay(to),
+        })
+    }
+
+    /// Once every track of `flight` has ended, from `now`: nothing plays, and every window it draws
+    /// is where its plan sends it, each edge within a point.
+    fn lands_on_its_plan(flight: &Flight, now: f64, tag: &str) -> Result<(), String> {
+        let end = now + flight.score.remaining(now);
+        if !flight.score.settled(end) {
+            return Err(format!("{tag}: plays past its end"));
+        }
+        for &window in &flight.drawn {
+            let drawn = flight.score.drawn(window, end);
+            let lands = flight.plan.destination(window);
+            let (Some(drawn), Some(lands)) = (drawn, lands) else {
+                return Err(format!("{tag}: {window:?} drawn {drawn:?}, sent to {lands:?}"));
+            };
+            if edges_apart(drawn, lands) > 1.0 {
+                return Err(format!(
+                    "{tag}: {window:?} lands at {drawn:?}, sent to {lands:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The fold contract, over flights of the look `make` gives: one to three passes folded in before
+    /// the motion, as `random_pass` builds them, frame zero posed again after each. The plan folded
+    /// names every window it named and none twice; starts every window it leaves riding alike where
+    /// the plan before started it; and sends every window the pass sends onto the viewport to the
+    /// frame the pass sends it to, within `GROUP_TOLERANCE` (one sent off it may ride its container
+    /// out). A window it moves to another container or kind of path may start anywhere, and the
+    /// pass's own start frames bind no start. Frame zero draws every window the flight draws where
+    /// the folded plan starts it, within the half point placing on whole points allows, which holds
+    /// the pose to the fold; and the motion lands every window where the folded plan sends it.
+    fn folds_each_pass_before_the_motion(
+        make: &dyn Fn() -> Box<dyn Choreography>,
+    ) -> Result<(), String> {
+        let mut rng = Gen(167);
+        for run in 0..RUNS {
+            let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
+            for step in 0..1 + rng.below(3) {
+                let tag = format!("seed 167 run {run} step {step}");
+                let named = flight.plan.windows();
+                let started: Vec<(WindowId, Member)> =
+                    named.iter().filter_map(|w| Some((*w, flight.plan.member(*w)?))).collect();
+                let (incoming, pan) = random_pass(&mut rng, &mut flight, wid(500 + step as u32));
+                let pass = Pass {
+                    plan: &incoming,
+                    pan,
+                    focus: None,
+                    viewport: VIEWPORT,
+                    drawn: &flight.drawn,
+                    seconds: PLAIN,
+                    cue: Cue::Plain,
+                    accent: None,
+                };
+                let folded = flight.choreography.fold(&flight.plan, &pass);
+                let mut names = folded.windows();
+                let count = names.len();
+                names.sort();
+                names.dedup();
+                if names.len() != count {
+                    return Err(format!("{tag}: a window named twice in {folded:?}"));
+                }
+                if let Some(lost) = named.iter().find(|w| folded.member(**w).is_none()) {
+                    return Err(format!("{tag}: {lost:?} is no longer named"));
+                }
+                for &(window, was) in &started {
+                    let Some(is) = folded.member(window).filter(|is| rides_alike(was, *is)) else {
+                        continue;
+                    };
+                    let (was, is) = (on_overlay(was.start_frame()), on_overlay(is.start_frame()));
+                    if edges_apart(was, is) > 0.01 {
+                        return Err(format!(
+                            "{tag}: {window:?} keeps where it rides and starts at {is:?}, it started at {was:?}"
+                        ));
+                    }
+                }
+                for window in incoming.windows() {
+                    let Some(want) = sent_by(&incoming, window) else {
+                        continue;
+                    };
+                    if is_off_screen(VIEWPORT, want) {
+                        continue;
+                    }
+                    let got = folded.destination(window);
+                    let honoured =
+                        got.is_some_and(|got| edges_apart(got, want) <= GROUP_TOLERANCE + 0.01);
+                    if !honoured {
+                        return Err(format!(
+                            "{tag}: {window:?} sent to {got:?}, the pass sends it to {want:?}"
+                        ));
+                    }
+                }
+                flight.plan = folded;
+                flight.score = flight.choreography.pose(&stage(&flight.plan, &flight.drawn, &[]));
+                for &window in &flight.drawn {
+                    let starts = flight.plan.member(window).map(|m| on_overlay(m.start_frame()));
+                    let drawn = flight.score.drawn(window, BEGIN);
+                    let posed =
+                        matches!((drawn, starts), (Some(d), Some(s)) if edges_apart(d, s) <= 0.5);
+                    if !posed {
+                        return Err(format!(
+                            "{tag}: frame zero draws {window:?} at {drawn:?}, it starts at {starts:?}"
+                        ));
+                    }
+                }
+            }
+            flight.start(&[]);
+            lands_on_its_plan(&flight, BEGIN, &format!("seed 167 run {run}"))?;
+        }
+        Ok(())
+    }
+
+    /// Whether two members ride alike: one container, or one kind of path of their own.
+    fn rides_alike(a: Member, b: Member) -> bool {
+        match (a, b) {
+            (Member::Rigid { key: a, .. }, Member::Rigid { key: b, .. }) => a == b,
+            (a, b) => std::mem::discriminant(&a) == std::mem::discriminant(&b),
+        }
+    }
+
+    /// The push contract, over flights of the look `make` gives: one to three pushes against an end
+    /// reaching a flight that moves, each 10-300ms after the one before. No window the flight draws
+    /// jumps as a push reaches it, within the half point placing on whole points allows; against each
+    /// of the four walls, some push draws a window more than a point further toward it than the
+    /// flight without it draws it; and once every track has ended, every window is home where its
+    /// plan sends it.
+    fn pushes_out_and_home_without_a_jump(
+        make: &dyn Fn() -> Box<dyn Choreography>,
+    ) -> Result<(), String> {
+        let walls = [
+            OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0),
+            OverlayVector::new(EDGE_BOUNCE_OVERSHOOT, 0.0),
+            OverlayVector::new(0.0, -EDGE_BOUNCE_OVERSHOOT),
+            OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT),
+        ];
+        let mut rng = Gen(173);
+        let mut toward = [0usize; 4];
+        for run in 0..RUNS {
+            let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
+            flight.start(&[]);
+            let mut now = BEGIN;
+            for step in 0..1 + rng.below(3) {
+                let tag = format!("seed 173 run {run} step {step}");
+                now += rng.pt(10.0, 300.0) / 1000.0;
+                let side = rng.below(4) as usize;
+                let wall = walls[side];
+                let without = flight.score.clone();
+                let edits = flight.choreography.push(&flight.score, &Cue::Plain, wall, PLAIN, now);
+                flight.fold(&edits);
+                for &window in &flight.drawn {
+                    let (was, is) = (without.drawn(window, now), flight.score.drawn(window, now));
+                    let (Some(was), Some(is)) = (was, is) else {
+                        return Err(format!("{tag}: {window:?} drawn {was:?} then {is:?}"));
+                    };
+                    if gap(is, was) > 0.5 + 1e-6 {
+                        return Err(format!(
+                            "{tag}: {window:?} jumped at the push against {wall:?}: {was:?} then {is:?}"
+                        ));
+                    }
+                }
+                let further = |at: f64, window: &WindowId| {
+                    let (Some(was), Some(is)) =
+                        (without.drawn(*window, at), flight.score.drawn(*window, at))
+                    else {
+                        return false;
+                    };
+                    let (dx, dy) = (is.origin.x - was.origin.x, is.origin.y - was.origin.y);
+                    (dx * wall.x + dy * wall.y) / EDGE_BOUNCE_OVERSHOOT > 1.0
+                };
+                let pushed = (1..8).any(|k| {
+                    let at = now + PLAIN * k as f64 / 8.0;
+                    flight.drawn.iter().any(|window| further(at, window))
+                });
+                toward[side] += usize::from(pushed);
+            }
+            lands_on_its_plan(&flight, now, &format!("seed 173 run {run}"))?;
+        }
+        if let Some(side) = toward.iter().position(|pushed| *pushed == 0) {
+            let wall = walls[side];
+            return Err(format!(
+                "no push against {wall:?} in {RUNS} runs drew a window toward its wall"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Every look keeps the fold contract.
+    #[test]
+    fn every_look_folds_each_pass_before_the_motion() {
+        for look in Look::ALL {
+            if let Err(broken) = folds_each_pass_before_the_motion(&|| look.choreography()) {
+                panic!("{look:?}: {broken}");
+            }
+        }
+    }
+
+    /// Every look keeps the push contract.
+    #[test]
+    fn every_look_pushes_out_and_home_without_a_jump() {
+        for look in Look::ALL {
+            if let Err(broken) = pushes_out_and_home_without_a_jump(&|| look.choreography()) {
+                panic!("{look:?}: {broken}");
+            }
+        }
+    }
+
+    /// The fold contract rejects a look whose fold keeps the plan it is given, one that moves each
+    /// window where the pass sends it but keeps every resize at the size it starts at, and one that
+    /// starts every resize and entrance where it ends.
+    #[test]
+    fn the_fold_contract_rejects_a_look_that_ignores_the_pass_drops_resizes_or_moves_a_start() {
+        let broken = folds_each_pass_before_the_motion(&|| Flawed::boxed(Flaw::IgnoresThePass))
+            .expect_err("a fold that ignores the pass");
+        assert!(broken.contains("the pass sends it to"), "{broken}");
+        let unresized = folds_each_pass_before_the_motion(&|| Flawed::boxed(Flaw::DropsResizes))
+            .expect_err("a fold that drops every resize");
+        assert!(unresized.contains("the pass sends it to"), "{unresized}");
+        let finished = folds_each_pass_before_the_motion(&|| Flawed::boxed(Flaw::StartsAtTheEnd))
+            .expect_err("a fold that starts every resize and entrance where it ends");
+        assert!(finished.contains("it started at"), "{finished}");
+    }
+
+    /// The push contract rejects a look that plays no push, one that pushes only against the left
+    /// and right walls, and one that starts every bounce from rest wherever the one before is drawn.
+    #[test]
+    fn the_push_contract_rejects_a_look_that_skips_a_wall_or_pushes_from_rest() {
+        let still = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PlaysNoPush))
+            .expect_err("a push that plays nothing");
+        assert!(still.contains("toward its wall"), "{still}");
+        let level = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PushesSideways))
+            .expect_err("a push only against the left and right walls");
+        assert!(
+            level.contains("(0.0, -72.0)") || level.contains("(0.0, 72.0)"),
+            "{level}"
+        );
+        let from_rest = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PushesFromRest))
+            .expect_err("a push from rest over a bounce");
+        assert!(from_rest.contains("jumped"), "{from_rest}");
+    }
+
+    /// The digest of what Slide draws over seed 163's flights, posed, composed with the accents
+    /// seed 181 has wait for the motion and bent by one to four passes as `random_pass` builds them,
+    /// half of them bringing a step: the score after the motion starts and after each pass, and each
+    /// pass's edits. A change to how Slide moves changes it; one that only moves code between Slide
+    /// and what every look shares keeps it.
+    const SLIDE_SCORES: u64 = 0x6373_4c6a_e8c8_829e;
+
+    /// Slide draws over seed 163's flights what `SLIDE_SCORES` holds: every node's place, ride and
+    /// tracks, and every edit a pass answers; some flights start stepping or pushed, and some passes
+    /// take a step while none plays.
+    #[test]
+    fn slide_draws_every_seeded_flight_as_it_did() {
+        let mut rng = Gen(163);
+        let mut accents = Gen(181);
+        let mut digest = Digest::default();
+        let (mut started, mut stepped) = (0, 0);
+        for _ in 0..RUNS {
+            let mut flight =
+                Flight::posed(Look::Slide.choreography(), &random_requests(&mut rng), |_| true);
+            let waiting = waiting_accents(&mut accents);
+            flight.start(&waiting);
+            started += usize::from(flight.score.plays(Channel::Nudge, BEGIN));
+            digest.score(&flight.score);
+            let mut now = BEGIN;
+            for step in 0..1 + rng.below(4) {
+                now += rng.pt(10.0, 400.0) / 1000.0;
+                let (incoming, pan) = random_pass(&mut rng, &mut flight, wid(500 + step as u32));
+                let accent = accents.coin().then(|| a_step(&mut accents));
+                let edits = flight.merge(&incoming, pan, accent, now).edits;
+                stepped += usize::from(edits.iter().any(
+                    |edit| matches!(edit, Edit::Add(track) if track.channel() == Channel::Nudge),
+                ));
+                digest.edits(&edits);
+                digest.score(&flight.score);
+            }
+        }
+        assert!(
+            started > 0 && stepped > 0,
+            "{started} started, {stepped} stepped"
+        );
+        assert_eq!(digest.0, SLIDE_SCORES, "{:#x}", digest.0);
+    }
+
+    /// A move's step left or right, of a third of the viewport, at the plain length.
+    fn a_step(rng: &mut Gen) -> Accent {
+        let offset = if rng.coin() { 576.0 } else { -576.0 };
+        Accent::Step {
+            offset: OverlayVector::new(offset, 0.0),
+            seconds: PLAIN,
+        }
+    }
+
+    /// What waits for the motion: nothing, a step, a push against a side wall, or both.
+    fn waiting_accents(rng: &mut Gen) -> Vec<Accent> {
+        let wall = if rng.coin() {
+            EDGE_BOUNCE_OVERSHOOT
+        } else {
+            -EDGE_BOUNCE_OVERSHOOT
+        };
+        let push = Accent::Push {
+            wall: OverlayVector::new(wall, 0.0),
+            seconds: PLAIN,
+        };
+        match rng.below(4) {
+            0 => Vec::new(),
+            1 => vec![a_step(rng)],
+            2 => vec![push],
+            _ => vec![a_step(rng), push],
+        }
+    }
+
+    /// FNV-1a over every score and edit list folded in, each read in one order: a score's maps and
+    /// the merge's keep none.
+    struct Digest(u64);
+
+    impl Default for Digest {
+        fn default() -> Self { Digest(0xcbf2_9ce4_8422_2325) }
+    }
+
+    impl Digest {
+        fn score(&mut self, score: &Score) {
+            let node = |node: Node| {
+                let tracks: Vec<_> = score.tracks(node).collect();
+                format!("{node:?} {:?} {tracks:?}", score.model(node))
+            };
+            let mut lines: Vec<String> =
+                score.containers().map(|key| node(Node::Container(key))).collect();
+            lines.extend(
+                score
+                    .tiles()
+                    .map(|(window, key)| format!("{key:?} {}", node(Node::Tile(window)))),
+            );
+            lines.sort();
+            self.bytes(lines.concat().bytes());
+        }
+
+        fn edits(&mut self, edits: &[Edit]) {
+            let mut lines: Vec<String> = edits.iter().map(|edit| format!("{edit:?}")).collect();
+            lines.sort();
+            self.bytes(lines.concat().bytes());
+        }
+
+        fn bytes(&mut self, bytes: impl IntoIterator<Item = u8>) {
+            for byte in bytes {
+                self.0 = (self.0 ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+    }
+
+    /// The one contract a `Flawed` look breaks.
+    #[derive(Clone, Copy, Debug)]
+    enum Flaw {
+        /// Its fold gives back the plan it is given.
+        IgnoresThePass,
+        /// Its fold keeps every resize at the size it starts at.
+        DropsResizes,
+        /// Its fold starts every resize and entrance where it ends.
+        StartsAtTheEnd,
+        /// Its push plays nothing.
+        PlaysNoPush,
+        /// Its push plays nothing against the top or bottom wall.
+        PushesSideways,
+        /// Its push starts every carrier's bounce from rest, wherever the one before is drawn.
+        PushesFromRest,
+        /// Its bend moves nothing: every node it would carry is cut to where it ends.
+        CutsTheBend,
+        /// Its bend starts every container it carries on `MOTION_CURVE` from where it is, at the
+        /// curve's speed, whatever speed it had.
+        RestartsTheBend,
+    }
+
+    /// Slide but for one flaw, so a contract's check is seen to reject a look that breaks it.
+    #[derive(Debug)]
+    struct Flawed {
+        flaw: Flaw,
+        slide: Slide,
+    }
+
+    impl Flawed {
+        fn boxed(flaw: Flaw) -> Box<dyn Choreography> {
+            Box::new(Flawed { flaw, slide: Slide::default() })
+        }
+    }
+
+    impl Choreography for Flawed {
+        fn plan(&self, pass: ReflowPlan, cue: &Cue) -> FlightPlan { self.slide.plan(pass, cue) }
+
+        fn fold(&self, plan: &FlightPlan, pass: &Pass) -> FlightPlan {
+            match self.flaw {
+                Flaw::IgnoresThePass => plan.clone(),
+                Flaw::DropsResizes => {
+                    let mut folded = self.slide.fold(plan, pass);
+                    for path in &mut folded.changing {
+                        path.to.size = path.from.size;
+                    }
+                    folded
+                }
+                Flaw::StartsAtTheEnd => {
+                    let mut folded = self.slide.fold(plan, pass);
+                    for path in folded.changing.iter_mut().chain(&mut folded.entrances) {
+                        path.from = path.to;
+                    }
+                    folded
+                }
+                Flaw::PlaysNoPush
+                | Flaw::PushesSideways
+                | Flaw::PushesFromRest
+                | Flaw::CutsTheBend
+                | Flaw::RestartsTheBend => self.slide.fold(plan, pass),
+            }
+        }
+
+        fn pose(&self, stage: &Stage) -> Score { self.slide.pose(stage) }
+
+        fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
+            self.slide.compose(playing, stage, begin)
+        }
+
+        fn retarget(
+            &mut self,
+            playing: &Score,
+            plan: &FlightPlan,
+            pass: &Pass,
+            now: f64,
+        ) -> Retarget {
+            let mut bent = self.slide.retarget(playing, plan, pass, now);
+            for edit in &mut bent.edits {
+                let Edit::Add(track) = edit else { continue };
+                if track.channel() != Channel::Base {
+                    continue;
+                }
+                match (self.flaw, track.node(), track.keys()) {
+                    (Flaw::CutsTheBend, node, _) => *edit = Edit::Cut(node, Channel::Base),
+                    (
+                        Flaw::RestartsTheBend,
+                        node @ Node::Container(_),
+                        [(_, from), .., (_, to)],
+                    ) => {
+                        *edit = Edit::Add(Track::between(
+                            node,
+                            Channel::Base,
+                            *from,
+                            *to,
+                            now,
+                            pass.seconds,
+                            Curve::Bezier(MOTION_CURVE),
+                        ))
+                    }
+                    _ => {}
+                }
+            }
+            bent
+        }
+
+        fn push(
+            &mut self,
+            playing: &Score,
+            cue: &Cue,
+            wall: OverlayVector,
+            seconds: f64,
+            now: f64,
+        ) -> Vec<Edit> {
+            let bounce = Bounce::from_rest(wall, Duration::from_secs_f64(seconds));
+            match self.flaw {
+                Flaw::PlaysNoPush => Vec::new(),
+                Flaw::PushesSideways if wall.y != 0.0 => Vec::new(),
+                Flaw::IgnoresThePass
+                | Flaw::DropsResizes
+                | Flaw::StartsAtTheEnd
+                | Flaw::PushesSideways
+                | Flaw::CutsTheBend
+                | Flaw::RestartsTheBend => self.slide.push(playing, cue, wall, seconds, now),
+                Flaw::PushesFromRest => playing
+                    .containers()
+                    .filter(|key| carries_out_and_back(*key, wall))
+                    .map(|key| Edit::Add(bounce.track(key, now)))
+                    .collect(),
+            }
+        }
     }
 
     /// Whatever the press and the strip, a look stages no window but those of the pair it is given,

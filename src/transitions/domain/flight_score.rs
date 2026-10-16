@@ -33,6 +33,16 @@ impl FlightScore {
         }
     }
 
+    /// A flight moved by `choreography`, a look only the tests build.
+    #[cfg(test)]
+    pub fn of(choreography: Box<dyn Choreography>) -> FlightScore {
+        FlightScore {
+            choreography,
+            score: Score::default(),
+            waiting: Vec::new(),
+        }
+    }
+
     pub fn score(&self) -> &Score { &self.score }
 
     /// The flight's plan from its first pass, as its look makes it.
@@ -104,7 +114,7 @@ impl FlightScore {
         let track = self.score.track(Node::Tile(window), Channel::Base)?;
         match track.keys().first()?.1 {
             Value::Rect(start) => Some(start.size),
-            Value::Point(_) => None,
+            Value::Point(_) | Value::Zoom(_) => None,
         }
     }
 
@@ -113,7 +123,7 @@ impl FlightScore {
     pub fn drawn_size(&self, window: WindowId, at: f64) -> Option<Size<Group>> {
         match self.score.along(Node::Tile(window), at)? {
             Value::Rect(drawn) => Some(drawn.size),
-            Value::Point(_) => None,
+            Value::Point(_) | Value::Zoom(_) => None,
         }
     }
 
@@ -274,6 +284,7 @@ mod tests {
             seconds: PLAIN,
             cue: Cue::Plain,
             accents: &[],
+            viewport: VIEWPORT,
         }
     }
 

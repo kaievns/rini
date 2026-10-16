@@ -20,7 +20,8 @@ use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSArray, NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
     CAAnimation, CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming,
-    CAMediaTimingFunction, CAPropertyAnimation, kCAAnimationDiscrete, kCAMediaTimingFunctionLinear,
+    CAMediaTimingFunction, CAPropertyAnimation, CATransform3D, NSValueCATransform3DAdditions,
+    kCAAnimationDiscrete, kCAMediaTimingFunctionLinear,
 };
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
@@ -33,7 +34,7 @@ use crate::animation::domain::motion::easing::CubicBezier;
 use crate::animation::domain::motion::holes::{band_hole_in, hole_in};
 use crate::animation::domain::motion::plan::GroupKey;
 use crate::animation::domain::motion::score::{
-    Channel, Curve, Edit, Form, Node, Score, Track, Value,
+    Channel, Curve, Edit, Form, Node, Score, Track, Value, Zoom,
 };
 use crate::animation::domain::motion::tile::{self, Anchors, ContentMode, content_mode, crop};
 use crate::animation::domain::motion::z_group::{Band, container_z};
@@ -92,6 +93,9 @@ const BOUNCE_ANIMATION_KEY: &str = "rini.group.bounce";
 
 /// One key for a move's nudge, apart from the bounce's so neither stops the other.
 const NUDGE_ANIMATION_KEY: &str = "rini.group.nudge";
+
+/// One key for the strip's zoom, on the strip layer.
+const STRIP_ZOOM_KEY: &str = "rini.strip.zoom";
 
 /// The log target `TileOverlay::trace` writes under, which the engine asks is on before it sends a
 /// `Render::Trace`.
@@ -251,15 +255,49 @@ fn cf_object(value: &objc2_core_foundation::CFType) -> Retained<AnyObject> { Ret
 fn as_point(value: Value) -> OverlayPoint {
     match value {
         Value::Point(point) => point,
-        Value::Rect(_) => unreachable!("a container holds a point"),
+        _ => unreachable!("a container holds a point"),
     }
 }
 
 fn as_frame(value: Value) -> GroupRect {
     match value {
         Value::Rect(frame) => frame,
-        Value::Point(_) => unreachable!("a tile holds a frame"),
+        _ => unreachable!("a tile holds a frame"),
     }
+}
+
+/// `zoom` as the strip layer's transform, which draws its point `p` at `p * scale + shift`. A scale
+/// and a translation alone interpolate part by part, as the score does, whether Core Animation
+/// decomposes the matrix or not.
+fn zoom_transform(zoom: Zoom) -> CATransform3D {
+    CATransform3D {
+        m11: zoom.scale,
+        m12: 0.0,
+        m13: 0.0,
+        m14: 0.0,
+        m21: 0.0,
+        m22: zoom.scale,
+        m23: 0.0,
+        m24: 0.0,
+        m31: 0.0,
+        m32: 0.0,
+        m33: 1.0,
+        m34: 0.0,
+        m41: zoom.shift.x,
+        m42: zoom.shift.y,
+        m43: 0.0,
+        m44: 1.0,
+    }
+}
+
+fn zoom_object(value: Value) -> Retained<AnyObject> {
+    let Value::Zoom(zoom) = value else {
+        unreachable!("the strip holds a zoom")
+    };
+    // SAFETY: any transform makes an `NSValue`.
+    Retained::into_super(Retained::into_super(unsafe {
+        NSValue::valueWithCATransform3D(zoom_transform(zoom))
+    }))
 }
 
 /// Whether `f` of a track's keys differs between any two of them.
@@ -621,8 +659,9 @@ impl CropGrid {
     }
 }
 
-/// What a flight is drawn with: the desktop behind it, the containers, the floating container's twin
-/// and the tiles under `root`, and the replica, the score of everything installed and placed on them. Apart from the
+/// What a flight is drawn with: the desktop behind it, the strip layer, the floating container and
+/// its twin under `root`, every other container under the strip layer, the tiles under their
+/// containers, and the replica, the score of everything installed and placed on them. Apart from the
 /// window, so it hangs off any root layer and a test builds one without a window. Every method that
 /// changes a layer leaves the transaction to its caller.
 struct Tree {
@@ -632,6 +671,9 @@ struct Tree {
     scale: f64,
     /// The real desktop, drawn behind everything and held still.
     backdrop: Retained<CALayer>,
+    /// What every container but the floating one and its twin hangs under, anchored at the
+    /// overlay's origin: its `transform` is the strip's zoom.
+    strip: Retained<CALayer>,
     /// One layer per rigid piece of a flight; a container's `position` is the only animated
     /// translation its members get.
     containers: HashMap<GroupKey, Retained<CALayer>>,
@@ -1042,11 +1084,14 @@ impl Tree {
         backdrop.setContentsScale(scale);
         backdrop.setZPosition(BACKDROP_Z);
         root.addSublayer(&backdrop);
+        let strip = new_container(&root);
+        strip.setPosition(CGPoint::new(0.0, 0.0));
         Tree {
             root,
             size,
             scale,
             backdrop,
+            strip,
             containers: HashMap::new(),
             lifted: None,
             tile_layers: HashMap::new(),
@@ -1078,6 +1123,7 @@ impl Tree {
             self.drop_node(Node::Container(key));
         }
         self.replica = score.clone();
+        self.place_strip();
         let bounds = CGRect::new(CGPoint::new(0.0, 0.0), self.size);
         for key in score.containers() {
             self.open(key);
@@ -1104,9 +1150,8 @@ impl Tree {
                 self.place_tile(window, frame);
             }
         }
-        let tracks: Vec<Track> = score
-            .containers()
-            .map(Node::Container)
+        let tracks: Vec<Track> = std::iter::once(Node::Strip)
+            .chain(score.containers().map(Node::Container))
             .chain(score.tiles().map(|(window, _)| Node::Tile(window)))
             .flat_map(|node| score.tracks(node).cloned().collect::<Vec<_>>())
             .collect();
@@ -1122,6 +1167,7 @@ impl Tree {
             let new_leg = !matches!(edit, Edit::Add(track) if self.moves_only_the_end(track));
             self.replica.apply(edit);
             match edit {
+                Edit::Place(Node::Strip, _) => self.strip.setTransform(self.strip_model()),
                 Edit::Place(Node::Container(key), value) => {
                     self.open(*key);
                     for layer in self.layers_of(*key) {
@@ -1145,7 +1191,12 @@ impl Tree {
     fn open(&mut self, key: GroupKey) {
         let bounds = CGRect::new(CGPoint::new(0.0, 0.0), self.size);
         if !self.containers.contains_key(&key) {
-            let layer = new_container(&self.root);
+            let parent = if key == GroupKey::Floating {
+                &self.root
+            } else {
+                &self.strip
+            };
+            let layer = new_container(parent);
             layer.setBounds(bounds);
             self.containers.insert(key, layer);
         }
@@ -1214,6 +1265,15 @@ impl Tree {
     /// is, and how long the ground that one is cut onto took to read counts in `crops`.
     fn install(&mut self, track: &Track, tiles: &[OverlayTile], new_leg: bool) {
         match track.node() {
+            Node::Strip => {
+                let key = NSString::from_str(STRIP_ZOOM_KEY);
+                if track.seconds() <= 0.0 {
+                    self.strip.removeAnimationForKey(&key);
+                    return;
+                }
+                let zoom = animation(track, "transform", zoom_object);
+                self.strip.addAnimation_forKey(&zoom, Some(&key));
+            }
             Node::Container(key) => {
                 let riding: Vec<Track> = match track.channel() {
                     Channel::Base => self.replica.tracks(track.node()).cloned().collect(),
@@ -1262,6 +1322,10 @@ impl Tree {
     /// Takes away what `node`'s track on `channel` installed.
     fn cut(&self, node: Node, channel: Channel) {
         match node {
+            Node::Strip if channel == Channel::Base => {
+                self.strip.removeAnimationForKey(&NSString::from_str(STRIP_ZOOM_KEY))
+            }
+            Node::Strip => {}
             Node::Container(key) => {
                 let key_path = NSString::from_str(container_key(channel));
                 for layer in self.layers_of(key) {
@@ -1284,6 +1348,7 @@ impl Tree {
     /// Takes a tile's layers out, or a container's with its twin.
     fn drop_node(&mut self, node: Node) {
         match node {
+            Node::Strip => self.place_strip(),
             Node::Tile(window) => {
                 if let Some(entry) = self.tile_layers.remove(&window) {
                     entry.remove();
@@ -1323,6 +1388,7 @@ impl Tree {
         if let Some(lifted) = self.lifted.as_ref() {
             lifted.setZPosition(container_z(Band::Lifted, off_strip));
         }
+        self.strip.setZPosition(container_z(Band::Strip, off_strip));
         for (window, tile) in &self.tile_layers {
             if self.replica.parent(*window) == Some(GroupKey::Floating) {
                 tile.reparent(&self.parent_layer(*window, GroupKey::Floating));
@@ -1405,6 +1471,21 @@ impl Tree {
             lifted.removeFromSuperlayer();
         }
         self.replica = Score::default();
+        self.place_strip();
+    }
+
+    /// The strip layer drawn at the replica's zoom, at rest without one, nothing playing on it.
+    fn place_strip(&self) {
+        self.strip.removeAnimationForKey(&NSString::from_str(STRIP_ZOOM_KEY));
+        self.strip.setTransform(self.strip_model());
+    }
+
+    /// The replica's zoom as the strip layer's transform, at rest without one.
+    fn strip_model(&self) -> CATransform3D {
+        match self.replica.model(Node::Strip) {
+            Some(Value::Zoom(zoom)) => zoom_transform(zoom),
+            _ => zoom_transform(Zoom::REST),
+        }
     }
 }
 
@@ -1680,12 +1761,12 @@ fn new_crop_grid(container: &CALayer) -> CropGrid {
     }
 }
 
-/// An empty container covering the overlay, under `root`.
-fn new_container(root: &CALayer) -> Retained<CALayer> {
+/// An empty container anchored at its origin, under `parent`.
+fn new_container(parent: &CALayer) -> Retained<CALayer> {
     let layer = CALayer::layer();
     layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
     layer.setMasksToBounds(false);
-    root.addSublayer(&layer);
+    parent.addSublayer(&layer);
     layer
 }
 
@@ -3531,13 +3612,15 @@ mod tests {
         }
 
         /// What the tree draws is exactly its replica: a container and a tile layer for every node,
-        /// each tile under its container, a floating one lifted in front of the strip under the
-        /// floating container's twin, every container and tile at the depth the replica's banding
-        /// gives it, every track installed as itself under its key (an accent a later movement
-        /// begins again as far into its own time as it had got), and no `rini.*` key the replica
-        /// has no track for.
+        /// every container but the floating one and its twin under the strip layer, each tile under
+        /// its container, a floating one lifted in front of the strip under the floating
+        /// container's twin, the strip layer and every container and tile at the depth the
+        /// replica's banding gives it, the strip layer at the replica's zoom, every track installed
+        /// as itself under its key (an accent a later movement begins again as far into its own
+        /// time as it had got), and no `rini.*` key the replica has no track for.
         fn plays_exactly(tree: &Tree) {
             let replica = &tree.replica;
+            plays_its_zoom(tree);
             let mut containers: Vec<String> =
                 tree.containers.keys().map(|key| format!("{key:?}")).collect();
             let mut placed: Vec<String> =
@@ -3638,12 +3721,114 @@ mod tests {
             }
         }
 
-        /// A Slide flight posed and played, then bent by a pan with a window joining and the
-        /// floating window leaving: the tree plays exactly its replica, and the replica is the fold
-        /// of the edits it was handed.
+        /// The strip layer under the root at the strip's depth, every container but the floating
+        /// one and its twin under it, its transform the replica's zoom, at rest with none, and its
+        /// zoom's track installed as itself on `transform` under its key, the only key it has.
+        fn plays_its_zoom(tree: &Tree) {
+            let (replica, strip) = (&tree.replica, &tree.strip);
+            let under = |layer: &CALayer, parent: &CALayer| {
+                layer.superlayer().is_some_and(|hung| std::ptr::eq(&*hung, parent))
+            };
+            assert!(under(strip, &tree.root));
+            let off = replica.banding().focus_off_strip;
+            assert_eq!(strip.zPosition(), container_z(Band::Strip, off));
+            for (key, layer) in &tree.containers {
+                let parent = if *key == GroupKey::Floating {
+                    &tree.root
+                } else {
+                    strip
+                };
+                assert!(under(layer, parent), "{key:?}");
+            }
+            if let Some(twin) = tree.lifted.as_ref() {
+                assert!(under(twin, &tree.root), "the twin");
+            }
+            let model = replica.model(Node::Strip).unwrap_or(Value::Zoom(Zoom::REST));
+            assert_eq!(zoom_in_transform(strip.transform()), model);
+            match replica.track(Node::Strip, Channel::Base) {
+                Some(track) => {
+                    assert_eq!(installed(strip, STRIP_ZOOM_KEY, zoom_in), expected(track, |v| v));
+                    assert_eq!(key_path(strip, STRIP_ZOOM_KEY), "transform");
+                    assert_eq!(rini_keys(strip), [STRIP_ZOOM_KEY]);
+                }
+                None => assert!(rini_keys(strip).is_empty()),
+            }
+        }
+
+        /// The key path the animation under `key` plays.
+        fn key_path(layer: &CALayer, key: &str) -> String {
+            // SAFETY: a read of the layer's own animation.
+            let animation = unsafe { layer.animationForKey(&NSString::from_str(key)) }
+                .unwrap_or_else(|| panic!("nothing under {key}"));
+            let animation =
+                animation.downcast::<CAPropertyAnimation>().expect("a property animation");
+            animation.keyPath().expect("a key path").to_string()
+        }
+
+        /// A transform read back as the zoom it draws, checked to be a scale and a translation
+        /// alone.
+        fn zoom_in_transform(t: CATransform3D) -> Value {
+            let identity = zoom_transform(Zoom::REST);
+            let rest = [
+                t.m12, t.m13, t.m14, t.m21, t.m23, t.m24, t.m31, t.m32, t.m33, t.m34,
+            ];
+            let want = [
+                identity.m12,
+                identity.m13,
+                identity.m14,
+                identity.m21,
+                identity.m23,
+                identity.m24,
+                identity.m31,
+                identity.m32,
+                identity.m33,
+                identity.m34,
+            ];
+            assert_eq!((rest, t.m22, t.m43, t.m44), (want, t.m11, 0.0, 1.0), "{t:?}");
+            Value::Zoom(Zoom {
+                scale: t.m11,
+                shift: OverlayVector::new(t.m41, t.m42),
+            })
+        }
+
+        fn zoom_in(value: &AnyObject) -> Value {
+            let value = value.downcast_ref::<NSValue>().expect("an NSValue");
+            // SAFETY: the value was made from a transform.
+            zoom_in_transform(unsafe { value.CATransform3DValue() })
+        }
+
+        /// A zoom of the strip as a zoom look would play one, over every look's flight: out to 0.88
+        /// and back on a sin² arc about the display's centre, its camera panning a column, in 1/120s
+        /// samples from `begin`.
+        fn zoom_arc(begin: f64, seconds: f64) -> Vec<Edit> {
+            let centre = OverlayPoint::new(864.0, 558.5);
+            let steps = (seconds / SAMPLE_STEP).ceil() as usize;
+            let arc = (0..=steps).map(|k| {
+                let f = k as f64 / steps as f64;
+                let scale = 1.0 - 0.12 * (std::f64::consts::PI * f).sin().powi(2);
+                let camera = OverlayVector::new(-863.0 * (1.0 - f), 0.0);
+                Value::Zoom(Zoom::about(scale, centre, camera))
+            });
+            vec![
+                Edit::Place(Node::Strip, Value::Zoom(Zoom::REST)),
+                Edit::Add(Track::samples(Node::Strip, Channel::Base, arc, begin, seconds)),
+            ]
+        }
+
+        /// Every look's flight posed and played with the strip zoomed over it, then bent by a pan
+        /// with a window joining and the floating window leaving, the zoom sent home from where it
+        /// is drawn: the tree plays exactly its replica, the replica is the fold of the edits it was
+        /// handed, the joiner rides a container in it, the floating window has no tile in it and
+        /// every container in it carries a tile.
         #[test]
         fn the_overlay_plays_exactly_its_score() {
             let _core_animation = hold_core_animation();
+            for look in Look::ALL {
+                plays_exactly_its_score(look);
+            }
+        }
+
+        fn plays_exactly_its_score(look: Look) {
             let column = |i: f64, w: f64| -> ScreenRect { typed(4.0 + i * 863.0, 32.0, w, 1081.0) };
             let step = |frame: ScreenRect| -> ScreenRect {
                 typed(
@@ -3672,13 +3857,14 @@ mod tests {
             let plan = FlightPlan::from(reflow_plan(&requests, DISPLAY));
             let windows: Vec<WindowId> = tiles.iter().map(|t| t.window).collect();
 
-            let mut slide = Look::Slide.choreography();
-            let mut score = slide.pose(&Stage {
+            let mut choreography = look.choreography();
+            let mut score = choreography.pose(&Stage {
                 plan: &plan,
                 drawn: &windows,
                 seconds: 0.35,
                 cue: Cue::Plain,
                 accents: &[],
+                viewport: VIEWPORT,
             });
             score.apply(&Edit::Bank(Banding {
                 focus_off_strip: true,
@@ -3687,8 +3873,11 @@ mod tests {
             }));
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.pose(&score, &tiles);
-            assert_eq!(tree.replica, score);
-            assert!(tree.lifted.is_some(), "e is drawn in front of the strip");
+            assert_eq!(tree.replica, score, "{look:?}");
+            assert!(
+                tree.lifted.is_some(),
+                "{look:?}: e is drawn in front of the strip"
+            );
             plays_exactly(&tree);
 
             let steps = [Accent::Step {
@@ -3701,13 +3890,15 @@ mod tests {
                 seconds: 0.35,
                 cue: Cue::Plain,
                 accents: &steps,
+                viewport: VIEWPORT,
             };
-            let started = slide.compose(&score, &stage, 100.0);
+            let mut started = choreography.compose(&score, &stage, 100.0);
+            started.extend(zoom_arc(100.0, 0.35));
             for edit in &started {
                 score.apply(edit);
             }
             tree.play(&started, &tiles);
-            assert_eq!(tree.replica, score);
+            assert_eq!(tree.replica, score, "{look:?}");
             plays_exactly(&tree);
 
             let joined = column(3.0, 859.0);
@@ -3732,32 +3923,108 @@ mod tests {
                 cue: Cue::Plain,
                 accent: None,
             };
-            let mut bent = slide.retarget(&score, &plan, &pass, 100.1);
+            let mut bent = choreography.retarget(&score, &plan, &pass, 100.1);
             bent.edits.push(Edit::Bank(banding(&drawn, &bent.plan)));
+            let zoomed = score.sample(Node::Strip, 100.1).expect("zoomed");
+            assert_ne!(zoomed, Value::Zoom(Zoom::REST), "{look:?}: mid-arc");
+            bent.edits.push(Edit::Add(Track::between(
+                Node::Strip,
+                Channel::Base,
+                zoomed,
+                Value::Zoom(Zoom::REST),
+                100.1,
+                0.35,
+                Curve::Bezier(EASE_IN_OUT),
+            )));
             for edit in &bent.edits {
                 score.apply(edit);
             }
-            assert!(
-                bent.edits.iter().any(|edit| matches!(edit, Edit::Ride(w, _) if *w == f)),
-                "f joins"
-            );
-            assert!(bent.edits.contains(&Edit::Drop(Node::Container(GroupKey::Floating))));
             tree.play(&bent.edits, &tiles);
-            assert_eq!(tree.replica, score);
+            assert_eq!(tree.replica, score, "{look:?}");
+            assert!(tree.replica.parent(f).is_some(), "{look:?}: f joins");
+            assert!(tree.replica.parent(e).is_none(), "{look:?}: e leaves");
+            let empty = tree
+                .replica
+                .containers()
+                .find(|key| !tree.replica.tiles().any(|(_, rides)| rides == *key));
+            assert_eq!(empty, None, "{look:?}: a container no tile rides");
             assert!(
                 tree.lifted.is_none(),
-                "the twin goes with the floating container"
+                "{look:?}: the twin goes with the floating container"
             );
             plays_exactly(&tree);
         }
 
-        /// A snap moves where a tile's own leg ends and keeps how the tile is drawn, even where
-        /// the snapped leg judged again would draw it otherwise, so it never turns mid-flight. A
-        /// resize of under a percent whose picture fits both ends stretches; snapped 4pt past the
-        /// plan, its picture misfits where it ends and it stays stretched. A new leg is
+        /// A zoom posed plays on the strip layer as one played does; a track of no length, a cut of
+        /// its channel and a drop each take it off, the drop putting the strip back at rest, a cut of
+        /// another channel leaves it playing, and a place draws the strip at its model.
+        #[test]
+        fn the_strip_layer_lets_go_of_its_zoom() {
+            let _core_animation = hold_core_animation();
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            let deep = Value::Zoom(Zoom::about(
+                0.88,
+                OverlayPoint::new(864.0, 558.5),
+                OverlayVector::zero(),
+            ));
+            let home = |seconds: f64| {
+                Edit::Add(Track::between(
+                    Node::Strip,
+                    Channel::Base,
+                    deep,
+                    Value::Zoom(Zoom::REST),
+                    5.0,
+                    seconds,
+                    Curve::Linear,
+                ))
+            };
+            let mut posed = Score::default();
+            for edit in zoom_arc(5.0, 0.35) {
+                posed.apply(&edit);
+            }
+            tree.pose(&posed, &[]);
+            assert_eq!(tree.replica, posed);
+            plays_exactly(&tree);
+            tree.play(&[Edit::Place(Node::Strip, deep)], &[]);
+            assert_eq!(zoom_in_transform(tree.strip.transform()), deep);
+            assert!(
+                !rini_keys(&tree.strip).is_empty(),
+                "a place leaves the zoom playing"
+            );
+            plays_exactly(&tree);
+            tree.play(&[home(0.0)], &[]);
+            assert!(rini_keys(&tree.strip).is_empty(), "no length");
+            tree.play(&[home(0.35), Edit::Cut(Node::Strip, Channel::Nudge)], &[]);
+            assert!(
+                !rini_keys(&tree.strip).is_empty(),
+                "a cut of a channel the zoom is not on"
+            );
+            plays_exactly(&tree);
+            tree.play(&[Edit::Cut(Node::Strip, Channel::Base)], &[]);
+            assert!(rini_keys(&tree.strip).is_empty(), "cut");
+            plays_exactly(&tree);
+            tree.play(&[home(0.35), Edit::Drop(Node::Strip)], &[]);
+            assert!(rini_keys(&tree.strip).is_empty(), "dropped");
+            assert_eq!(
+                zoom_in_transform(tree.strip.transform()),
+                Value::Zoom(Zoom::REST)
+            );
+            plays_exactly(&tree);
+        }
+
+        /// For every look, a snap moves where a tile's own leg ends and keeps how the tile is drawn,
+        /// even where the snapped leg judged again would draw it otherwise, so it never turns
+        /// mid-flight. A resize of under a percent whose picture fits both ends stretches; snapped
+        /// 4pt past the plan, its picture misfits where it ends and it stays stretched. A new leg is
         /// judged again: a shrink then crops the picture it has.
         #[test]
         fn a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again() {
+            for look in Look::ALL {
+                snaps_keeping_how_a_tile_is_drawn(look);
+            }
+        }
+
+        fn snaps_keeping_how_a_tile_is_drawn(look: Look) {
             use crate::animation::domain::motion::tile;
             let window = wid(1);
             let (from, to): (ScreenRect, ScreenRect) = (
@@ -3767,18 +4034,19 @@ mod tests {
             let mut tiles = vec![overlay_tile(window, on(from), on(to), false)];
             tiles[0].snapshot = test_picture(ScreenSize::new(1004.0, 1081.0));
             let plan = FlightPlan::from(reflow_plan(&[Resolved::tiled(window, from, to)], DISPLAY));
-            let mut slide = Look::Slide.choreography();
+            let mut choreography = look.choreography();
             let stage = Stage {
                 plan: &plan,
                 drawn: &[window],
                 seconds: 0.35,
                 cue: Cue::Plain,
                 accents: &[],
+                viewport: VIEWPORT,
             };
-            let mut score = slide.pose(&stage);
+            let mut score = choreography.pose(&stage);
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.pose(&score, &tiles);
-            let started = slide.compose(&score, &stage, 100.0);
+            let started = choreography.compose(&score, &stage, 100.0);
             let mut play = |tree: &mut Tree, edits: &[Edit], tiles: &[OverlayTile]| {
                 for edit in edits {
                     score.apply(edit);
@@ -3787,16 +4055,16 @@ mod tests {
             };
             play(&mut tree, &started, &tiles);
             let stretched = |tree: &Tree| tree.tile_layers[&window].crop_of.is_none();
-            assert!(stretched(&tree), "the picture fits both ends");
+            assert!(stretched(&tree), "{look:?}: the picture fits both ends");
 
             let real = on(typed(4.0, 32.0, 1012.0, 1081.0));
             let snapped = tile::snap(&tree.replica, window, real, 100.15);
             assert!(
                 snapped.iter().any(|edit| matches!(edit, Edit::Add(_))),
-                "on its leg"
+                "{look:?}: on its leg"
             );
             play(&mut tree, &snapped, &tiles);
-            assert!(stretched(&tree), "drawn as it was");
+            assert!(stretched(&tree), "{look:?}: drawn as it was");
 
             let shrink = Track::between(
                 Node::Tile(window),
@@ -3808,7 +4076,7 @@ mod tests {
                 Curve::Bezier(MOTION_CURVE),
             );
             play(&mut tree, &[Edit::Add(shrink)], &tiles);
-            assert!(!stretched(&tree), "a new leg crops the picture it has");
+            assert!(!stretched(&tree), "{look:?}: a new leg crops the picture it has");
         }
 
         /// Every new leg picks its crop's anchors again, a crop-drawn tile staying crop-drawn

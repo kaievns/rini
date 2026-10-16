@@ -18,7 +18,9 @@ floating windows. The flight's look, chosen as it begins (`Look` in
 (`src/transitions/domain/flight_score.rs`) and the overlay plays: Slide, the default look
 (`src/animation/domain/choreography/slide.rs`). Frame zero is its pose, every group with a drawn
 member a container at the origin, which the overlay builds its tree from (`TileOverlay::pose` in
-`overlay.rs`): each group is one `CALayer` container under the overlay's root. A container's
+`overlay.rs`): each group is one `CALayer` container, the floating one and its twin under the
+overlay's root and every other under the strip layer, whose `transform` is the strip's zoom, at rest
+unless a look zooms. A container's
 `position` is the only animated translation its members get; the tiles inside sit at
 frames in its own points (`Group` in `crates/rini-geometry/docs/README.md`), the overlay's less its
 position, and never move on their own. Resizes and entrances
@@ -109,7 +111,15 @@ piece and steps with the strip; pinned by
 `a_still_window_joining_mid_step_steps_with_the_strip`. Before the flight moves, a pass is folded in
 by the same function, every container drawn where frame zero installs it and its leg taken to be where
 the last pass sends it: nothing has moved, and the pass's frames are places on the strip there. That
-is the look's rule too (`Slide::fold`), and frame zero is posed again from the folded plan. What the flight does about a merge,
+is the look's rule too (`Slide::fold`), and frame zero is posed again from the folded plan. Every look's
+fold sends each window to the frame the pass sends it to, size as well as place, and starts each
+window it leaves in its container, or on its kind of path of its own, where it started; frame zero
+draws each window where the folded plan starts it, so those windows hold still. A window the fold
+moves to another container or kind of path may start elsewhere: over the contract's 200 runs, 8 of
+258 such windows moved at frame zero under Slide, the farthest 1199pt, and none of 2552 that kept
+theirs (measured with a probe over the contract's seed; not checked on screen). The pass's own start
+frames bind no start: they are places on the strip as the last pass left it. Pinned by
+`every_look_folds_each_pass_before_the_motion`. What the flight does about a merge,
 the clock, the frames already sent and the entrances still reserved, is "Mid-flight passes" in
 `src/transitions/docs/coordination.md`.
 
@@ -167,10 +177,28 @@ A retarget now accelerates over about 30ms from the speed it was at (210, 4163,
 separate pulses at 300-570ms between presses is separate flights: the first
 leg is 97% home by half time, so the strip is at rest before the next press.
 
+Every look keeps that speed for a window riding a container
+(`every_look_bends_a_flight_at_the_speed_it_moves`): across a pass, each edge's speed over the
+1/120s step either side changes by no more than the motions themselves change it over the steps
+around it, and a half point over a step. Drawn as Core Animation's polyline a spring changes its
+speed at every sample, so the bend's own change, up to 4,008pt/s under Slide over seed 163's
+flights, is held against the motion's, at most 0.71 of it over the contract's two seeds; a look
+restarting each container on `MOTION_CURVE` from where it is drawn changes it by up to 9.3 times
+the motion's
+(`the_speed_contract_rejects_a_look_that_restarts_the_motion_at_a_pass`), and Linear, before it
+carried its speed, by up to 79 times. **Slide's loose tiles still restart:** a resize, entrance
+or floating window a pass bends starts `MOTION_CURVE` again from where it is drawn (`tile_leg`), so
+its speed jumps, against "Arriving mid-flight" in `specs/animation.md`. Over seed 163's flights
+a resizing tile's changed by a median 3,408pt/s and up to 16,676pt/s, and one a pass made resize
+out of a moving container's by a median 5,111pt/s (measured with a probe not committed; not seen
+on screen), so the contract holds only windows riding a container.
+
 The look reads every container's two positions once, from the flight's score, for `merge_plans`,
-and turns the delta into the score's edits (`Slide::retarget`), which the overlay plays in one
-transaction: reparents, container animations, joins, loose retargets, and the `Bank` the engine
-appends.
+and turns the delta into the score's edits, which the overlay plays in one transaction: reparents,
+container animations, joins, loose retargets, and the `Bank` the engine appends. What rides where
+and where each node ends is every look's alike (`Merged::bend` in
+`src/animation/domain/choreography.rs`); the look gives each node's movement (`Bending`), Slide's
+the springs and legs above.
 Without this a pan merging 56ms after an open (log 3:27:20, 22 tiles
 scrolled 574pt) left the newcomer at its pre-pan slot: a tear between the
 active window and its neighbours, then a pop at lift. Cross-container z is a
@@ -195,9 +223,10 @@ band names. A twin rather than a second plan group: every floating window rides
 one translation, so the twin is opened, moved, animated and dropped with
 the floating container (`layers_of`) and a tile moved between them lands where
 it was. It has to be a separate layer at all because tiles are children of their
-container and a container's `zPosition` alone decides its children's order
-against every other container — one floating container cannot put one
-application in front of the strip and another behind it. Found drawing zoom in
+container: a strip container's order against the floating container and its twin
+is the strip layer's `zPosition`, and the floating container's is its own, so
+one floating container cannot put one application in front of the strip and
+another behind it. Found drawing zoom in
 front of the strip for the length of a switch to 1Password and dropping it
 behind on landing ("Which windows come forward together", `specs/animation.md`).
 
@@ -302,12 +331,22 @@ Mechanics worth remembering:
   durations bypass the animation and draw the final frame directly.
 - `NSValue::valueWithPoint` (the from/to carrier) requires the
   `NSGeometry` + `objc2-core-foundation` features of `objc2-foundation`.
-- **Whole points.** Slide places every container and tile on whole points
-  (`tiles_sit_on_whole_points_like_the_real_windows`): layout offsets are fractional (4592.67) and
+- **Whole points.** Every container and tile is placed on whole points: at a bend by every
+  look's `Merged::bend`, and by Slide's pose and compose
+  (`tiles_sit_on_whole_points_like_the_real_windows`). Layout offsets are fractional (4592.67) and
   the window server places windows on whole points, so a tile drawn at the fraction was resampled
-  and popped by the fraction at the lift. A member a merge moves to another container starts at its
-  plan frame and keeps the rounding its tile sat at; placed from the plan frame alone it jumped by up
-  to a point, origin and width (`every_look_bends_a_flight_without_a_jump`).
+  and popped by the fraction at the lift. Rounding a frame rounds its edges, so its width moves by
+  up to a point while no edge moves more than a half. A member a merge moves to another container
+  starts at its plan frame and keeps the rounding its tile sat at; placed from the plan frame alone
+  it jumped by up to a point, origin and width. A container the merge opens is placed where it
+  ends, but its movement starts where it installs, where its first member's container is drawn,
+  and not at the whole point nearest that: from there a member of another container moved into
+  it jumped by up to a point, a half for the container and a half for its own frame. That passed
+  a half point on 6 of seeds 1-40 and 163 of the bend contract's generator under Slide, the
+  farthest 0.82pt on seed 2, and on 1 under the test-only Linear look, 0.79pt (measured with a
+  probe not committed; not seen on screen). The contract runs seeds 163 and 2 and holds every
+  edge to a half point (`every_look_bends_a_flight_without_a_jump`); tile frames, and so where
+  every window lands, are as they were, within 0.88pt of its plan over those 41 seeds.
 
 Found on the first live run of the per-tile strip path: **floating tiles
 were drawn behind the desktop backdrop.** The band behind the strip sits
@@ -356,7 +395,9 @@ while a bounce plays draws none of it, opened with no tracks, and the next push 
 way out while the strip's goes on from where it is drawn on a shortened one: the two stay apart by
 at most the offset the strip drew, until both are home. Handed the record's bounce, it used to jump
 by up to 72pt into phase with the strip. Both are pinned by
-`a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. A
+`a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. Every look's push keeps both: no window
+jumps as a push reaches it, a push against each of the four walls draws some window toward it, and
+every window comes home where its plan sends it (`every_look_pushes_out_and_home_without_a_jump`). A
 push of no length is a cut, drawn at rest (`a_push_of_no_length_is_a_cut`). A
 move's nudge (below) is the other out-and-back, on the same containers by the
 same rule, under its own key. Only a step still playing holds a step off (`steps` in
@@ -572,8 +613,9 @@ changes is how the picture maps onto it (`content_mode` in
 ## The score: what Core Animation plays
 
 `src/animation/domain/motion/score.rs` is the movement of a transition as data:
-tracks of keyframes on containers (a position) and tiles (a frame), on three
-channels (`Base`, the movement; `Bounce` and `Nudge`, added on top), and the
+tracks of keyframes on the strip (a `Zoom`, a scale and a shift), containers (a
+position) and tiles (a frame), on three channels (`Base`, the movement; `Bounce`
+and `Nudge`, added on top of a container's), and the
 model value each node ends at, which container each tile rides and how deep
 everything is drawn. A score is the fold of its edits (`Edit`: a place, a track
 added or cut, a ride, a drop, a bank; `a_score_is_the_fold_of_its_edits`).
@@ -594,7 +636,13 @@ its content mode again against its first and last key, set only when it changes,
 on with its end moved, a snap, keeps it drawn as it was, so a snap never turns a tile
 (`a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again`); a swap judges it again against
 the picture landing (`TileOverlay::swap` in "A grow waits for its repaint",
-`src/transitions/docs/coordination.md`).
+`src/transitions/docs/coordination.md`). The strip's zoom plays on the strip layer's `transform`
+under its own key (`rini.strip.zoom`), a matrix of a scale and a translation alone
+(`zoom_transform`), so interpolated entry by entry or decomposed it is the score's part-by-part
+lerp. That is inferred, not measured on the render server; the read-back pins what is installed
+(`the_strip_layer_lets_go_of_its_zoom`). `transform` is the key path the parked zoom spike played and
+read back on its strip layer; `transform.scale` carries no camera, and `sublayerTransform` would draw
+the same through a layer of its own.
 The presentation layer is read only by the trace.
 
 Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in

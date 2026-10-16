@@ -263,6 +263,7 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
 	"CAMediaTimingFunction",
 	"CATextLayer",
 	"CATransaction",
+	"CATransform3D",
 	"objc2-core-foundation",
 	"objc2-core-graphics"
 ]}
