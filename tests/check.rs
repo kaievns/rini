@@ -182,39 +182,6 @@ fn every_crate_inherits_the_workspace_lints() {
     }
 }
 
-/// Every unsafe block and `unsafe impl` says why it is sound, every unsafe operation in an unsafe
-/// fn sits in a block of its own and every public unsafe fn has a `# Safety` section, each denied
-/// in `[workspace.lints]` and allowed, expected or lowered to a warning nowhere.
-#[test]
-fn the_workspace_denies_undocumented_unsafe_and_no_source_allows_it() {
-    let manifest = fs::read_to_string(Path::new(ROOT).join("Cargo.toml")).unwrap();
-    let table = |name: &str| -> Vec<String> {
-        let (_, rest) = manifest.split_once(&format!("\n[workspace.lints.{name}]\n")).unwrap();
-        rest.split("\n[").next().unwrap().lines().map(str::to_owned).collect()
-    };
-    let lints = [
-        ("rust", "unsafe_op_in_unsafe_fn"),
-        ("clippy", "undocumented_unsafe_blocks"),
-        ("clippy", "missing_safety_doc"),
-    ];
-    for (tool, lint) in lints {
-        assert!(
-            table(tool).contains(&format!("{lint} = \"deny\"")),
-            "{lint} is not denied"
-        );
-    }
-    let mut offending = Vec::new();
-    for (path, source) in rust_sources(&["src", "crates", "tests"]) {
-        for (at, line) in source.lines().enumerate() {
-            let lowers = ["allow(", "expect(", "warn("].iter().any(|level| line.contains(level));
-            if lowers && lints.iter().any(|(_, lint)| line.contains(lint)) {
-                offending.push(format!("{path}:{}", at + 1));
-            }
-        }
-    }
-    assert!(offending.is_empty(), "{offending:#?}");
-}
-
 /// Every Rust source under `dirs`, by path from the root, in path order.
 fn rust_sources(dirs: &[&str]) -> Vec<(String, String)> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {

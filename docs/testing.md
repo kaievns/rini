@@ -293,9 +293,12 @@ Nothing else in the repo cites an id; a comment or a doc names the work in words
 |---|---|---|
 
 Every unsafe block and `unsafe impl` carries a `// SAFETY:` comment naming the invariant it rests
-on, every unsafe operation in an `unsafe fn` sits in an unsafe block of its own with its own
-comment, and every public `unsafe fn` has a `# Safety` section. No source allows, expects or warns
-on any of the three lints (`the_workspace_denies_undocumented_unsafe_and_no_source_allows_it`).
+on, every unsafe operation in an `unsafe fn` sits inside an unsafe block with its own SAFETY
+comment, as it does outside one, and every public `unsafe fn` has a `# Safety` section. No
+attribute in `src`, `crates` or `tests`, read whole across lines and inside a `cfg_attr`, allows,
+expects or warns on any of the three lints or on a group holding one: `clippy::all`,
+`clippy::style`, `clippy::restriction` or `rust_2024_compatibility`
+(`the_workspace_denies_undocumented_unsafe_and_no_source_allows_it` in `tests/architecture.rs`).
 `multiple_unsafe_ops_per_block` is not on, because blocks under `src` and `crates` make two or
 more unsafe calls under one invariant. Nothing in `src`, `crates`, `tests` or `tools` holds a
 `static mut` (`nothing_in_the_repo_holds_a_static_mut`).

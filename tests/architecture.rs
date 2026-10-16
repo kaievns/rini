@@ -2405,6 +2405,158 @@ static MUTEX: Mutex<u8> = Mutex::new(0);
     assert_eq!(static_muts(source), vec![1, 2]);
 }
 
+/// The lints that hold every unsafe operation to a stated invariant, each by its tool's table in
+/// `[workspace.lints]` and its name.
+const UNSAFE_LINTS: [(&str, &str); 3] = [
+    ("rust", "unsafe_op_in_unsafe_fn"),
+    ("clippy", "undocumented_unsafe_blocks"),
+    ("clippy", "missing_safety_doc"),
+];
+
+/// The lint groups that hold one of `UNSAFE_LINTS`, which an allow lowers as surely as the lint.
+const UNSAFE_LINT_GROUPS: [&str; 4] = [
+    "clippy::all",
+    "clippy::style",
+    "clippy::restriction",
+    "rust_2024_compatibility",
+];
+
+/// The 1-based line of every attribute in `source`'s code that allows, expects or warns on one of
+/// `UNSAFE_LINTS` or a group holding one, read whole from `#[` or `#![` to its matching `]`, a
+/// `cfg_attr` included.
+fn lowered_unsafe_lints(source: &str) -> Vec<usize> {
+    let code: Vec<char> = blank_comments(source, true).chars().collect();
+    let named: Vec<String> = UNSAFE_LINTS
+        .iter()
+        .map(|(tool, lint)| {
+            if *tool == "rust" {
+                (*lint).to_owned()
+            } else {
+                format!("{tool}::{lint}")
+            }
+        })
+        .chain(UNSAFE_LINT_GROUPS.iter().map(|group| (*group).to_owned()))
+        .collect();
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at < code.len() {
+        let open = match (code[at], code.get(at + 1), code.get(at + 2)) {
+            ('#', Some('['), _) => at + 1,
+            ('#', Some('!'), Some('[')) => at + 2,
+            _ => {
+                at += 1;
+                continue;
+            }
+        };
+        let mut depth = 0;
+        let mut close = open;
+        while close < code.len() {
+            match code[close] {
+                '[' => depth += 1,
+                ']' => depth -= 1,
+                _ => {}
+            }
+            if depth == 0 {
+                break;
+            }
+            close += 1;
+        }
+        let attribute: String = code[open..close.min(code.len())]
+            .iter()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        if lowers_any(&attribute, &named) {
+            found.push(code[..at].iter().filter(|&&c| c == '\n').count() + 1);
+        }
+        at = close + 1;
+    }
+    found
+}
+
+/// Whether `attribute`, its whitespace dropped, holds an `allow`, `expect` or `warn` naming one of
+/// `lints`.
+fn lowers_any(attribute: &str, lints: &[String]) -> bool {
+    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == ':';
+    ["allow(", "expect(", "warn("].iter().any(|level| {
+        attribute.match_indices(level).any(|(at, _)| {
+            if attribute[..at].chars().next_back().is_some_and(ident) {
+                return false;
+            }
+            let mut depth = 1;
+            let body: String = attribute[at + level.len()..]
+                .chars()
+                .take_while(|&c| {
+                    depth += match c {
+                        '(' => 1,
+                        ')' => -1,
+                        _ => 0,
+                    };
+                    depth > 0
+                })
+                .collect();
+            body.split(',').any(|item| lints.iter().any(|lint| item == lint))
+        })
+    })
+}
+
+/// Every unsafe block and `unsafe impl` says why it is sound, every unsafe operation in an unsafe
+/// fn sits inside an unsafe block and every public unsafe fn has a `# Safety` section, each denied
+/// in `[workspace.lints]` and allowed, expected or lowered to a warning nowhere, by the lint or by
+/// a group holding it.
+#[test]
+fn the_workspace_denies_undocumented_unsafe_and_no_source_allows_it() {
+    let manifest = fs::read_to_string("Cargo.toml").expect("readable manifest");
+    for (tool, lint) in UNSAFE_LINTS {
+        let (_, table) = manifest
+            .split_once(&format!("\n[workspace.lints.{tool}]\n"))
+            .expect("the workspace sets the tool's lints");
+        let table = table.split("\n[").next().unwrap_or_default();
+        assert!(
+            table.lines().any(|line| line == format!("{lint} = \"deny\"")),
+            "{lint} is not denied"
+        );
+    }
+    let mut broken = Vec::new();
+    for path in ["src", "crates", "tests"].iter().flat_map(|dir| rust_files(Path::new(dir))) {
+        for line in lowered_unsafe_lints(&fs::read_to_string(&path).expect("readable source")) {
+            broken.push(format!("{}:{line}", slash(&path)));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "state the invariant in a SAFETY comment instead:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_lowered_unsafe_lint_is_found_in_a_whole_attribute_and_never_in_a_comment_or_a_string() {
+    let source = r##"#[allow(clippy::undocumented_unsafe_blocks)]
+#[allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "a reason long enough that rustfmt breaks the attribute over lines"
+)]
+#![cfg_attr(test, expect(unsafe_op_in_unsafe_fn))]
+#[warn(clippy::missing_safety_doc)]
+#[allow(clippy::all)]
+#![allow(clippy::style, dead_code)]
+#[allow(
+    rust_2024_compatibility
+)]
+#[allow(clippy::restriction)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "clippy::undocumented_unsafe_blocks is named only in this reason"
+)]
+#[deny(clippy::undocumented_unsafe_blocks)]
+#[allow(clippy::all_but_this, clippy::style_two)]
+// #[allow(clippy::undocumented_unsafe_blocks)]
+const ATTRIBUTE: &str = "#[allow(clippy::undocumented_unsafe_blocks)]";
+let index = slice[0];
+"##;
+    assert_eq!(lowered_unsafe_lints(source), vec![1, 2, 6, 7, 8, 9, 10, 13]);
+}
+
 /// Phrasings that narrate where code came from or what it once did. A comment says what holds and
 /// the constraint it protects; the history of a change is in git and, when worth keeping, `docs/`.
 const HISTORY: [&str; 8] = [
