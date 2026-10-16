@@ -1,37 +1,53 @@
 //! Looks: how a flight moves. A look stages a press on the strip before the flight is asked for
 //! (`Look::stage`), and for each flight its `Choreography` makes the plan, poses frame zero, composes
 //! the motion, folds a press before it and bends the flight at a press after it, answering with the
-//! score's edits (`motion::score::Edit`), which the renderer plays as they are. `Look::ALL` is every
-//! look, and the tests below are the contract each keeps; `slide` is the default. See "The overlay
-//! engine" in `src/animation/docs/animation-smoothness.md`.
+//! score's edits (`motion::score::Edit`), which the renderer plays as they are. A bend's structure is
+//! every look's alike (`Merged::bend`), and a look gives only each node's movement in it
+//! (`Bending`). `Look::ALL` is every look, and the tests below are the contract each keeps; `slide`
+//! is the default, and `linear`, a look only the tests build, keeps the contract through the same
+//! seam. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
 
+#[cfg(test)]
+pub mod linear;
 pub mod slide;
 
 use std::fmt::Debug;
 
 use rini_core::ids::WindowId;
-use rini_geometry::space::{OverlayRect, OverlayVector, SurfaceRect};
+use rini_geometry::Round;
+use rini_geometry::space::{
+    GroupRect, OverlayPoint, OverlayRect, OverlayVector, Point, SurfaceRect,
+};
 use rini_ipc::protocol::Direction;
 
 use self::slide::Slide;
 use super::motion::accents::Accent;
-use super::motion::plan::{FlightPlan, PlanDelta, ReflowPlan};
-use super::motion::score::{Edit, Score};
+use super::motion::plan::{
+    FlightPlan, GroupKey, Member, PlanDelta, ReflowPlan, merge_plans, stale_overlay_layers,
+};
+use super::motion::score::{Channel, Edit, Node, Score, Value};
 
 /// How a flight moves, chosen when it begins: a later pass's look is not asked.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Look {
     #[default]
     Slide,
+    #[cfg(test)]
+    Linear,
 }
 
 impl Look {
+    #[cfg(not(test))]
     pub const ALL: [Look; 1] = [Look::Slide];
+    #[cfg(test)]
+    pub const ALL: [Look; 2] = [Look::Slide, Look::Linear];
 
     /// The look's choreography for one flight.
     pub fn choreography(self) -> Box<dyn Choreography> {
         match self {
             Look::Slide => Box::new(Slide::default()),
+            #[cfg(test)]
+            Look::Linear => Box::new(linear::Linear),
         }
     }
 
@@ -40,6 +56,8 @@ impl Look {
     pub fn stage(self, cue: &Cue, strip: &Strip) -> Staging {
         match self {
             Look::Slide => slide::stage(cue, strip),
+            #[cfg(test)]
+            Look::Linear => linear::stage(cue, strip),
         }
     }
 }
@@ -173,11 +191,292 @@ pub trait Choreography: Debug {
     ) -> Vec<Edit>;
 }
 
+/// Edits as they are made, each folded into a copy of the score playing, so the next reads what the
+/// ones before it did.
+struct Making {
+    score: Score,
+    edits: Vec<Edit>,
+}
+
+impl Making {
+    fn from(playing: &Score) -> Self {
+        Making {
+            score: playing.clone(),
+            edits: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, edit: Edit) {
+        self.score.apply(&edit);
+        self.edits.push(edit);
+    }
+
+    /// Where the container `key` ends, if the score has it.
+    fn container(&self, key: GroupKey) -> Option<OverlayPoint> {
+        match self.score.model(Node::Container(key)) {
+            Some(Value::Point(position)) => Some(position),
+            _ => None,
+        }
+    }
+
+    /// The container `key`, opened at `at` unless the score has it.
+    fn open(&mut self, key: GroupKey, at: OverlayPoint) {
+        if self.container(key).is_none() {
+            self.push(Edit::Place(Node::Container(key), Value::Point(at)));
+        }
+    }
+}
+
+/// A container's movement at a bend: from where it is, already placed where it ends.
+#[derive(Clone, Copy, Debug)]
+struct ContainerWay {
+    key: GroupKey,
+    from: OverlayPoint,
+    to: OverlayPoint,
+}
+
+/// A loose tile's movement at a bend, in its container: from where it is, already placed where it
+/// ends.
+#[derive(Clone, Copy, Debug)]
+struct TileWay {
+    window: WindowId,
+    from: GroupRect,
+    to: GroupRect,
+}
+
+/// The motion a look gives a bend, node by node, in the order `Merged::bend` asks for it: the
+/// tracks. What rides where, and where every node ends, is the bend's.
+trait Bending {
+    /// A container the merge retargets, from where the score has its movement.
+    fn retarget(&mut self, making: &mut Making, way: ContainerWay);
+
+    /// A container the merge opens, from where it installs; `leaving` is the container its member
+    /// left, none for a newcomer's.
+    fn open(&mut self, making: &mut Making, way: ContainerWay, leaving: Option<GroupKey>);
+
+    /// A loose tile joining or bent, from where it starts or the score draws it.
+    fn tile(&mut self, making: &mut Making, way: TileWay);
+
+    /// The container `key` opens again or is dropped: any movement the look keeps of it goes.
+    fn forget(&mut self, _key: GroupKey) {}
+}
+
+/// A loose tile placed where it ends, and moved there by `look`.
+fn place_tile(making: &mut Making, look: &mut impl Bending, way: TileWay) {
+    making.push(Edit::Place(Node::Tile(way.window), Value::Rect(way.to)));
+    look.tile(making, way);
+}
+
+/// A pass merged into a flight that moves, at `now`: `merge_plans` over where the score draws every
+/// container, its delta, and the edits made of it so far.
+struct Merged<'a> {
+    before: &'a FlightPlan,
+    plan: FlightPlan,
+    delta: PlanDelta,
+    drawn: &'a [WindowId],
+    now: f64,
+    making: Making,
+}
+
+impl<'a> Merged<'a> {
+    fn new(playing: &Score, plan: &'a FlightPlan, pass: &Pass<'a>, now: f64) -> Self {
+        let (merged, delta) = merge_plans(
+            plan,
+            pass.plan,
+            pass.pan,
+            &playing.presented(now),
+            pass.focus,
+            pass.viewport,
+        );
+        Merged {
+            before: plan,
+            plan: merged,
+            delta,
+            drawn: pass.drawn,
+            now,
+            making: Making::from(playing),
+        }
+    }
+
+    fn drawn(&self, window: WindowId) -> bool { self.drawn.contains(&window) }
+
+    fn position(&self, key: GroupKey) -> Option<OverlayPoint> {
+        self.plan.positions.get(&key).copied()
+    }
+
+    /// The delta as edits, in this order, `look` carrying each node placed where it ends. The
+    /// containers a merge opens at where they install, a newcomer that opened one riding it at its
+    /// frame in it; members moving container placed in their new one where they start; every
+    /// retargeted container, carried on from where the score has its movement; every opened one,
+    /// carried off from where it installs; tiles joining, each riding its container, a rigid one at
+    /// its frame in it and a loose one carried off from where it starts; loose tiles carried on from
+    /// where the score draws them, one `place_moved` just placed from there; and what the flight
+    /// stops drawing dropped.
+    fn bend(&mut self, look: &mut impl Bending) {
+        self.open_groups(look);
+        let placed = self.place_moved();
+        for &(key, to) in &self.delta.retargeted_groups {
+            let Some(Value::Point(from)) = self.making.score.along(Node::Container(key), self.now)
+            else {
+                continue;
+            };
+            let to = to.rounded();
+            self.making.push(Edit::Place(Node::Container(key), Value::Point(to)));
+            look.retarget(&mut self.making, ContainerWay { key, from, to });
+        }
+        for new in &self.delta.new_groups {
+            let key = new.key;
+            let to = self.plan.positions.get(&key).copied().unwrap_or(new.install).rounded();
+            self.making.push(Edit::Place(Node::Container(key), Value::Point(to)));
+            let way = ContainerWay {
+                key,
+                from: new.install.rounded(),
+                to,
+            };
+            look.open(&mut self.making, way, new.leaving);
+        }
+        self.join_tiles(look);
+        self.bend_tiles(look, &placed);
+        self.drop_stale(look);
+    }
+
+    fn open_groups(&mut self, look: &mut impl Bending) {
+        for new in &self.delta.new_groups {
+            self.making.push(Edit::Place(
+                Node::Container(new.key),
+                Value::Point(new.install.rounded()),
+            ));
+            look.forget(new.key);
+            let Some(group) = self.plan.groups.iter().find(|g| g.key == new.key) else {
+                continue;
+            };
+            for member in &group.members {
+                let moved_in = self
+                    .delta
+                    .reparented
+                    .iter()
+                    .any(|(w, _, to)| *w == member.window && *to == new.key);
+                if moved_in || !self.drawn.contains(&member.window) {
+                    continue;
+                }
+                self.making.push(Edit::Ride(member.window, new.key));
+                self.making.push(Edit::Place(
+                    Node::Tile(member.window),
+                    Value::Rect(member.rel.rounded()),
+                ));
+            }
+        }
+    }
+
+    /// A member moving container starts at its plan frame, which its tile sits a rounding from: it
+    /// keeps the tile's, or it jumps by up to a point. Gives the windows it placed.
+    fn place_moved(&mut self) -> Vec<WindowId> {
+        let mut placed: Vec<WindowId> = Vec::new();
+        for &(window, _, to_key) in &self.delta.reparented {
+            let Some(frame) = self.plan.member(window).map(|member| member.start_frame()) else {
+                continue;
+            };
+            let (Some(Member::Rigid { rel, .. }), Some(Value::Rect(drawn))) = (
+                self.before.member(window),
+                self.making.score.model(Node::Tile(window)),
+            ) else {
+                continue;
+            };
+            let frame = GroupRect::new(
+                Point::new(
+                    frame.origin.x + drawn.origin.x - rel.origin.x,
+                    frame.origin.y + drawn.origin.y - rel.origin.y,
+                ),
+                drawn.size,
+            );
+            let at = self.plan.positions.get(&to_key).copied().unwrap_or(OverlayPoint::origin());
+            self.making.open(to_key, at);
+            self.making.push(Edit::Ride(window, to_key));
+            self.making.push(Edit::Place(Node::Tile(window), Value::Rect(frame.rounded())));
+            if self.making.score.track(Node::Tile(window), Channel::Base).is_some() {
+                self.making.push(Edit::Cut(Node::Tile(window), Channel::Base));
+            }
+            placed.push(window);
+        }
+        placed
+    }
+
+    fn join_tiles(&mut self, look: &mut impl Bending) {
+        for &(window, key) in &self.delta.joined_tiles {
+            if !self.drawn(window) {
+                continue;
+            }
+            let Some(member) = self.plan.member(window) else {
+                continue;
+            };
+            let at = self.position(key).unwrap_or(OverlayPoint::origin());
+            self.making.open(key, at);
+            self.making.push(Edit::Ride(window, key));
+            match member {
+                Member::Rigid { rel, .. } => {
+                    self.making.push(Edit::Place(Node::Tile(window), Value::Rect(rel.rounded())))
+                }
+                Member::Changing { from, to }
+                | Member::Entrance { from, to }
+                | Member::Floating { from, to } => {
+                    let way = TileWay {
+                        window,
+                        from: from.rounded(),
+                        to: to.rounded(),
+                    };
+                    place_tile(&mut self.making, look, way);
+                }
+            }
+        }
+    }
+
+    fn bend_tiles(&mut self, look: &mut impl Bending, placed: &[WindowId]) {
+        for &(window, to) in &self.delta.retargeted_tiles {
+            if !self.drawn(window) {
+                continue;
+            }
+            let node = Node::Tile(window);
+            let from = if placed.contains(&window) {
+                self.making.score.model(node)
+            } else {
+                self.making.score.sample(node, self.now)
+            };
+            let Some(Value::Rect(from)) = from else { continue };
+            place_tile(&mut self.making, look, TileWay {
+                window,
+                from,
+                to: to.rounded(),
+            });
+        }
+    }
+
+    fn drop_stale(&mut self, look: &mut impl Bending) {
+        let tiles: Vec<(WindowId, GroupKey)> = self.making.score.tiles().collect();
+        let containers: Vec<GroupKey> = self.making.score.containers().collect();
+        let (stale, empty) = stale_overlay_layers(&tiles, self.drawn, &containers);
+        for window in stale {
+            self.making.push(Edit::Drop(Node::Tile(window)));
+        }
+        for key in empty {
+            self.making.push(Edit::Drop(Node::Container(key)));
+            look.forget(key);
+        }
+    }
+
+    fn retarget(self) -> Retarget {
+        Retarget {
+            plan: self.plan,
+            delta: self.delta,
+            edits: self.making.edits,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use rini_geometry::space::{OverlayPoint, Point, Rect, Respace, ScreenRect, ScreenVector};
+    use rini_geometry::space::{Rect, Respace, ScreenRect, ScreenVector};
     use rini_geometry::{from_overlay_space, is_off_screen, to_overlay_space};
 
     use super::*;
@@ -186,7 +485,6 @@ mod tests {
         EDGE_BOUNCE_OVERSHOOT, GROUP_TOLERANCE, GroupKey, Member, Resolved, carries_out_and_back,
         on_overlay, overlay_of, reflow_plan,
     };
-    use crate::animation::domain::motion::score::{Node, Value};
     use crate::animation::domain::motion::testing::{
         DISPLAY, Gen, RUNS, VIEWPORT, random_requests, rect,
     };
@@ -274,8 +572,13 @@ mod tests {
             self.fold(&edits);
         }
 
-        /// `incoming` merged at `now`.
-        fn merge(&mut self, incoming: &ReflowPlan, pan: Option<OverlayVector>, now: f64) {
+        /// `incoming` merged at `now`, and what the look answered.
+        fn merge(
+            &mut self,
+            incoming: &ReflowPlan,
+            pan: Option<OverlayVector>,
+            now: f64,
+        ) -> Retarget {
             let pass = Pass {
                 plan: incoming,
                 pan,
@@ -288,7 +591,8 @@ mod tests {
             };
             let retarget = self.choreography.retarget(&self.score, &self.plan, &pass, now);
             self.fold(&retarget.edits);
-            self.plan = retarget.plan;
+            self.plan = retarget.plan.clone();
+            retarget
         }
     }
 
@@ -372,76 +676,114 @@ mod tests {
         }
     }
 
-    /// Whatever a pass brings and whenever it lands, every window the flight drew before it is drawn
-    /// where it was, and a window it brings rides beside the windows it sits beside in the layout:
-    /// drawn where the pass has it, moved by as far as the container it rides is drawn from where the
-    /// last pass sent it. Each within the half point placing on whole points allows: passes built as
-    /// the reactor builds them, from where the last pass sends every window, merged into a flight
-    /// playing from its score, 200 cases from a fixed seed.
-    #[test]
-    fn every_look_bends_a_flight_without_a_jump() {
-        for look in Look::ALL {
-            let mut rng = Gen(163);
-            let mut brought = 0;
-            for run in 0..RUNS {
-                let mut flight =
-                    Flight::posed(look.choreography(), &random_requests(&mut rng), |_| true);
-                flight.start(&[]);
-                let mut now = BEGIN;
-                for step in 0..1 + rng.below(4) {
-                    let tag = format!("{look:?} seed 163 run {run} step {step}");
-                    now += rng.pt(10.0, 400.0) / 1000.0;
-                    let windows = flight.plan.windows();
-                    let newcomer = wid(500 + step as u32);
-                    let (incoming, pan) = random_pass(&mut rng, &mut flight, newcomer);
-                    let before: Vec<(WindowId, OverlayRect)> = windows
-                        .iter()
-                        .filter_map(|w| Some((*w, flight.score.drawn(*w, now)?)))
-                        .collect();
-                    let sent = flight.plan.clone();
-                    flight.merge(&incoming, pan, now);
-                    if let Some(Member::Rigid { key, .. }) = flight.plan.member(newcomer)
-                        && let Some(start) = sent.positions.get(&key)
-                    {
-                        let from = incoming.groups.iter().find_map(|g| {
-                            g.members.iter().find(|m| m.window == newcomer).map(|m| m.rel)
-                        });
-                        let from = from.expect("the pass brings it");
-                        let Some(Value::Point(container)) =
-                            flight.score.sample(Node::Container(key), now)
-                        else {
-                            panic!("{tag}: {key:?} is not drawn");
-                        };
-                        let want = OverlayRect::new(
-                            OverlayPoint::new(
-                                from.origin.x + container.x - start.x,
-                                from.origin.y + container.y - start.y,
-                            ),
-                            from.size.respace(),
-                        );
-                        let is = flight.score.drawn(newcomer, now).expect("drawn");
-                        let gap = gap(is, want);
-                        assert!(
-                            gap <= 0.5 + 1e-6,
-                            "{tag}: {newcomer:?} starts {gap} from beside the strip: {is:?}, wants {want:?}"
-                        );
-                        brought += 1;
+    /// The bend contract, over flights of the look `make` gives: whatever a pass brings and whenever
+    /// it lands, every window the flight drew before it is drawn where it was, and a window it brings
+    /// rides beside the windows it sits beside in the layout: drawn where the pass has it, moved by
+    /// as far as the container it rides is drawn from where the last pass sent it. Each edge within
+    /// the half point placing on whole points allows, and within a point for a window the pass moves
+    /// into a container it opens (`OPENED_SLACK`): passes built as the reactor builds them, from
+    /// where the last pass sends every window, merged into a flight playing from its score, 200 cases
+    /// from a fixed seed.
+    fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
+        let mut rng = Gen(163);
+        let mut brought = 0;
+        for run in 0..RUNS {
+            let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
+            flight.start(&[]);
+            let mut now = BEGIN;
+            for step in 0..1 + rng.below(4) {
+                let tag = format!("seed 163 run {run} step {step}");
+                now += rng.pt(10.0, 400.0) / 1000.0;
+                let windows = flight.plan.windows();
+                let newcomer = wid(500 + step as u32);
+                let (incoming, pan) = random_pass(&mut rng, &mut flight, newcomer);
+                let before: Vec<(WindowId, OverlayRect)> = windows
+                    .iter()
+                    .filter_map(|w| Some((*w, flight.score.drawn(*w, now)?)))
+                    .collect();
+                let sent = flight.plan.clone();
+                let delta = flight.merge(&incoming, pan, now).delta;
+                if let Some(Member::Rigid { key, .. }) = flight.plan.member(newcomer)
+                    && let Some(start) = sent.positions.get(&key)
+                {
+                    let from = incoming.groups.iter().find_map(|g| {
+                        g.members.iter().find(|m| m.window == newcomer).map(|m| m.rel)
+                    });
+                    let from = from.expect("the pass brings it");
+                    let Some(Value::Point(container)) =
+                        flight.score.sample(Node::Container(key), now)
+                    else {
+                        return Err(format!("{tag}: {key:?} is not drawn"));
+                    };
+                    let want = OverlayRect::new(
+                        OverlayPoint::new(
+                            from.origin.x + container.x - start.x,
+                            from.origin.y + container.y - start.y,
+                        ),
+                        from.size.respace(),
+                    );
+                    let is = flight.score.drawn(newcomer, now).expect("drawn");
+                    let apart = edges_apart(is, want);
+                    if apart > 0.5 + 1e-6 {
+                        return Err(format!(
+                            "{tag}: {newcomer:?} starts {apart} from beside the strip: {is:?}, wants {want:?}"
+                        ));
                     }
-                    for (window, was) in before {
-                        let is = flight
-                            .score
-                            .drawn(window, now)
-                            .unwrap_or_else(|| panic!("{tag}: {window:?} gone"));
-                        let gap = gap(is, was);
-                        assert!(
-                            gap <= 0.5 + 1e-6,
-                            "{tag}: {window:?} jumped {gap}: {was:?} then {is:?}"
-                        );
+                    brought += 1;
+                }
+                for (window, was) in before {
+                    let Some(is) = flight.score.drawn(window, now) else {
+                        return Err(format!("{tag}: {window:?} gone"));
+                    };
+                    let apart = edges_apart(is, was);
+                    let slack = if moved_into_an_opened(&delta, window) {
+                        OPENED_SLACK
+                    } else {
+                        0.5
+                    };
+                    if apart > slack + 1e-6 {
+                        return Err(format!(
+                            "{tag}: {window:?} jumped {apart}: {was:?} then {is:?}"
+                        ));
                     }
                 }
             }
-            assert!(brought > 0, "{look:?} brought no window beside the strip");
         }
+        if brought == 0 {
+            return Err("no window brought beside the strip".to_string());
+        }
+        Ok(())
+    }
+
+    /// Every look keeps the bend contract.
+    #[test]
+    fn every_look_bends_a_flight_without_a_jump() {
+        for look in Look::ALL {
+            if let Err(broken) = bends_without_a_jump(&|| look.choreography()) {
+                panic!("{look:?}: {broken}");
+            }
+        }
+    }
+
+    /// The bend contract rejects a look that cuts every node the pass moves to where it ends.
+    #[test]
+    fn the_bend_contract_rejects_a_look_that_cuts_to_the_pass() {
+        let cut = bends_without_a_jump(&|| Flawed::boxed(Flaw::CutsTheBend))
+            .expect_err("a bend that cuts to the pass");
+        assert!(cut.contains("jumped"), "{cut}");
+    }
+
+    /// How far a window a pass moves into a container it opens may be drawn from where it was: the
+    /// container opens on a whole point where its first member's container is drawn, and a member
+    /// from another container sat at another fraction, a half point each. See "Whole points" in
+    /// `src/animation/docs/animation-smoothness.md`.
+    const OPENED_SLACK: f64 = 1.0;
+
+    /// Whether the merge that left `delta` moved `window` into a container it opened.
+    fn moved_into_an_opened(delta: &PlanDelta, window: WindowId) -> bool {
+        delta.reparented.iter().any(|&(moved, _, to)| {
+            moved == window && delta.new_groups.iter().any(|group| group.key == to)
+        })
     }
 
     /// A pass as the reactor builds one for `flight`, from where its last pass sends every window: a
@@ -802,6 +1144,72 @@ mod tests {
         assert!(from_rest.contains("jumped"), "{from_rest}");
     }
 
+    /// The digest of what Slide draws over seed 163's flights, posed, composed and bent by one to
+    /// four passes as `random_pass` builds them: the score after the motion starts and after each
+    /// pass, and each pass's edits. A change to how Slide moves changes it; one that only moves code
+    /// between Slide and what every look shares keeps it.
+    const SLIDE_SCORES: u64 = 0xb3e5_dde7_a6c7_691b;
+
+    /// Slide draws over seed 163's flights what `SLIDE_SCORES` holds: every node's place, ride and
+    /// tracks, and every edit a pass answers.
+    #[test]
+    fn slide_draws_every_seeded_flight_as_it_did() {
+        let mut rng = Gen(163);
+        let mut digest = Digest::default();
+        for _ in 0..RUNS {
+            let mut flight =
+                Flight::posed(Look::Slide.choreography(), &random_requests(&mut rng), |_| true);
+            flight.start(&[]);
+            digest.score(&flight.score);
+            let mut now = BEGIN;
+            for step in 0..1 + rng.below(4) {
+                now += rng.pt(10.0, 400.0) / 1000.0;
+                let (incoming, pan) = random_pass(&mut rng, &mut flight, wid(500 + step as u32));
+                digest.edits(&flight.merge(&incoming, pan, now).edits);
+                digest.score(&flight.score);
+            }
+        }
+        assert_eq!(digest.0, SLIDE_SCORES, "{:#x}", digest.0);
+    }
+
+    /// FNV-1a over every score and edit list folded in, each read in one order: a score's maps and
+    /// the merge's keep none.
+    struct Digest(u64);
+
+    impl Default for Digest {
+        fn default() -> Self { Digest(0xcbf2_9ce4_8422_2325) }
+    }
+
+    impl Digest {
+        fn score(&mut self, score: &Score) {
+            let node = |node: Node| {
+                let tracks: Vec<_> = score.tracks(node).collect();
+                format!("{node:?} {:?} {tracks:?}", score.model(node))
+            };
+            let mut lines: Vec<String> =
+                score.containers().map(|key| node(Node::Container(key))).collect();
+            lines.extend(
+                score
+                    .tiles()
+                    .map(|(window, key)| format!("{key:?} {}", node(Node::Tile(window)))),
+            );
+            lines.sort();
+            self.bytes(lines.concat().bytes());
+        }
+
+        fn edits(&mut self, edits: &[Edit]) {
+            let mut lines: Vec<String> = edits.iter().map(|edit| format!("{edit:?}")).collect();
+            lines.sort();
+            self.bytes(lines.concat().bytes());
+        }
+
+        fn bytes(&mut self, bytes: impl IntoIterator<Item = u8>) {
+            for byte in bytes {
+                self.0 = (self.0 ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+    }
+
     /// The one contract a `Flawed` look breaks.
     #[derive(Clone, Copy, Debug)]
     enum Flaw {
@@ -817,6 +1225,8 @@ mod tests {
         PushesSideways,
         /// Its push starts every carrier's bounce from rest, wherever the one before is drawn.
         PushesFromRest,
+        /// Its bend moves nothing: every node it would carry is cut to where it ends.
+        CutsTheBend,
     }
 
     /// Slide but for one flaw, so a contract's check is seen to reject a look that breaks it.
@@ -852,9 +1262,10 @@ mod tests {
                     }
                     folded
                 }
-                Flaw::PlaysNoPush | Flaw::PushesSideways | Flaw::PushesFromRest => {
-                    self.slide.fold(plan, pass)
-                }
+                Flaw::PlaysNoPush
+                | Flaw::PushesSideways
+                | Flaw::PushesFromRest
+                | Flaw::CutsTheBend => self.slide.fold(plan, pass),
             }
         }
 
@@ -871,7 +1282,17 @@ mod tests {
             pass: &Pass,
             now: f64,
         ) -> Retarget {
-            self.slide.retarget(playing, plan, pass, now)
+            let mut bent = self.slide.retarget(playing, plan, pass, now);
+            if let Flaw::CutsTheBend = self.flaw {
+                for edit in &mut bent.edits {
+                    if let Edit::Add(track) = edit
+                        && track.channel() == Channel::Base
+                    {
+                        *edit = Edit::Cut(track.node(), Channel::Base);
+                    }
+                }
+            }
+            bent
         }
 
         fn push(
@@ -889,7 +1310,8 @@ mod tests {
                 Flaw::IgnoresThePass
                 | Flaw::DropsResizes
                 | Flaw::StartsAtTheEnd
-                | Flaw::PushesSideways => self.slide.push(playing, cue, wall, seconds, now),
+                | Flaw::PushesSideways
+                | Flaw::CutsTheBend => self.slide.push(playing, cue, wall, seconds, now),
                 Flaw::PushesFromRest => playing
                     .containers()
                     .filter(|key| carries_out_and_back(*key, wall))

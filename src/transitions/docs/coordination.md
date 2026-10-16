@@ -882,7 +882,7 @@ short of the start on the shrinking axis, the press picture short of the end on 
 at frame zero, the repaint showed the window's ground over that span until the moving edge swallowed
 it: on fold1 (`docs/data/2026-10-10-fold`) lab-C's 538-tall repaint flew its 1079-tall start, its
 ground above it, read by eye off the movie's frames at 3520 and 3540ms. So its leg flies in two steps
-(`tile::leg`, which `Making::move_tile` makes every tile's leg with, a flight's first and a merge's
+(`tile::leg`, which Slide makes every tile's leg with, a flight's first and a merge's
 alike): the shrinking axis first, to the corner where it has reached its end and the growing one has
 not moved (lab-C's 866,576 860x538, between 866,35 860x1079 and 3,576 1148x538), flying the press
 picture, which covers every frame of it; then the growing axis, flying the repaint, which covers

@@ -26,7 +26,9 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/motion/tile.rs` | `OverlayTile`: one window's tile on the overlay, generic over the picture it is drawn with (the overlay draws a captured `Picture`); how a tile fits its picture to its frame: stretched only where that is exact, a picture fitting both ends and the stand-in, cropped otherwise (`content_mode`); the crop's pieces, the ground where its picture ends and the edges they stand still against (`crop`, `Anchors`) |
 | `domain/motion/tile.rs`, continued | a tile's leg, one movement or, growing on one axis as it shrinks on the other, two steps turning at a corner (`two_steps`, `leg`, `corner_key`); when it snaps onto its window's real frame (`snap_to`), and the snap as the score's edits (`snap`) |
 | `domain/choreography.rs` | The looks: `Look`, every look by name (`ALL`), its `Choreography` for a flight (the plan, frame zero posed, the motion composed, a press before it folded and one after it bent) and its staging of a press on the strip (`stage`, over a `Cue`, a `Strip` and its `PairStart`s, giving a `Staging`); what a look composes from (`Stage`), bends with (`Pass`) and gives back (`Retarget`); and the tests every look passes |
-| `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed, everything on whole points; a move whose column fills the viewport held and stepped, any other crossing |
+| `domain/choreography.rs`, continued | a bend's structure, every look's alike (`Merged::bend`): containers opened, members riding a new one, tiles joining, every node placed where it ends, what the flight stops drawing dropped, each edit folded into a copy of the score playing (`Making`); the look gives each node's movement in it (`Bending`) |
+| `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed (`Bent`), everything on whole points; a move whose column fills the viewport held and stepped, any other crossing |
+| `domain/choreography/linear.rs` | `Linear`, a look only the tests build and `ALL` holds under them: every node straight to where its pass sends it at an even speed, bent through `Merged::bend`, so the contract and the overlay's playback tests run over a second look |
 | `platform/overlay.rs` | `TileOverlay`, the window the renderer draws on: it poses frame zero and plays a score's edits, every animation installed from a track, and commits nothing itself; each tile wears its picture and `decorations::platform::layers`, which it fills a resize for from the tile's track (`Resize`); its `Tree` (the `CALayer` tree, the desktop behind it included, and the replica it reads only to install) hangs off any root layer, so it is tested without a window |
 | `platform/overlay.rs`, continued | `server_id()` is its window's number, which a handover check pictures alone; `window_origin` is where the window over a display starts on screen, which that picture is read from, and `same_layout` whether a display lays the window out again; at the lift it lets go of the tiles and of the desktop behind them (`release`), which the pictures service still holds for the next flight's dressing |
 | `platform/renderer.rs` | `Renderer`, the main thread's actor: it owns the overlay, makes it on the first flight it dresses or poses, and plays the flight engine's `Batch`es of `Render` commands, each one of the overlay's calls |
@@ -77,6 +79,22 @@ in [`animation-smoothness.md`](animation-smoothness.md)).
 
 **`tokio::time` panics here.** There is no tokio reactor; see
 [`crates/rini-runloop/docs/run-loop-executor.md`](../../../crates/rini-runloop/docs/run-loop-executor.md).
+
+## Adding a look
+
+A look that moves tiles through points and rects touches these files, and nothing in `transitions`:
+
+1. `domain/choreography/<name>.rs`: a `Choreography` and a `stage`. Its `retarget` calls
+   `Merged::new` and `Merged::bend` with a `Bending` of its own, and adds only motion; `linear.rs`
+   is the smallest one.
+2. `domain/choreography.rs`: a `Look` variant, a slot in `ALL`, and an arm in `choreography` and
+   in `stage`. `ALL` puts it under every contract test there and the overlay's playback tests in
+   `platform/overlay.rs`.
+3. This README: a row for its file.
+4. The reactor's choice of it: it takes `Look::default()` for every flight
+   (`src/app/reactor/strip_motion.rs`, `src/app/reactor/animation.rs`).
+
+A zoom needs more than this: a score holds no scale (`docs/pictures-motion-transitions.md`).
 
 ## Reading order
 

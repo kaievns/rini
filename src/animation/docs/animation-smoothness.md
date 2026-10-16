@@ -176,9 +176,11 @@ separate pulses at 300-570ms between presses is separate flights: the first
 leg is 97% home by half time, so the strip is at rest before the next press.
 
 The look reads every container's two positions once, from the flight's score, for `merge_plans`,
-and turns the delta into the score's edits (`Slide::retarget`), which the overlay plays in one
-transaction: reparents, container animations, joins, loose retargets, and the `Bank` the engine
-appends.
+and turns the delta into the score's edits, which the overlay plays in one transaction: reparents,
+container animations, joins, loose retargets, and the `Bank` the engine appends. What rides where
+and where each node ends is every look's alike (`Merged::bend` in
+`src/animation/domain/choreography.rs`); the look gives each node's movement (`Bending`), Slide's
+the springs and legs above.
 Without this a pan merging 56ms after an open (log 3:27:20, 22 tiles
 scrolled 574pt) left the newcomer at its pre-pan slot: a tear between the
 active window and its neighbours, then a pop at lift. Cross-container z is a
@@ -313,9 +315,16 @@ Mechanics worth remembering:
 - **Whole points.** Slide places every container and tile on whole points
   (`tiles_sit_on_whole_points_like_the_real_windows`): layout offsets are fractional (4592.67) and
   the window server places windows on whole points, so a tile drawn at the fraction was resampled
-  and popped by the fraction at the lift. A member a merge moves to another container starts at its
-  plan frame and keeps the rounding its tile sat at; placed from the plan frame alone it jumped by up
-  to a point, origin and width (`every_look_bends_a_flight_without_a_jump`).
+  and popped by the fraction at the lift. Rounding a frame rounds its edges, so its width moves by
+  up to a point while no edge moves more than a half. A member a merge moves to another container
+  starts at its plan frame and keeps the rounding its tile sat at; placed from the plan frame alone
+  it jumped by up to a point, origin and width. One moved into a container the merge opens still
+  jumps by up to a point: the container opens on a whole point where its first member's container
+  is drawn, and a member from another container sat at another fraction, a half point each. Over
+  41 seeds of the bend contract it passed a half point on 6 under Slide, the farthest 0.82pt, and
+  on 1 under the test-only Linear look, 0.79pt (measured with a probe over seeds 1-40 and 163; not
+  seen on screen), so the contract allows those a point
+  (`every_look_bends_a_flight_without_a_jump`).
 
 Found on the first live run of the per-tile strip path: **floating tiles
 were drawn behind the desktop backdrop.** The band behind the strip sits
