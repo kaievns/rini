@@ -114,7 +114,7 @@ fn nudge(viewport_width: f64, direction: Direction) -> Option<OverlayVector> {
 fn step_of<'a>(accents: impl IntoIterator<Item = &'a Accent>) -> Option<(OverlayVector, f64)> {
     accents.into_iter().find_map(|accent| match *accent {
         Accent::Step { offset, seconds } => Some((offset, seconds)),
-        Accent::Push { .. } => None,
+        Accent::Push { .. } | Accent::Arc { .. } => None,
     })
 }
 

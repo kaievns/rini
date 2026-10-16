@@ -17,10 +17,10 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/motion/glide.rs` | `Leg`: a container's movement over time; `Leg::toward`, the spring a merge bends it on, from where the score has its movement (`Score::along`) and as fast as its leg is going |
 | `domain/motion/easing.rs` | `MOTION_CURVE`, and the ease-in-out a stepping move's strip crosses on; a curve cut where its progress reaches a share, its speed unbroken through the cut (`CubicBezier::split`) |
 | `domain/motion/score.rs` | `Score`: a transition's movement as tracks on the strip's zoom (`Zoom`, a scale and a shift), containers and tiles, which container each tile rides and how deep each is drawn, evaluating to what Core Animation draws; the fold of its `Edit`s (a place, a track added or cut, a ride, a drop, a bank), the one way in; each track's `Form`, the class that plays it |
-| `domain/motion/score.rs`, continued | `ending_at`, a track's end moved; `presented`, where every container is; `plays`, whether a channel plays; `MediaClock`, the media time an `Instant` is at, from one reading of both |
+| `domain/motion/score.rs`, continued | `ending_at`, a track's end moved; `presented`, where every container is; `plays`, whether a channel plays; `rate`, how fast a node's movement is drawn going; `MediaClock`, the media time an `Instant` is at, from one reading of both |
 | `domain/motion/bounce.rs` | `Bounce`: the edge bounce's shape, a push arriving where one is drawn (`from_drawn`), and its track |
 | `domain/motion/nudge.rs` | A move's nudge: the step's share and stretch, its keyframes and track, and the curve a stepping flight flies on |
-| `domain/motion/accents.rs` | `Accent`, what a press asks to ride its movement (a push, a step), and the tracks each plays on its carriers: `push_tracks`, each container's bounce from where its own is drawn, never held off; `steps`, whether a step is taken, only while none plays; `step_tracks`, the step on every carrier |
+| `domain/motion/accents.rs` | `Accent`, what a press asks to ride its movement (a push, a step, a zoom look's arc and the pair it swaps, `Swap`), and the tracks the push and the step play on their carriers: `push_tracks`, each container's bounce from where its own is drawn, never held off; `steps`, whether a step is taken, only while none plays; `step_tracks`, the step on every carrier |
 | `domain/motion/holes.rs` | Where the overlay is holed over a window that ends on screen, and over the band it wears at rest, so both keep painting |
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
 | `domain/motion/tile.rs` | `OverlayTile`: one window's tile on the overlay, generic over the picture it is drawn with (the overlay draws a captured `Picture`); how a tile fits its picture to its frame: stretched only where that is exact, a picture fitting both ends and the stand-in, cropped otherwise (`content_mode`); the crop's pieces, the ground where its picture ends and the edges they stand still against (`crop`, `Anchors`) |
@@ -28,7 +28,8 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/choreography.rs` | The looks: `Look`, every look by name (`ALL`), its `Choreography` for a flight (the plan, frame zero posed, the motion composed, a press before it folded and one after it bent) and its staging of a press on the strip (`stage`, over a `Cue`, a `Strip` and its `PairStart`s, giving a `Staging`); what a look composes from (`Stage`), bends with (`Pass`) and gives back (`Retarget`); and the tests every look passes |
 | `domain/choreography.rs`, continued | a bend's structure, every look's alike (`Merged::bend`): containers opened, members riding a new one, tiles joining, every node placed where it ends, what the flight stops drawing dropped, each edit folded into a copy of the score playing (`Making`); the look gives each node's movement in it (`Bending`) |
 | `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed (`Bent`), everything on whole points; a move whose column fills the viewport held and stepped, any other crossing |
-| `domain/choreography/linear.rs` | `Linear`, a look only the tests build and `ALL` holds under them: every node straight to where its pass sends it at an even speed, and bent through `Merged::bend` from the speed it is moving at, that speed changing evenly, so the contract and the overlay's playback tests run over a second look |
+| `domain/choreography/zoom.rs` | `ZoomArc`, the zoom look: a press along the strip as one arc, the strip zoomed out and back on a sin² bell (`arc_scale`) as deep as the pair needs (`zoom_depth`), the travel every container carries eased to show the pair at the middle (`pair_view`, `camera_share`, `camera_progress`), the swap on `ZOOM_CURVE` on top; a pan folded into the arc or a spring at the speed the score draws; a push bounced zoomed |
+| `domain/choreography/linear.rs` | `Linear`, a look only the tests build and `ALL` holds under them: every node straight to where its pass sends it at an even speed, and bent through `Merged::bend` from the speed it is moving at, that speed changing evenly, so the contract and the overlay's playback tests run over motion neither Slide's nor Zoom's |
 | `platform/overlay.rs` | `TileOverlay`, the window the renderer draws on: it poses frame zero and plays a score's edits, every animation installed from a track, and commits nothing itself; each tile wears its picture and `decorations::platform::layers`, which it fills a resize for from the tile's track (`Resize`); its `Tree` (the `CALayer` tree, the desktop behind it included, and the replica it reads only to install) hangs off any root layer, so it is tested without a window |
 | `platform/overlay.rs`, continued | the tree's strip layer, which every container but the floating one and its twin hangs under, plays the strip's zoom on its `transform` (`zoom_transform`) |
 | `platform/overlay.rs`, continued | `server_id()` is its window's number, which a handover check pictures alone; `window_origin` is where the window over a display starts on screen, which that picture is read from, and `same_layout` whether a display lays the window out again; at the lift it lets go of the tiles and of the desktop behind them (`release`), which the pictures service still holds for the next flight's dressing |
@@ -84,7 +85,8 @@ in [`animation-smoothness.md`](animation-smoothness.md)).
 ## Adding a look
 
 A look touches these files, and nothing in `transitions`, which stages every flight and pass on the
-display the overlay covers (`viewport`):
+display the overlay covers (`viewport`), unless it adds an `Accent`, which the tests there match on
+by kind:
 
 1. `domain/choreography/<name>.rs`: a `Choreography` and a `stage`. Its `retarget` calls
    `Merged::new` and `Merged::bend` with a `Bending` of its own, and adds only motion; `linear.rs`
@@ -97,12 +99,16 @@ display the overlay covers (`viewport`):
 4. Its name: a word in `kebab_scalar!(Look …)` in `src/app/config/kdl/value.rs`, which
    `animations › look` decodes and `config get` prints. Every flight the reactor sends takes the
    look the config names (`specs/animation.md`, "Looks").
-5. `rini.default.kdl`'s comment over `animations › look` and the "Not yet met" line under "Looks"
-   in `specs/animation.md`, both of which name slide as the only look.
+5. `rini.default.kdl`'s comment over `animations › look`, `docs/config.md`'s row for it, and
+   "Looks" in `specs/animation.md`, each of which names every look, and the look's requirements in
+   a section of their own there.
 
-A zoom of the strip is a look like any other: its tracks on `Node::Strip` hold a `Zoom`, and its
-`retarget` bends them beside `Merged::bend` (`docs/pictures-motion-transitions.md`). A track lerps
-a zoom's scale and shift, not its camera, so one changing both samples its track (`Zoom::about`).
+A zoom of the strip is a look like any other (`domain/choreography/zoom.rs`): its tracks on
+`Node::Strip` hold a `Zoom` about the display's centre with no camera, and the travel a camera
+would carry rides each container's own track, so a zoom track lerps exactly between its samples
+(`Zoom::about`), and `Merged::bend` bends that travel with the rest of every container's movement.
+The speed contract reads a window's speed on the strip and the zoom's apart: drawn, the two turning
+opposite ways cancel its allowance though neither jumps.
 
 ## Reading order
 

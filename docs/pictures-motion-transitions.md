@@ -98,15 +98,17 @@ bend's structure, what rides where and where every node ends, is every look's al
 is a file under `src/animation/domain/choreography/`, a `Look` variant in `ALL` there with its arms
 in `choreography` and `stage`, a row in `src/animation/docs/README.md` ("Adding a look") and its
 config word in `kebab_scalar!(Look …)` in `src/app/config/kdl/value.rs`, which `animations › look`
-decodes; capture, swaps and handover never see what a score contains. A zoom of the strip is such a look: the score's strip node
-holds a `Zoom`, a scale and a shift that say a scale about a centre through a camera
+decodes; capture, swaps and handover never see what a score contains. Zoom
+(`src/animation/domain/choreography/zoom.rs`) is such a look: the score's strip node holds a `Zoom`,
+a scale and a shift that say a scale about a centre through a camera
 (`src/animation/domain/motion/score.rs`), the overlay plays it on the layer every container but the
 floating one hangs under, and frame zero, the motion and each pass are staged on the display the
-overlay covers (`Stage` and `Pass` carry it as `viewport`), what a zoom is centred on, so a zoom look
-needs only its choreography and staging
-(`a_look_zooms_the_strip_about_the_display_it_is_staged_on`), its `retarget` bending the strip's
-zoom beside `Merged::bend`, which bends containers and tiles alone. A container
-scaled on its own, as the parked spike lifted the moved window, is not in the score.
+overlay covers (`Stage` and `Pass` carry it as `viewport`), what a zoom is centred on
+(`a_look_zooms_the_strip_about_the_display_it_is_staged_on`). Zoom keeps the camera at rest and
+carries the travel a camera would in each container's own track, so `Merged::bend` bends it with the
+rest of every container's movement and the strip's zoom is left playing through a bend; its press
+rides the movement as an `Accent::Arc`. A container scaled on its own, as the parked spike lifted
+the moved window, is not in the score.
 
 ## `transitions`
 

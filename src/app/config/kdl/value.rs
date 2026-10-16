@@ -295,7 +295,7 @@ macro_rules! kebab_scalar {
         }
     };
 }
-kebab_scalar!(Look { "slide" => Look::Slide, #[cfg(test)] "linear" => Look::Linear, #[cfg(test)] "probe" => Look::Probe });
+kebab_scalar!(Look { "slide" => Look::Slide, "zoom" => Look::Zoom, #[cfg(test)] "linear" => Look::Linear, #[cfg(test)] "probe" => Look::Probe });
 kebab_scalar!(StackedUpperSide { "left" => StackedUpperSide::Left, "right" => StackedUpperSide::Right });
 kebab_scalar!(CenterFocusedColumn {
     "never" => CenterFocusedColumn::Never,

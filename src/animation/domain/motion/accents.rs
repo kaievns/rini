@@ -1,11 +1,12 @@
-//! The accents a flight carries on top of its movement, the edge bounce and a move's step, and the
-//! tracks each plays on the containers that carry it. A push against an end re-kicks every
+//! The accents a flight carries on top of its movement, the edge bounce, a move's step and a zoom
+//! look's arc, and the tracks the bounce and the step play on the containers that carry them. A push against an end re-kicks every
 //! carrier's bounce from where that carrier's is drawn (`push_tracks`), never held off; a step is
 //! taken only while none plays (`steps`), or a burst of moves steps the strip once per press, and
 //! plays on every carrier (`step_tracks`). Their shapes are `bounce` and `nudge`.
 
 use std::time::Duration;
 
+use rini_core::ids::WindowId;
 use rini_geometry::space::OverlayVector;
 
 use super::bounce::Bounce;
@@ -21,6 +22,25 @@ pub enum Accent {
     /// A move's step: the whole strip out by `offset` and back, over its press's plain `seconds`
     /// stretched, the flight it rides lasting at least as long.
     Step { offset: OverlayVector, seconds: f64 },
+    /// A zoom look's arc: the strip out to `depth` and back over its press's plain `seconds`
+    /// stretched, the travel the containers carry `share` done at its middle, and the columns a
+    /// move swapped crossing on a curve of their own.
+    Arc {
+        depth: f64,
+        share: f64,
+        swap: Option<Swap>,
+        seconds: f64,
+    },
+}
+
+/// The two columns a move swapped, each named by one of its windows, and how far each crosses the
+/// strip on top of the travel every container carries.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Swap {
+    pub moved: WindowId,
+    pub passed: WindowId,
+    pub moved_by: OverlayVector,
+    pub passed_by: OverlayVector,
 }
 
 /// The bounce a push against `wall` at `at` plays on each container of `playing` that carries it,

@@ -17,6 +17,9 @@ use super::plan::{Banding, GroupKey, Presented};
 /// How far apart a spring leg's and a nudge's samples are: one 120Hz frame.
 pub const SAMPLE_STEP: f64 = 1.0 / 120.0;
 
+/// How far back `Score::rate` reads a movement's speed from: within one of its samples.
+const RATE_READ: f64 = 1e-4;
+
 /// What a track moves: the strip's zoom, a container's position, or a tile's frame inside its
 /// container.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -416,6 +419,19 @@ impl Score {
         let model = self.model(node)?;
         let base = self.track(node, Channel::Base).and_then(|track| track.at(at));
         Some(base.unwrap_or(model))
+    }
+
+    /// How fast `node`'s movement is going at `at`, per part a second: its `Base` track read over the
+    /// sliver of its segment before `at`, as Core Animation draws it. Still with none playing then.
+    pub fn rate(&self, node: Node, at: f64) -> [f64; 4] {
+        let track = self.track(node, Channel::Base);
+        match track.map(|track| (track.at(at - RATE_READ), track.at(at))) {
+            Some((Some(before), Some(now))) => {
+                let (before, now) = (before.parts(), now.parts());
+                std::array::from_fn(|i| (now[i] - before[i]) / RATE_READ)
+            }
+            _ => [0.0; 4],
+        }
     }
 
     /// Where `window`'s tile is drawn at `at`: its frame in its container, moved by where the
@@ -1360,6 +1376,38 @@ mod tests {
             0.0,
         )));
         assert!(!score.plays(Channel::Bounce, 3.0), "a cut never plays");
+    }
+
+    /// `rate` is how fast the movement is drawn going: a straight line's slope, a sampled track's
+    /// segment's, an accent left out, and still before the movement begins, from its end on, and on
+    /// a node with no movement.
+    #[test]
+    fn rate_reads_the_movement_as_it_is_drawn_going() {
+        let mut score = moving(0.0, 100.0, 1.0, 2.0, Curve::Linear);
+        assert!((score.rate(container(), 1.5)[0] - 50.0).abs() < 1e-6);
+        score.add(Track::samples(
+            container(),
+            Channel::Bounce,
+            [point(0.0, 0.0), point(900.0, 0.0), point(0.0, 0.0)],
+            1.0,
+            1.0,
+        ));
+        assert!(
+            (score.rate(container(), 1.5)[0] - 50.0).abs() < 1e-6,
+            "the accent left out"
+        );
+        score.add(Track::samples(
+            container(),
+            Channel::Base,
+            [point(0.0, 0.0), point(10.0, 0.0), point(40.0, 20.0)],
+            1.0,
+            2.0,
+        ));
+        let [x, y, ..] = score.rate(container(), 2.5);
+        assert!((x - 30.0).abs() < 1e-6 && (y - 20.0).abs() < 1e-6, "{x} {y}");
+        assert_eq!(score.rate(container(), 1.0), [0.0; 4], "not begun");
+        assert_eq!(score.rate(container(), 3.0), [0.0; 4], "ended");
+        assert_eq!(score.rate(tile(), 1.5), [0.0; 4], "no movement");
     }
 
     #[test]

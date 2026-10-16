@@ -3955,6 +3955,108 @@ mod tests {
             plays_exactly(&tree);
         }
 
+        /// A zoom look's flight on its own arc, two columns swapped and a push waiting, then a pan
+        /// folded into the arc: the strip layer's zoom and every container's movement begin on one
+        /// clock, and the tree plays exactly its replica, which is the score, after each.
+        #[test]
+        fn a_zoom_flight_plays_its_arc_exactly() {
+            use crate::animation::domain::motion::accents::Swap;
+            let _core_animation = hold_core_animation();
+            let column = |i: f64| -> ScreenRect { typed(4.0 + i * 863.0, 32.0, 859.0, 1081.0) };
+            let shifted = |frame: ScreenRect, dx: f64| -> ScreenRect {
+                typed(
+                    frame.origin.x + dx,
+                    frame.origin.y,
+                    frame.size.width,
+                    frame.size.height,
+                )
+            };
+            let (a, b, c) = (wid(1), wid(2), wid(3));
+            let requests = [
+                Resolved::tiled(a, column(1.0), shifted(column(0.0), -863.0)),
+                Resolved::tiled(b, column(0.0), shifted(column(1.0), -863.0)),
+                Resolved::tiled(c, column(2.0), shifted(column(2.0), -863.0)),
+            ];
+            let tiles: Vec<OverlayTile> = requests
+                .iter()
+                .map(|r| overlay_tile(r.window, on(r.start), on(r.end), r.floating))
+                .collect();
+            let plan = FlightPlan::from(reflow_plan(&requests, DISPLAY));
+            let windows = [a, b, c];
+            let accents = [
+                Accent::Arc {
+                    depth: 0.7516,
+                    share: 0.5,
+                    swap: Some(Swap {
+                        moved: a,
+                        passed: b,
+                        moved_by: OverlayVector::new(-863.0, 0.0),
+                        passed_by: OverlayVector::new(863.0, 0.0),
+                    }),
+                    seconds: 0.35,
+                },
+                Accent::Push {
+                    wall: OverlayVector::new(-72.0, 0.0),
+                    seconds: 0.35,
+                },
+            ];
+            let stage = Stage {
+                plan: &plan,
+                drawn: &windows,
+                seconds: 0.35,
+                cue: Cue::Focus { from: a, to: a },
+                accents: &accents,
+                viewport: VIEWPORT,
+            };
+            let mut choreography = Look::Zoom.choreography();
+            let mut score = choreography.pose(&stage);
+            score.apply(&Edit::Bank(banding(&windows, &plan)));
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.pose(&score, &tiles);
+            let started = choreography.compose(&score, &stage, 100.0);
+            for edit in &started {
+                score.apply(edit);
+            }
+            tree.play(&started, &tiles);
+            assert_eq!(tree.replica, score);
+            plays_exactly(&tree);
+            let base: Vec<&Track> = started
+                .iter()
+                .filter_map(|edit| match edit {
+                    Edit::Add(track) if track.channel() == Channel::Base => Some(track),
+                    _ => None,
+                })
+                .collect();
+            assert!(base.iter().any(|t| t.node() == Node::Strip), "the arc");
+            assert!(base.len() >= 3, "the arc and the containers: {}", base.len());
+            for track in &base {
+                assert_eq!((track.begin(), track.seconds()), (100.0, 0.35 * 2.2 / 3.0));
+            }
+
+            let incoming = reflow_plan(
+                &requests.map(|r| Resolved::tiled(r.window, r.end, shifted(r.end, -863.0))),
+                DISPLAY,
+            );
+            let pass = Pass {
+                plan: &incoming,
+                pan: Some(OverlayVector::new(-863.0, 0.0)),
+                focus: None,
+                viewport: VIEWPORT,
+                drawn: &windows,
+                seconds: 0.35,
+                cue: Cue::Plain,
+                accent: None,
+            };
+            let mut bent = choreography.retarget(&score, &plan, &pass, 100.05);
+            bent.edits.push(Edit::Bank(banding(&windows, &bent.plan)));
+            for edit in &bent.edits {
+                score.apply(edit);
+            }
+            tree.play(&bent.edits, &tiles);
+            assert_eq!(tree.replica, score);
+            plays_exactly(&tree);
+        }
+
         /// A zoom posed plays on the strip layer as one played does; a track of no length, a cut of
         /// its channel and a drop each take it off, the drop putting the strip back at rest, a cut of
         /// another channel leaves it playing, and a place draws the strip at its model.

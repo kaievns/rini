@@ -4,14 +4,15 @@
 //! bends the flight at a press after it, answering with the score's edits (`motion::score::Edit`),
 //! which the renderer plays as they are. A bend's structure is every look's alike (`Merged::bend`),
 //! and a look gives only each node's movement in it (`Bending`). `Look::ALL` is every look, and the
-//! tests below are the contract each keeps; `slide` is the default, the config's `animations › look`
-//! picks the one every flight takes, and `linear` and `probe`, looks only the tests build, keep the
-//! contract through the same seam. See "The overlay engine" in
+//! tests below are the contract each keeps; `slide` is the default, `zoom` the arc a press along the
+//! strip plays zoomed out, the config's `animations › look` picks the one every flight takes, and
+//! `linear` and `probe`, looks only the tests build, keep the contract through the same seam. See "The overlay engine" in
 //! `src/animation/docs/animation-smoothness.md`.
 
 #[cfg(test)]
 pub mod linear;
 pub mod slide;
+pub mod zoom;
 
 use std::fmt::Debug;
 
@@ -23,6 +24,7 @@ use rini_geometry::space::{
 use rini_ipc::protocol::Direction;
 
 use self::slide::Slide;
+use self::zoom::ZoomArc;
 use super::motion::accents::Accent;
 use super::motion::plan::{
     FlightPlan, GroupKey, Member, PlanDelta, ReflowPlan, merge_plans, stale_overlay_layers,
@@ -34,6 +36,7 @@ use super::motion::score::{Edit, Node, Score, Value};
 pub enum Look {
     #[default]
     Slide,
+    Zoom,
     #[cfg(test)]
     Linear,
     /// Slide's choreography and staging but for the step, so a test can tell a chosen look from
@@ -44,12 +47,13 @@ pub enum Look {
 
 impl Look {
     #[cfg(test)]
-    pub const ALL: [Look; 3] = [Look::Slide, Look::Linear, Look::Probe];
+    pub const ALL: [Look; 4] = [Look::Slide, Look::Zoom, Look::Linear, Look::Probe];
 
     /// The look's choreography for one flight.
     pub fn choreography(self) -> Box<dyn Choreography> {
         match self {
             Look::Slide => Box::new(Slide::default()),
+            Look::Zoom => Box::new(ZoomArc::default()),
             #[cfg(test)]
             Look::Linear => Box::new(linear::Linear),
             #[cfg(test)]
@@ -62,6 +66,7 @@ impl Look {
     pub fn stage(self, cue: &Cue, strip: &Strip) -> Staging {
         match self {
             Look::Slide => slide::stage(cue, strip),
+            Look::Zoom => zoom::stage(cue, strip),
             #[cfg(test)]
             Look::Linear => linear::stage(cue, strip),
             #[cfg(test)]
@@ -82,13 +87,18 @@ pub enum Cue {
         window: WindowId,
         direction: Direction,
     },
+    /// Focus went along the strip from `from` to `to`; at an end, both are the window it stayed on.
+    Focus {
+        from: WindowId,
+        to: WindowId,
+    },
 }
 
 impl Cue {
     pub fn moved(&self) -> Option<(WindowId, Direction)> {
         match *self {
             Cue::Move { window, direction } => Some((window, direction)),
-            Cue::Plain => None,
+            Cue::Plain | Cue::Focus { .. } => None,
         }
     }
 }
@@ -486,13 +496,14 @@ mod tests {
     use rini_geometry::{from_overlay_space, is_off_screen, to_overlay_space};
 
     use super::*;
+    use crate::animation::domain::motion::accents::Swap;
     use crate::animation::domain::motion::bounce::Bounce;
-    use crate::animation::domain::motion::easing::MOTION_CURVE;
+    use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
     use crate::animation::domain::motion::plan::{
         EDGE_BOUNCE_OVERSHOOT, GROUP_TOLERANCE, GroupKey, Member, Resolved, carries_out_and_back,
         on_overlay, overlay_of, reflow_plan,
     };
-    use crate::animation::domain::motion::score::{Channel, Curve, SAMPLE_STEP, Track};
+    use crate::animation::domain::motion::score::{Channel, Curve, SAMPLE_STEP, Track, Zoom};
     use crate::animation::domain::motion::testing::{
         DISPLAY, Gen, RUNS, VIEWPORT, random_requests, rect,
     };
@@ -574,8 +585,15 @@ mod tests {
         }
 
         /// The motion from frame zero at `BEGIN`, with `accents` waiting for it.
-        fn start(&mut self, accents: &[Accent]) {
-            let stage = stage(&self.plan, &self.drawn, accents);
+        fn start(&mut self, accents: &[Accent]) { self.start_as(accents, Cue::Plain); }
+
+        /// The motion from frame zero at `BEGIN`, with `accents` waiting for it and frame zero
+        /// showing `cue`.
+        fn start_as(&mut self, accents: &[Accent], cue: Cue) {
+            let stage = Stage {
+                cue,
+                ..stage(&self.plan, &self.drawn, accents)
+            };
             let edits = self.choreography.compose(&self.score, &stage, BEGIN);
             self.fold(&edits);
         }
@@ -650,8 +668,9 @@ mod tests {
     }
 
     /// The motion lands every window the flight draws where its plan sends it, whichever accent
-    /// waited for it, and once every track has ended nothing plays: each edge within a point, a half
-    /// for its tile and a half for its container, each placed on whole points.
+    /// waited for it and whatever press frame zero shows, and once every track has ended nothing
+    /// plays: each edge within a point, a half for its tile and a half for its container, each
+    /// placed on whole points.
     #[test]
     fn every_look_lands_each_node_on_its_plan() {
         let waiting = [
@@ -667,11 +686,16 @@ mod tests {
         ];
         for look in Look::ALL {
             let mut rng = Gen(31);
+            let mut presses = Gen(32);
             for run in 0..RUNS {
                 let mut flight =
                     Flight::posed(look.choreography(), &random_requests(&mut rng), |_| true);
-                let accents = &waiting[rng.below(waiting.len() as u64) as usize];
-                flight.start(accents);
+                let mut accents = waiting[rng.below(waiting.len() as u64) as usize].clone();
+                if presses.coin() {
+                    accents.push(an_arc(&mut presses, &flight.drawn));
+                }
+                let cue = a_cue(&mut presses, &flight.drawn);
+                flight.start_as(&accents, cue);
                 let end = BEGIN + flight.score.remaining(BEGIN);
                 assert!(flight.score.settled(end), "{look:?} run {run}");
                 for &window in &flight.drawn {
@@ -702,23 +726,26 @@ mod tests {
     /// Every pass of the bend contracts' flights of the look `make` gives, as `check` sees it: passes
     /// built as the reactor builds them, from where the last pass sends every window, merged one to
     /// four times 10-400ms apart into a flight playing from its score, 200 flights from each of
-    /// `BEND_SEEDS`.
+    /// `BEND_SEEDS`. Some flights start on an arc and some passes bring one (`an_arc`).
     fn bent_flights(
         make: &dyn Fn() -> Box<dyn Choreography>,
         check: &mut dyn FnMut(&Bend) -> Result<(), String>,
     ) -> Result<(), String> {
         for seed in BEND_SEEDS {
             let mut rng = Gen(seed);
+            let mut arcs = Gen(seed + 1000);
             for run in 0..RUNS {
                 let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
-                flight.start(&[]);
+                let first = arcs.coin().then(|| an_arc(&mut arcs, &flight.drawn));
+                flight.start(&Vec::from_iter(first));
                 let mut now = BEGIN;
                 for step in 0..1 + rng.below(4) {
                     now += rng.pt(10.0, 400.0) / 1000.0;
                     let newcomer = wid(500 + step as u32);
                     let (incoming, pan) = random_pass(&mut rng, &mut flight, newcomer);
                     let (playing, sent) = (flight.score.clone(), flight.plan.clone());
-                    let delta = flight.merge(&incoming, pan, None, now).delta;
+                    let accent = (arcs.below(3) == 0).then(|| an_arc(&mut arcs, &flight.drawn));
+                    let delta = flight.merge(&incoming, pan, accent, now).delta;
                     check(&Bend {
                         tag: format!("seed {seed} run {run} step {step}"),
                         now,
@@ -756,7 +783,7 @@ mod tests {
     /// The bend contract, over `bent_flights`: whatever a pass brings and whenever it lands, every
     /// window the flight drew before it is drawn where it was, and a window it brings rides beside
     /// the windows it sits beside in the layout: drawn where the pass has it, moved by as far as the
-    /// container it rides is drawn from where the last pass sent it. Each edge within the half point
+    /// container it rides is drawn from where the last pass sent it, through the strip's zoom. Each edge within the half point
     /// placing on whole points allows, and within a point for a window the pass moves into a
     /// container it opens (`OPENED_SLACK`). No rigid member's tile has a track of its own:
     /// `Merged::bend` moves one to another container by riding and placing it alone.
@@ -783,6 +810,12 @@ mod tests {
                     ),
                     from.size.respace(),
                 );
+                let want = match flight.score.sample(Node::Strip, now) {
+                    Some(Value::Zoom(zoom)) => {
+                        OverlayRect::new(zoom.draw(want.origin), want.size * zoom.scale)
+                    }
+                    _ => want,
+                };
                 let is = flight.score.drawn(newcomer, now).expect("drawn");
                 let apart = edges_apart(is, want);
                 if apart > 0.5 + 1e-6 {
@@ -824,57 +857,102 @@ mod tests {
         Ok(())
     }
 
+    /// How a speed changes across a bend at `now`, read over `SAMPLE_STEP`s: `was` as it was drawn
+    /// and `is` as it is, each from 2 steps before to 2 after. The speed over the step before the
+    /// bend and over the one after, and how far they may differ: as far as the motions themselves
+    /// change it there, the motion before over the step before that and the step after, as it would
+    /// have gone on, the one after over its second step, and `slack` over a step.
+    struct Crossed {
+        before: f64,
+        after: f64,
+        allowed: f64,
+    }
+
+    impl Crossed {
+        fn read(
+            was: impl Fn(f64) -> Option<f64>,
+            is: impl Fn(f64) -> Option<f64>,
+            slack: f64,
+        ) -> Option<Crossed> {
+            const STEP: f64 = SAMPLE_STEP;
+            let (p2, p1, p0, o1) = (was(-2.0)?, was(-1.0)?, was(0.0)?, was(1.0)?);
+            let (q0, q1, q2) = (is(0.0)?, is(1.0)?, is(2.0)?);
+            let (earlier, before, unbent) = ((p1 - p2) / STEP, (p0 - p1) / STEP, (o1 - p0) / STEP);
+            let (after, later) = ((q1 - q0) / STEP, (q2 - q1) / STEP);
+            let allowed = (before - earlier).abs()
+                + (unbent - before).abs()
+                + (later - after).abs()
+                + slack / STEP;
+            Some(Crossed { before, after, allowed })
+        }
+
+        fn jumped(&self) -> bool { (self.after - self.before).abs() > self.allowed }
+    }
+
+    /// Where `score` lays `window` out at `at`: its frame in its container, moved by where the
+    /// container is drawn, before the strip's zoom.
+    fn laid(score: &Score, window: WindowId, at: f64) -> Option<OverlayRect> {
+        let key = score.parent(window)?;
+        match (
+            score.sample(Node::Tile(window), at)?,
+            score.sample(Node::Container(key), at)?,
+        ) {
+            (Value::Rect(frame), Value::Point(container)) => Some(overlay_of(frame, container)),
+            _ => None,
+        }
+    }
+
     /// The speed contract, over `bent_flights`: every window the flight drew before a pass that the
-    /// pass leaves riding a container goes on at the speed it is drawn moving. Each edge's speed over
-    /// the `SAMPLE_STEP` before the pass, as it was drawn, and over the one after, as it is, differs
-    /// by no more than the motions themselves change it there: the motion before the pass over the
-    /// step before that and over the step after, as it would have gone on, the one after it over its
-    /// second step, and the half point a bend may move an edge, over a step. A loose tile is outside
-    /// it: Slide starts each one a pass bends from where it is drawn on `MOTION_CURVE` again, so its
-    /// speed jumps, against "Arriving mid-flight" in `specs/animation.md`.
+    /// pass leaves riding a container goes on at the speed it is drawn moving. A window is drawn
+    /// through the strip's zoom, so each is read apart: each edge's speed as the window is laid out
+    /// on the strip, and the zoom's scale and shift, each `Crossed` the bend within what the motions
+    /// change it, a laid-out edge with the half point a bend may move it as slack. Read drawn, a
+    /// window's speed and the zoom's turning opposite ways cancel the allowance though neither
+    /// jumps. A loose tile is outside it: Slide starts each one a pass bends from where it is drawn
+    /// on `MOTION_CURVE` again, so its speed jumps, against "Arriving mid-flight" in
+    /// `specs/animation.md`.
     fn bends_at_the_speed_it_moves(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
-        const STEP: f64 = SAMPLE_STEP;
         let edges =
             |frame: OverlayRect| [frame.min().x, frame.min().y, frame.max().x, frame.max().y];
+        let zoom = |score: &Score, at: f64| match score.sample(Node::Strip, at) {
+            Some(Value::Zoom(zoom)) => Some(Value::Zoom(zoom).parts()),
+            _ => None,
+        };
         let mut moving = 0;
         bent_flights(make, &mut |bend| {
             let now = bend.now;
+            let at = |k: f64| now + k * SAMPLE_STEP;
+            for part in 0..3 {
+                let was = |k: f64| zoom(bend.playing, at(k)).map(|parts| parts[part]);
+                let is = |k: f64| zoom(&bend.bent.score, at(k)).map(|parts| parts[part]);
+                if let Some(crossed) = Crossed::read(was, is, 1e-6).filter(Crossed::jumped) {
+                    let Crossed { before, after, allowed } = crossed;
+                    return Err(format!(
+                        "{}: the zoom's speed jumped from {before:.3} to {after:.3}/s, allowed \
+                         {allowed:.3}",
+                        bend.tag
+                    ));
+                }
+            }
             for window in bend.sent.windows() {
                 if !matches!(bend.bent.plan.member(window), Some(Member::Rigid { .. })) {
                     continue;
                 }
-                let was = |k: f64| bend.playing.drawn(window, now + k * STEP).map(edges);
-                let is = |k: f64| bend.bent.score.drawn(window, now + k * STEP).map(edges);
-                let (Some(p2), Some(p1), Some(p0), Some(o1), Some(q0), Some(q1), Some(q2)) = (
-                    was(-2.0),
-                    was(-1.0),
-                    was(0.0),
-                    was(1.0),
-                    is(0.0),
-                    is(1.0),
-                    is(2.0),
-                ) else {
-                    continue;
-                };
                 for edge in 0..4 {
-                    let earlier = (p1[edge] - p2[edge]) / STEP;
-                    let before = (p0[edge] - p1[edge]) / STEP;
-                    let unbent = (o1[edge] - p0[edge]) / STEP;
-                    let after = (q1[edge] - q0[edge]) / STEP;
-                    let later = (q2[edge] - q1[edge]) / STEP;
-                    let change = (after - before).abs();
-                    let allowed = (before - earlier).abs()
-                        + (unbent - before).abs()
-                        + (later - after).abs()
-                        + 0.5 / STEP;
-                    if change > allowed {
+                    let was = |k: f64| laid(bend.playing, window, at(k)).map(|f| edges(f)[edge]);
+                    let is = |k: f64| laid(&bend.bent.score, window, at(k)).map(|f| edges(f)[edge]);
+                    let Some(crossed) = Crossed::read(was, is, 0.5) else {
+                        continue;
+                    };
+                    if crossed.jumped() {
+                        let Crossed { before, after, allowed } = crossed;
                         return Err(format!(
                             "{}: {window:?}'s speed jumped from {before:.0} to {after:.0}pt/s, \
                              allowed {allowed:.0}",
                             bend.tag
                         ));
                     }
-                    moving += usize::from(before.abs() > 100.0);
+                    moving += usize::from(crossed.before.abs() > 100.0);
                 }
             }
             Ok(())
@@ -918,13 +996,18 @@ mod tests {
     }
 
     /// The speed contract rejects a look that starts every container a pass bends on a fresh curve
-    /// from where it is drawn, keeping the bend contract.
+    /// from where it is drawn, and one that sends the strip's zoom home from rest where it is drawn,
+    /// each keeping the bend contract.
     #[test]
-    fn the_speed_contract_rejects_a_look_that_restarts_the_motion_at_a_pass() {
+    fn the_speed_contract_rejects_a_look_that_restarts_the_motion_or_the_zoom_at_a_pass() {
         let restarted = bends_at_the_speed_it_moves(&|| Flawed::boxed(Flaw::RestartsTheBend))
             .expect_err("a bend that restarts the motion");
         assert!(restarted.contains("speed jumped"), "{restarted}");
         bends_without_a_jump(&|| Flawed::boxed(Flaw::RestartsTheBend)).expect("drawn where it was");
+        let zoomed = bends_at_the_speed_it_moves(&|| Flawed::boxed(Flaw::RestartsTheZoom))
+            .expect_err("a bend that restarts the zoom");
+        assert!(zoomed.contains("the zoom's speed jumped"), "{zoomed}");
+        bends_without_a_jump(&|| Flawed::boxed(Flaw::RestartsTheZoom)).expect("drawn where it was");
     }
 
     /// A pass as the reactor builds one for `flight`, from where its last pass sends every window: a
@@ -1166,7 +1249,8 @@ mod tests {
     }
 
     /// The push contract, over flights of the look `make` gives: one to three pushes against an end
-    /// reaching a flight that moves, each 10-300ms after the one before. No window the flight draws
+    /// reaching a flight that moves, each 10-300ms after the one before, each with a press of its
+    /// own (`a_cue`), the flight at times started on an arc or by a push of its own. No window the flight draws
     /// jumps as a push reaches it, within the half point placing on whole points allows; against each
     /// of the four walls, some push draws a window more than a point further toward it than the
     /// flight without it draws it; and every window is home where its plan sends it once every track
@@ -1181,10 +1265,20 @@ mod tests {
             OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT),
         ];
         let mut rng = Gen(173);
+        let mut presses = Gen(174);
         let mut toward = [0usize; 4];
         for run in 0..RUNS {
             let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
-            flight.start(&[]);
+            let first = match presses.below(3) {
+                0 => vec![an_arc(&mut presses, &flight.drawn)],
+                1 => vec![Accent::Push {
+                    wall: walls[presses.below(2) as usize],
+                    seconds: PLAIN,
+                }],
+                _ => Vec::new(),
+            };
+            let cue = a_cue(&mut presses, &flight.drawn);
+            flight.start_as(&first, cue);
             let motion_end = BEGIN + flight.score.remaining(BEGIN);
             let mut now = BEGIN;
             for step in 0..1 + rng.below(3) {
@@ -1193,7 +1287,8 @@ mod tests {
                 let side = rng.below(4) as usize;
                 let wall = walls[side];
                 let without = flight.score.clone();
-                let edits = flight.choreography.push(&flight.score, &Cue::Plain, wall, PLAIN, now);
+                let cue = a_cue(&mut presses, &flight.drawn);
+                let edits = flight.choreography.push(&flight.score, &cue, wall, PLAIN, now);
                 flight.fold(&edits);
                 for &window in &flight.drawn {
                     let (was, is) = (without.drawn(window, now), flight.score.drawn(window, now));
@@ -1339,6 +1434,46 @@ mod tests {
         assert_eq!(digest.0, SLIDE_SCORES, "{:#x}", digest.0);
     }
 
+    /// An arc a zoom look stages, at the plain length: 0.7 to 0.88 deep, a quarter to three quarters
+    /// of the travel carried at its middle, and half the time two of `windows` swapped, each
+    /// crossing up to 900pt.
+    fn an_arc(rng: &mut Gen, windows: &[WindowId]) -> Accent {
+        let depth = 0.7 + rng.below(19) as f64 / 100.0;
+        let share = 0.25 + rng.below(51) as f64 / 100.0;
+        let swap = (windows.len() >= 2 && rng.coin()).then(|| {
+            let moved = rng.below(windows.len() as u64) as usize;
+            let passed = (moved + 1 + rng.below(windows.len() as u64 - 1) as usize) % windows.len();
+            let by = rng.pt(100.0, 900.0);
+            Swap {
+                moved: windows[moved],
+                passed: windows[passed],
+                moved_by: OverlayVector::new(by, 0.0),
+                passed_by: OverlayVector::new(-by, 0.0),
+            }
+        });
+        Accent::Arc {
+            depth,
+            share,
+            swap,
+            seconds: PLAIN,
+        }
+    }
+
+    /// The press a flight or a push shows: plain, focus along the strip between two of `windows` or
+    /// staying on one at an end, or a move of one of them.
+    fn a_cue(rng: &mut Gen, windows: &[WindowId]) -> Cue {
+        let kind = rng.below(3);
+        let mut any = || windows.get(rng.below(windows.len().max(1) as u64) as usize).copied();
+        match (kind, any(), any()) {
+            (1, Some(from), Some(to)) => Cue::Focus { from, to },
+            (2, Some(window), _) => Cue::Move {
+                window,
+                direction: Direction::Left,
+            },
+            _ => Cue::Plain,
+        }
+    }
+
     /// A move's step left or right, of a third of the viewport, at the plain length.
     fn a_step(rng: &mut Gen) -> Accent {
         let offset = if rng.coin() { 576.0 } else { -576.0 };
@@ -1367,8 +1502,64 @@ mod tests {
         }
     }
 
+    /// The digest of what Zoom draws over seed 163's flights, each started on an arc seed 191 stages
+    /// with a press of its own, some with a push waiting, and bent by one to four passes as
+    /// `random_pass` builds them, some bringing an arc and some reached by a push first: the score
+    /// after the motion starts and after each pass or push, and each one's edits. A change to how
+    /// Zoom moves changes it.
+    const ZOOM_SCORES: u64 = 0xed99_e770_d1b2_eeec;
+
+    /// Zoom draws over seed 163's flights what `ZOOM_SCORES` holds: the strip's zoom and every
+    /// node's place, ride and tracks, and every edit a pass or a push answers; some passes fold into
+    /// the arc playing and some start a shallow one.
+    #[test]
+    fn zoom_draws_every_seeded_flight_as_it_did() {
+        let mut rng = Gen(163);
+        let mut presses = Gen(191);
+        let mut digest = Digest::default();
+        let (mut during, mut started) = (0, 0);
+        for _ in 0..RUNS {
+            let mut flight =
+                Flight::posed(Look::Zoom.choreography(), &random_requests(&mut rng), |_| true);
+            let mut waiting = vec![an_arc(&mut presses, &flight.drawn)];
+            if presses.below(3) == 0 {
+                waiting.push(Accent::Push {
+                    wall: OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0),
+                    seconds: PLAIN,
+                });
+            }
+            let cue = a_cue(&mut presses, &flight.drawn);
+            flight.start_as(&waiting, cue);
+            digest.score(&flight.score);
+            let mut now = BEGIN;
+            for step in 0..1 + rng.below(4) {
+                now += rng.pt(10.0, 400.0) / 1000.0;
+                let (incoming, pan) = random_pass(&mut rng, &mut flight, wid(500 + step as u32));
+                if presses.below(4) == 0 {
+                    let wall = OverlayVector::new(EDGE_BOUNCE_OVERSHOOT, 0.0);
+                    let edits = flight.choreography.push(&flight.score, &cue, wall, PLAIN, now);
+                    flight.fold(&edits);
+                    digest.edits(&edits);
+                }
+                let arcing = flight.score.track(Node::Strip, Channel::Base).cloned();
+                during += usize::from(arcing.as_ref().is_some_and(|t| t.at(now).is_some()));
+                let accent = presses.coin().then(|| an_arc(&mut presses, &flight.drawn));
+                let edits = flight.merge(&incoming, pan, accent, now).edits;
+                let fresh = flight.score.track(Node::Strip, Channel::Base);
+                started += usize::from(fresh.is_some_and(|t| t.begin() == now));
+                digest.edits(&edits);
+                digest.score(&flight.score);
+            }
+        }
+        assert!(
+            during > 0 && started > 0,
+            "{during} during an arc, {started} started one"
+        );
+        assert_eq!(digest.0, ZOOM_SCORES, "{:#x}", digest.0);
+    }
+
     /// FNV-1a over every score and edit list folded in, each read in one order: a score's maps and
-    /// the merge's keep none.
+    /// the merge's keep none. The strip is read only once it is placed.
     struct Digest(u64);
 
     impl Default for Digest {
@@ -1388,6 +1579,9 @@ mod tests {
                     .tiles()
                     .map(|(window, key)| format!("{key:?} {}", node(Node::Tile(window)))),
             );
+            if score.model(Node::Strip).is_some() {
+                lines.push(node(Node::Strip));
+            }
             lines.sort();
             self.bytes(lines.concat().bytes());
         }
@@ -1429,6 +1623,9 @@ mod tests {
         RestartsTheBend,
         /// Its motion holds every rigid member's tile at its frame on a track of its own.
         TracksRigidTiles,
+        /// Its motion zooms the strip out and back, and its bend sends the zoom home from where it
+        /// is drawn on `EASE_IN_OUT`, from rest.
+        RestartsTheZoom,
     }
 
     /// Slide but for one flaw, so a contract's check is seen to reject a look that breaks it.
@@ -1470,7 +1667,8 @@ mod tests {
                 | Flaw::PushesSlowly
                 | Flaw::CutsTheBend
                 | Flaw::RestartsTheBend
-                | Flaw::TracksRigidTiles => self.slide.fold(plan, pass),
+                | Flaw::TracksRigidTiles
+                | Flaw::RestartsTheZoom => self.slide.fold(plan, pass),
             }
         }
 
@@ -1478,6 +1676,15 @@ mod tests {
 
         fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
             let mut edits = self.slide.compose(playing, stage, begin);
+            if let Flaw::RestartsTheZoom = self.flaw {
+                let mut making = Making::from(playing);
+                for edit in edits {
+                    making.push(edit);
+                }
+                let centre = stage.viewport.center();
+                zoom::strip_arc(&mut making, zoom::STRIP_ZOOM, centre, begin, stage.seconds);
+                return making.edits;
+            }
             if let Flaw::TracksRigidTiles = self.flaw {
                 let members = stage.plan.groups.iter().flat_map(|group| &group.members);
                 for member in members.filter(|m| stage.drawn.contains(&m.window)) {
@@ -1504,6 +1711,19 @@ mod tests {
             now: f64,
         ) -> Retarget {
             let mut bent = self.slide.retarget(playing, plan, pass, now);
+            if let (Flaw::RestartsTheZoom, Some(drawn)) =
+                (self.flaw, playing.sample(Node::Strip, now))
+            {
+                bent.edits.push(Edit::Add(Track::between(
+                    Node::Strip,
+                    Channel::Base,
+                    drawn,
+                    Value::Zoom(Zoom::REST),
+                    now,
+                    pass.seconds,
+                    Curve::Bezier(EASE_IN_OUT),
+                )));
+            }
             for edit in &mut bent.edits {
                 let Edit::Add(track) = edit else { continue };
                 if track.channel() != Channel::Base {
@@ -1550,7 +1770,8 @@ mod tests {
                 | Flaw::PushesSideways
                 | Flaw::CutsTheBend
                 | Flaw::RestartsTheBend
-                | Flaw::TracksRigidTiles => self.slide.push(playing, cue, wall, seconds, now),
+                | Flaw::TracksRigidTiles
+                | Flaw::RestartsTheZoom => self.slide.push(playing, cue, wall, seconds, now),
                 Flaw::PushesSlowly => self.slide.push(playing, cue, wall, seconds * 10.0, now),
                 Flaw::PushesFromRest => playing
                     .containers()
@@ -1578,6 +1799,7 @@ mod tests {
         };
         for look in Look::ALL {
             let mut rng = Gen(37);
+            let mut focus = Gen(38);
             let mut staged = 0;
             for run in 0..RUNS {
                 let count = 1 + rng.below(6) as u32;
@@ -1605,6 +1827,10 @@ mod tests {
                     }
                 }
                 let cue = match rng.below(3) {
+                    0 if focus.coin() => Cue::Focus {
+                        from: wid(1 + focus.below(count as u64) as u32),
+                        to: wid(1 + focus.below(count as u64) as u32),
+                    },
                     0 => Cue::Plain,
                     _ => Cue::Move {
                         window: wid(1 + rng.below(count as u64 + 1) as u32),

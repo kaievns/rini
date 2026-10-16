@@ -71,10 +71,11 @@ check, then a spec or deletion:
 - **One picture per window.** Each window keeps a focused face beside its picture
   (`specs/animation.md`, "Focus changing during a flight"). Dropping it saves memory. I parked it
   on 2026-10-06, to come back to.
-- **A second look: zoom and arc for moves and navigation.** Spiked 2026-10-01, wanted back
-  2026-10-15 (`specs/animation.md`, "Looks", not yet met). The score's strip zoom, the viewport a
-  look is staged on and `animations › look` are in place, so it needs only its choreography,
-  staging, a `Look` variant and a config word (`src/animation/docs/README.md`, "Adding a look").
+- **The zoom look's presses and clock.** `look "zoom"` plays a move's arc. The reactor names no
+  focus press and sends every bounce as a plain press, so neither zooms, and the flight's clock runs
+  the plain length past the arc (`specs/animation.md`, "The zoom look", not yet met). The moved
+  window's lift shadow, and whether a zoomed-out strip draws every window it brings into view, are
+  open there too.
 - **Unplug and replug verified end to end,** per arrangement and with role pins, by a
   `query diagnostics` capture before and after into `docs/data/`. Nothing there covers displays yet.
 - **Per-display overrides by display name.** `output "UUID"` takes a UUID only, and only `gaps` and

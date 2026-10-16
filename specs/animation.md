@@ -33,17 +33,18 @@ only the transitions are missing.
 ## Looks
 
 How a flight moves is its look: which pieces move, along which paths, and how the view follows them.
-Every other requirement in this spec holds whatever the look.
+There are two: slide, the default, and zoom ("The zoom look"). Every other requirement in this spec
+holds whatever the look, but for one that names a look, which holds for that look alone.
 
 - rini MUST support more than one look. A look MUST choose only how a flight is drawn: the frames
   written to the windows MUST be the layout's under every look ("Correctness the user can see").
-  Not yet met: slide is the only look.
 - Every look MUST pass one contract, checked alike for each: frame zero draws each window where it
   is on screen at the press ("The pictures a flight starts with", "Correctness the user can see");
   the motion lands each window on its layout frame, so the lift hands over to windows standing where
   their tiles end; a pass before the motion folds into it as one movement from frame zero, and a
   pass arriving mid-flight bends the flight without a jump in place, nor in speed for a window
-  riding a container ("Arriving mid-flight"); a push draws each window toward its wall without a
+  riding a container, its speed on the strip and the strip's zoom each read apart, as a window
+  drawn through a zoom moves at both ("Arriving mid-flight"); a push draws each window toward its wall without a
   jump, and every window is home within one bounce of the last push ("Pushing past an end"); and a
   move stages only the pair it is given ("Moving a window along the strip").
 - A look MUST keep what every flight owes beyond the contract: the pictures it starts from and waits
@@ -104,7 +105,7 @@ Every other requirement in this spec holds whatever the look.
 - Every window MUST start from where it was on screen. The view moves wherever the strip moves on
   screen, not only when it scrolls: a centred column that loses its centring as it moves shifts the
   whole strip with the scroll offset unchanged.
-- Only a moved column that fills the viewport MUST step: one as wide as the tiling area, the
+- Under slide, only a moved column that fills the viewport MUST step: one as wide as the tiling area, the
   display's usable width less both outer gaps, within a point, whether the full-width toggle or a
   width preset made it so. The view follows such a column, so nothing else on screen shows it moved.
   A narrower column, half or two-thirds of the display, is seen moving and MUST NOT step.
@@ -128,13 +129,13 @@ Every other requirement in this spec holds whatever the look.
 - The step and the bounce at an end MUST NOT hold each other off.
 - The step is drawn only. Real windows go to the layout's frames, the column passed included.
 
-> **Reported 2026-09-30.** "what i have two 50/50 windows at the beginning of a strip, when i move one
+> **Reported 2026-09-29.** "what i have two 50/50 windows at the beginning of a strip, when i move one
 > of them in place of the other there is a nice transition animation where two windows are moving to
 > take each other's places. everywhere else though the window just jumps to new place and then there
 > is a focus navigation animation on top of it, the transition is instant and confusing, it is
 > especially problematic for full sized windows where the movement is generally invisible and it
-> doesn't feel like anything is actually happening, which feels broken." And: "maby moving full-size
-> windows 1/3 to either side temporarily to show the swap animation and then bounce it back in focus
+> doesn't feel like anything is actually happening, which feels broken." And on 2026-09-30: "maby
+> moving full-size windows 1/3 to either side temporarily to show the swap animation and then bounce it back in focus
 > would be an option too". Every move that scrolled the strip was drawn as the finished layout panning
 > into view, so the two windows had changed places by the first frame. The 50/50 pair at the start of
 > a strip was the one case that did not scroll.
@@ -145,6 +146,95 @@ Every other requirement in this spec holds whatever the look.
 > own travel on screen was under a quarter of the display stepped, so half-width moves the view
 > followed stepped too, and the moved window stepped alone toward where it went. The column it passed
 > crossed the display in about 60ms, so the third the step opened showed the desktop.
+
+## The zoom look
+
+Under zoom, a press along the strip plays as one arc: the strip zooms out and back in while it moves.
+Zoom never steps; the step above is slide's.
+
+> **Reported 2026-10-15.** "zoom spike is coming back, i want to support different animations
+> generally". On 2026-10-16: "go for zoom". The spike, parked on 2026-10-01, drew its own motion
+> beside the flight's; the look carries the same arc through the seam every look keeps.
+
+- A move along the strip MUST zoom the strip out, swap the pair and zoom back in, so that a swap of
+  columns as wide as the display is seen. Both columns MUST cross from the slots they held to each
+  other's, and nothing is held.
+
+> **Reported 2026-09-29.** "maybe strip zoom out or something and then animate the window swap and
+> zoom back in", closing the report under "Moving a window along the strip". On 2026-09-30: "can you
+> as a scratch put together a temporary animation that will zoom out the stip, animate the swap and
+> zoom back in, please?"
+
+- The zoom MUST go only as deep as the pair needs: 0.88 for two half-width columns, deeper for a
+  wider pair until the narrower column keeps two thirds of itself in view with the pair centred, and
+  never past 0.7. The moved window MUST zoom out as far as the strip: no depth between them, its
+  lift shown by a shadow alone. Not yet met: the moved window has no lift shadow.
+
+> **Reported 2026-09-30.** "way too much zoom, also the strip should zoom out more than the current
+> window so it'd look like the window is lifted above the strip". The first scratch zoomed the strip,
+> the moved window with it, out to between 0.4 and 0.75; the next took the strip to 0.88 and the
+> window to 0.95. Later that day: "can you reduce the depth gap between the current window and the
+> strip?", which halved the gap, then "reduce the zoomout gap to 0".
+
+- At the arc's middle, a pair that fits the zoomed display MUST be in view whole, the view moved no
+  further than that takes, and a pair wider than it MUST be centred, both columns clipped alike on
+  opposite sides: a third of each for two full-width columns, 431pt on the 1728pt display. The view
+  MUST end on the layout, the moved window back in focus, and MUST move one way, never winding up
+  first or running past the layout and settling back. Two halves at the start of the strip MUST
+  move only themselves.
+
+> **Reported 2026-09-30.** "i really like how the 50/50 windows swap looks like. but the fullsize
+> swap is not quite there, it's barely visible again. ... zoom out, but as you're zooming out move
+> the strip to the side opposite to the swap, how much depends on a window for a 50/50 situation
+> that's 0 to match what i see now, if the two windows together are more than 100% of the size
+> you'll need to move them so that both of them would be clipped on opposite sides, for two
+> full-sized windows swap i imagine both of them clipped by 1/3-1/4 or so. then animate the swap
+> between the windows and then zoom back in with shifting the strip in the direction of the swap so
+> that the active window got back in focus."
+
+- A focus press that scrolls the strip MUST pan on an arc too, as deep as a move of the same two
+  columns, the view half way at the middle. Not yet met: the reactor names no focus press to the
+  look, so under zoom one pans as slide pans.
+
+> **Reported 2026-09-30.** "can you try to change the normal navigation as well to zoom out, move,
+> and then zoom back in? same end of the strip wiggle in zoomed out state"
+
+- The zoom, the swap and the view's movement MUST be one movement: the zoom out and back in on one
+  bell that never holds, deepest where the swap is half done, the view moving from the first frame
+  to the last, every piece leaving and landing at rest.
+
+> **Reported 2026-09-30.** "there are three distinct moves in that animation. zoom out, move, zoom
+> in. can you make it one? sort of like an arc, one combined move". The spike zoomed out, held while
+> it moved and zoomed back in.
+
+- The arc MUST run 2.2/3 of the movement's plain length, 0.257s at the default 0.35s, and every
+  window it carries MUST run as long. Not yet met: the flight's clock runs the plain length, so the
+  overlay is up 93ms after the arc lands, and a press in that time merges into a flight with no arc.
+
+> **Reported 2026-10-01.** "speed it up 3x". The arc ran 0.77s. Kai parked the spike 19 minutes
+> later, before judging it: "lets park this for a second, and come back to it shortly."
+
+- A push against a side of the strip, by a move or a focus press, MUST bounce with the strip zoomed
+  out to 0.88 over an arc no longer than the bounce, and the bounce MUST reach its 72pt on screen.
+  A push while an arc plays MUST bounce at the strip's zoom and start no second arc. Not yet met: the
+  reactor sends every bounce flight as a plain press, so under zoom a push bounces at rest.
+
+> **Reported 2026-09-30.** "also the little bounce at the ends of the strip, can you make it work in
+> the zoomed out state, please?"
+
+> **Reported 2026-10-03.** "if you can make it react to every single press like a pure CSS based
+> bouncer would, that'd be fantastic" ("Pushing past an end"). The spike's zoomed bounce waited for
+> 0.3 of its arc; it now plays as its press lands, as every push does.
+
+- A press merged into an arc MUST carry it on as one movement. A press panning the way the strip is
+  going, with a quarter of the arc left, MUST fold into the arc and land with it, adding its travel
+  from rest. A press against it, or with less left, MUST turn the strip on a spring from where it is
+  drawn as fast as it is drawn moving: folded in, the strip would carry on the old way before
+  turning. A move merged into a flight with no arc playing MUST play a shallow arc of its own from
+  rest; any press merged into an arc playing MUST leave the arc as it is.
+- A zoomed-out strip MUST NOT show the desktop where the strip has a window. Not yet checked on
+  screen: which windows a flight draws is judged against the display at full size, so a window the
+  zoom brings into view may not be drawn.
 
 ## The vertical workspace switch
 
@@ -899,13 +989,18 @@ where its picture ends and the edges it stands still against are
 `src/pictures/domain/ground.rs`, and when a resized window has repainted is
 `src/pictures/domain/settle.rs`. The looks
 (`src/animation/domain/choreography.rs`, Slide the default in
-`src/animation/domain/choreography/slide.rs`) compose a flight's score, fold a press before its motion
+`src/animation/domain/choreography/slide.rs`, Zoom in `src/animation/domain/choreography/zoom.rs`) compose a flight's score, fold a press before its motion
 into it and bend it at a press after, and stage a press on the strip. The contract every look passes
 is the tests there: `every_look_poses_each_drawn_window_where_it_starts`,
 `every_look_lands_each_node_on_its_plan`, `every_look_folds_each_pass_before_the_motion`,
 `every_look_bends_a_flight_without_a_jump`, `every_look_bends_a_flight_at_the_speed_it_moves`,
 `every_look_pushes_out_and_home_without_a_jump` and `every_look_stages_only_the_pair_it_is_given`,
-and the `the_*_contract_rejects_*` tests beside them show each contract fails a flawed look. The config's `animations › look` is decoded in
+and the `the_*_contract_rejects_*` tests beside them show each contract fails a flawed look.
+`slide_draws_every_seeded_flight_as_it_did` and `zoom_draws_every_seeded_flight_as_it_did` pin what
+each look draws. Zoom's arc, its depth, its view and its merges are held by the tests in its file,
+`a_wide_pair_is_centred_at_the_middle_clipped_alike_on_both_sides` and
+`a_press_the_same_way_folds_into_the_arc_and_lands_with_it` among them, and the overlay plays its arc
+in `a_zoom_flight_plays_its_arc_exactly`. The config's `animations › look` is decoded in
 `src/app/config/kdl/value.rs`, held by `the_look_is_picked_by_name_and_slide_unless_written`, and
 the reactor hands it to every flight it asks for, held by
 `every_flight_takes_the_look_the_config_picks`; `FlightScore` keeps the look a flight began with,

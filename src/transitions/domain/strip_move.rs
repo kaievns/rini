@@ -185,6 +185,7 @@ pub(crate) mod tests {
         match stage_move(windows, &cue, area(), travel, PLAIN, Look::Slide) {
             Some(Accent::Step { offset, .. }) => Some(offset),
             Some(Accent::Push { .. }) => panic!("a move pushes nothing"),
+            Some(Accent::Arc { .. }) => panic!("Slide plays no arc"),
             None => None,
         }
     }
@@ -684,7 +685,8 @@ pub(crate) mod tests {
 
     /// What the look staged is what lands on the surface: a window it starts elsewhere crosses from
     /// there, one it holds is drawn at that frame with no start of its own, every other window stays at
-    /// its new frame, and the accent is the look's. A plain press stages nothing.
+    /// its new frame, and the accent is the look's. Every look stages some move, and some look holds a
+    /// column, as Slide does and Zoom never does. A plain press stages nothing.
     #[test]
     fn stage_move_applies_what_the_look_staged() {
         let area = area();
@@ -699,8 +701,9 @@ pub(crate) mod tests {
             (full_width_move(Direction::Right), Direction::Up),
             ((narrower, SurfacePoint::origin()), Direction::Right),
         ];
+        let mut held = 0;
         for look in Look::ALL {
-            let (mut held, mut crossed) = (0, 0);
+            let mut staged = 0;
             for ((before, from_offset), direction) in cases.clone() {
                 let travel = travel_from(from_offset);
                 let cue = Cue::Move { window: wid(W), direction };
@@ -729,12 +732,9 @@ pub(crate) mod tests {
                     assert_eq!(*is, expected, "{look:?} {direction:?}");
                 }
                 held += staging.held.len();
-                crossed += staging.from.len();
+                staged += staging.from.len() + staging.held.len();
             }
-            assert!(
-                held > 0 && crossed > 0,
-                "{look:?}: {held} held, {crossed} crossed"
-            );
+            assert!(staged > 0, "{look:?} staged nothing");
 
             let (before, from_offset) = full_width_move(Direction::Right);
             let mut windows = before.clone();
@@ -745,6 +745,7 @@ pub(crate) mod tests {
             );
             assert_eq!(windows, before, "{look:?}: a plain press");
         }
+        assert!(held > 0, "no look held a column");
     }
 
     /// The simulated flight, both ways: the side the step opens is covered by N, then by N and C

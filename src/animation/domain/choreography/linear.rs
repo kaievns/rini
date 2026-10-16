@@ -52,9 +52,6 @@ struct Even<'a> {
     bent: Option<&'a Score>,
 }
 
-/// How far back a bend reads a track's speed from: within one of its steps, which are 1/120s.
-const SPEED_READ: f64 = 1e-4;
-
 impl Even<'_> {
     /// `node` carried from `from` to where it is placed, starting at `speed`: from rest on a linear
     /// track, or with its speed changing evenly on one sampled every `SAMPLE_STEP`; nothing for no
@@ -91,18 +88,10 @@ impl Even<'_> {
         making.push(Edit::Add(track));
     }
 
-    /// How fast `node`'s movement is going as the bend lands, per part a second: still for a node
-    /// with no movement playing then, and in a composition.
+    /// How fast `node`'s movement is going as the bend lands (`Score::rate`): still in a
+    /// composition.
     fn speed(&self, node: Node) -> [f64; 4] {
-        let track = self.bent.and_then(|score| score.track(node, Channel::Base));
-        let read = track.map(|track| (track.at(self.begin - SPEED_READ), track.at(self.begin)));
-        match read {
-            Some((Some(before), Some(now))) => {
-                let (before, now) = (before.parts(), now.parts());
-                std::array::from_fn(|i| (now[i] - before[i]) / SPEED_READ)
-            }
-            _ => [0.0; 4],
-        }
+        self.bent.map_or([0.0; 4], |score| score.rate(node, self.begin))
     }
 }
 
