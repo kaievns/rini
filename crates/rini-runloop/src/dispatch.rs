@@ -19,24 +19,34 @@ unsafe extern "C" {
 }
 
 pub trait DispatchExt {
+    /// `work` run with `context` on this queue at `when`.
+    ///
     /// # Safety
-    /// `context` must stay valid for `work` until the queue runs it.
+    /// `context` must stay valid for `work` until the queue runs it, and be usable from the
+    /// queue's thread.
     unsafe fn after_f(&self, when: Time, context: *mut c_void, work: extern "C" fn(*mut c_void));
-    fn after_f_s<T>(&self, when: Time, context: T, work: fn(T));
+    /// `work` run with `context` on this queue at `when`.
+    fn after_f_s<T: 'static>(&self, when: Time, context: T, work: fn(T));
 }
 
 impl DispatchExt for Unmanaged {
     unsafe fn after_f(&self, when: Time, context: *mut c_void, work: extern "C" fn(*mut c_void)) {
+        // SAFETY: `self` is a live queue, which the call retains until `work` has run; the caller
+        // keeps `context` valid for `work` and usable on the queue's thread.
         unsafe { dispatch_after_f(when, self, context, work) }
     }
 
-    fn after_f_s<T>(&self, when: Time, context: T, work: fn(T)) {
+    fn after_f_s<T: 'static>(&self, when: Time, context: T, work: fn(T)) {
         extern "C" fn trampoline<T>(ctx: *mut c_void) {
+            // SAFETY: `ctx` is the box `after_f_s` leaked for this one run of `trampoline`.
             let ctx = unsafe { Box::from_raw(ctx as *mut (T, fn(T))) };
             let (context, work) = *ctx;
             work(context);
         }
         let ctx = Box::into_raw(Box::new((context, work))) as *mut c_void;
+        // SAFETY: `ctx` owns a `'static` value, freed by the one `trampoline` that runs it. That it
+        // may move to the queue's thread the bound does not say: every caller schedules on the
+        // main queue, one of them a pointer to a main-thread object.
         unsafe { self.after_f(when, ctx, trampoline::<T>) };
     }
 }

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use objc2_core_foundation::{
     CFAbsoluteTime, CFAbsoluteTimeGetCurrent, CFRetained, CFRunLoop, CFRunLoopTimer,
-    CFRunLoopTimerContext, CFTimeInterval, kCFAllocatorDefault, kCFRunLoopCommonModes,
+    CFRunLoopTimerContext, CFTimeInterval, kCFAllocatorDefault,
 };
 use parking_lot::Mutex;
 use tokio_stream::Stream;
@@ -71,13 +71,15 @@ impl Timer {
         let callback_info = Arc::new(timer_ref);
 
         unsafe extern "C-unwind" fn retain(info: *const c_void) -> *const c_void {
-            // SAFETY: The pointer was passed to CFRunLoopTimerContext.info below.
+            // SAFETY: `info` is `Arc::as_ptr` of `callback_info`, an Arc CF holds a count of from
+            // this first retain until its last release.
             unsafe { Arc::increment_strong_count(info.cast::<Weak<Mutex<TimerState>>>()) };
             info
         }
 
         unsafe extern "C-unwind" fn release(info: *const c_void) {
-            // SAFETY: The pointer was passed to CFRunLoopTimerContext.info below.
+            // SAFETY: `info` is `Arc::as_ptr` of `callback_info`, each release giving back a count
+            // a retain took.
             unsafe { Arc::decrement_strong_count(info.cast::<Weak<Mutex<TimerState>>>()) };
         }
 
@@ -89,7 +91,8 @@ impl Timer {
                 return;
             }
 
-            // SAFETY: The pointer was passed to CFRunLoopTimerContext.info below.
+            // SAFETY: `info` is `Arc::as_ptr` of `callback_info`, kept alive by the count CF holds
+            // while the timer can fire.
             let timer_ref = unsafe { &*info.cast::<Weak<Mutex<TimerState>>>() };
 
             let Some(timer) = timer_ref.upgrade() else { return };
@@ -109,7 +112,9 @@ impl Timer {
             copyDescription: None,
         };
 
-        // SAFETY: The retain/release callbacks and info are thread-safe.
+        // SAFETY: the context is live for the call, which copies it and retains `info` before
+        // returning, so `callback_info` can drop after; the callbacks each read `info` as the
+        // `Weak` it is, and their counts are atomic, as a release on another thread needs.
         let cf_timer = unsafe {
             CFRunLoopTimer::new(
                 kCFAllocatorDefault,
@@ -124,7 +129,7 @@ impl Timer {
         .expect("Failed to create CFRunLoopTimer");
 
         let current_loop = CFRunLoop::current().expect("Failed to get current run loop");
-        current_loop.add_timer(Some(&cf_timer), unsafe { kCFRunLoopCommonModes });
+        current_loop.add_timer(Some(&cf_timer), crate::run_loop::common_modes());
 
         {
             let mut state = inner.lock();

@@ -5,12 +5,18 @@ use std::mem;
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{
-    CFAbsoluteTimeGetCurrent, CFIndex, CFRetained, CFRunLoop, CFRunLoopActivity, CFRunLoopObserver,
-    CFRunLoopObserverContext, CFRunLoopSource, CFRunLoopSourceContext, CFRunLoopTimer,
-    CFRunLoopTimerContext, kCFRunLoopCommonModes,
+    CFAbsoluteTimeGetCurrent, CFIndex, CFRetained, CFRunLoop, CFRunLoopActivity, CFRunLoopMode,
+    CFRunLoopObserver, CFRunLoopObserverContext, CFRunLoopSource, CFRunLoopSourceContext,
+    CFRunLoopTimer, CFRunLoopTimerContext, kCFRunLoopCommonModes,
 };
 
 use crate::turns::{self, MainTurn};
+
+/// `kCFRunLoopCommonModes`, the modes every source, timer and observer here is added in.
+pub(crate) fn common_modes() -> Option<&'static CFRunLoopMode> {
+    // SAFETY: a CoreFoundation constant, set before any Rust code runs and never written.
+    unsafe { kCFRunLoopCommonModes }
+}
 
 /// A core foundation run loop source.
 ///
@@ -22,13 +28,12 @@ use crate::turns::{self, MainTurn};
 #[derive(Clone, PartialEq)]
 pub struct WakeupHandle(CFRetained<CFRunLoopSource>, CFRetained<CFRunLoop>);
 
-// SAFETY:
-// - CFRunLoopSource and CFRunLoop are CoreFoundation/ObjC objects which are allowed to be used
-//   from multiple threads.
-// - This handle only exposes `wake()` (signal + wake_up). It does not expose the underlying
-//   handler or allow mutation of the run loop/source beyond signaling.
-// - Therefore it is safe to treat this as Send + Sync for the purposes of a Waker hot path.
+// SAFETY: the handle holds two retained CF objects, whose retain and release are atomic, and
+// reaches the handler only through `wake`: CFRunLoopSourceSignal and CFRunLoopWakeUp may be called
+// from any thread, and the handler runs on the run loop it was added to, which holds the source,
+// and so the handler, until its thread ends.
 unsafe impl Send for WakeupHandle {}
+// SAFETY: as for `Send`: `wake`, the one thing a shared handle does, is callable from any thread.
 unsafe impl Sync for WakeupHandle {}
 
 struct Handler<F> {
@@ -50,22 +55,26 @@ impl WakeupHandle {
 
         // `info` is a *mut Handler<F>; retain/release keep its count and free the box at zero.
         unsafe extern "C-unwind" fn perform<F: Fn() + 'static>(info: *mut c_void) {
-            // SAFETY: `info` was created from a Box<Handler<F>> and is valid.
-            let handler = unsafe { &mut *(info as *mut Handler<F>) };
+            // SAFETY: `info` is the leaked Box<Handler<F>>, freed only by the last release, after
+            // the source's last perform. Shared, so a perform re-entered from a nested run of the
+            // loop aliases nothing mutable.
+            let handler = unsafe { &*(info as *const Handler<F>) };
             (handler.func)();
         }
         unsafe extern "C-unwind" fn retain<F>(info: *const c_void) -> *const c_void {
-            // SAFETY: `info` was created from a Box<Handler<F>> and is valid.
+            // SAFETY: `info` is the leaked Box<Handler<F>>; CF retains it once, as it creates the
+            // source, while nothing else can reach it.
             let handler = unsafe { &mut *(info as *mut Handler<F>) };
             handler.ref_count += 1;
             info
         }
         unsafe extern "C-unwind" fn release<F>(info: *const c_void) {
-            // SAFETY: `info` was created from a Box<Handler<F>> and is valid.
+            // SAFETY: `info` is the leaked Box<Handler<F>>; CF releases it as the source is freed,
+            // when no perform can be running.
             let handler = unsafe { &mut *(info as *mut Handler<F>) };
             handler.ref_count -= 1;
             if handler.ref_count == 0 {
-                // Recreate the Box to drop it.
+                // SAFETY: the count retain raised is back to zero, so this is the box's last use.
                 mem::drop(unsafe { Box::from_raw(info as *mut Handler<F>) });
             }
         }
@@ -83,10 +92,12 @@ impl WakeupHandle {
             perform: Some(perform::<F>),
         };
 
+        // SAFETY: the context is live for the call, which copies it, and its callbacks each take
+        // the `Handler<F>` its `info` points at.
         let source = unsafe { CFRunLoopSource::new(None, order, &mut context as *mut _) };
 
         let run_loop = CFRunLoop::current().unwrap();
-        run_loop.add_source(source.as_deref(), unsafe { kCFRunLoopCommonModes });
+        run_loop.add_source(source.as_deref(), common_modes());
 
         WakeupHandle(source.unwrap(), run_loop)
     }
@@ -138,7 +149,8 @@ impl RepeatingTimer {
         };
 
         let fire_date = CFAbsoluteTimeGetCurrent() + seconds;
-        // SAFETY: the context pointer is valid, and the callout matches CFRunLoopTimerCallBack.
+        // SAFETY: the context is live for the call, which copies it; its `info` is the leaked
+        // handler, which `callout`, of CFRunLoopTimerCallBack's signature, reads as its own type.
         let timer = unsafe {
             CFRunLoopTimer::new(
                 None,
@@ -160,7 +172,7 @@ impl RepeatingTimer {
             drop(unsafe { Box::from_raw(handler_ptr) });
             return None;
         };
-        run_loop.add_timer(Some(&timer), unsafe { kCFRunLoopCommonModes });
+        run_loop.add_timer(Some(&timer), common_modes());
 
         Some(Self {
             timer,
@@ -175,7 +187,7 @@ impl Drop for RepeatingTimer {
         // Invalidate before freeing the handler: invalidation is what guarantees the callout will
         // not be entered again.
         self.timer.invalidate();
-        self.run_loop.remove_timer(Some(&self.timer), unsafe { kCFRunLoopCommonModes });
+        self.run_loop.remove_timer(Some(&self.timer), common_modes());
         if !self.handler.is_null() {
             // SAFETY: the timer is invalidated and removed, so the callout cannot run again, and
             // nothing else holds this pointer.
@@ -260,7 +272,7 @@ impl TurnObserver {
             drop(unsafe { Box::from_raw(handler_ptr) });
             return None;
         };
-        let modes = unsafe { kCFRunLoopCommonModes };
+        let modes = common_modes();
         run_loop.add_observer(Some(&woke), modes);
         run_loop.add_observer(Some(&sleeps), modes);
         Some(Self {
@@ -274,7 +286,7 @@ impl TurnObserver {
 
 impl Drop for TurnObserver {
     fn drop(&mut self) {
-        let modes = unsafe { kCFRunLoopCommonModes };
+        let modes = common_modes();
         for observer in [&self.woke, &self.sleeps] {
             observer.invalidate();
             self.run_loop.remove_observer(Some(observer), modes);
