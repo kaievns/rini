@@ -706,9 +706,10 @@ now, in the order they had before. For W of width a and N of width b with gap
 g, moving right, W started at N's new x and N at N's new x + a + g; moving
 left, W at W's new x + b + g and N at W's new x. Every window of a stacked N
 shifts by one amount. What is done with the pair is the look's: the reactor
-names the press (`Cue::Move`), and `stage_move` hands the strip and the pair to
-the look (`Look::stage`, `src/animation/domain/choreography.rs`) and puts what
-it staged on the surface. Slide, the default look
+names the press (`Cue::Move`), and as the movement reaches the flight engine,
+`stage_move` hands the strip and the pair to the look of the flight it joins,
+else the one it asks for (`Look::stage`, `src/animation/domain/choreography.rs`),
+and puts what it staged on the surface. Slide, the default look
 (`src/animation/domain/choreography/slide.rs`), has W cross from its start, and
 N cross from its own unless the move steps, when it is held; the three rules
 below are Slide's. `surface_plan` groups by travel vector, so the strip is one

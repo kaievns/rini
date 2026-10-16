@@ -902,7 +902,8 @@ is the tests there: `every_look_poses_each_drawn_window_where_it_starts`,
 `src/app/config/kdl/value.rs`, held by `the_look_is_picked_by_name_and_slide_unless_written`, and
 the reactor hands it to every flight it asks for, held by
 `every_flight_takes_the_look_the_config_picks`; `FlightScore` keeps the look a flight began with,
-held by `a_pass_merged_into_a_flight_moves_by_the_flights_look`. `src/animation/platform/renderer.rs`
+and the flight engine stages a strip movement by the look of the flight it joins, held by
+`a_move_merged_into_a_flight_is_staged_by_the_flights_look`. `src/animation/platform/renderer.rs`
 plays the score on Core Animation on the main thread, on the overlay in
 `src/animation/platform/overlay.rs`, which lets go of the tiles and the desktop at the lift.
 `src/decorations/domain/` is what each tile wears: the hairline's, the shadow's, the focus ring's and

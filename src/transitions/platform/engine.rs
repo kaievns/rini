@@ -31,9 +31,9 @@ use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
 
-use crate::animation::domain::choreography::{Cue, Look, Pass};
-use crate::animation::domain::motion::accents::Accent;
+use crate::animation::domain::choreography::{Area, Cue, Look, Pass};
 use crate::animation::domain::motion::score::{Edit, MediaClock};
+use crate::animation::domain::motion::surface::pan_travel;
 use crate::animation::platform::overlay::{OverlayTile, TRACE_TARGET, same_layout, window_origin};
 use crate::animation::platform::renderer::{Batch, Render};
 use crate::decorations::domain::style::Worn;
@@ -57,6 +57,7 @@ use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow
 use crate::transitions::domain::running::{
     Composed, RunningAnimation, Shape, StageFocus, Took, WornPicture, restack, summary,
 };
+use crate::transitions::domain::strip_move::stage_move;
 use crate::transitions::domain::timing::*;
 use crate::transitions::platform::journal::Writer;
 use crate::transitions::settings::JournalSettings;
@@ -121,11 +122,11 @@ pub enum Event {
         duration: Duration,
         /// How the flight moves, if this movement begins one.
         look: Look,
-        /// The press, for the look.
+        /// The press, which the look of the flight it joins or begins stages on `windows`
+        /// (`strip_move::stage_move`) as the movement arrives.
         cue: Cue,
-        /// What rides the movement, as the look staged it: a move's step, the whole strip away from
-        /// where the moved window went and back, drawn only.
-        accent: Option<Accent>,
+        /// The screen the strip is shown on, for the staging.
+        area: Area,
         /// The event the movement answers, where its journal starts.
         cause: Cause,
     },
@@ -373,7 +374,7 @@ impl FlightEngine {
                 self.start(windows, (focus, focused_before), key, duration, look)
             }
             Event::AnimateSurface {
-                windows,
+                mut windows,
                 from_offset,
                 to_offset,
                 final_frames,
@@ -383,10 +384,19 @@ impl FlightEngine {
                 duration,
                 look,
                 cue,
-                accent,
+                area,
                 cause,
             } => {
                 self.take_request(cause);
+                let look = self.running.as_ref().map_or(look, |running| running.score.look());
+                let accent = stage_move(
+                    &mut windows,
+                    &cue,
+                    area,
+                    pan_travel(from_offset, to_offset),
+                    duration.as_secs_f64(),
+                    look,
+                );
                 self.start_surface(SurfaceFlight {
                     windows,
                     from_offset,
@@ -1431,7 +1441,7 @@ mod tests {
     use rini_geometry::space::{ScreenSize, ScreenVector, SurfaceRect, ToCg};
 
     use super::*;
-    use crate::animation::domain::motion::score::Node;
+    use crate::animation::domain::motion::score::{Channel, Node};
     use crate::animation::domain::motion::surface::SurfaceGeometry;
     use crate::animation::domain::motion::testing::{DISPLAY, rect};
     use crate::animation::domain::motion::tile;
@@ -1446,6 +1456,15 @@ mod tests {
     fn screen(frame: OverlayRect) -> ScreenRect { from_overlay_space(frame, DISPLAY) }
 
     fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
+
+    /// `DISPLAY` as a strip is shown on it, 4pt outer gaps either side.
+    fn area() -> Area {
+        Area {
+            frame: on(DISPLAY),
+            outer_left: 4.0,
+            outer_right: 4.0,
+        }
+    }
 
     /// A SkyLight sliver: 40pt of an `size`-wide window, which `is_usable` rejects.
     fn clipped(size: ScreenSize) -> Picture {
@@ -1736,7 +1755,7 @@ mod tests {
                     duration: Duration::from_millis(300),
                     look: Look::default(),
                     cue: Cue::Plain,
-                    accent: None,
+                    area: area(),
                     cause: self.cause(),
                 }
             }
@@ -1931,34 +1950,79 @@ mod tests {
             assert!(placed(&h.commit(shown)).is_empty(), "written once");
         }
 
-        /// A flight keeps the look it began with: a pass of another look merged into it moves by
-        /// the flight's, and the next flight takes its own ("Looks" in `specs/animation.md`).
+        /// A flight keeps the look it began with: a full-width move merged into it is staged by the
+        /// flight's look, whatever look the move asks for, so it steps the strip only on a Slide
+        /// flight, Probe staging no step; the next flight takes the move's own ("Looks" in
+        /// `specs/animation.md`).
         #[test]
-        fn a_pass_merged_into_a_flight_moves_by_the_flights_look() {
-            let looked = |mut event: Event, chosen: Look| {
+        fn a_move_merged_into_a_flight_is_staged_by_the_flights_look() {
+            let panned = |mut event: Event, chosen: Look| {
                 if let Event::AnimateSurface { look, .. } = &mut event {
                     *look = chosen;
                 }
                 event
             };
-            let flying =
-                |h: &Harness| h.engine.running.as_ref().map(|running| running.score.look());
-            for (begun, merged) in [(Look::Slide, Look::Probe), (Look::Probe, Look::Slide)] {
+            let moved = |h: &Harness, look: Look| {
+                let at = |id: u32, x: f64| SurfaceWindow {
+                    worn: h.worn,
+                    window: wid(id),
+                    server_id: WindowServerId::new(id),
+                    frame: rect(x, 0.0, 1720.0, 1081.0),
+                    pinned: false,
+                    floating: false,
+                    from: None,
+                };
+                let windows = vec![at(2, -1719.0), at(1, 4.0)];
+                let (from_offset, to_offset) =
+                    (SurfacePoint::new(-1723.0, 0.0), SurfacePoint::origin());
+                let final_frames = windows
+                    .iter()
+                    .map(|w| (w.window, screen(w.travel(from_offset, to_offset).1)))
+                    .collect();
+                Event::AnimateSurface {
+                    windows,
+                    from_offset,
+                    to_offset,
+                    final_frames,
+                    focus: Some(wid(1)),
+                    focused_before: Some(wid(1)),
+                    key: None,
+                    duration: Duration::from_millis(300),
+                    look,
+                    cue: Cue::Move {
+                        window: wid(1),
+                        direction: rini_ipc::protocol::Direction::Right,
+                    },
+                    area: area(),
+                    cause: h.cause(),
+                }
+            };
+            let flying = |h: &Harness| {
+                let running = h.engine.running.as_ref()?;
+                let steps = running.score.score().plays(Channel::Nudge, h.media.at(h.at()));
+                Some((running.score.look(), steps))
+            };
+            for (begun, asked) in [(Look::Slide, Look::Probe), (Look::Probe, Look::Slide)] {
                 let mut h = Harness::new();
-                h.step(looked(h.pan(), begun));
+                h.step(panned(h.pan(), begun));
                 h.advance(Duration::from_millis(5));
                 let shown = only_batch(&h.step(h.frame_zero())).seq;
                 h.commit(shown);
                 h.advance(Duration::from_millis(50));
-                let sent = h.step(looked(h.pan_on(), merged));
-                assert!(!placed(&sent).is_empty(), "{begun:?}: merged and written");
-                assert_eq!(flying(&h), Some(begun), "{merged:?} merged");
+                assert_eq!(
+                    flying(&h),
+                    Some((begun, false)),
+                    "{begun:?}: the pan steps nothing"
+                );
+                h.step(moved(&h, asked));
+                let slide = begun == Look::Slide;
+                assert_eq!(flying(&h), Some((begun, slide)), "{asked:?} merged");
 
-                h.advance(Duration::from_millis(1000));
+                h.advance(Duration::from_millis(2000));
                 h.step(Event::Tick);
                 assert_eq!(flying(&h), None, "{begun:?}: lifted");
-                h.step(looked(h.pan(), merged));
-                assert_eq!(flying(&h), Some(merged), "the next flight");
+                h.step(moved(&h, asked));
+                assert_eq!(flying(&h).map(|(look, _)| look), Some(asked), "the next flight");
             }
         }
 
@@ -2074,7 +2138,7 @@ mod tests {
                 duration: Duration::from_millis(300),
                 look: Look::default(),
                 cue: Cue::Plain,
-                accent: None,
+                area: area(),
                 cause: h.cause(),
             };
             h.step(press);
@@ -2156,7 +2220,7 @@ mod tests {
                 duration: Duration::from_millis(300),
                 look: Look::default(),
                 cue: Cue::Plain,
-                accent: None,
+                area: area(),
                 cause: h.cause(),
             }
         }

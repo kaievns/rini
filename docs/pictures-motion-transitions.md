@@ -86,11 +86,11 @@ edit: it changes what a tile shows, never where it is.
 
 A `Look` is how a flight moves, chosen as the flight begins; `Look::ALL` holds every look, and each
 passes the same tests. Its `Choreography` makes the flight's plan, composes a score from a stage,
-folds a press before the motion and retargets a playing score from wherever it is drawn. Before a
-strip movement is asked for, the look stages its press (`Look::stage`): the reactor names the press as
-a `Cue`, `transitions` finds where a moved pair starts and passes look and cue through without
-matching on either, and the look says which windows cross, which are held and which accent rides the
-movement. An `Accent` adds an additive track (the bounce re-kicks from where it is drawn). The
+folds a press before the motion and retargets a playing score from wherever it is drawn. As a strip
+movement reaches the flight engine, a look stages its press (`Look::stage`): the reactor names the
+press as a `Cue`, `transitions` finds where a moved pair starts and hands it to the look of the
+flight the movement joins, else the one it asks for, without matching on look or cue, and the look
+says which windows cross, which are held and which accent rides the movement. An `Accent` adds an additive track (the bounce re-kicks from where it is drawn). The
 renderer plays a score's edits, the snap of a tile onto its window's frame among them, swaps
 pictures, cuts holes over windows that end on screen, draws each tile's decorations, and lifts. A new
 look that moves tiles through points and rects is another `Look`, its choreography and its staging, in

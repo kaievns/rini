@@ -1,10 +1,10 @@
-//! Looks: how a flight moves. A look stages a press on the strip before the flight is asked for
-//! (`Look::stage`), and for each flight its `Choreography` makes the plan, poses frame zero, composes
-//! the motion, folds a press before it and bends the flight at a press after it, answering with the
-//! score's edits (`motion::score::Edit`), which the renderer plays as they are. `Look::ALL` is every
-//! look, and the tests below are the contract each keeps; `slide` is the default, and the config's
-//! `animations › look` picks the one every flight takes. See "The overlay engine" in
-//! `src/animation/docs/animation-smoothness.md`.
+//! Looks: how a flight moves. A look stages a press on the strip as the strip movement reaches the
+//! flight engine, the look of the flight it joins or begins (`Look::stage`), and for each flight its
+//! `Choreography` makes the plan, poses frame zero, composes the motion, folds a press before it and
+//! bends the flight at a press after it, answering with the score's edits (`motion::score::Edit`),
+//! which the renderer plays as they are. `Look::ALL` is every look, and the tests below are the
+//! contract each keeps; `slide` is the default, and the config's `animations › look` picks the one
+//! every flight takes. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
 
 pub mod slide;
 
@@ -24,7 +24,8 @@ use super::motion::score::{Edit, Score};
 pub enum Look {
     #[default]
     Slide,
-    /// Slide's choreography under another name, so a test can tell a chosen look from the default.
+    /// Slide's choreography and staging but for the step, so a test can tell a chosen look from
+    /// the default and a flight's staging from another look's.
     #[cfg(test)]
     Probe,
 }
@@ -50,7 +51,10 @@ impl Look {
         match self {
             Look::Slide => slide::stage(cue, strip),
             #[cfg(test)]
-            Look::Probe => slide::stage(cue, strip),
+            Look::Probe => Staging {
+                accent: None,
+                ..slide::stage(cue, strip)
+            },
         }
     }
 }

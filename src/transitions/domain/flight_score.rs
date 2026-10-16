@@ -37,7 +37,7 @@ impl FlightScore {
 
     pub fn score(&self) -> &Score { &self.score }
 
-    /// The look the flight began with, which every pass merged into it moves by.
+    /// The look the flight began with, which stages and bends every pass merged into it.
     pub fn look(&self) -> Look { self.look }
 
     /// The flight's plan from its first pass, as its look makes it.

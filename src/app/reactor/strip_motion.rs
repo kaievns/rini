@@ -181,10 +181,11 @@ impl Reactor {
     /// `delta` is how far the strip moved, zero when it did not. The strip surface holds the whole
     /// active workspace at its final positions, and the viewport starts shifted back by `delta` so
     /// the strip appears to arrive from where it was, then settles. A `moved` window is the press's
-    /// cue, and the look stages it (`strip_move::stage_move`): Slide starts the moved column and the
-    /// column it passed from the slots they held before the move, so the two are seen changing
-    /// places, unless the moved column fills the viewport, when the whole strip steps and the column
-    /// it passed is held on the strip beneath it. See "The move flight, staged" in
+    /// cue, which the flight engine has a look stage (`strip_move::stage_move`) as the movement
+    /// reaches it, the look of the flight it joins, else the config's: Slide starts the moved column
+    /// and the column it passed from the slots they held before the move, so the two are seen
+    /// changing places, unless the moved column fills the viewport, when the whole strip steps and
+    /// the column it passed is held on the strip beneath it. See "The move flight, staged" in
     /// `src/transitions/docs/coordination.md`.
     ///
     /// `final_frames` are the pass's windows on this workspace whose frames changed: the real windows
@@ -242,7 +243,6 @@ impl Reactor {
         let from_offset = SurfacePoint::new(delta.x, delta.y);
         let to_offset = SurfacePoint::origin();
         use crate::animation::domain::choreography::Cue;
-        let look = self.config.settings.look;
         let cue = moved.map_or(Cue::Plain, |(window, direction)| Cue::Move { window, direction });
         // A move's pair starts where the look stages it.
         if cue == Cue::Plain {
@@ -255,18 +255,9 @@ impl Reactor {
                 screen.frame,
             );
         }
-        let area = strip_area(screen.frame, display_bounds, &gaps);
         // The plain duration: the look stretches the flight only when it takes the step.
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
-        let accent = crate::transitions::domain::strip_move::stage_move(
-            &mut windows,
-            &cue,
-            area,
-            crate::animation::domain::motion::surface::pan_travel(from_offset, to_offset),
-            duration.as_secs_f64(),
-            look,
-        );
 
         self.send_flight(
             space,
@@ -282,9 +273,9 @@ impl Reactor {
                 focused_before: self.focused_as_event_began,
                 key: self.main_window_tracker.key_window(),
                 duration,
-                look,
+                look: self.config.settings.look,
                 cue,
-                accent,
+                area: strip_area(screen.frame, display_bounds, &gaps),
                 cause: self.cause,
             },
         );
@@ -479,7 +470,7 @@ impl Reactor {
                 duration,
                 look: self.config.settings.look,
                 cue: crate::animation::domain::choreography::Cue::Plain,
-                accent: None,
+                area: strip_area(screen.frame, display_bounds, &gaps),
                 cause: self.cause,
             },
         );
