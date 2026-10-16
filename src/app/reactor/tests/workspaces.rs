@@ -297,7 +297,7 @@ fn a_layout_command_is_logged_once_by_its_wire_name() {
 }
 
 #[test]
-fn workspace_switch_batches_all_window_positions_with_eui_enabled() {
+fn workspace_switch_batches_all_window_positions() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let space = SpaceId::new(1);
@@ -324,7 +324,7 @@ fn workspace_switch_batches_all_window_positions_with_eui_enabled() {
                     if positions.iter().any(|(wid, _)| *wid == WindowId::new(1, 1))
             )
         }),
-        "expected a position-only workspace-switch batch with eui enabled: {requests:?}"
+        "expected a position-only workspace-switch batch: {requests:?}"
     );
 }
 
