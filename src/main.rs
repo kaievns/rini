@@ -8,7 +8,7 @@ use rini::app::boot::{Cli, Commands};
 use rini::app::config::Config;
 use rini::app::config::actor::{Change, ConfigActor};
 use rini::app::config::watcher::ConfigWatcher;
-use rini::app::controller::WmController;
+use rini::app::controller::Controller;
 use rini::app::launch_agent::handle_service_command;
 use rini::app::notifications::NotificationCenter;
 use rini::app::reactor::{self, Reactor, ReactorParts};
@@ -150,14 +150,16 @@ fn main() {
     ConfigWatcher::spawn(config_tx.clone(), config_path.clone());
     serve_ipc(&reactor, &config_tx);
 
-    let (wm_controller, wm_controller_sender) = WmController::new(
+    let (controller, controller_sender) = Controller::new(
         config.clone(),
         config_tx.clone(),
         events_tx.clone(),
         event_tap_tx.clone(),
         Some(window_tx_store.clone()),
     );
-    events_tx.send(reactor::Event::RegisterWmSender(wm_controller_sender.clone()));
+    events_tx.send(reactor::Event::RegisterControllerSender(
+        controller_sender.clone(),
+    ));
 
     let spaces = SpacesActor::new(
         spaces_rx,
@@ -168,13 +170,13 @@ fn main() {
     );
     let window_notify =
         window_notify(&events_tx, &spaces_tx, &rest_tx, following.clone(), server_reads);
-    let notification_center = NotificationCenter::new(wm_controller_sender.clone(), spaces_tx);
+    let notification_center = NotificationCenter::new(controller_sender.clone(), spaces_tx);
 
     // Which applications ask for attention, read from LaunchServices on a thread of its own.
     rini::windows::platform::attention::spawn(Box::new(events_tx.clone()));
 
-    let process = process_actor(&wm_controller_sender);
-    let event_tap = input_tap(&config, &wm_controller_sender, event_tap_rx, &events_tx);
+    let process = process_actor(&controller_sender);
+    let event_tap = input_tap(&config, &controller_sender, event_tap_rx, &events_tx);
     let cursor_warp = cursor_warp(&config, cursor_warp_rx);
 
     // The decorations drawn at rest, on the main thread for AppKit: a rest window above each window
@@ -209,7 +211,7 @@ fn main() {
     run_main_thread(
         mtm,
         QuietActors {
-            wm_controller,
+            controller,
             notification_center,
             spaces,
             window_notify,
@@ -223,7 +225,7 @@ fn main() {
 
 /// The actors on the main thread that draw nothing.
 struct QuietActors {
-    wm_controller: WmController,
+    controller: Controller,
     notification_center: NotificationCenter,
     spaces: SpacesActor,
     window_notify: window_notify_actor::WindowNotify,
@@ -244,7 +246,7 @@ struct DrawingActors {
 fn run_main_thread(mtm: MainThreadMarker, quiet: QuietActors, drawing: DrawingActors) {
     Executor::run_main(mtm, async move {
         join!(
-            supervise("wm_controller", quiet.wm_controller.run()),
+            supervise("controller", quiet.controller.run()),
             supervise(
                 "notification_center",
                 quiet.notification_center.watch_for_notifications()
@@ -304,9 +306,9 @@ fn serve_ipc(reactor: &reactor::ReactorHandle, config_tx: &rini::app::config::ac
     }
 }
 
-fn process_actor(wm_controller_sender: &rini::app::controller::Sender) -> ProcessActor {
+fn process_actor(controller_sender: &rini::app::controller::Sender) -> ProcessActor {
     ProcessActor::new({
-        let sender = wm_controller_sender.clone();
+        let sender = controller_sender.clone();
         move |event| sender.send(event.into())
     })
 }
@@ -315,7 +317,7 @@ fn process_actor(wm_controller_sender: &rini::app::controller::Sender) -> Proces
 /// the reactor.
 fn input_tap(
     config: &Config,
-    wm_controller_sender: &rini::app::controller::Sender,
+    controller_sender: &rini::app::controller::Sender,
     event_tap_rx: channels::Receiver<rini::input::platform::input_tap::Request>,
     events_tx: &reactor::Sender,
 ) -> InputTap {
@@ -323,7 +325,7 @@ fn input_tap(
     let mut event_tap = InputTap::new(
         &input_settings,
         rini::app::power::is_low_power_mode_enabled(),
-        Box::new(wm_controller_sender.clone()),
+        Box::new(controller_sender.clone()),
         event_tap_rx,
     );
     event_tap.set_on_left_press(reactor::Event::left_press_sink(events_tx.clone()));

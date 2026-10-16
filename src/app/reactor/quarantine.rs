@@ -56,7 +56,7 @@ impl Reactor {
             | Event::AttentionChanged(_)
             | Event::Query(_)
             | Event::Command(_)
-            | Event::RegisterWmSender(_)
+            | Event::RegisterControllerSender(_)
             | Event::ConfigUpdated(_)
             | Event::ConfigFileRead { .. } => false,
         }

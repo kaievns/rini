@@ -593,7 +593,7 @@ impl Reactor {
         &mut self,
     ) -> channels::Receiver<crate::app::controller::WmEvent> {
         let (tx, rx) = channels::channel();
-        self.communication_manager.wm_sender = Some(tx);
+        self.communication_manager.controller_sender = Some(tx);
         rx
     }
 

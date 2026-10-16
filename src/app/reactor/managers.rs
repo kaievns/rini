@@ -251,7 +251,7 @@ pub(super) struct CommunicationManager {
     pub(super) transitions_tx: Option<crate::transitions::platform::engine::Sender>,
     pub(super) pictures: Option<crate::pictures::platform::service::Pictures>,
     pub(super) raise_manager_tx: raise::Sender,
-    pub(super) wm_sender: Option<controller::Sender>,
+    pub(super) controller_sender: Option<controller::Sender>,
     pub(super) events_tx: Option<channels::Sender<Event>>,
 }
 
