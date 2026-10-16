@@ -11,8 +11,9 @@ pub use protocol::*;
 use serde::Serialize;
 use tracing::{error, info, trace};
 
-/// What the window manager answers over IPC. The daemon implements it in `src/app/api/backend.rs`;
-/// every method blocks the Mach server thread until the reactor replies.
+/// What the window manager answers over IPC. The daemon implements it in `src/app/api/backend.rs`.
+/// Every method is called on the main run loop and blocks the main thread until it returns, so none
+/// may wait on the main thread.
 pub trait Backend: Send + 'static {
     fn workspaces(&self, space: Option<u64>) -> Vec<crate::protocol::WorkspaceData>;
     fn windows(&self, space: Option<u64>) -> Vec<crate::protocol::WindowData>;
@@ -41,7 +42,7 @@ pub fn run_mach_server<B: Backend>(reactor: B) -> Result<(), String> {
             "Another Rini instance is already running; quit it before starting another.".into(),
         );
     }
-    info!("Spawning background Mach server thread");
+    info!("Registering the Mach service on a background thread, to be served on the main run loop");
 
     std::thread::spawn(move || {
         let handler = MachHandler { reactor };

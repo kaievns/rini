@@ -54,7 +54,6 @@ unsafe extern "C" {
 
     fn CFRunLoopAddSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
     safe fn CFRunLoopGetMain() -> CFRunLoopRef;
-    safe fn CFRunLoopRun();
 
     fn CFRelease(obj: *const c_void);
 
@@ -426,11 +425,12 @@ fn send_mach_reply(request: &mach_msg_header_t, response: &[u8]) -> bool {
     true
 }
 
-/// Registers the service and answers each request on the main run loop with what `handler` returns
-/// for its payload. `false` when the service could not be registered or scheduled.
+/// Registers the service and schedules its port on the main run loop, which answers each request
+/// with what `handler` returns for its payload. `false` when the service could not be registered or
+/// scheduled.
 pub fn mach_server_run(handler: Handler) -> bool {
     let Some(server) = mach_server_begin(handler) else {
-        error!("mach_server_run: mach_server_begin failed, aborting run loop");
+        error!("mach_server_run: mach_server_begin failed");
         return false;
     };
 
@@ -438,7 +438,6 @@ pub fn mach_server_run(handler: Handler) -> bool {
         "mach_server_run: ports ready (port={}, bs_port={})",
         server.port, server.bs_port
     );
-    CFRunLoopRun();
     true
 }
 
