@@ -280,7 +280,6 @@ An allow over a whole crate or file, `#![allow]`, is one of these, held by
 | `src/displays/platform/cgs_notify.rs` | SkyLight's C names |
 | `src/windows/platform/sub_level.rs` | SkyLight's C names |
 | `src/windows/platform/app_actor/subscriptions.rs` | Accessibility's notification names |
-| `src/windows/platform/carbon.rs` | `missing_safety_doc`, P5.1 |
 
 The quality roadmap the ids come from is a plan kept outside the repo, so the row of every id an
 allow cites is copied here. `every_roadmap_id_an_allow_cites_has_a_row_in_docs_testing` holds the
@@ -290,7 +289,6 @@ Nothing else in the repo cites an id; a comment or a doc names the work in words
 
 | Id | Task | Done when |
 |---|---|---|
-| P5.1 | SAFETY comments everywhere; deny `undocumented_unsafe_blocks` and `unsafe_op_in_unsafe_fn` | clippy clean with both denied; 0 `static mut` in the repo |
 
 `unsafe_op_in_unsafe_fn` is not in `[workspace.lints]`. Edition 2024 warns on it already, so P5.1
 denies it once every unsafe operation is wrapped, with `undocumented_unsafe_blocks` beside it.

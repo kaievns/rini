@@ -1,9 +1,9 @@
 //! The actor over a `FakeAx`, and what it told the reactor, for the tests of every job.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use parking_lot::Mutex;
 use rini_core::ids::{WindowId, WindowServerId, pid_t};
 use rini_runloop::channel as channels;
 use rustc_hash::FxHashMap as HashMap;
@@ -16,13 +16,10 @@ use crate::windows::platform::ax::world::FakeAx;
 
 /// Collects what the actor told the reactor.
 #[derive(Clone, Default)]
-pub(super) struct Sink(pub(super) Rc<RefCell<Vec<Event>>>);
-
-// The actor's thread owns its sink; a test drives it on one thread and never sends it anywhere.
-unsafe impl Send for Sink {}
+pub(super) struct Sink(pub(super) Arc<Mutex<Vec<Event>>>);
 
 impl EventSink for Sink {
-    fn send(&self, event: Event) { self.0.borrow_mut().push(event); }
+    fn send(&self, event: Event) { self.0.lock().push(event); }
 }
 
 pub(super) const PID: pid_t = 501;
@@ -74,7 +71,7 @@ pub(super) fn raisable(window: u32) -> (State<FakeAx>, Sink, WindowId) {
         .register_window(window, peer(window, rect(0., 0., 100., 100.)))
         .expect("registers")
         .1;
-    sink.0.borrow_mut().clear();
+    sink.0.lock().clear();
     (state, sink, wid)
 }
 
@@ -95,11 +92,11 @@ pub(super) fn app_with(windows: &[u32]) -> (State<FakeAx>, Sink, Vec<WindowId>) 
         .iter()
         .map(|&window| state.register_window(window, peer(window, frame)).expect("registers").1)
         .collect();
-    sink.0.borrow_mut().clear();
+    sink.0.lock().clear();
     (state, sink, wids)
 }
 
-pub(super) fn announced(sink: &Sink) -> Vec<Event> { sink.0.borrow_mut().drain(..).collect() }
+pub(super) fn announced(sink: &Sink) -> Vec<Event> { sink.0.lock().drain(..).collect() }
 
 pub(super) fn poll_once<T>(
     future: std::pin::Pin<&mut impl Future<Output = T>>,
@@ -110,7 +107,7 @@ pub(super) fn poll_once<T>(
 /// The windows reported raised, in the order they were.
 pub(super) fn completed(sink: &Sink) -> Vec<WindowId> {
     sink.0
-        .borrow()
+        .lock()
         .iter()
         .filter_map(|event| match event {
             Event::RaiseCompleted { window_id, .. } => Some(*window_id),
@@ -121,7 +118,7 @@ pub(super) fn completed(sink: &Sink) -> Vec<WindowId> {
 
 pub(super) fn main_window_changes(sink: &Sink) -> Vec<(Option<WindowId>, Quiet)> {
     sink.0
-        .borrow()
+        .lock()
         .iter()
         .filter_map(|event| match event {
             Event::ApplicationMainWindowChanged(PID, wid, quiet) => Some((*wid, *quiet)),

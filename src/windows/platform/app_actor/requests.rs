@@ -279,7 +279,7 @@ mod tests {
             .1;
         state.ax.positions.borrow_mut().clear();
         state.ax.sizes.borrow_mut().clear();
-        sink.0.borrow_mut().clear();
+        sink.0.lock().clear();
 
         let desired = rect(2000., 0., 800., 600.);
         let clamped = rect(2000., 0., 640., 600.);
@@ -303,7 +303,7 @@ mod tests {
             &[(window, desired.size), (window, desired.size)],
             "sized twice once the move came back at another size"
         );
-        let announced = sink.0.borrow();
+        let announced = sink.0.lock();
         assert!(
             matches!(
                 announced.as_slice(),

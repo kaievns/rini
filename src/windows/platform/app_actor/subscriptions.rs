@@ -154,7 +154,7 @@ mod tests {
             );
         }
         assert!(
-            sink.0.borrow().iter().any(|event| matches!(
+            sink.0.lock().iter().any(|event| matches!(
                 event,
                 Event::WindowsDiscovered { new, .. } if new.iter().any(|(w, _)| *w == wid)
             )),

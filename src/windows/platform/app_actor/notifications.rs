@@ -1,7 +1,7 @@
 //! What the application's notifications tell the reactor: windows created, destroyed, moved,
 //! miniaturized and retitled, the application hidden and shown, and a change of main window.
 //!
-//! A notification for an element a window no longer has says nothing about the window: after a
+//! A notification for an element a window has since lost says nothing about the window: after a
 //! wake a refresh rebinds the window to a new element, and a late one for the old is ignored.
 
 use objc2_application_services::AXError;
@@ -272,7 +272,7 @@ mod tests {
 
         state.handle_notification(window, AxNotificationKind::WindowCreated, None);
 
-        let announced = sink.0.borrow();
+        let announced = sink.0.lock();
         assert!(
             matches!(
                 announced.as_slice(),
@@ -294,7 +294,7 @@ mod tests {
         state.handle_notification(window, AxNotificationKind::WindowCreated, None);
 
         assert!(state.windows.is_empty());
-        assert!(sink.0.borrow().is_empty(), "{:?}", sink.0.borrow());
+        assert!(sink.0.lock().is_empty(), "{:?}", sink.0.lock());
     }
 
     /// `window` registered, then found at a refresh as a new element, `replacement`, of the same
@@ -309,7 +309,7 @@ mod tests {
             state.is_current_window_element(wids[0], &replacement),
             "rebound to the replacement"
         );
-        sink.0.borrow_mut().clear();
+        sink.0.lock().clear();
         (state, sink, wids[0])
     }
 

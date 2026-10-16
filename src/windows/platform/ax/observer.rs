@@ -14,6 +14,9 @@ use rini_core::ids::pid_t;
 use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
 
 /// An observer for accessibility events.
+///
+/// Drop it only once the run loop it was installed on has stopped for good: the drop frees the
+/// contexts its callbacks read and leaves its run-loop source in place.
 pub struct Observer {
     callback: Callback,
     observer: CFRetained<AXObserver>,
@@ -65,6 +68,8 @@ impl Observer {
         ),
     ) -> Result<ObserverBuilder<F>, AxError> {
         let mut observer_ptr: *mut AXObserver = ptr::null_mut();
+        // SAFETY: `observer_ptr` is a local the call writes, and `trampoline` has the callback's
+        // signature, checked by the type above.
         let status = unsafe {
             AXObserver::create(
                 pid,
@@ -73,6 +78,7 @@ impl Observer {
             )
         };
         make_result(status)?;
+        // SAFETY: a Create call that succeeded, so the observer is non-null and +1 to us.
         let observer = unsafe {
             CFRetained::from_raw(NonNull::new(observer_ptr).expect("observer must be non-null"))
         };
@@ -108,8 +114,10 @@ impl<F: Fn(AXUIElement, &'static str) + 'static> ObserverBuilder<F> {
 
 impl<F> ObserverBuilder<F> {
     fn install_inner(self, callback: Callback) -> Observer {
+        // SAFETY: `self.0` is a live observer; its source comes back retained.
         let run_loop_source = unsafe { self.0.run_loop_source() };
         if let Some(run_loop) = CFRunLoop::current() {
+            // SAFETY: a CoreFoundation constant, set when the framework loads and never written.
             let mode: &CFRunLoopMode =
                 unsafe { kCFRunLoopCommonModes.expect("kCFRunLoopCommonModes") };
             run_loop.add_source(Some(run_loop_source.as_ref()), Some(mode));
@@ -159,6 +167,8 @@ impl Observer {
         let notification_cf = CFString::from_static_str(notification);
         let observer: &AXObserver = &self.observer;
         let callback_data = Rc::as_ptr(&callback_ctx).cast_mut().cast();
+        // SAFETY: `elem` and the name are live for the call, and the refcon is a context
+        // `subscription_ctx` keeps until the observer drops, which a callback only reads.
         make_result(unsafe {
             observer.add_notification(
                 elem.as_concrete_TypeRef(),
@@ -194,6 +204,7 @@ impl Observer {
     ) -> Result<(), AxError> {
         let notification_cf = CFString::from_static_str(notification);
         let observer: &AXObserver = &self.observer;
+        // SAFETY: `elem` and the name are live for the call.
         let result = make_result(unsafe {
             observer.remove_notification(elem.as_concrete_TypeRef(), notification_cf.as_ref())
         });
@@ -211,9 +222,12 @@ unsafe extern "C-unwind" fn internal_callback(
     _notif: NonNull<CFString>,
     data: *mut c_void,
 ) {
+    // SAFETY: `data` is a context the `!Send` observer keeps on this run loop's thread until it
+    // drops, and each owner drops it only once this run loop has stopped for good.
     let Some(ctx) = (unsafe { data.cast::<SubscriptionContext>().as_ref() }) else {
         return;
     };
+    // SAFETY: AX hands the callback a live element under the Get rule.
     let elem = unsafe { AXUIElement::from_get_rule(elem.as_ptr()) };
     if let Callback::Data(callback) = &ctx.callback {
         callback(elem, ctx.data.get());
@@ -226,9 +240,12 @@ unsafe extern "C-unwind" fn internal_callback_with_notification(
     _notif: NonNull<CFString>,
     data: *mut c_void,
 ) {
+    // SAFETY: `data` is a context the `!Send` observer keeps on this run loop's thread until it
+    // drops, and each owner drops it only once this run loop has stopped for good.
     let Some(ctx) = (unsafe { data.cast::<SubscriptionContext>().as_ref() }) else {
         return;
     };
+    // SAFETY: AX hands the callback a live element under the Get rule.
     let elem = unsafe { AXUIElement::from_get_rule(elem.as_ptr()) };
     if let Callback::Notification(callback) = &ctx.callback {
         callback(elem, ctx.notification);

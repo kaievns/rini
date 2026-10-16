@@ -515,7 +515,7 @@ mod tests {
 
             raise_manager.handle_message(completion_msg);
 
-            // Verify that one window was removed from pending
+            // The completed window has left pending; the other is still there.
             assert!(raise_manager.active_sequence.is_some());
             let sequence = raise_manager.active_sequence.as_ref().unwrap();
             assert_eq!(sequence.pending_raises.len(), 1);

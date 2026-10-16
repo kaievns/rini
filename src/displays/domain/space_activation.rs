@@ -72,8 +72,8 @@ impl SpaceActivationPolicy {
             if let Some(previous_space) = previous_space
                 && previous_space != new_space
             {
-                // Only transfer activation when the previous space id is no longer known
-                // (e.g. space id churn on reconnect), not for normal space switches.
+                // Only transfer activation when the previous space id is not among the known user
+                // spaces (e.g. space id churn on reconnect), not for normal space switches.
                 if !self.known_user_spaces.contains(&previous_space) {
                     self.transfer_space_activation(cfg, previous_space, new_space);
                 }

@@ -1,5 +1,3 @@
-#![allow(clippy::missing_safety_doc, reason = "P5.1")]
-
 use std::ffi::c_void;
 use std::ptr;
 
@@ -63,8 +61,17 @@ pub struct Event {
 }
 
 impl Event {
+    /// The event's parameter `name`, read as `desired_type`.
+    ///
+    /// # Safety
+    ///
+    /// The event is still being handled, so `raw` is live, and `T` is the C type `desired_type`
+    /// names: plain data of the size Carbon writes, valid when all zeroes.
     pub unsafe fn parameter<T: Copy>(&self, name: u32, desired_type: u32) -> Option<T> {
+        // SAFETY: the caller's: `T` is valid when all zeroes.
         let mut out: T = unsafe { std::mem::zeroed() };
+        // SAFETY: the caller's: `raw` is live and `T` is `desired_type`; Carbon writes at most
+        // `size_of::<T>()` bytes into `out`.
         let status = unsafe {
             GetEventParameter(
                 self.raw,
@@ -89,9 +96,13 @@ unsafe extern "C" fn trampoline(
     event: EventRef,
     user_data: *mut c_void,
 ) -> OSStatus {
+    // SAFETY: `user_data` is the `CallbackCtx` `application` boxed, freed only after the handler is
+    // removed; Carbon calls the handler on the main thread one event at a time, so nothing else
+    // holds it.
     let ctx = unsafe { &mut *(user_data as *mut CallbackCtx) };
     let ev = Event {
         raw: event,
+        // SAFETY: `event` is the live event Carbon is handing the handler.
         kind: unsafe { GetEventKind(event) },
     };
     (ctx.callback)(ev)
@@ -101,9 +112,6 @@ pub struct CarbonListener {
     handler_ref: EventHandlerRef,
     ctx: *mut c_void,
 }
-
-unsafe impl Send for CarbonListener {}
-unsafe impl Sync for CarbonListener {}
 
 impl std::fmt::Debug for CarbonListener {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -116,6 +124,7 @@ impl std::fmt::Debug for CarbonListener {
 impl CarbonListener {
     pub fn application<F>(types: &[EventType], callback: F) -> Result<Self, String>
     where F: FnMut(Event) -> OSStatus + Send + 'static {
+        // SAFETY: takes nothing and returns the application's target, which Carbon owns.
         let target = unsafe { GetApplicationEventTarget() };
         if target.is_null() {
             return Err("GetApplicationEventTarget returned null".to_string());
@@ -125,6 +134,8 @@ impl CarbonListener {
             Box::into_raw(Box::new(CallbackCtx { callback: Box::new(callback) })) as *mut c_void;
 
         let mut handler_ref: EventHandlerRef = ptr::null_mut();
+        // SAFETY: `types` is borrowed for the call, which copies it; `ctx` lives until `remove`,
+        // which removes the handler before freeing it; `handler_ref` is a local the call writes.
         let status = unsafe {
             InstallEventHandler(
                 target,
@@ -137,6 +148,7 @@ impl CarbonListener {
         };
 
         if status != NO_ERR || handler_ref.is_null() {
+            // SAFETY: `ctx` is the box made above, which no installed handler holds.
             unsafe { drop(Box::from_raw(ctx as *mut CallbackCtx)) };
             return Err(format!("InstallEventHandler failed: status={status}"));
         }
@@ -146,6 +158,7 @@ impl CarbonListener {
 
     pub fn remove(&mut self) -> Result<(), String> {
         if !self.handler_ref.is_null() {
+            // SAFETY: `handler_ref` is the installed handler, removed once and then nulled.
             let status = unsafe { RemoveEventHandler(self.handler_ref) };
             if status != NO_ERR {
                 return Err(format!("RemoveEventHandler failed: status={status}"));
@@ -153,6 +166,7 @@ impl CarbonListener {
             self.handler_ref = ptr::null_mut();
         }
         if !self.ctx.is_null() {
+            // SAFETY: the box `application` made; the handler that held it is removed above.
             unsafe { drop(Box::from_raw(self.ctx as *mut CallbackCtx)) };
             self.ctx = ptr::null_mut();
         }

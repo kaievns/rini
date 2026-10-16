@@ -288,13 +288,13 @@ mod tests {
         let reported_wid = state.id(&reported).expect("taken on");
         assert!(state.id(&unreported).is_err(), "left out");
         assert!(
-            sink.0.borrow().iter().any(|event| matches!(
+            sink.0.lock().iter().any(|event| matches!(
                 event,
                 Event::WindowsDiscovered { new, .. }
                     if new.iter().map(|(w, _)| *w).eq([reported_wid])
             )),
             "{:?}",
-            sink.0.borrow()
+            sink.0.lock()
         );
     }
 
@@ -304,10 +304,10 @@ mod tests {
         state: &mut State<FakeAx>,
         sink: &Sink,
     ) -> (Vec<(WindowId, WindowInfo)>, Vec<WindowId>) {
-        sink.0.borrow_mut().clear();
+        sink.0.lock().clear();
         state.handle_request(Request::GetVisibleWindows).expect("refreshed");
         sink.0
-            .borrow()
+            .lock()
             .iter()
             .find_map(|event| match event {
                 Event::WindowsDiscovered { new, known_visible, .. } => {

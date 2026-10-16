@@ -15,6 +15,8 @@ impl ProcessInfo {
             processInfoLength: size_of::<ProcessInfoRec>() as _,
             ..ProcessInfoRec::default()
         };
+        // SAFETY: `psn` is borrowed for the call, `info`'s length field bounds the 72 bytes written,
+        // and `processName` and `processAppRef` are null, so the call writes through neither.
         cg_ok(unsafe { GetProcessInformation(&psn, &mut info) })?;
 
         Ok(Self {
@@ -51,6 +53,7 @@ const _: () = if size_of::<ProcessInfoRec>() != 72 {
 pub use rini_skylight_sys::ProcessSerialNumber;
 pub fn psn_for_pid(pid: pid_t) -> Result<ProcessSerialNumber, CGError> {
     let mut psn = ProcessSerialNumber::default();
+    // SAFETY: `psn` is a local the call writes.
     cg_ok(unsafe { GetProcessForPID(pid, &mut psn) })?;
     Ok(psn)
 }
@@ -58,6 +61,7 @@ pub fn psn_for_pid(pid: pid_t) -> Result<ProcessSerialNumber, CGError> {
 /// The pid of the process `psn` names, if it names one.
 pub fn pid_for_psn(psn: &ProcessSerialNumber) -> Option<pid_t> {
     let mut pid: pid_t = 0;
+    // SAFETY: `psn` is borrowed for the call, and `pid` is a local it writes.
     (unsafe { GetProcessPID(psn, &mut pid) } == 0 && pid != 0).then_some(pid)
 }
 

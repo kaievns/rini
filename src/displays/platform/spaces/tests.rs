@@ -1177,9 +1177,7 @@ fn display_origin_change_is_treated_as_topology_change() {
 
 /// A login or system space must never reach the reactor as a display's space.
 ///
-/// `SLSSpaceGetType == 0` is the only thing that counts as a user space. This rule was unreachable
-/// from a test until the classifier became injectable: the old `#[cfg(test)]` fork of `is_user_space`
-/// returned `true` for every id, so under test there was no such thing as a non-user space.
+/// `SLSSpaceGetType == 0` is the only thing that counts as a user space.
 #[test]
 fn a_non_user_space_is_nulled_out_before_it_is_forwarded() {
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor_with_a_non_user_space();

@@ -132,8 +132,8 @@ impl<W: AxWorld> State<W> {
     pub(super) fn remove_stale_windows(&mut self) {
         let mut to_remove = Vec::new();
         for (&wid, window) in self.windows.iter() {
-            // `kAXWindowsAttribute` is space-filtered and cannot be used to decide
-            // whether a tracked window still exists globally. Only drop state when
+            // `kAXWindowsAttribute` is space-filtered and cannot decide whether a
+            // tracked window still exists globally. Only drop state when
             // the element itself has become invalid.
             if let Err(error) = self.ax.role(&window.elem)
                 && is_gone(Self::failure_of(&error))
@@ -183,13 +183,13 @@ mod tests {
         // The element goes: every read about it now fails the way Accessibility reports a dead one.
         state.ax.frames.remove(&died);
         state.ax.roles.remove(&died);
-        sink.0.borrow_mut().clear();
+        sink.0.lock().clear();
 
         state.remove_stale_windows();
 
         assert!(state.windows.contains_key(&kept_wid), "the live window stays");
         assert!(!state.windows.contains_key(&died_wid), "the dead one goes");
-        let announced = sink.0.borrow();
+        let announced = sink.0.lock();
         assert_eq!(announced.len(), 1, "told exactly once: {announced:?}");
         assert!(
             matches!(announced[0], Event::WindowDestroyed(w) if w == died_wid),
@@ -208,7 +208,7 @@ mod tests {
             .register_window(window, peer(window, rect(0., 0., 100., 100.)))
             .expect("registers")
             .1;
-        sink.0.borrow_mut().clear();
+        sink.0.lock().clear();
 
         // The application goes under load AFTER the window is known: every read now fails with
         // "could not complete", which is what a wedged or busy application looks like.
@@ -219,7 +219,7 @@ mod tests {
             state.windows.contains_key(&wid),
             "a busy application has not lost its windows"
         );
-        assert!(sink.0.borrow().is_empty(), "and nothing is announced");
+        assert!(sink.0.lock().is_empty(), "and nothing is announced");
     }
 
     #[test]

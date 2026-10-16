@@ -1,4 +1,4 @@
-//! Whether rini manages a window, and whether one the app no longer lists is gone, decided over
+//! Whether rini manages a window, and whether one the app has stopped listing is gone, decided over
 //! what Accessibility and the window server said about it.
 //!
 //! Every fact arrives as a value. A window-server fact is `None` when the window server gave no
@@ -66,7 +66,7 @@ pub struct Liveness {
     pub ordered_in: Option<bool>,
 }
 
-/// Whether the window server's picture of a window the app no longer lists says it is gone: not a
+/// Whether the window server's picture of a window the app has stopped listing says it is gone: not a
 /// suitable window, off layer 0, too small to be real, or ordered out. A failed query (`None`) is
 /// not evidence; only an explicit negative observation retires a window.
 pub fn looks_gone(info: &WindowServerInfo, liveness: Liveness) -> bool {

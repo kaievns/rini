@@ -41,7 +41,7 @@ impl FocusOrder {
         self.recent.insert(0, window);
     }
 
-    /// Drop a window that no longer exists.
+    /// Drop a window that has gone.
     pub fn forget(&mut self, window: WindowId) {
         self.recent.retain(|candidate| *candidate != window);
     }

@@ -53,6 +53,8 @@ impl ProcessActor {
         ];
 
         let listener = CarbonListener::application(&types, move |ev: Event| {
+            // SAFETY: `ev` is the event being handled, and a `typeProcessSerialNumber` parameter is
+            // a `ProcessSerialNumber`, two integers.
             let psn = match unsafe {
                 ev.parameter::<ProcessSerialNumber>(
                     K_EVENT_PARAM_PROCESS_ID,

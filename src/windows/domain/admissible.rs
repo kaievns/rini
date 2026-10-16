@@ -3,10 +3,6 @@
 //! Distinct from `rules`, which is the user's config, and from `state::is_manageable`, which is about
 //! a window rini has already taken on. This is the door: four reasons to turn a window away, applied
 //! before anything else knows it exists.
-//!
-//! Lifted out of `platform::app_actor::register_window`, where they were four early returns in a
-//! ninety-line function against a live `AXUIElement` — so the strings below, which is what they
-//! mostly are, could not be exercised at all.
 
 use rini_core::ids::WindowServerId;
 

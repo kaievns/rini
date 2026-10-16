@@ -367,7 +367,7 @@ pub fn snapshot_is_committable(
 /// What changed about the attached display set between two snapshots.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplaySetDelta {
-    /// Displays that were attached and are not any more, in the order they were attached.
+    /// Displays that were attached and are not now, in the order they were attached.
     pub departed: Vec<DisplayUuid>,
     /// Displays that are attached and were not, in the order they are now attached.
     pub arrived: Vec<DisplayUuid>,
@@ -378,9 +378,8 @@ pub struct DisplaySetDelta {
 /// Compare two snapshots of the attached displays.
 ///
 /// Both slices carry one entry per screen, in screen order; a screen macOS cannot identify carries
-/// an empty UUID. Taking both lists up front is the point of the function: the caller used to
-/// capture the previous set inline, one line before it replaced it, and the ordering was held in
-/// place by a comment.
+/// an empty UUID. Taking both lists up front is the point of the function: the previous set is read
+/// before the current one replaces it, an ordering the signature holds rather than a comment.
 ///
 /// `unchanged` needs `display_set_changed` from the snapshot AS WELL as the counts, because a
 /// display can be replaced by another one between two snapshots and leave the count alone. It

@@ -19,3 +19,9 @@ pub(crate) fn cg_ok(err: objc2_core_graphics::CGError) -> Result<(), objc2_core_
         Err(err)
     }
 }
+
+/// The address of `name` in any image loaded into the process, none when no image exports it.
+pub(crate) fn symbol(name: &std::ffi::CStr) -> Option<std::ptr::NonNull<std::ffi::c_void>> {
+    // SAFETY: `name` is NUL-terminated, and `RTLD_DEFAULT` searches the loaded images, changing none.
+    std::ptr::NonNull::new(unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) })
+}

@@ -316,7 +316,6 @@ mod tests {
         );
     }
 
-    // The 40 lines this replaced read the live Dock, so none of it was ever tested.
     #[test]
     fn the_menu_bar_takes_off_the_top_and_leaves_the_width_alone() {
         let usable = usable_frame(rect(0.0, 0.0, 1728.0, 1117.0), 37.0, None);
