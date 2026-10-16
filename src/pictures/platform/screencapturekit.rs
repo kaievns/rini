@@ -27,7 +27,7 @@ use crate::pictures::domain::route::Route;
 use crate::pictures::domain::schedule::Display;
 use crate::pictures::domain::target::PictureTarget;
 use crate::pictures::platform::picture::{LazyGround, Picture, Pixels};
-use crate::pictures::platform::surface::{Layout, new_surface, read_locked};
+use crate::pictures::platform::surface::{Layout, OwnSurface, new_surface, read_unwritten};
 
 /// Alpha above which a pixel counts as painted; shadows are excluded, so a painted edge is opaque.
 const PAINTED_ALPHA: u8 = 8;
@@ -101,7 +101,12 @@ fn content_reaches_edges(buffer: &CVPixelBuffer) -> Option<bool> {
 /// Copies a capture's pixels into an IOSurface this process owns: ScreenCaptureKit recycles its pool
 /// surfaces once the completion returns, so a capture's surface is copied inside its completion. See
 /// "Cached surfaces have to be marked in use" in the research doc.
-fn own_copy(source: &IOSurfaceRef) -> Option<CFRetained<IOSurfaceRef>> {
+///
+/// # Safety
+///
+/// Nothing writes `source` until this returns: it is a capture's surface read inside its delivery
+/// completion, or one of this process's own.
+unsafe fn own_copy(source: &IOSurfaceRef) -> Option<OwnSurface> {
     let (width, height) = (source.width(), source.height());
     let stride = source.bytes_per_row();
     if width == 0 || height == 0 || stride < width * 4 {
@@ -113,12 +118,15 @@ fn own_copy(source: &IOSurfaceRef) -> Option<CFRetained<IOSurfaceRef>> {
     };
     new_surface(width, height, layout, |copy, copy_stride| {
         let row_bytes = stride.min(copy_stride);
-        read_locked(source, |pixels| {
-            for row in 0..height {
-                copy[row * copy_stride..][..row_bytes]
-                    .copy_from_slice(&pixels[row * stride..][..row_bytes]);
-            }
-        })
+        // SAFETY: by this function's contract, nothing writes `source` while it is read.
+        unsafe {
+            read_unwritten(source, |pixels| {
+                for row in 0..height {
+                    copy[row * copy_stride..][..row_bytes]
+                        .copy_from_slice(&pixels[row * stride..][..row_bytes]);
+                }
+            })
+        }
     })
 }
 
@@ -278,17 +286,20 @@ pub fn capture(
     screenshot(&prepared.filter, &prepared.config, move |buffer| {
         let filled = buffer.as_ref().and_then(|b| content_reaches_edges(b));
         let surface = buffer.and_then(|b| CVPixelBufferGetIOSurface(Some(&b)));
+        // SAFETY: `window_picture` below calls this before it returns, so inside the delivery
+        // completion, before ScreenCaptureKit takes the surface back.
+        let copy = || surface.as_deref().and_then(|surface| unsafe { own_copy(surface) });
         // No capture calls in here: `CGWindowListCreateImage` is proxied through this same delivery
         // queue and deadlocks until a ~20s timeout, and `SLSCaptureWindowsContentsToRectWithOptions`
         // reaches the same proxy (`docs/data/2026-10-08-skylight-lock/callgraph.txt`).
-        done(window_picture(&target, size, surface, filled, taken));
+        done(window_picture(&target, size, copy, filled, taken));
     });
 }
 
 fn window_picture(
     target: &PictureTarget,
     size: CGSize,
-    surface: Option<CFRetained<IOSurfaceRef>>,
+    copy: impl FnOnce() -> Option<OwnSurface>,
     filled: Option<bool>,
     taken: std::time::Instant,
 ) -> Option<Picture> {
@@ -303,7 +314,7 @@ fn window_picture(
         );
         return None;
     }
-    let Some(surface) = surface.as_deref().and_then(own_copy) else {
+    let Some(surface) = copy() else {
         debug!(
             wsid = target.server_id.as_u32(),
             pid = target.window.pid,
@@ -393,7 +404,9 @@ pub fn render_desktop(display: Display, done: impl Fn(Option<Picture>) + Send + 
         let done = done.clone();
         screenshot(&filter, &config, move |buffer| {
             let surface = buffer.and_then(|buffer| CVPixelBufferGetIOSurface(Some(&buffer)));
-            done(surface.as_deref().and_then(own_copy).map(|surface| Picture {
+            // SAFETY: inside the delivery completion, before ScreenCaptureKit takes the surface back.
+            let copy = surface.as_deref().and_then(|surface| unsafe { own_copy(surface) });
+            done(copy.map(|surface| Picture {
                 coverage: Coverage {
                     covered: ScreenSize::new(
                         surface.width() as f64 / scale,
@@ -414,6 +427,7 @@ pub fn render_desktop(display: Display, done: impl Fn(Option<Picture>) + Send + 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pictures::platform::surface::read_locked;
 
     #[test]
     fn a_captures_copy_is_its_own_surface_with_the_same_pixels() {
@@ -432,7 +446,8 @@ mod tests {
         })
         .expect("a source surface");
 
-        let copy = own_copy(&source).expect("a copy");
+        // SAFETY: the test's own surface, which nothing writes after `new_surface`.
+        let copy = unsafe { own_copy(&source) }.expect("a copy");
         assert_ne!(copy.id(), source.id(), "a surface of our own");
         assert_eq!((copy.width(), copy.height()), (7, 5));
         assert_eq!(copy.pixel_format(), source.pixel_format());
@@ -460,8 +475,8 @@ mod tests {
     fn a_capture_with_no_surface_or_an_underfilled_one_is_no_picture() {
         let size = CGSize::new(859.0, 1081.0);
         let now = std::time::Instant::now();
-        assert!(window_picture(&target(), size, None, None, now).is_none());
-        assert!(window_picture(&target(), size, None, Some(false), now).is_none());
+        assert!(window_picture(&target(), size, || None, None, now).is_none());
+        assert!(window_picture(&target(), size, || None, Some(false), now).is_none());
     }
 
     /// Alpha reader whose top-left `fill_w` x `fill_h` pixels are painted, a closure because

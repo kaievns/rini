@@ -80,9 +80,9 @@ mod tests {
     use crate::pictures::domain::region::WHOLE;
     use crate::pictures::platform::bitmap::rgba_bitmap_context;
     use crate::pictures::platform::picture::{LazyGround, test_picture};
-    use crate::pictures::platform::surface::{Layout, new_surface};
+    use crate::pictures::platform::surface::{Layout, OwnSurface, new_surface};
 
-    fn test_surface() -> CFRetained<objc2_io_surface::IOSurfaceRef> {
+    fn test_surface() -> OwnSurface {
         new_surface(1, 1, Layout::default(), |_, _| Some(())).expect("a surface")
     }
 

@@ -13,7 +13,6 @@ use objc2_core_graphics::{
     CGColorSpaceModel, CGContext, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
     CGInterpolationQuality,
 };
-use objc2_io_surface::IOSurfaceRef;
 use rini_geometry::space::ScreenPoint;
 
 use crate::pictures::domain::ground::{Ground, ground};
@@ -28,7 +27,7 @@ use crate::pictures::platform::bitmap::{
     THUMBPRINT_SIDE, bitmap_context, rgba_bitmap_context, thumbprint,
 };
 use crate::pictures::platform::picture::{Picture, Pixels, image_size};
-use crate::pictures::platform::surface::read_locked;
+use crate::pictures::platform::surface::{OwnSurface, read_locked};
 
 /// The band print of a picture: its top `BAND_PT` at the picture's own scale, drawn down to
 /// `BAND_PRINT`. `None` for a surface.
@@ -102,7 +101,7 @@ pub fn picture_thumbprint(picture: &Picture) -> Option<Vec<u8>> {
 
 /// A surface's thumbprint, BGRA read as RGBA: each cell of a `THUMBPRINT_SIDE` square the mean of
 /// `THUMBPRINT_POINTS` squared points across it.
-fn surface_thumbprint(surface: &IOSurfaceRef) -> Option<Vec<u8>> {
+fn surface_thumbprint(surface: &OwnSurface) -> Option<Vec<u8>> {
     const THUMBPRINT_POINTS: usize = 4;
     let (width, height, stride) = (surface.width(), surface.height(), surface.bytes_per_row());
     if width == 0 || height == 0 || stride < width * 4 {
@@ -206,7 +205,7 @@ fn own_format(image: &CGImage) -> Option<(SampleFormat, CFRetained<CGColorSpace>
 }
 
 /// A surface's pixels at the body's points, BGRA read as RGBA.
-fn surface_samples(surface: &IOSurfaceRef) -> Option<Vec<[u8; 4]>> {
+fn surface_samples(surface: &OwnSurface) -> Option<Vec<[u8; 4]>> {
     let (width, height, stride) = (surface.width(), surface.height(), surface.bytes_per_row());
     if width == 0 || height == 0 || stride < width * 4 {
         return None;
@@ -732,11 +731,7 @@ mod tests {
         assert_ne!(small, print(60, 40, [200, 20, 30, 255]));
     }
 
-    fn test_surface(
-        width: usize,
-        height: usize,
-        bgra_of_rgba: [u8; 4],
-    ) -> CFRetained<IOSurfaceRef> {
+    fn test_surface(width: usize, height: usize, bgra_of_rgba: [u8; 4]) -> OwnSurface {
         let [r, g, b, a] = bgra_of_rgba;
         new_surface(width, height, Layout::default(), |bytes, stride| {
             for y in 0..height {

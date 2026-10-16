@@ -1,6 +1,8 @@
 //! IOSurfaces of this process's own, written once as they are made, and a surface's bytes read under
 //! its lock. The only place a surface's memory is reached.
 
+use std::ops::Deref;
+
 use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained, CFString};
 use objc2_io_surface::{
     IOSurfaceLockOptions, IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceBytesPerRow,
@@ -15,6 +17,17 @@ pub struct Layout {
     pub pixel_format: Option<u32>,
 }
 
+/// A surface `new_surface` made: written only by its `fill`, before it returns, so nothing writes it
+/// while it is read.
+#[derive(Clone, Debug)]
+pub struct OwnSurface(CFRetained<IOSurfaceRef>);
+
+impl Deref for OwnSurface {
+    type Target = IOSurfaceRef;
+
+    fn deref(&self) -> &IOSurfaceRef { &self.0 }
+}
+
 /// A new `width` x `height` surface laid out as `layout` says, its bytes written by `fill` before
 /// anything else holds it: `fill` is handed every row, `bytes_per_row` apart. `None` when IOSurface
 /// makes none, the surface is smaller than its rows, or `fill` gives up.
@@ -23,7 +36,7 @@ pub fn new_surface(
     height: usize,
     layout: Layout,
     fill: impl FnOnce(&mut [u8], usize) -> Option<()>,
-) -> Option<CFRetained<IOSurfaceRef>> {
+) -> Option<OwnSurface> {
     // SAFETY: each is an immutable `CFString` constant exported by IOSurface.
     let [width_key, height_key, element_key, row_key, format_key]: [&CFString; 5] = unsafe {
         [
@@ -56,18 +69,30 @@ pub fn new_surface(
         fill(unsafe { std::slice::from_raw_parts_mut(base, length) }, stride)
     })
     .flatten()?;
-    Some(surface)
+    Some(OwnSurface(surface))
 }
 
 /// Hands `read` the bytes of `surface`, every row, `bytes_per_row` apart, under a read-only lock.
-/// `None` when the lock fails or the surface is smaller than its rows. `surface` is one
-/// `new_surface` made, or a capture's surface read inside its delivery completion: nothing writes
-/// either while it is read.
-pub(super) fn read_locked<R>(surface: &IOSurfaceRef, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
+/// `None` when the lock fails or the surface is smaller than its rows.
+pub(super) fn read_locked<R>(surface: &OwnSurface, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
+    // SAFETY: an `OwnSurface` is written only inside `new_surface`, before it returns.
+    unsafe { read_unwritten(&surface.0, read) }
+}
+
+/// [`read_locked`] for a surface of any origin.
+///
+/// # Safety
+///
+/// Nothing writes `surface` until this returns: a read-only lock does not hold another writer off.
+/// ScreenCaptureKit rewrites a delivered surface once its completion returns, so a capture's surface
+/// is read inside it.
+pub(super) unsafe fn read_unwritten<R>(
+    surface: &IOSurfaceRef,
+    read: impl FnOnce(&[u8]) -> R,
+) -> Option<R> {
     with_locked(surface, IOSurfaceLockOptions::ReadOnly, |base, length| {
-        // SAFETY: `with_locked` hands the `length` bytes the surface holds at `base`, locked. This
-        // process writes a surface only inside `new_surface`, before anything else holds it, and
-        // ScreenCaptureKit rewrites a delivered surface only after its completion returns.
+        // SAFETY: `with_locked` hands the `length` bytes the surface holds at `base`, locked, and
+        // by the caller's contract nothing writes them while the slice lives.
         read(unsafe { std::slice::from_raw_parts(base, length) })
     })
 }

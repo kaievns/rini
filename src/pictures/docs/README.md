@@ -37,6 +37,7 @@ decides what each is worth, keeps them, and hands them to layers. The plan it is
 | **Measurement** | `platform/measure.rs` — a picture read small in its own format (`sample_format`): band print, body samples, ground, thumbprint (`picture_thumbprint`, `surface_thumbprint`), first-picture translucency and material; and a picture drawn whole for a handover check |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render, each reporting back through a callback |
 | **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from, and the rect each set covers |
+| **IOSurfaces** | `platform/surface.rs` — `OwnSurface`, a surface written only by the `fill` of the `new_surface` that makes it, so `read_locked` reads it safely; any other surface read through the unsafe `read_unwritten`, a capture's only inside its delivery completion |
 | **Bitmaps** | `platform/bitmap.rs` — a fresh context, RGBA or in a format given, an image's copy of its own, and an image's thumbprint |
 | **Layers** | `platform/layer.rs` — a picture or a region handed to a layer (`contents_of`, `contentsRect`), and a layer filled with a picture's ground in the space it was read in (`ground_colour`) |
 

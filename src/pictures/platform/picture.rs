@@ -10,7 +10,6 @@ use std::sync::{Arc, OnceLock};
 
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
-use objc2_io_surface::IOSurfaceRef;
 use rini_geometry::space::{
     ContentsRect, PixelRect, PixelSize, PointSpace, ScreenSize, Size, ToCg,
 };
@@ -22,6 +21,7 @@ use crate::pictures::domain::region::{WHOLE, unit_rect};
 use crate::pictures::domain::route::Route;
 use crate::pictures::platform::bitmap::{rgba_bitmap_context, standalone_copy};
 use crate::pictures::platform::measure::ground_of;
+use crate::pictures::platform::surface::OwnSurface;
 
 /// A window's pixels, whichever API produced them. Core Animation accepts each form.
 #[derive(Clone, Debug)]
@@ -29,7 +29,7 @@ pub enum Pixels {
     /// CPU-side bitmap, from `SLSHWCaptureWindowList`.
     Bitmap(CFRetained<CGImage>),
     /// GPU-side surface, from ScreenCaptureKit; off the process's heap.
-    Surface(CFRetained<IOSurfaceRef>),
+    Surface(OwnSurface),
     /// One window's part of a batched SkyLight composite, `rect` in the composite's pixels. Drawn
     /// through `contentsRect`, so nothing is copied out of it; it keeps the whole composite alive, so
     /// it is replaced by a copy of its own once no transition holds the service.
