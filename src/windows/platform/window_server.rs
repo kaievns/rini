@@ -283,11 +283,36 @@ struct WindowQueryKeys {
     exclude_tags: usize,
 }
 
-fn resolve_window_query_key(name: &CStr) -> Option<usize> {
-    let slot = symbol(name)?;
-    // SAFETY: each name is a SkyLight `CFStringRef` global, so `slot` addresses a readable pointer.
-    let key = unsafe { *(slot.as_ptr().cast::<*mut CFString>()) };
-    (!key.is_null()).then_some(key as usize)
+/// The SkyLight query keys rini sets, each the name of an exported `CFStringRef` global.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowQueryKey {
+    Owner,
+    Spaces,
+    SpaceListOptions,
+    WorkspaceWindowListOptions,
+    IncludeTags,
+    ExcludeTags,
+}
+
+impl WindowQueryKey {
+    const fn symbol_name(self) -> &'static CStr {
+        match self {
+            Self::Owner => c"SLSWindowQueryKeyOwner",
+            Self::Spaces => c"SLSWindowQueryKeySpaces",
+            Self::SpaceListOptions => c"SLSWindowQueryKeySpaceListOptions",
+            Self::WorkspaceWindowListOptions => c"SLSWindowQueryKeyWorkspaceWindowListOptions",
+            Self::IncludeTags => c"SLSWindowQueryKeyIncludeTags",
+            Self::ExcludeTags => c"SLSWindowQueryKeyExcludeTags",
+        }
+    }
+
+    fn resolve(self) -> Option<usize> {
+        let slot = symbol(self.symbol_name())?;
+        // SAFETY: every `symbol_name` is a SkyLight data symbol holding a `CFStringRef`, so `slot`
+        // addresses a readable, pointer-sized global.
+        let key = unsafe { *(slot.as_ptr().cast::<*mut CFString>()) };
+        (!key.is_null()).then_some(key as usize)
+    }
 }
 
 static GET_CORNER_RADII: Lazy<Option<SLSWindowIteratorGetCornerRadiiFn>> = Lazy::new(|| {
@@ -302,22 +327,21 @@ static GET_CORNER_RADII: Lazy<Option<SLSWindowIteratorGetCornerRadiiFn>> = Lazy:
 
 static WINDOW_QUERY_KEYS: Lazy<Option<WindowQueryKeys>> = Lazy::new(|| {
     Some(WindowQueryKeys {
-        owner: resolve_window_query_key(c"SLSWindowQueryKeyOwner")?,
-        spaces: resolve_window_query_key(c"SLSWindowQueryKeySpaces").unwrap_or(0),
-        space_options: resolve_window_query_key(c"SLSWindowQueryKeySpaceListOptions").unwrap_or(0),
+        owner: WindowQueryKey::Owner.resolve()?,
+        spaces: WindowQueryKey::Spaces.resolve().unwrap_or(0),
+        space_options: WindowQueryKey::SpaceListOptions.resolve().unwrap_or(0),
         // This key appeared later than the core query API. A missing value is
         // represented by zero and simply leaves the server default in place.
-        window_options: resolve_window_query_key(c"SLSWindowQueryKeyWorkspaceWindowListOptions")
-            .unwrap_or(0),
-        include_tags: resolve_window_query_key(c"SLSWindowQueryKeyIncludeTags")?,
-        exclude_tags: resolve_window_query_key(c"SLSWindowQueryKeyExcludeTags")?,
+        window_options: WindowQueryKey::WorkspaceWindowListOptions.resolve().unwrap_or(0),
+        include_tags: WindowQueryKey::IncludeTags.resolve()?,
+        exclude_tags: WindowQueryKey::ExcludeTags.resolve()?,
     })
 });
 
 /// # Safety
 ///
 /// `query` is a live query from `SLSWindowQueryCreate`, and `key`, when not 0, a query key resolved
-/// by `resolve_window_query_key` that takes a value of `T`'s CF type.
+/// by `WindowQueryKey::resolve` that takes a value of `T`'s CF type.
 unsafe fn set_window_query_value<T: Type>(query: *mut CFType, key: usize, value: &CFRetained<T>) {
     if key != 0 {
         // SAFETY: the caller's; `value` is a live CF object, which the query retains if it keeps it.
@@ -879,6 +903,28 @@ mod tests {
 
     use super::*;
     use crate::windows::domain::stack::NORMAL_WINDOW_LEVEL;
+
+    #[test]
+    fn a_window_query_key_resolves_only_a_skylight_query_key_symbol() {
+        use WindowQueryKey::*;
+        let names: Vec<&str> = [
+            Owner,
+            Spaces,
+            SpaceListOptions,
+            WorkspaceWindowListOptions,
+            IncludeTags,
+            ExcludeTags,
+        ]
+        .into_iter()
+        .map(|key| key.symbol_name().to_str().unwrap())
+        .collect();
+        assert!(
+            names.iter().all(|name| name.starts_with("SLSWindowQueryKey")),
+            "{names:?}"
+        );
+        let distinct: std::collections::HashSet<_> = names.iter().collect();
+        assert_eq!(distinct.len(), names.len(), "{names:?}");
+    }
 
     #[test]
     fn zero_window_server_id_is_not_a_window_id() {
