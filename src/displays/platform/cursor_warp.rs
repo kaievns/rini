@@ -218,13 +218,13 @@ impl CursorWarp {
             return;
         };
 
-        // Both calls are FFI into CoreGraphics with plain-value arguments; there are no
-        // pointers or lifetimes involved, so the unsafety is purely that they are extern.
+        // SAFETY: a point by value only, so no memory of rini's is at stake.
         let result = unsafe { rini_skylight_sys::CGWarpMouseCursorPosition(target) };
         if result == CGError::Success {
             // Re-associate the cursor with the mouse. Without this the pointer keeps the
             // velocity it had at the edge and can slide straight back out of the display
             // it just entered.
+            // SAFETY: an integer argument only.
             unsafe { rini_skylight_sys::CGAssociateMouseAndMouseCursorPosition(1) };
             self.last_warp = Some(Instant::now());
             debug!(?cursor, ?target, "warped cursor across stacked displays");
@@ -467,7 +467,7 @@ fn warp_screens(
 
 /// Physical height of a display in millimetres, or 0.0 when the display does not report it.
 fn physical_height_mm(id: ScreenId) -> f64 {
-    // SAFETY: plain-value FFI into CoreGraphics with a display id.
+    // SAFETY: an integer argument only; the size comes back by value.
     let size = unsafe { rini_skylight_sys::CGDisplayScreenSize(id.as_u32()) };
     if size.height.is_finite() && size.height > 0.0 {
         size.height

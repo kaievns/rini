@@ -14,7 +14,7 @@ use once_cell::sync::Lazy;
 use parking_lot::{Mutex, RwLock};
 use rini_runloop::channel as channels;
 use rini_skylight_sys::{
-    KnownCGSEvent, SLSMainConnectionID, SLSRegisterConnectionNotifyProc,
+    G_CONNECTION, KnownCGSEvent, SLSRegisterConnectionNotifyProc,
     SLSRequestNotificationsForWindows, cid_t,
 };
 use rustc_hash::FxHashMap as HashMap;
@@ -32,8 +32,8 @@ pub struct EventData {
 static EVENT_RECEIVERS: Lazy<Mutex<HashMap<KnownCGSEvent, Option<channels::Receiver<EventData>>>>> =
     Lazy::new(|| Mutex::new(HashMap::default()));
 
-static G_CONNECTION: Lazy<cid_t> = Lazy::new(|| unsafe { SLSMainConnectionID() });
-
+/// Each event type's context, boxed so its address holds, and never removed: SkyLight is handed the
+/// address and calls back with it for the life of the process.
 static CALLBACK_CTXS: Lazy<RwLock<HashMap<KnownCGSEvent, Box<CallbackContext>>>> =
     Lazy::new(|| RwLock::new(HashMap::default()));
 
@@ -41,6 +41,8 @@ struct CallbackContext {
     event_type: KnownCGSEvent,
     sender: channels::Sender<EventData>,
 }
+
+static_assertions::assert_impl_all!(CallbackContext: Sync);
 
 /// Registers `event` with SkyLight. MUST be called at most once per event type for the process: a
 /// second call registers the callback again over the first call's context, so the first receiver
@@ -60,7 +62,9 @@ pub fn init(event: KnownCGSEvent) -> i32 {
         .or_insert_with(|| Box::new(CallbackContext { event_type: event, sender: tx }));
 
     let raw = event as u32;
-    let callback_ctx_ptr = (&mut **callback_ctx as *mut CallbackContext).cast::<c_void>();
+    let callback_ctx_ptr = (&**callback_ctx as *const CallbackContext).cast_mut().cast::<c_void>();
+    // SAFETY: the context is boxed in `CALLBACK_CTXS`, which never removes it, so it outlives
+    // every callback; the callback only reads it, and `CallbackContext` is `Sync`.
     let res = unsafe {
         SLSRegisterConnectionNotifyProc(*G_CONNECTION, connection_callback, raw, callback_ctx_ptr)
     };
@@ -85,6 +89,7 @@ pub fn take_receiver(event: KnownCGSEvent) -> channels::Receiver<EventData> {
 }
 
 pub fn update_window_notifications(window_ids: &[u32]) {
+    // SAFETY: the pointer and length are `window_ids`', borrowed for the call.
     unsafe {
         let _ = SLSRequestNotificationsForWindows(
             *G_CONNECTION,
@@ -94,16 +99,19 @@ pub fn update_window_notifications(window_ids: &[u32]) {
     }
 }
 
-#[inline(always)]
-fn read<T: Copy + Sized + 'static>(bytes: &[u8], off: usize) -> Option<T> {
-    let n = std::mem::size_of::<T>();
-    if bytes.len() < off + n {
-        return None;
-    }
-    let mut buf = [0u8; 32];
-    assert!(n <= buf.len(), "read_ne: type too large");
-    buf[..n].copy_from_slice(&bytes[off..off + n]);
-    Some(unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const T) })
+/// The `N` bytes at `off` in a payload, none when it is shorter.
+fn bytes_at<const N: usize>(bytes: &[u8], off: usize) -> Option<[u8; N]> {
+    bytes.get(off..off.checked_add(N)?)?.try_into().ok()
+}
+
+/// The native-order `u64` at `off` in a payload, none when it is shorter.
+fn read_u64(bytes: &[u8], off: usize) -> Option<u64> {
+    bytes_at(bytes, off).map(u64::from_ne_bytes)
+}
+
+/// The native-order `u32` at `off` in a payload, none when it is shorter.
+fn read_u32(bytes: &[u8], off: usize) -> Option<u32> {
+    bytes_at(bytes, off).map(u32::from_ne_bytes)
 }
 
 extern "C" fn connection_callback(
@@ -117,6 +125,7 @@ extern "C" fn connection_callback(
         return;
     }
 
+    // SAFETY: `context` is the boxed `CallbackContext` `init` registered, never freed.
     let ctx = unsafe { &*(context as *const CallbackContext) };
     let kind = ctx.event_type;
     debug_assert_eq!(event_raw, kind as u32);
@@ -125,6 +134,7 @@ extern "C" fn connection_callback(
     let bytes = if data.is_null() || len == 0 {
         &[]
     } else {
+        // SAFETY: SkyLight hands the callback `len` bytes at `data`, live while it runs.
         unsafe { std::slice::from_raw_parts(data as *const u8, len) }
     };
 
@@ -133,8 +143,8 @@ extern "C" fn connection_callback(
 
     match kind {
         KnownCGSEvent::SpaceWindowDestroyed | KnownCGSEvent::SpaceWindowCreated => {
-            if let Some(sid) = read::<u64>(bytes, 0) {
-                if let Some(wid) = read::<u32>(bytes, std::mem::size_of::<u64>()) {
+            if let Some(sid) = read_u64(bytes, 0) {
+                if let Some(wid) = read_u32(bytes, std::mem::size_of::<u64>()) {
                     space_id = Some(sid);
                     window_id = Some(wid);
                 } else {
@@ -146,7 +156,7 @@ extern "C" fn connection_callback(
         }
 
         KnownCGSEvent::SpaceCreated | KnownCGSEvent::SpaceDestroyed => {
-            if let Some(sid) = read::<u64>(bytes, 0) {
+            if let Some(sid) = read_u64(bytes, 0) {
                 space_id = Some(sid)
             } else {
                 warn!("no space_id on {kind}");
@@ -159,7 +169,7 @@ extern "C" fn connection_callback(
         | KnownCGSEvent::WindowReordered
         | KnownCGSEvent::WindowUnhidden
         | KnownCGSEvent::WindowHidden => {
-            if let Some(wid) = read::<u32>(bytes, 0) {
+            if let Some(wid) = read_u32(bytes, 0) {
                 window_id = Some(wid);
             } else {
                 warn!("Skylight event {kind} payload too short for window id (len={len})");
@@ -175,5 +185,22 @@ extern "C" fn connection_callback(
 
     if let Err(e) = sender.try_send(event_data) {
         debug!("Failed to send event {kind}: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_payload_id_is_read_in_native_order_at_its_offset_and_none_past_the_end() {
+        let mut payload = 7u64.to_ne_bytes().to_vec();
+        payload.extend(42u32.to_ne_bytes());
+        assert_eq!(read_u64(&payload, 0), Some(7));
+        assert_eq!(read_u32(&payload, 8), Some(42));
+        assert_eq!(read_u32(&payload, 9), None, "three bytes left");
+        assert_eq!(read_u64(&payload[..7], 0), None);
+        assert_eq!(read_u32(&[], 0), None);
+        assert_eq!(read_u32(&payload, usize::MAX), None, "no overflow past the end");
     }
 }

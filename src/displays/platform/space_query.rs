@@ -1,12 +1,18 @@
 //! What the window server says about a space: its kind, and which one holds focus.
-use once_cell::sync::Lazy;
 use rini_core::ids::SpaceId;
-use rini_skylight_sys::{CGSGetActiveSpace, SLSMainConnectionID, SLSSpaceGetType};
+use rini_skylight_sys::{CGSGetActiveSpace, G_CONNECTION, SLSSpaceGetType};
 
-static G_CONNECTION: Lazy<i32> = Lazy::new(|| unsafe { SLSMainConnectionID() });
+/// `SLSSpaceGetType` of `sid`.
+fn space_type(sid: u64) -> i32 {
+    // SAFETY: integer arguments only, so no memory of rini's is at stake.
+    unsafe { SLSSpaceGetType(*G_CONNECTION, sid) }
+}
 
-pub fn space_is_user(sid: u64) -> bool { unsafe { SLSSpaceGetType(*G_CONNECTION, sid) == 0 } }
-pub fn space_is_fullscreen(sid: u64) -> bool { unsafe { SLSSpaceGetType(*G_CONNECTION, sid) == 4 } }
+pub fn space_is_user(sid: u64) -> bool { space_type(sid) == 0 }
+pub fn space_is_fullscreen(sid: u64) -> bool { space_type(sid) == 4 }
 /// The space on the display currently holding WindowServer focus. With two displays this needs
 /// checking (`specs/focus.md`, "Which window is focused").
-pub fn active_space() -> SpaceId { SpaceId::new(unsafe { CGSGetActiveSpace(*G_CONNECTION) }) }
+pub fn active_space() -> SpaceId {
+    // SAFETY: an integer argument only, so no memory of rini's is at stake.
+    SpaceId::new(unsafe { CGSGetActiveSpace(*G_CONNECTION) })
+}
