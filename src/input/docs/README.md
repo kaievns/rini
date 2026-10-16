@@ -34,6 +34,12 @@ the callback defeated the safety valve and made the freeze survive until reboot.
 even about the current tap, because re-arming a replaced generation puts a second tap
 in the path swallowing events.
 
+**A dead tap is found by its port.** A tap's Mach port carries Core Graphics' own record as its
+context info, not the refcon the tap was made with, so the invalidation callback is handed that
+record. Measured in
+[`docs/data/2026-10-16-tap-port-context/`](../../../docs/data/2026-10-16-tap-port-context/readings.md).
+`tap.rs` keeps each live tap's handler by port address and reads nothing else the callback is passed.
+
 **A left press skips the sink.** The tap hands it to the `OnLeftPress` the
 application wires, which in rini sends it straight to the reactor's channel.
 The sink goes through the main thread, and a title-bar zoom is only recognised

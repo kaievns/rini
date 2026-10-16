@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::sync::Arc;
 
 use objc2_core_foundation::{
     CFMachPort, CFRetained, CFRunLoop, CFRunLoopMode, CFRunLoopSource, kCFRunLoopCommonModes,
@@ -7,6 +8,7 @@ use objc2_core_graphics::{
     CGEvent, CGEventMask, CGEventTapLocation as CGTapLoc, CGEventTapOptions as CGTapOpt,
     CGEventTapPlacement as CGTapPlace, CGEventTapProxy, CGEventType,
 };
+use parking_lot::Mutex;
 use tracing::{debug, warn};
 
 pub type TapCallback = Option<
@@ -18,27 +20,49 @@ pub type TapCallback = Option<
     ) -> *mut CGEvent,
 >;
 
-pub type TapDisabledCallback = Option<unsafe extern "C-unwind" fn(*mut c_void)>;
-pub type TapInvalidatedCallback = Option<unsafe extern "C-unwind" fn(*mut c_void)>;
+/// What a tap calls when the OS disables it, on the tap's thread.
+pub type OnDisabled = Box<dyn Fn()>;
+/// What a tap calls when its Mach port dies, on whichever thread Core Foundation invalidates it.
+pub type OnInvalidated = Arc<dyn Fn() + Send + Sync>;
 
 struct TrampolineCtx {
     callback: TapCallback,
     original_user_info: *mut c_void,
     original_drop: Option<unsafe fn(*mut c_void)>,
-    disabled_callback: TapDisabledCallback,
-    invalidated_callback: TapInvalidatedCallback,
-    port_ptr: Option<core::ptr::NonNull<CFMachPort>>,
+    on_disabled: OnDisabled,
 }
 
-extern "C-unwind" fn port_invalidated(_port: *mut CFMachPort, user_info: *mut c_void) {
-    if user_info.is_null() {
-        return;
-    }
+/// Each live tap's port, by address, and what its invalidation calls. A tap port's context info is
+/// Core Graphics' own record rather than the tap's refcon, so the callback finds its handler by port:
+/// see "A dead tap is found by its port" in src/input/docs/README.md.
+static ON_INVALIDATED: Mutex<Vec<(usize, OnInvalidated)>> = Mutex::new(Vec::new());
 
-    let ctx = unsafe { &*(user_info as *const TrampolineCtx) };
-    warn!("Event tap Mach port was invalidated; scheduling tap recreation");
-    if let Some(callback) = ctx.invalidated_callback {
-        unsafe { callback(ctx.original_user_info) };
+/// The handler `port`'s invalidation calls until the guard drops.
+struct InvalidationWatch {
+    port: usize,
+}
+
+impl InvalidationWatch {
+    fn new(port: usize, on_invalidated: OnInvalidated) -> Self {
+        ON_INVALIDATED.lock().push((port, on_invalidated));
+        InvalidationWatch { port }
+    }
+}
+
+impl Drop for InvalidationWatch {
+    fn drop(&mut self) { ON_INVALIDATED.lock().retain(|(port, _)| *port != self.port); }
+}
+
+/// Reads neither the port nor `_info`: the port's address only picks the handler.
+extern "C-unwind" fn port_invalidated(port: *mut CFMachPort, _info: *mut c_void) {
+    let on_invalidated = ON_INVALIDATED
+        .lock()
+        .iter()
+        .find(|(watched, _)| *watched == port as usize)
+        .map(|(_, on_invalidated)| Arc::clone(on_invalidated));
+    if let Some(on_invalidated) = on_invalidated {
+        warn!("Event tap Mach port was invalidated; scheduling tap recreation");
+        on_invalidated();
     }
 }
 
@@ -52,6 +76,8 @@ extern "C-unwind" fn trampoline_callback(
         return event_ref.as_ptr();
     }
 
+    // SAFETY: the refcon is the `TrampolineCtx` this tap was made with, freed only by its `Drop`
+    // after the tap is disabled and its source taken off this thread's run loop, where this runs.
     let ctx = unsafe { &*(user_info as *const TrampolineCtx) };
 
     // kCGEventTapDisabledByTimeout (-2) & kCGEventTapDisabledByUserInput (-1)
@@ -65,37 +91,50 @@ extern "C-unwind" fn trampoline_callback(
             reason,
             "Event tap was disabled; deferring to the owner's governor"
         );
-        if let Some(callback) = ctx.disabled_callback {
-            unsafe { callback(ctx.original_user_info) };
-        }
+        (ctx.on_disabled)();
         return event_ref.as_ptr();
     }
 
     if let Some(orig_cb) = ctx.callback {
+        // SAFETY: the owner's `user_info` is what its `callback` expects and stays valid until the
+        // tap drops it, as `new_with_options_and_recovery_callbacks` requires.
         return unsafe { orig_cb(proxy, etype, event_ref, ctx.original_user_info) };
     }
 
     event_ref.as_ptr()
 }
 
+/// Frees a tap's `TrampolineCtx`, and the owner's `user_info` with it.
+///
+/// # Safety
+///
+/// `ptr` is the `TrampolineCtx` a tap was made with, not freed before, and no callback can reach it
+/// again.
 unsafe fn trampoline_drop(ptr: *mut c_void) {
-    if ptr.is_null() {
-        return;
-    }
-
+    // SAFETY: `ptr` is the boxed `TrampolineCtx`, freed exactly once here, as the caller guarantees.
     let ctx: Box<TrampolineCtx> = unsafe { Box::from_raw(ptr as *mut TrampolineCtx) };
     if let Some(dropper) = ctx.original_drop
         && !ctx.original_user_info.is_null()
     {
+        // SAFETY: `dropper` frees what the owner handed in, which only this tap held.
         unsafe { dropper(ctx.original_user_info) };
     }
 }
 
+/// The run-loop modes a tap's source is scheduled in.
+fn common_modes() -> Option<&'static CFRunLoopMode> {
+    // SAFETY: an immutable constant Core Foundation exports, set before any Rust code runs.
+    unsafe { kCFRunLoopCommonModes }
+}
+
+/// A session event tap. Not `Send`: its source is on the run loop of the thread that made it, and
+/// `Drop` takes it off the current one.
 pub struct EventTap {
+    /// First, so it is dropped before releasing the port and its source invalidates the port.
+    _invalidation: InvalidationWatch,
     port: CFRetained<CFMachPort>,
     source: CFRetained<CFRunLoopSource>,
-    user_info: *mut c_void,
-    drop_ctx: Option<unsafe fn(*mut c_void)>,
+    trampoline: *mut c_void,
 }
 
 /// Whether a disabled tap may be re-armed now or must sit out a cooldown. One disable is routine
@@ -238,6 +277,7 @@ fn hand_to_port<T, P>(
     match create(ptr) {
         Ok(port) => Ok((port, ptr)),
         Err(error) => {
+            // SAFETY: `ptr` is the `Box::into_raw` above, and `create` left it nowhere.
             drop(unsafe { Box::from_raw(ptr as *mut T) });
             Err(error)
         }
@@ -245,8 +285,8 @@ fn hand_to_port<T, P>(
 }
 
 impl EventTap {
-    /// Creates a session event tap that reports disables (`disabled_callback`) and Mach-port
-    /// invalidations (`invalidated_callback`) to its owner instead of recovering in the callback.
+    /// Creates a session event tap that reports disables (`on_disabled`) and Mach-port
+    /// invalidations (`on_invalidated`) to its owner instead of recovering in the callback.
     /// On `Err` the tap never took `user_info`, so the caller still owns it.
     ///
     /// # Safety
@@ -259,19 +299,19 @@ impl EventTap {
         callback: TapCallback,
         user_info: *mut c_void,
         drop_ctx: Option<unsafe fn(*mut c_void)>,
-        disabled_callback: TapDisabledCallback,
-        invalidated_callback: TapInvalidatedCallback,
+        on_disabled: OnDisabled,
+        on_invalidated: OnInvalidated,
     ) -> Result<Self, TapError> {
         let tramp = Box::new(TrampolineCtx {
             callback,
             original_user_info: user_info,
             original_drop: drop_ctx,
-            disabled_callback,
-            invalidated_callback,
-            port_ptr: None,
+            on_disabled,
         });
 
-        let ((port, source), tramp_ptr) = hand_to_port(tramp, |tramp_ptr| {
+        let ((port, source), trampoline) = hand_to_port(tramp, |tramp_ptr| {
+            // SAFETY: `trampoline_callback` has the tap callback's signature and reads its refcon only
+            // as this `TrampolineCtx`, which lives until the tap's `Drop` has disabled it.
             let port = unsafe {
                 CGEvent::tap_create(
                     CGTapLoc::SessionEventTap,
@@ -291,29 +331,24 @@ impl EventTap {
             debug!(
                 "EventTap: CFRunLoop::current() returned a run loop; adding source to common modes"
             );
-            let mode: &CFRunLoopMode = unsafe {
-                kCFRunLoopCommonModes.expect("kCFRunLoopCommonModes should be available on macOS")
-            };
+            let mode = common_modes().expect("kCFRunLoopCommonModes should be available on macOS");
             rl.add_source(Some(&source), Some(mode));
         } else {
             debug!("EventTap: CFRunLoop::current() returned None; run loop not present");
         }
         CGEvent::tap_enable(&port, true);
 
-        let event_tap = Self {
+        let invalidation =
+            InvalidationWatch::new(CFRetained::as_ptr(&port).as_ptr() as usize, on_invalidated);
+        // SAFETY: `port_invalidated` reads neither the port nor its info, only the port's address.
+        unsafe { port.set_invalidation_call_back(Some(port_invalidated)) };
+
+        Ok(Self {
+            _invalidation: invalidation,
             port,
             source,
-            user_info: tramp_ptr,
-            drop_ctx: Some(trampoline_drop),
-        };
-
-        unsafe {
-            let tramp_ctx = &mut *(tramp_ptr as *mut TrampolineCtx);
-            tramp_ctx.port_ptr = Some(core::ptr::NonNull::from(&*event_tap.port));
-            event_tap.port.set_invalidation_call_back(Some(port_invalidated));
-        }
-
-        Ok(event_tap)
+            trampoline,
+        })
     }
 
     /// Re-arms a tap the OS disabled. `false` means the port is dead and the tap
@@ -327,17 +362,14 @@ impl EventTap {
 impl Drop for EventTap {
     fn drop(&mut self) {
         if self.port.is_valid() {
-            // Intentional teardown/replacement must not be mistaken for an
-            // unexpected Mach-port failure by the event-driven recovery path.
-            unsafe { self.port.set_invalidation_call_back(None) };
             CGEvent::tap_enable(&self.port, false);
         }
         if let Some(rl) = CFRunLoop::current() {
-            rl.remove_source(Some(&self.source), unsafe { kCFRunLoopCommonModes });
+            rl.remove_source(Some(&self.source), common_modes());
         }
-        if let Some(dropper) = self.drop_ctx {
-            unsafe { dropper(self.user_info) };
-        }
+        // SAFETY: the tap is disabled and its source is off this thread's run loop, the one it was
+        // added to as `EventTap` is not `Send`, so no callback reaches the trampoline again.
+        unsafe { trampoline_drop(self.trampoline) };
     }
 }
 
@@ -368,8 +400,37 @@ mod tests {
         .unwrap();
         assert_eq!(ptr, seen);
         assert_eq!(std::rc::Rc::strong_count(&held), 2);
+        // SAFETY: `ptr` is the box `hand_to_port` kept on `Ok`, and nothing else frees it.
         drop(unsafe { Box::from_raw(ptr as *mut std::rc::Rc<()>) });
         assert_eq!(std::rc::Rc::strong_count(&held), 1);
+    }
+
+    /// A dead port calls the handler watched for it, never reading the info Core Foundation passes,
+    /// which for a tap's port is Core Graphics' record rather than anything rini made.
+    #[test]
+    fn a_dead_port_calls_its_own_handler_and_never_reads_the_info() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let ports = [0u8; 2];
+        let [port, other] = [&ports[0], &ports[1]].map(|p| p as *const u8 as *mut CFMachPort);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&calls);
+        let watch = InvalidationWatch::new(
+            port as usize,
+            Arc::new(move || _ = counted.fetch_add(1, Ordering::SeqCst)),
+        );
+        let core_graphics_record = std::ptr::dangling_mut::<c_void>();
+
+        port_invalidated(port, core_graphics_record);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        port_invalidated(other, core_graphics_record);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "another port's death is not this one's"
+        );
+        drop(watch);
+        port_invalidated(port, core_graphics_record);
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "a dropped tap is not told");
     }
 
     #[test]
