@@ -1,7 +1,8 @@
 # Cleanup, round 1
 
-The items agreed after `8274c0b`, worked in `5d6e86e`..`9ea1079`: section 0 is closed, and
-sections 1 and 2 are partly done, each saying what is still open. Kept because the reasoning about
+The items agreed after `8274c0b`, worked from `5d6e86e`: sections 0 and 1 are closed, and section 2
+is closed but for one request with no test of its own, now in `src/windows/docs/README.md`'s known
+debt. Kept because the reasoning about
 what NOT to change is the part worth keeping. Line numbers and sizes below are as they were when written; the
 sizes held now are `LONG_FNS` and `LONG_FILES` in `tests/architecture.rs`.
 
@@ -57,7 +58,7 @@ next person meets it before writing one.
 
 ## 1. `workspaces/engine.rs` — 2,898 lines, 20 tests (144 lines/test)
 
-**Partly.** Three rules out, 14 tests. The file's own ratio barely moved, and the honest reason is
+**Closed.** Three rules out first, 14 tests. The file's own ratio barely moved, and the honest reason is
 that the tests left with the rules: `domain/workspace_focus.rs` holds 11 and
 `layout/domain/boundary.rs` gained 3, none of which existed before. Counting lines per in-file test
 rewards keeping logic where it cannot be tested, which is the opposite of what this pass is for.
@@ -93,7 +94,7 @@ and the target-workspace fallback of `move_window_to_space` is `ensure_active_wo
 
 ## 2. `windows/platform/app_actor.rs` — 1,369 lines, 0 tests
 
-**Partly.** Two rules out to `windows/domain/ax_events.rs` with 12 tests. The file was then 1,331 lines
+**Closed but for one arm.** Two rules out to `windows/domain/ax_events.rs` with 12 tests. The file was then 1,331 lines
 with no in-file tests; the AX seam below gave it its first.
 
 - `handling` / `is_gone` — whether a failed Accessibility request means the window is GONE. Only an
@@ -155,6 +156,7 @@ the window is not on screen. So `register_window` needs a `WindowServerInfo` hin
 tested on the same fake: a replaced element's notifications, miniaturize, hide and show, the skip of
 the window already focused and of no background application's main window, batch order, `Quiet` on
 the last window, the wait for activation, its cancel and the frontmost polling that can end it.
-Still untested in there: `handle_request`'s `WindowMaybeDestroyed` and `SetWorkspaceSwitchPositions`
-arms. No `TODO` or `FIXME` is left in `app_actor.rs`; two of the questions they asked are answered
+`handle_request`'s `SetWorkspaceSwitchPositions` arm is tested since
+(`a_switch_position_is_reported_as_read_back_under_its_txid`); its `WindowMaybeDestroyed` arm is
+not. No `TODO` or `FIXME` is left in `app_actor.rs`; two of the questions they asked are answered
 on evidence in `src/windows/docs/admission-and-raise-findings.md`.

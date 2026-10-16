@@ -79,13 +79,11 @@ check, then a spec or deletion:
 - **Fewer actors on the main thread.** Seven actors that draw nothing share it with the four that
   draw, so a busy one holds a batch the renderer waits on. The cursor warp moves first
   (`docs/architecture.md`, "What is still not where the map says").
-- **The other open rows of that table:** the `src/displays/screen.rs` split, the flight engine's
-  pure rules into `domain/`, typed geometry outside the animation features, the
-  `src/workspaces/engine.rs` split, and the reactor's stores owned by their features
-  (`docs/audit-progress.md`, item 3). The config hub, the hotkeys' lowering and the notifications
-  demultiplexer stay, for the reasons their rows give.
-- **A fake element seam for the AX driver** in `src/windows/platform/app_actor.rs`, so it can be
-  tested (`docs/audit-progress.md`, item 7).
+- **The other open rows of that table:** the `src/displays/screen.rs` split, typed geometry outside
+  the animation features, and the reactor's stores owned by their features, through the
+  `present(motion)` boundary its layout pass waits on (`docs/implementation-audit.md`, 3.2 to 3.4).
+  The config hub, the controller's lowering and the notifications demultiplexer stay, for the
+  reasons their rows give.
 - **Grants measured across a reboot.** Not checked since the signing identity came in
   (`docs/permissions-and-the-launch-agent.md`).
 - **A faster new terminal window.** Measured 2026-10-09 with a screen recording against the journal:

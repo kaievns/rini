@@ -6,11 +6,12 @@ came from. Ranked within each section by what it costs to leave alone.
 
 Measured at commit `118e35d`: **54,751 non-test code lines**, 1101 tests.
 
-**Status: worked through in `45adc4b`..`HEAD`, taking the tests from 1101 to 1241.** Every
-entry below is closed or partly closed; the reasons are in each section and summarised in
-`docs/audit-progress.md`. The findings are left as written rather than edited into the past
-tense, because what they say about how the code got that way is the part worth keeping. What
-changed since is marked `DONE`, `PARTLY` or `OPEN` at the head of each entry.
+**Status: worked through from `45adc4b`, taking the tests from 1101 to 1241.** The findings are
+left as written rather than edited into the past tense, because what they say about how the code got
+that way is the part worth keeping. What changed since is marked `DONE`, `PARTLY`, `KEPT`, `GONE` or
+`OPEN` at the head of each entry. The open ones, 3.2 to 3.4, are collected in `roadmap.md`
+("Wanted next"), and what 4.3 leaves is a ratio to watch rather than a task; sizes and counts in the findings are as measured then, and the sizes held now are
+`tests/architecture.rs`'s (`no_function_or_file_grows_past_its_limit`).
 
 Three of them turned out to be bugs rather than untidiness, and each has a test that fails
 if it comes back: the raise list's order was reversed by its own batching (3.2.1), the spaces
@@ -130,6 +131,8 @@ resolve-window-then-send shape, different payload.
 `self.display_affinity.space_for_display(display_uuid)`.
 
 ### 1.8 Four `workspace_for_window` entry points
+
+**KEPT — a delegation chain from the index. The `_any` variant is gone (`56f10800`).**
 
 A delegation chain rather than a contradiction, but four names for one lookup:
 
@@ -326,7 +329,10 @@ each still borrows all of it rather than the stores it writes. `animate_layout`'
 
 ### 3.4 `src/displays/screen.rs` straddles domain and platform
 
-537 code lines, 2 tests. Already the sole named exception in
+**OPEN — what the split needs is its row in `docs/architecture.md`, "What is still not where the
+map says".**
+
+537 code lines and 2 tests when audited. Already the sole named exception in
 `tests/architecture.rs` and explained in `docs/architecture.md`. Repeated here
 because it is the only remaining rule-2 violation and the reason the ratchet has
 an exception list at all.
@@ -340,7 +346,7 @@ an exception list at all.
 ### 4.1 One 5,949-line integration test file
 
 **DONE — the fixtures came out first (`02c1f6e`), then the 184 cases split by subject into eight
-files under `src/app/reactor/tests/`.**
+files under `src/app/reactor/tests/`, sized as below when split.**
 
 | file | tests | lines |
 |---|---|---|
@@ -362,14 +368,14 @@ out to where they can be tested alone — `space_resolution`, `present`, `contro
 
 The recent batches moved the opposite way deliberately — pure decisions to
 `domain/` where they are tested in isolation — and that is why
-`layout/domain/scrolling.rs` now carries 62 tests at 26 code lines each.
+`layout/domain/scrolling.rs` carried 62 tests at 26 code lines each when audited.
 
 ### 4.2 Production modules with no tests at all
 
 | file | code | why it resists |
 |---|---|---|
 | `src/windows/platform/app_actor.rs` | — | the AX driver, its size held to the file limit by `tests/architecture.rs`. DONE: its admission rules are now `windows::domain::admissible` with 11 tests (`4dac5df`), and the fake `AXUIElement` seam it needed (`FakeAx`, `9ea1079`) carries the actor's own tests, `handle_notification` and `handle_raise_request` among them, beside each job's code in `src/windows/platform/app_actor/` |
-| `src/displays/platform/spaces.rs` | — | has `spaces/tests.rs` (44 tests) beside it, but two of its rules were untestable until `SpaceKinds` — see 4.4 |
+| `src/displays/platform/spaces.rs` | — | has `spaces/tests.rs` beside it, but two of its rules were untestable until `SpaceKinds` — see 4.4 |
 | `gesture_tap.rs`, the HID gesture tap | 657 | DONE, then deleted: the phase machine became `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`); the tap, the rules and their tests went with the trackpad swipes (2026-10-10) |
 | `src/app/reactor/observations.rs` | — | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
 | `src/main.rs` | — | the composition root: `main` builds the actors in order, each built by a function of its own, and joins them |
@@ -377,9 +383,9 @@ The recent batches moved the opposite way deliberately — pure decisions to
 
 ### 4.3 Worst code-to-test ratios among tested files
 
-**PARTLY — `rini-cli` is 2 tests to 10 (`37dd37b`), 18 since; the tap's key decisions are
-`input::domain::router::KeyRouter`, with 21 tests, leaving `input_tap.rs` 5 tests, its size held to
-the file limit by `tests/architecture.rs`; `workspaces/engine.rs` is split by job under
+**PARTLY — `rini-cli` is tested (`37dd37b`); the tap's key decisions are
+`input::domain::router::KeyRouter`, tested there, leaving `input_tap.rs` the tap's own few, its size
+held to the file limit by `tests/architecture.rs`; `workspaces/engine.rs` is split by job under
 `workspaces/engine/`, each file and function under the limits; the rest stand.**
 
 ```

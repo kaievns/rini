@@ -268,15 +268,15 @@ docs/                           only what genuinely spans features
 What is left at the top of the tree is cross-cutting: this file, `testing.md`,
 `signing.md`, `permissions-and-the-launch-agent.md`, `config.md` (the config format's
 decisions), `pictures-motion-transitions.md` (how four features share drawing a moving
-window), the implementation audit with `audit-progress.md` beside it, `cleanup-round-1.md`,
-and `data/`, the measured runs the docs cite.
+window), the implementation audit, `cleanup-round-1.md`, and `data/`, the measured runs the docs
+cite.
 Anything that names one feature belongs inside it.
 
 Code points at the doc by path when a reader would otherwise be stuck. When code moves,
 its docs move with it — and since a feature's docs now live inside the feature, moving a
 folder moves both.
 
-Five tests in `tests/architecture.rs` hold this rather than good intentions:
+These tests in `tests/architecture.rs` hold this rather than good intentions:
 `every_feature_and_crate_documents_itself` requires the READMEs to exist,
 `every_domain_and_reactor_module_is_named_in_its_readme` requires each one to name, by its path
 from the feature's root, every module of its `domain/` (and `src/app/docs/README.md` every module

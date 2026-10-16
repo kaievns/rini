@@ -151,3 +151,10 @@ was raised first instead of last and ended up behind the strip.
 
 Cross-feature detail is at the top of the tree: [`docs/architecture.md`](../../../docs/architecture.md),
 [`docs/testing.md`](../../../docs/testing.md).
+
+## Known debt
+
+**One request has no test of its own.** `WindowMaybeDestroyed`, which the reactor sends when a
+tracked window leaves a fullscreen space, makes the app actor refresh its visible windows
+(`platform/app_actor/requests.rs`); no test drives it on `FakeAx` (`docs/cleanup-round-1.md`,
+section 2).
