@@ -1080,7 +1080,7 @@ impl Apps {
                         });
                     }
                 }
-                Request::SetBatchWindowFrame(frames, txid, _) => {
+                Request::SetBatchWindowFrame(frames, txid) => {
                     for (wid, frame) in frames {
                         let window = self.windows.entry(wid).or_default();
                         window.last_seen_txid = txid;
@@ -1097,7 +1097,7 @@ impl Apps {
                         }
                     }
                 }
-                Request::SetWorkspaceSwitchPositions(positions, txid, _) => {
+                Request::SetWorkspaceSwitchPositions(positions, txid) => {
                     for (wid, position) in positions {
                         let window = self.windows.entry(wid).or_default();
                         window.last_seen_txid = txid;

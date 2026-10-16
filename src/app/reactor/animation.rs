@@ -16,7 +16,7 @@ use crate::pictures::domain::target::PictureTarget;
 use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
 use crate::transitions::domain::request::AnimationRequest;
 use crate::transitions::domain::travel::changes_visibly;
-use crate::windows::domain::request::{AppThreadHandle, Request, SuppressEnhancedUi};
+use crate::windows::domain::request::{AppThreadHandle, Request};
 use crate::windows::domain::transaction::TransactionId;
 
 /// A committed move's frame for its window, and the app thread that writes it.
@@ -33,7 +33,6 @@ impl Placement {
             window: self.window,
             frame: self.frame,
             txid: self.txid,
-            enhanced_ui: SuppressEnhancedUi::Yes,
         }
     }
 }

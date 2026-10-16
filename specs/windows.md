@@ -129,7 +129,8 @@ window once.
   size cannot be read. AppKit clamps a size against the window's current position, so a window near
   a screen edge cannot grow until it has moved; the first size is what lets the move succeed for a
   window that must grow and shift at once. Neither size may be dropped from such a write.
-- Enhanced User Interface MUST be suppressed for the duration of a burst of writes, not per write.
+- Every frame or position write MUST suppress Enhanced User Interface for the duration of the burst
+  of writes it arrives in, not per write.
   AppKit re-lays-out a window while it is on, which fights the write.
 
 > **Found 2026-10-03, not reported.** Measured in the handover prototype's research run on

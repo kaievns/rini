@@ -8,7 +8,7 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::{WindowId, WindowServerId};
 
-use crate::windows::domain::request::{Request, SuppressEnhancedUi};
+use crate::windows::domain::request::Request;
 use crate::windows::domain::transaction::{TransactionId, WindowTxStore};
 use crate::workspaces::WindowStore;
 
@@ -93,7 +93,6 @@ pub(crate) fn instant_requests(
         return vec![Request::SetBatchWindowFrame(
             frames.into_iter().map(|(wid, frame, _)| (wid, frame)).collect(),
             txid,
-            SuppressEnhancedUi::Yes,
         )];
     }
     let mut positions: Vec<(WindowId, CGPoint)> = Vec::new();
@@ -107,18 +106,10 @@ pub(crate) fn instant_requests(
     }
     let mut requests = Vec::with_capacity(2);
     if !positions.is_empty() {
-        requests.push(Request::SetWorkspaceSwitchPositions(
-            positions,
-            txid,
-            SuppressEnhancedUi::Yes,
-        ));
+        requests.push(Request::SetWorkspaceSwitchPositions(positions, txid));
     }
     if !full_frames.is_empty() {
-        requests.push(Request::SetBatchWindowFrame(
-            full_frames,
-            txid,
-            SuppressEnhancedUi::Yes,
-        ));
+        requests.push(Request::SetBatchWindowFrame(full_frames, txid));
     }
     requests
 }
@@ -269,15 +260,13 @@ mod tests {
         ];
         let requests = instant_requests(frames.clone(), txid, true);
         assert!(
-            matches!(&requests[0], Request::SetWorkspaceSwitchPositions(p, _, SuppressEnhancedUi::Yes) if p == &vec![(w(1), CGPoint::new(0.0, 0.0))])
+            matches!(&requests[0], Request::SetWorkspaceSwitchPositions(p, _) if p == &vec![(w(1), CGPoint::new(0.0, 0.0))])
         );
         assert!(
-            matches!(&requests[1], Request::SetBatchWindowFrame(f, _, SuppressEnhancedUi::Yes) if f.len() == 1 && f[0].0 == w(2))
+            matches!(&requests[1], Request::SetBatchWindowFrame(f, _) if f.len() == 1 && f[0].0 == w(2))
         );
         let full = instant_requests(frames, txid, false);
         assert_eq!(full.len(), 1);
-        assert!(
-            matches!(&full[0], Request::SetBatchWindowFrame(f, _, SuppressEnhancedUi::Yes) if f.len() == 2)
-        );
+        assert!(matches!(&full[0], Request::SetBatchWindowFrame(f, _) if f.len() == 2));
     }
 }

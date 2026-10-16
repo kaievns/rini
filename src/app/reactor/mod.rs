@@ -66,9 +66,7 @@ use crate::transitions::domain::request::Cause;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::raise::RaiseManager;
-use crate::windows::domain::request::{
-    AppThreadHandle, Quiet, RaiseSequence, Request, SuppressEnhancedUi,
-};
+use crate::windows::domain::request::{AppThreadHandle, Quiet, RaiseSequence, Request};
 use crate::windows::domain::transaction::{TransactionId, WindowTxStore};
 use crate::windows::platform::mouse::MouseState;
 use crate::workspaces::domain::display_memory::DisplayMemory;
@@ -1066,7 +1064,6 @@ impl Reactor {
                 window: write.window,
                 frame: write.frame,
                 txid: transaction,
-                enhanced_ui: SuppressEnhancedUi::Yes,
             })
         {
             warn!(window = ?write.window, %error, "failed to write requested window frame");

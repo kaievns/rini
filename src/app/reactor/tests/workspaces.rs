@@ -11,7 +11,7 @@ use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::displays::domain::topology::Topology;
 use crate::windows::domain::raise::{self, RaiseRequest};
-use crate::windows::domain::request::{Request, SuppressEnhancedUi};
+use crate::windows::domain::request::Request;
 use crate::workspaces::{LayoutCommand, LayoutEvent, WorkspaceCommand};
 
 #[test]
@@ -320,7 +320,7 @@ fn workspace_switch_batches_all_window_positions_with_eui_enabled() {
         requests.iter().any(|req| {
             matches!(
                 req,
-                Request::SetWorkspaceSwitchPositions(positions, _, SuppressEnhancedUi::Yes)
+                Request::SetWorkspaceSwitchPositions(positions, _)
                     if positions.iter().any(|(wid, _)| *wid == WindowId::new(1, 1))
             )
         }),
@@ -345,7 +345,7 @@ fn non_workspace_instant_layout_keeps_full_frame_batch() {
     assert!(
         requests.iter().any(|request| matches!(
             request,
-            Request::SetBatchWindowFrame(frames, _, SuppressEnhancedUi::Yes)
+            Request::SetBatchWindowFrame(frames, _)
                 if frames.as_slice() == [(wid, target)]
         )),
         "ordinary instant layouts must retain full-frame writes: {requests:?}"
@@ -375,7 +375,7 @@ fn workspace_switch_layout_falls_back_to_full_frames_for_size_changes() {
     assert!(
         requests.iter().any(|request| matches!(
             request,
-            Request::SetBatchWindowFrame(frames, _, SuppressEnhancedUi::Yes)
+            Request::SetBatchWindowFrame(frames, _)
                 if frames.as_slice() == [(wid, target)]
         )),
         "workspace layouts with size changes must retain full-frame writes: {requests:?}"
@@ -437,10 +437,10 @@ fn topology_change_clears_stale_pending_hide_target_before_next_workspace_layout
     assert!(
         requests.iter().any(|req| {
             matches!(req,
-                Request::SetWindowFrame { window: req_wid, frame, enhanced_ui: SuppressEnhancedUi::Yes, .. }
+                Request::SetWindowFrame { window: req_wid, frame, .. }
                     if *req_wid == wid && frame.same_as(hidden_target)
             ) || matches!(req,
-                Request::SetBatchWindowFrame(frames, _, SuppressEnhancedUi::Yes)
+                Request::SetBatchWindowFrame(frames, _)
                     if frames.iter().any(|(req_wid, frame)| *req_wid == wid && frame.same_as(hidden_target))
             )
         }),
@@ -521,10 +521,10 @@ fn auto_workspace_switch_follows_activated_window_when_same_app_is_visible_elsew
     assert!(
         requests.iter().any(|request| match request {
             Request::SetWindowFrame { window: wid, .. } => *wid == activated,
-            Request::SetBatchWindowFrame(frames, _, _) => {
+            Request::SetBatchWindowFrame(frames, _) => {
                 frames.iter().any(|(wid, _)| *wid == activated)
             }
-            Request::SetWorkspaceSwitchPositions(positions, _, _) => {
+            Request::SetWorkspaceSwitchPositions(positions, _) => {
                 positions.iter().any(|(wid, _)| *wid == activated)
             }
             _ => false,
