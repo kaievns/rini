@@ -12,7 +12,7 @@ that machinery, and nothing else: no window, no workspace, no layout.
 | `turns.rs` | a turn's time, folded: each actor's polls (`timed`), the time outside them, and the window changes noted (`changed`) from 50ms before it; a turn over 8ms is a `MainTurn` |
 | `timer.rs` | `Timer`: an awaitable `CFRunLoopTimer` |
 | `channel.rs` | An unbounded mpsc that carries the sender's tracing span with each message |
-| `dispatch.rs` | `DispatchExt::after_f`/`after_f_s` (run work on a dispatch queue after a delay) and `block_on` |
+| `dispatch.rs` | `DispatchExt::after_f`/`after_f_s` (run work on a dispatch queue after a delay; `after_f_s` takes a `Send` context, since the work runs on the queue's thread) and `block_on` |
 
 ## The shape that matters
 
