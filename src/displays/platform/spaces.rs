@@ -25,6 +25,7 @@ use crate::displays::domain::topology::{
     snapshot_is_committable,
 };
 use crate::displays::event::{Event as OutEvent, EventSink};
+use crate::displays::platform::display_churn::ChurnWriter;
 use crate::displays::screen::ScreenCache;
 use crate::windows::platform::window_server::{self, WindowServer};
 
@@ -115,6 +116,8 @@ impl AuthorityState {
 pub struct SpacesActor {
     receiver: Receiver,
     events: Box<dyn EventSink>,
+    /// The churn as the reactor drops window events by, written as it begins and ends.
+    churn: ChurnWriter,
     schedule: Box<dyn Schedule>,
     window_server: Arc<dyn WindowServer>,
     state: AuthorityState,
@@ -127,6 +130,7 @@ impl SpacesActor {
         receiver: Receiver,
         sender: Sender,
         events: Box<dyn EventSink>,
+        churn: ChurnWriter,
         top_band: f64,
     ) -> Self {
         let mut screen_cache = ScreenCache::new(MainThreadMarker::new().unwrap());
@@ -138,6 +142,7 @@ impl SpacesActor {
         Self {
             receiver,
             events,
+            churn,
             schedule: Box::new(MainQueue(sender)),
             window_server: window_server::live(),
             state: AuthorityState::new(kinds, live, Some(screen_cache)),
@@ -490,6 +495,7 @@ impl SpacesActor {
         let step = self.state.churn.next(ChurnEdge::Reconfigured(flags, windows));
         self.state.last_sent_spaces = None;
         if step == ChurnStep::Began {
+            self.churn.begin();
             self.events.send(OutEvent::DisplayChurnBegin);
         }
         self.state.churn.epoch()
@@ -518,10 +524,11 @@ impl SpacesActor {
             Settle::GiveUp => self.finish_display_churn(expected_epoch, true),
             Settle::Forward => {
                 let (flags, before) = (run.flags, std::mem::take(&mut run.windows_before));
-                self.synthesize_topology_window_delta(expected_epoch, flags, before, &screens);
-                // The settled snapshot acknowledges the reactor's churn quarantine.
-                self.forward_screen_parameters(screens, converter);
+                // Ended first, so the reactor incorporates the settled snapshot outside the churn.
                 self.finish_display_churn(expected_epoch, false);
+                self.synthesize_topology_window_delta(expected_epoch, flags, before, &screens);
+                // The settled snapshot releases the refreshes the reactor held since the begin.
+                self.forward_screen_parameters(screens, converter);
             }
         }
     }
@@ -530,7 +537,7 @@ impl SpacesActor {
         if self.state.churn.next(ChurnEdge::Ended(expected_epoch)) == ChurnStep::Stale {
             return;
         }
-        self.events.send(OutEvent::DisplayChurnEnd);
+        self.churn.end();
         if schedule_refresh {
             self.schedule_screen_refresh_after(0, 0);
         }

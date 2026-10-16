@@ -1012,7 +1012,7 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
 #[test]
 fn display_churn_quarantines_window_frame_and_membership_events() {
     let mut reactor = test_reactor();
-    reactor.handle_event(Event::DisplayChurnBegin);
+    let _churn = reactor.begin_display_churn();
     let space = SpaceId::new(7);
     let wsid = WindowServerId::new(77);
 
@@ -1063,22 +1063,25 @@ fn display_churn_quarantines_window_frame_and_membership_events() {
     );
 }
 
-/// The churn is the reactor's own, heard in order: window events are dropped from the spaces
-/// actor's `DisplayChurnBegin` to its `DisplayChurnEnd`, and refreshes stay held until the snapshot
-/// after it.
+/// Window events are dropped from the moment the spaces actor begins a churn, ahead of its
+/// `DisplayChurnBegin`, and pass from its end; refreshes are held from the begin the reactor hears
+/// until the snapshot after it.
 #[test]
-fn window_events_pass_once_the_churn_ends_and_refreshes_once_its_snapshot_is_incorporated() {
+fn window_events_drop_from_the_churn_s_start_and_refreshes_wait_for_its_snapshot() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     apps.make_app_and_settle_on_screen(&mut reactor, screen, SpaceId::new(1), 1, make_windows(1));
     apps.requests();
     let destroyed = Event::WindowDestroyed(WindowId::new(1, 1));
 
-    reactor.handle_event(Event::DisplayChurnBegin);
+    let churn = reactor.begin_display_churn();
     assert!(reactor.should_quarantine_during_display_churn(&destroyed));
+    assert!(!reactor.refreshes_blocked());
+
+    reactor.handle_event(Event::DisplayChurnBegin);
     assert!(reactor.refreshes_blocked());
 
-    reactor.handle_event(Event::DisplayChurnEnd);
+    churn.end();
     assert!(!reactor.should_quarantine_during_display_churn(&destroyed));
     assert_eq!(
         reactor.refresh_quarantine_state(),
@@ -1098,48 +1101,93 @@ fn window_events_pass_once_the_churn_ends_and_refreshes_once_its_snapshot_is_inc
     );
 }
 
-/// A settled churn's snapshot, which carries the churn's window delta, comes ahead of its
-/// `DisplayChurnEnd`, so the snapshot itself ends the churn before it is incorporated: display
-/// affinity is observed again, a closed window's home forgotten, and the end that follows changes
-/// nothing.
+/// macOS replaces a window's Accessibility element on an unplug, and the destroy of the old one can
+/// be on the reactor's queue ahead of `DisplayChurnBegin`: it is dropped, so the window keeps its
+/// place.
 #[test]
-fn a_settled_churn_s_snapshot_ends_the_churn_before_it_is_incorporated() {
-    let mut reactor = test_reactor();
+fn a_window_destroyed_ahead_of_the_churn_s_begin_keeps_its_place() {
+    let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let space = SpaceId::new(1);
-    let closed = WindowId::new(1, 1);
-    set_space_membership(&reactor, &[(space, &[901])]);
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
-    reactor.add_test_app(1);
-    let workspace = reactor.test_workspace(space, 0);
-    reactor.add_test_window(closed, WindowServerId::new(901), Some(space), screen);
-    assert!(reactor.assign_test_window_to_workspace(space, closed, workspace));
-    reactor.send_layout_event(LayoutEvent::WindowAdded(space, closed));
-    reactor.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(closed));
-    reactor.windows_mut().remove_window(closed);
-    set_space_membership(&reactor, &[(space, &[])]);
-    assert_eq!(
-        reactor.display_affinity().window_home(closed),
-        Some(&DisplayUuid::new("test-display-0"))
-    );
+    let window = WindowId::new(1, 1);
+    apps.make_app_and_settle_on_screen(&mut reactor, screen, space, 1, make_windows(1));
 
-    reactor.handle_event(Event::DisplayChurnBegin);
-    reactor.handle_event(space_state_event_with(
-        vec![screen],
-        vec![Some(space)],
-        |state| {
-            state.topology_window_delta = Some(Default::default());
-        },
-    ));
-    assert_eq!(
-        reactor.display_affinity().window_home(closed),
-        None,
-        "the settled snapshot observes display affinity again"
+    let churn = reactor.begin_display_churn();
+    reactor.handle_queued_event(Event::WindowDestroyed(window));
+    reactor.handle_queued_event(Event::DisplayChurnBegin);
+    churn.end();
+    reactor.handle_queued_event(space_state_event(vec![screen], vec![Some(space)]));
+
+    assert!(has_window_in_layout(&mut reactor, space, screen, window));
+    assert!(reactor.windows().window(window).is_some());
+}
+
+/// The reads production builds take the churn the spaces actor writes; a test build gives them a
+/// fake window server, as it can give no other.
+#[test]
+fn a_production_reactor_drops_window_events_while_the_spaces_actor_churns() {
+    let (writer, reader) = crate::displays::platform::display_churn::shared();
+    let reads = SystemReads::live_with(
+        std::sync::Arc::new(crate::windows::platform::window_server::FakeWindowServer::default()),
+        reader,
     );
-    assert_eq!(reactor.quarantine().churn(), Churn::Steady);
-    reactor.handle_event(Event::DisplayChurnEnd);
-    assert_eq!(reactor.quarantine().churn(), Churn::Steady);
-    assert!(!reactor.refreshes_blocked());
+    let reactor = Reactor::with_reads(
+        crate::app::config::Config::reference(),
+        LayoutEngine::new(
+            &crate::app::config::VirtualWorkspaceSettings::default(),
+            &crate::app::config::LayoutSettings::default(),
+        ),
+        DisplayMemory::default(),
+        WindowTxStore::new(),
+        reads,
+    );
+    let created = Event::SpaceCreated(SpaceId::new(7));
+    assert!(!reactor.should_quarantine_during_display_churn(&created));
+    writer.begin();
+    assert!(reactor.should_quarantine_during_display_churn(&created));
+}
+
+/// A settled churn's snapshot, which carries the churn's window delta, is sent once the spaces
+/// actor's churn is over, so it is incorporated outside it: display affinity is observed again and
+/// a closed window's home forgotten. Incorporated while the churn is still under way, the home is
+/// kept.
+#[test]
+fn a_settled_churn_s_snapshot_observes_display_affinity_once_the_churn_is_over() {
+    for over in [true, false] {
+        let mut reactor = test_reactor();
+        let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+        let space = SpaceId::new(1);
+        let closed = WindowId::new(1, 1);
+        set_space_membership(&reactor, &[(space, &[901])]);
+        reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+        reactor.add_test_app(1);
+        let workspace = reactor.test_workspace(space, 0);
+        reactor.add_test_window(closed, WindowServerId::new(901), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, closed, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, closed));
+        reactor.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(closed));
+        reactor.windows_mut().remove_window(closed);
+        set_space_membership(&reactor, &[(space, &[])]);
+        let home = DisplayUuid::new("test-display-0");
+        assert_eq!(reactor.display_affinity().window_home(closed), Some(&home));
+
+        let churn = reactor.begin_display_churn();
+        reactor.handle_event(Event::DisplayChurnBegin);
+        if over {
+            churn.end();
+        }
+        reactor.handle_event(space_state_event_with(
+            vec![screen],
+            vec![Some(space)],
+            |state| {
+                state.topology_window_delta = Some(Default::default());
+            },
+        ));
+        let kept = reactor.display_affinity().window_home(closed);
+        assert_eq!(kept, (!over).then_some(&home), "over: {over}");
+        assert_eq!(reactor.quarantine().churn(), Churn::Steady);
+        assert!(!reactor.refreshes_blocked());
+    }
 }
 
 #[test]
@@ -1198,7 +1246,7 @@ fn each_quarantine_event_sets_its_quarantine_flag_and_moves_no_focus() {
     apps.requests();
 
     reactor.handle_event(Event::DisplayChurnBegin);
-    assert_eq!(reactor.quarantine().churn(), Churn::Churning);
+    assert_eq!(reactor.quarantine().churn(), Churn::AwaitingSnapshot);
     assert_eq!(
         reactor.refresh_quarantine_state(),
         RefreshQuarantineState::DisplayChurn

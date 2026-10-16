@@ -80,7 +80,6 @@ impl Reactor {
             | Event::SessionDidResignActive
             | Event::SessionDidBecomeActive
             | Event::DisplayChurnBegin
-            | Event::DisplayChurnEnd
             | Event::RegisterWmSender(_)) => self.dispatch_system_event(event, &dispatch),
             event @ (Event::MouseUp
             | Event::LeftMouseDown(_)
@@ -280,7 +279,6 @@ impl Reactor {
             Event::SessionDidResignActive => Ok(self.on_session_did_resign_active()),
             Event::SessionDidBecomeActive => Ok(self.on_session_did_become_active()),
             Event::DisplayChurnBegin => Ok(self.on_display_churn_begin()),
-            Event::DisplayChurnEnd => Ok(self.on_display_churn_end()),
             Event::RegisterWmSender(sender) => Ok(system::handle_register_wm_sender(
                 &mut self.communication_manager,
                 sender,

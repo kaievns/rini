@@ -8,6 +8,7 @@ use crate::displays::domain::settling::{DISPLAY_STABILIZE_MAX_ATTEMPTS, REFRESH_
 use crate::displays::domain::snapshot::TEST_FULLSCREEN_SPACE;
 use crate::displays::domain::topology::{DisplaySet, Topology};
 use crate::displays::event::Event as OutEvent;
+use crate::displays::platform::display_churn::{self, ChurnReader};
 use crate::windows::platform::window_server::FakeWindowServer;
 
 impl LiveDisplays {
@@ -26,13 +27,14 @@ impl LiveDisplays {
 }
 
 impl SpacesActor {
-    /// A test actor: no screen cache, a window server that knows nothing, and a schedule that only
-    /// records.
+    /// A test actor: no screen cache, a window server that knows nothing, a churn record of its own
+    /// and a schedule that only records.
     fn for_test(events: Box<dyn EventSink>, space_kinds: SpaceKinds, live: LiveDisplays) -> Self {
         let (_, receiver) = channel::channel();
         Self {
             receiver,
             events,
+            churn: display_churn::shared().0,
             schedule: Box::new(Recorded::default()),
             window_server: Arc::new(FakeWindowServer::default()),
             state: AuthorityState::new(space_kinds, live, None),
@@ -48,6 +50,13 @@ impl SpacesActor {
         let ws = Arc::new(FakeWindowServer::default());
         self.window_server = ws.clone();
         ws
+    }
+
+    /// The churn record this actor writes from now on, for the test to read.
+    fn hand_churn(&mut self) -> ChurnReader {
+        let (writer, reader) = display_churn::shared();
+        self.churn = writer;
+        reader
     }
 
     /// The schedule this actor asks from now on, for the test to read back.
@@ -801,6 +810,7 @@ fn a_settled_churn_forwards_the_windows_that_left_since_it_began_with_its_epoch_
     );
     let _ = recv_wm(&mut wm_rx);
     actor.state.forwarded.visible_window_spaces.insert(wsid, space);
+    let churn = actor.hand_churn();
 
     actor.handle_event(Notification::DisplayReconfigured {
         flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
@@ -809,6 +819,7 @@ fn a_settled_churn_forwards_the_windows_that_left_since_it_began_with_its_epoch_
         recv_reactor(&mut reactor_rx),
         OutEvent::DisplayChurnBegin
     ));
+    assert!(churn.churning());
     actor.hand_window_server().set_space_window_list(space.get(), Some(vec![]));
     let epoch = actor.state.churn.epoch();
     for attempt in 0..2 {
@@ -828,10 +839,8 @@ fn a_settled_churn_forwards_the_windows_that_left_since_it_began_with_its_epoch_
         }
         other => panic!("unexpected wm event: {other:?}"),
     }
-    assert!(matches!(
-        recv_reactor(&mut reactor_rx),
-        OutEvent::DisplayChurnEnd
-    ));
+    assert!(!churn.churning());
+    assert_no_reactor_event(&mut reactor_rx);
     assert!(!actor.state.churn.is_active());
 }
 
@@ -1036,10 +1045,7 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
         }
         other => panic!("unexpected wm event: {other:?}"),
     }
-    assert!(matches!(
-        recv_reactor(&mut reactor_rx),
-        OutEvent::DisplayChurnEnd
-    ));
+    assert!(!actor.state.churn.is_active());
     assert_no_reactor_event(&mut reactor_rx);
 }
 
@@ -1507,6 +1513,7 @@ fn run_checks(actor: &mut SpacesActor, scheduled: &Recorded) -> (Vec<u8>, Vec<No
 fn a_churn_that_never_settles_is_checked_up_to_its_cap_then_ends_with_a_refresh() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     let scheduled = actor.hand_schedule();
+    let churn = actor.hand_churn();
     actor.state.live.window_server_quiet = || false;
     actor.state.forwarded.screens = vec![make_screen(Some(SpaceId::new(721)))];
 
@@ -1531,9 +1538,10 @@ fn a_churn_that_never_settles_is_checked_up_to_its_cap_then_ends_with_a_refresh(
         OutEvent::DisplayChurnBegin
     ));
     assert!(
-        matches!(recv_reactor(&mut reactor_rx), OutEvent::DisplayChurnEnd),
-        "a churn given up on tells the reactor it ended, with no snapshot ahead of it"
+        !churn.churning(),
+        "a churn given up on is over for the reactor, with no snapshot"
     );
+    assert_no_reactor_event(&mut reactor_rx);
     assert_no_wm_event(&mut wm_rx);
 }
 
@@ -1556,12 +1564,24 @@ fn a_churn_with_no_screens_is_checked_up_to_its_cap_too() {
     assert_no_wm_event(&mut wm_rx);
 }
 
-/// The reactor reads its churn in the order of this one stream: a settled churn's snapshot after
-/// its begin and ahead of its end, and the next churn's begin after that end.
+/// Each event the actor sends, with whether its churn record said churning as it was sent.
+struct Witness {
+    churn: ChurnReader,
+    sent: channel::Sender<(OutEvent, bool)>,
+}
+impl EventSink for Witness {
+    fn send(&self, event: OutEvent) { self.sent.send((event, self.churn.churning())); }
+}
+
+/// The record says churning before the begin is sent, so the reactor drops the window events queued
+/// ahead of it, and is clear before the settled snapshot is sent, so the reactor incorporates it
+/// outside the churn; the next churn's begin comes after both.
 #[test]
-fn a_settled_churn_sends_its_begin_its_snapshot_and_its_end_in_that_order() {
-    let (events, mut stream) = channel::channel::<OutEvent>();
-    let mut actor = SpacesActor::new_for_tests(Box::new(events));
+fn a_settled_churn_is_recorded_before_its_begin_and_over_before_its_snapshot() {
+    let (writer, churn) = display_churn::shared();
+    let (sent, mut stream) = channel::channel();
+    let mut actor = SpacesActor::new_for_tests(Box::new(Witness { churn, sent }));
+    actor.churn = writer;
     let scheduled = actor.hand_schedule();
     actor.state.forwarded.screens = vec![make_screen(Some(SpaceId::new(741)))];
     let moved = Notification::DisplayReconfigured {
@@ -1578,10 +1598,9 @@ fn a_settled_churn_sends_its_begin_its_snapshot_and_its_end_in_that_order() {
     }
     assert!(
         matches!(sent.as_slice(), [
-            OutEvent::DisplayChurnBegin,
-            OutEvent::SpaceStateUpdated(..),
-            OutEvent::DisplayChurnEnd,
-            OutEvent::DisplayChurnBegin,
+            (OutEvent::DisplayChurnBegin, true),
+            (OutEvent::SpaceStateUpdated(..), false),
+            (OutEvent::DisplayChurnBegin, true),
         ]),
         "{sent:?}"
     );

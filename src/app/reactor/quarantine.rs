@@ -1,7 +1,7 @@
 //! What the reactor holds back while the displays or the session are unstable: events dropped
 //! during display churn and while refreshes are blocked, and the one visible-window refresh owed
 //! until every quarantine lifts.
-use super::managers::{Churn, QuarantineSignal, RefreshQuarantineState, VisibleRefresh};
+use super::managers::{QuarantineSignal, RefreshQuarantineState, VisibleRefresh};
 use super::{Event, Reactor};
 
 impl Reactor {
@@ -48,7 +48,6 @@ impl Reactor {
             | Event::SessionDidResignActive
             | Event::SessionDidBecomeActive
             | Event::DisplayChurnBegin
-            | Event::DisplayChurnEnd
             | Event::MissionControlNativeEntered
             | Event::MissionControlNativeExited
             | Event::RaiseCompleted { .. }
@@ -72,11 +71,9 @@ impl Reactor {
         self.refresh_quarantine_manager.state()
     }
 
-    /// From the spaces actor's `DisplayChurnBegin` to its `DisplayChurnEnd`, or the snapshot ahead
-    /// of it, in the order the reactor hears them.
-    pub(super) fn display_churning(&self) -> bool {
-        self.refresh_quarantine_manager.churn() == Churn::Churning
-    }
+    /// Whether the spaces actor is mid display reconfiguration now, ahead of the events still
+    /// queued: a window event already waiting when the churn began is dropped too.
+    pub(super) fn display_churning(&self) -> bool { self.reads.display_churn.churning() }
 
     pub(super) fn refreshes_blocked(&self) -> bool {
         self.refresh_quarantine_manager.blocks_refreshes()

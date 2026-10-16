@@ -18,6 +18,7 @@ windows are on this space" is a window-server query over window ids.
 | `platform/spaces.rs` | The spaces actor: the only thing that turns macOS lifecycle signals into a snapshot. It makes the reads, through the `WindowServer` port and `LiveDisplays` (`platform/spaces/live.rs`, with the `SpaceKinds` production hands it), and the domain decides; what it asks again is handed to a `Schedule` (`platform/spaces/schedule.rs`), the main queue in production and a record in tests, so a test runs every retry to its cap |
 | `platform/space_query.rs` | Asking what a space is |
 | `platform/cgs_notify.rs` | The CGS notification streams |
+| `platform/display_churn.rs` | Whether a churn is under way, as the spaces actor alone writes it (`ChurnWriter`) and the reactor reads it (`ChurnReader`) the moment it changes |
 | `platform/window_notify.rs` | The actor over those streams: space events to the spaces actor, focus edges coalesced into `WindowServerFocusChanged`, and one `window-frames` thread that reads the window server for the application, in the order it was asked through `Following`'s queue (`ToRead`): every tracked window's moves and resizes, as `ServerFrame`s, each reorder, hide, unhide and close, as a `ServerOrder` with the level and sub-level read after a reorder or an unhide (`StackLevel`), and each window the application introduces, whole, as a `ServerIntro`, all handed to its `OnServerRead` callbacks, only while the application is `Following` them ("Live frames" in `live-frames.md`) |
 | `platform/cursor_warp.rs` | Carrying the pointer across the edge between two stacked displays, over their whole bounds |
 | `platform/mission_control.rs` | Detecting Mission Control, during which nothing may be moved, through the Dock's notifications: a subscription the Dock is too busy to answer is asked again on `src/windows/platform/ax/ask_again.rs`'s schedule for up to 60s |
@@ -30,16 +31,18 @@ two identical topology samples plus a quiet window server before it speaks. Trea
 unstable snapshot as authoritative is what made rini remap every window onto fresh
 default workspaces.
 
-**The application hears a churn only as events.** `DisplayChurnBegin` when one starts and
-`DisplayChurnEnd` when it settles or is given up on, a settled one's snapshot queued ahead of its
-end. The spaces actor sends all of it straight to the reactor's queue, as Mission Control and the
-window notifications send theirs, so one churn's events cannot pass another's and its begin waits
-on no other actor. No flag is shared across threads, so the reactor reads the churn in the order
-of what it handles. The flags that start a churn come in macOS's callback after the
-reconfiguration (the one before carries only `BEGIN_CONFIGURATION`, which starts none), so windows
-can already have moved, and their Accessibility events, sent from each app's thread, can be on the
-reactor's queue ahead of the begin. Those are handled, not dropped; nothing on hardware has yet
-measured how many there are on an unplug.
+**The application hears a churn twice: as a record and as events.** The flags that start a
+churn come in macOS's callback after the reconfiguration (the one before carries only
+`BEGIN_CONFIGURATION`, which starts none), so windows can already have moved, and their
+Accessibility events, sent from each app's thread, can be on the reactor's queue ahead of anything
+the spaces actor sends. So the actor writes the churn to one record shared with the reactor
+(`platform/display_churn.rs`) as it begins, before it sends `DisplayChurnBegin`, and the reactor
+drops window events while the record says churning, those already queued included. The record is
+cleared when the churn settles or is given up on, before a settled one's snapshot is sent, so the
+reactor incorporates that snapshot outside the churn. `DisplayChurnBegin` itself, and each
+snapshot, go straight to the reactor's queue, as Mission Control and the window notifications send
+theirs, so one churn's begin and snapshot cannot pass another's; the reactor holds refreshes from
+the begin it hears until the snapshot after it.
 
 **macOS mints a new space id on every reconnect.** One monitor was observed as 479,
 484, 487, 516, 552, 1138 in a single session. Nothing durable may be keyed by space

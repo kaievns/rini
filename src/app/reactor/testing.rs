@@ -93,6 +93,9 @@ impl Reactor {
         }
     }
 
+    /// `event` as the reactor's queue hands it over: through the quarantines first.
+    pub fn handle_queued_event(&mut self, event: Event) { self.handle_loop_event(event); }
+
     pub fn test_workspace_ids(
         &mut self,
         space: rini_core::ids::SpaceId,
@@ -474,6 +477,17 @@ impl Reactor {
     pub(crate) fn reads(&self) -> &SystemReads { &self.reads }
 
     pub(crate) fn reads_mut(&mut self) -> &mut SystemReads { &mut self.reads }
+
+    /// The spaces actor's churn beginning, as the reactor reads it at once, ahead of the
+    /// `DisplayChurnBegin` the actor queues behind what is already waiting. The writer, to end it.
+    pub(crate) fn begin_display_churn(
+        &mut self,
+    ) -> crate::displays::platform::display_churn::ChurnWriter {
+        let (writer, reader) = crate::displays::platform::display_churn::shared();
+        self.reads.display_churn = reader;
+        writer.begin();
+        writer
+    }
 
     pub(crate) fn space_state(&self) -> &ForwardedSpaceState { &self.space_state }
 

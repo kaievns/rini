@@ -230,7 +230,6 @@ pub enum Event {
     SessionDidBecomeActive,
 
     DisplayChurnBegin,
-    DisplayChurnEnd,
 
     MissionControlNativeEntered,
     MissionControlNativeExited,
@@ -292,7 +291,6 @@ impl From<crate::displays::event::Event> for Event {
             D::SessionDidResignActive => Event::SessionDidResignActive,
             D::SessionDidBecomeActive => Event::SessionDidBecomeActive,
             D::DisplayChurnBegin => Event::DisplayChurnBegin,
-            D::DisplayChurnEnd => Event::DisplayChurnEnd,
             D::MissionControlEntered => Event::MissionControlNativeEntered,
             D::MissionControlExited => Event::MissionControlNativeExited,
             D::WindowServerFocusChanged(window, space) => {
@@ -444,7 +442,6 @@ impl Event {
             | Event::SessionDidResignActive
             | Event::SessionDidBecomeActive
             | Event::DisplayChurnBegin
-            | Event::DisplayChurnEnd
             | Event::MissionControlNativeEntered
             | Event::MissionControlNativeExited
             | Event::RaiseCompleted { .. }
@@ -561,6 +558,8 @@ pub struct ReactorParts {
         crate::displays::event::Following,
     )>,
     pub window_tx_store: WindowTxStore,
+    /// The display churn the spaces actor writes.
+    pub display_churn: crate::displays::platform::display_churn::ChurnReader,
 }
 
 impl Reactor {
@@ -577,10 +576,13 @@ impl Reactor {
             bar_tx,
             rest,
             window_tx_store,
+            display_churn,
         } = parts;
         let (events_tx, events) = channels::channel();
         let events_tx_clone = events_tx.clone();
-        let mut reactor = Reactor::new(config, layout_engine, display_memory, window_tx_store);
+        let reads = SystemReads::live(display_churn);
+        let mut reactor =
+            Reactor::with_reads(config, layout_engine, display_memory, window_tx_store, reads);
         reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
         reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
         reactor.connect_transitions(transitions_tx);
@@ -600,21 +602,6 @@ impl Reactor {
             })
             .unwrap();
         ReactorHandle::new(events_tx, query_handle)
-    }
-
-    pub fn new(
-        config: Config,
-        layout_engine: LayoutEngine,
-        display_memory: DisplayMemory,
-        window_tx_store: WindowTxStore,
-    ) -> Reactor {
-        Self::with_reads(
-            config,
-            layout_engine,
-            display_memory,
-            window_tx_store,
-            SystemReads::live(),
-        )
     }
 
     fn with_reads(

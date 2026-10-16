@@ -120,6 +120,7 @@ fn main() {
     // on while any window can wear a band.
     let (following, server_reads) = rini::displays::event::Following::new();
     let (spaces_tx, spaces_rx) = rini::app::channels::channel();
+    let (churn_writer, display_churn) = rini::displays::platform::display_churn::shared();
 
     let pictures = start_pictures(&transitions_tx, &switcher_tx);
 
@@ -135,6 +136,7 @@ fn main() {
         bar_tx: Some(bar_tx.clone()),
         rest: Some((rest_tx.clone(), following.clone())),
         window_tx_store: window_tx_store.clone(),
+        display_churn,
     });
     let events_tx = reactor.sender();
     if !config_usable {
@@ -158,6 +160,7 @@ fn main() {
         spaces_rx,
         spaces_tx.clone(),
         Box::new(events_tx.clone()),
+        churn_writer,
         config.settings.top_band(),
     );
     let window_notify =

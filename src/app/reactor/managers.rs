@@ -112,15 +112,13 @@ pub(super) enum Session {
     AwaitingSnapshot,
 }
 
-/// Whether a display reconfiguration holds window events and refreshes back.
+/// Whether a display reconfiguration holds refreshes back: from the spaces actor's
+/// `DisplayChurnBegin`, as the reactor hears it, until a snapshot is incorporated. Which window
+/// events it drops is the spaces actor's own record (`SystemReads::display_churn`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Churn {
     Steady,
-    /// From the spaces actor's `DisplayChurnBegin` to its end: window events are dropped and
-    /// refreshes held.
-    Churning,
-    /// Ended, with no snapshot incorporated since: refreshes are still held.
-    Settling,
+    AwaitingSnapshot,
 }
 
 /// The one visible-window refresh owed until every quarantine lifts.
@@ -147,9 +145,6 @@ pub(super) enum QuarantineSignal {
     SessionResigned,
     SessionActivated,
     ChurnBegan,
-    /// The spaces actor's `DisplayChurnEnd`, or a snapshot, which the spaces actor forwards during
-    /// a churn only as the settled one, ahead of its end.
-    ChurnEnded,
     /// A refresh asked for while refreshes are blocked.
     RefreshDeferred(VisibleRefresh),
     /// A forwarded snapshot, incorporated. Every one the spaces actor forwards is coherent, so each
@@ -196,12 +191,7 @@ impl RefreshQuarantineManager {
                 self.session = Session::AwaitingSnapshot;
                 self.owe(VisibleRefresh::TRACKING_MISSION_CONTROL);
             }
-            QuarantineSignal::ChurnBegan => self.churn = Churn::Churning,
-            QuarantineSignal::ChurnEnded => {
-                if self.churn == Churn::Churning {
-                    self.churn = Churn::Settling;
-                }
-            }
+            QuarantineSignal::ChurnBegan => self.churn = Churn::AwaitingSnapshot,
             QuarantineSignal::RefreshDeferred(refresh) => self.owe(refresh),
             QuarantineSignal::Incorporated { releases_lifecycle } => {
                 self.churn = Churn::Steady;
@@ -247,6 +237,7 @@ impl RefreshQuarantineManager {
     #[cfg(test)]
     pub(super) fn session(&self) -> Session { self.session }
 
+    #[cfg(test)]
     pub(super) fn churn(&self) -> Churn { self.churn }
 
     #[cfg(test)]
@@ -317,13 +308,12 @@ mod tests {
         const TRACKED: VisibleRefresh = VisibleRefresh { tracks_mission_control: true };
 
         /// Every signal, in the column order of the tables below.
-        const SIGNALS: [QuarantineSignal; 9] = [
+        const SIGNALS: [QuarantineSignal; 8] = [
             QuarantineSignal::WillSleep,
             QuarantineSignal::Woke,
             QuarantineSignal::SessionResigned,
             QuarantineSignal::SessionActivated,
             QuarantineSignal::ChurnBegan,
-            QuarantineSignal::ChurnEnded,
             QuarantineSignal::RefreshDeferred(UNTRACKED),
             QuarantineSignal::Incorporated { releases_lifecycle: true },
             QuarantineSignal::Incorporated { releases_lifecycle: false },
@@ -343,10 +333,10 @@ mod tests {
             use Wake::{Asleep, AwaitingSnapshot as Waiting, Awake};
             #[rustfmt::skip]
             let table: [(Wake, [Wake; SIGNALS.len()]); 3] = [
-                //        sleep   woke     resign   active   churn    ended    defer    released snapshot
-                (Awake,   [Asleep, Waiting, Awake,   Awake,   Awake,   Awake,   Awake,   Awake,   Awake]),
-                (Asleep,  [Asleep, Waiting, Asleep,  Asleep,  Asleep,  Asleep,  Asleep,  Asleep,  Asleep]),
-                (Waiting, [Asleep, Waiting, Waiting, Waiting, Waiting, Waiting, Waiting, Awake,   Waiting]),
+                //        sleep   woke     resign   active   churn    defer    released snapshot
+                (Awake,   [Asleep, Waiting, Awake,   Awake,   Awake,   Awake,   Awake,   Awake]),
+                (Asleep,  [Asleep, Waiting, Asleep,  Asleep,  Asleep,  Asleep,  Asleep,  Asleep]),
+                (Waiting, [Asleep, Waiting, Waiting, Waiting, Waiting, Waiting, Awake,   Waiting]),
             ];
             for (from, row) in table {
                 for (signal, to) in SIGNALS.into_iter().zip(row) {
@@ -362,10 +352,10 @@ mod tests {
             use Session::{Active, AwaitingSnapshot as Waiting, Inactive};
             #[rustfmt::skip]
             let table: [(Session, [Session; SIGNALS.len()]); 3] = [
-                //         sleep     woke      resign    active   churn     ended     defer     released  snapshot
-                (Active,   [Active,   Active,   Inactive, Waiting, Active,   Active,   Active,   Active,   Active]),
-                (Inactive, [Inactive, Inactive, Inactive, Waiting, Inactive, Inactive, Inactive, Inactive, Inactive]),
-                (Waiting,  [Waiting,  Waiting,  Inactive, Waiting, Waiting,  Waiting,  Waiting,  Active,   Waiting]),
+                //         sleep     woke      resign    active   churn     defer     released  snapshot
+                (Active,   [Active,   Active,   Inactive, Waiting, Active,   Active,   Active,   Active]),
+                (Inactive, [Inactive, Inactive, Inactive, Waiting, Inactive, Inactive, Inactive, Inactive]),
+                (Waiting,  [Waiting,  Waiting,  Inactive, Waiting, Waiting,  Waiting,  Active,   Waiting]),
             ];
             for (from, row) in table {
                 for (signal, to) in SIGNALS.into_iter().zip(row) {
@@ -378,13 +368,12 @@ mod tests {
 
         #[test]
         fn churn_moves_on_every_signal_as_its_table_says() {
-            use Churn::{Churning, Settling, Steady};
+            use Churn::{AwaitingSnapshot as Waiting, Steady};
             #[rustfmt::skip]
-            let table: [(Churn, [Churn; SIGNALS.len()]); 3] = [
-                //         sleep     woke      resign    active    churn     ended     defer     released snapshot
-                (Steady,   [Steady,   Steady,   Steady,   Steady,   Churning, Steady,   Steady,   Steady,  Steady]),
-                (Churning, [Churning, Churning, Churning, Churning, Churning, Settling, Churning, Steady,  Steady]),
-                (Settling, [Settling, Settling, Settling, Settling, Churning, Settling, Settling, Steady,  Steady]),
+            let table: [(Churn, [Churn; SIGNALS.len()]); 2] = [
+                //        sleep    woke     resign   active   churn    defer    released snapshot
+                (Steady,  [Steady,  Steady,  Steady,  Steady,  Waiting, Steady,  Steady,  Steady]),
+                (Waiting, [Waiting, Waiting, Waiting, Waiting, Waiting, Waiting, Steady,  Steady]),
             ];
             for (from, row) in table {
                 for (signal, to) in SIGNALS.into_iter().zip(row) {
@@ -399,17 +388,31 @@ mod tests {
         fn sleep_outranks_the_session_which_outranks_churn() {
             use RefreshQuarantineState::{DisplayChurn, Ready, SessionInactive, Sleeping};
             let table = [
-                (Wake::Asleep, Session::Inactive, Churn::Churning, Sleeping),
+                (
+                    Wake::Asleep,
+                    Session::Inactive,
+                    Churn::AwaitingSnapshot,
+                    Sleeping,
+                ),
                 (Wake::AwaitingSnapshot, Session::Active, Churn::Steady, Sleeping),
-                (Wake::Awake, Session::Inactive, Churn::Churning, SessionInactive),
+                (
+                    Wake::Awake,
+                    Session::Inactive,
+                    Churn::AwaitingSnapshot,
+                    SessionInactive,
+                ),
                 (
                     Wake::Awake,
                     Session::AwaitingSnapshot,
                     Churn::Steady,
                     SessionInactive,
                 ),
-                (Wake::Awake, Session::Active, Churn::Churning, DisplayChurn),
-                (Wake::Awake, Session::Active, Churn::Settling, DisplayChurn),
+                (
+                    Wake::Awake,
+                    Session::Active,
+                    Churn::AwaitingSnapshot,
+                    DisplayChurn,
+                ),
                 (Wake::Awake, Session::Active, Churn::Steady, Ready),
             ];
             for (wake, session, churn, state) in table {
@@ -431,7 +434,7 @@ mod tests {
 
         #[test]
         fn a_refresh_deferred_while_held_waits_for_the_snapshot_that_releases_the_hold() {
-            let mut quarantine = quarantine(Wake::Awake, Session::Active, Churn::Churning);
+            let mut quarantine = quarantine(Wake::Awake, Session::Active, Churn::AwaitingSnapshot);
             assert_eq!(quarantine.on(QuarantineSignal::RefreshDeferred(UNTRACKED)), None);
             assert_eq!(quarantine.owed, Some(UNTRACKED));
             assert_eq!(
@@ -466,7 +469,7 @@ mod tests {
                 (Wake::Awake, Session::AwaitingSnapshot, false),
             ];
             for (wake, session, releases_lifecycle) in cases {
-                let mut quarantine = quarantine(wake, session, Churn::Churning);
+                let mut quarantine = quarantine(wake, session, Churn::AwaitingSnapshot);
                 let made = quarantine.on(QuarantineSignal::Incorporated { releases_lifecycle });
                 assert_eq!(made, None, "{wake:?} {session:?} {releases_lifecycle}");
                 assert_eq!(quarantine.owed, Some(TRACKED));

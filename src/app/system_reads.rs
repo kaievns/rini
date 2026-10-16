@@ -3,7 +3,7 @@
 //! applications, with the two notes it hands back, the window-server activity clock and the windows
 //! it wants notifications for.
 //!
-//! Production builds the live value in `Reactor::new`; a test reactor gets [`SystemReads::fake`],
+//! Production builds the live value in `Reactor::spawn`; a test reactor gets [`SystemReads::fake`],
 //! where every read answers "unknown" until the test states it on the `FakeWindowServer` or swaps
 //! one field. A reducer takes the answer, or the port, as a parameter and never reads the machine.
 
@@ -13,6 +13,7 @@ use objc2_core_foundation::CGRect;
 use rini_core::ids::{ScreenId, WindowServerId, pid_t};
 
 use crate::displays::domain::snapshot::SpaceKinds;
+use crate::displays::platform::display_churn::ChurnReader;
 use crate::windows::domain::info::{AppInfo, WindowServerInfo};
 use crate::windows::domain::manageable::Facts;
 use crate::windows::platform::mouse::MouseState;
@@ -27,6 +28,8 @@ pub(crate) struct SystemReads {
     pub(crate) low_power: fn() -> bool,
     /// A display's whole bounds, menu bar and Dock included, in the overlay's coordinates.
     pub(crate) display_bounds: fn(ScreenId) -> CGRect,
+    /// Whether the spaces actor is mid display reconfiguration, as it writes it.
+    pub(crate) display_churn: ChurnReader,
     pub(crate) space_kinds: SpaceKinds,
     /// The running application `pid` is, for a window-server window of an app with no thread yet.
     pub(crate) running_app: fn(pid_t) -> Option<AppInfo>,
@@ -38,15 +41,21 @@ pub(crate) struct SystemReads {
 }
 
 impl SystemReads {
-    pub(crate) fn live() -> Self { Self::live_with(window_server::live()) }
+    pub(crate) fn live(display_churn: ChurnReader) -> Self {
+        Self::live_with(window_server::live(), display_churn)
+    }
 
     /// The live reads around `window_server`, which a test build can only give as a fake.
-    pub(crate) fn live_with(window_server: Arc<dyn WindowServer>) -> Self {
+    pub(crate) fn live_with(
+        window_server: Arc<dyn WindowServer>,
+        display_churn: ChurnReader,
+    ) -> Self {
         SystemReads {
             window_server,
             mouse: crate::windows::platform::mouse::get_mouse_state,
             low_power: crate::app::power::is_low_power_mode_enabled,
             display_bounds: |screen| objc2_core_graphics::CGDisplayBounds(screen.as_u32()),
+            display_churn,
             space_kinds: SpaceKinds::from_window_server(),
             running_app: |pid| {
                 objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
@@ -67,6 +76,7 @@ impl SystemReads {
             mouse: || None,
             low_power: || false,
             display_bounds: |_| CGRect::ZERO,
+            display_churn: ChurnReader::steady(),
             space_kinds: SpaceKinds::for_tests(),
             running_app: |_| None,
             note_activity: |_| {},

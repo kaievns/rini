@@ -133,6 +133,10 @@ context is arranged differently depending on what is plugged in, and rini rememb
   checked until one repeats.
 - Each snapshot MUST make one visible-window refresh once every quarantine it releases is lifted,
   not one per quarantine.
+- A window event MUST be dropped while a display churn is under way, from the moment the spaces
+  actor begins it, including one already queued for the reactor ahead of `DisplayChurnBegin`. macOS
+  replaces a window's Accessibility element on an unplug, and handling the old one's destruction
+  removes a window that is still there.
 
 > **Found 2026-10-16, not reported.** The first snapshot after a wake or an unlock released two
 > quarantines and refreshed once for each, so every application listed its windows twice. Tests never
@@ -176,6 +180,11 @@ lifecycle holds, churn and refresh it keeps, `src/displays/domain/topology.rs`,
 `src/displays/platform/spaces/tests.rs` hold the spaces actor to them, and
 `wake_quarantine_waits_for_fresh_space_snapshot_before_refresh` and
 `session_lock_quarantine_ignores_discovery_and_replays_one_refresh_after_unlock` the one refresh.
+`src/displays/platform/display_churn.rs` is the churn record the reactor drops window events by;
+`a_window_destroyed_ahead_of_the_churn_s_begin_keeps_its_place` in
+`src/app/reactor/tests/displays.rs` and
+`a_settled_churn_is_recorded_before_its_begin_and_over_before_its_snapshot` in
+`src/displays/platform/spaces/tests.rs` hold it.
 `src/displays/platform/mission_control.rs` watches the Dock, and
 `a_subscription_the_dock_is_too_busy_to_answer_is_left_for_the_next_ask` there and
 `an_application_too_busy_to_answer_is_asked_again_until_it_answers` and
