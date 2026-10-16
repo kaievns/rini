@@ -66,7 +66,11 @@ extern "C-unwind" fn port_invalidated(port: *mut CFMachPort, _info: *mut c_void)
     }
 }
 
-extern "C-unwind" fn trampoline_callback(
+/// # Safety
+///
+/// `user_info` is null or the live `TrampolineCtx` the tap was made with, and `event_ref` is the
+/// event Core Graphics passes, valid for the call.
+unsafe extern "C-unwind" fn trampoline_callback(
     proxy: CGEventTapProxy,
     etype: CGEventType,
     event_ref: core::ptr::NonNull<CGEvent>,
@@ -76,8 +80,8 @@ extern "C-unwind" fn trampoline_callback(
         return event_ref.as_ptr();
     }
 
-    // SAFETY: the refcon is the `TrampolineCtx` this tap was made with, freed only by its `Drop`
-    // after the tap is disabled and its source taken off this thread's run loop, where this runs.
+    // SAFETY: non-null, so the caller guarantees it is this tap's live `TrampolineCtx`, freed only
+    // by its `Drop` after the tap is disabled and its source is off the run loop this runs on.
     let ctx = unsafe { &*(user_info as *const TrampolineCtx) };
 
     // kCGEventTapDisabledByTimeout (-2) & kCGEventTapDisabledByUserInput (-1)
@@ -310,8 +314,8 @@ impl EventTap {
         });
 
         let ((port, source), trampoline) = hand_to_port(tramp, |tramp_ptr| {
-            // SAFETY: `trampoline_callback` has the tap callback's signature and reads its refcon only
-            // as this `TrampolineCtx`, which lives until the tap's `Drop` has disabled it.
+            // SAFETY: `trampoline_callback` requires its refcon be this `TrampolineCtx`, which lives
+            // until the tap's `Drop` has disabled it, and Core Graphics passes a valid event.
             let port = unsafe {
                 CGEvent::tap_create(
                     CGTapLoc::SessionEventTap,
