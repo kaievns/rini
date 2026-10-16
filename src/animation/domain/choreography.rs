@@ -587,11 +587,13 @@ mod tests {
 
     /// The fold contract, over flights of the look `make` gives: one to three passes folded in before
     /// the motion, as `random_pass` builds them, frame zero posed again after each. The plan folded
-    /// names every window it named and none twice, and sends every window the pass sends onto the
-    /// viewport where the pass sends it, within `GROUP_TOLERANCE` (one sent off it may ride its
-    /// container out); frame zero draws every window the flight draws where the folded plan starts
-    /// it, which is where its tile's picture is placed, within the half point placing on whole points
-    /// allows; and the motion lands every window where the folded plan sends it.
+    /// names every window it named and none twice; starts every window it leaves riding alike where
+    /// the plan before started it; and sends every window the pass sends onto the viewport to the
+    /// frame the pass sends it to, within `GROUP_TOLERANCE` (one sent off it may ride its container
+    /// out). A window it moves to another container or kind of path may start anywhere, and the
+    /// pass's own start frames bind no start. Frame zero draws every window the flight draws where
+    /// the folded plan starts it, within the half point placing on whole points allows, which holds
+    /// the pose to the fold; and the motion lands every window where the folded plan sends it.
     fn folds_each_pass_before_the_motion(
         make: &dyn Fn() -> Box<dyn Choreography>,
     ) -> Result<(), String> {
@@ -601,6 +603,8 @@ mod tests {
             for step in 0..1 + rng.below(3) {
                 let tag = format!("seed 167 run {run} step {step}");
                 let named = flight.plan.windows();
+                let started: Vec<(WindowId, Member)> =
+                    named.iter().filter_map(|w| Some((*w, flight.plan.member(*w)?))).collect();
                 let (incoming, pan) = random_pass(&mut rng, &mut flight, wid(500 + step as u32));
                 let pass = Pass {
                     plan: &incoming,
@@ -623,6 +627,17 @@ mod tests {
                 if let Some(lost) = named.iter().find(|w| folded.member(**w).is_none()) {
                     return Err(format!("{tag}: {lost:?} is no longer named"));
                 }
+                for &(window, was) in &started {
+                    let Some(is) = folded.member(window).filter(|is| rides_alike(was, *is)) else {
+                        continue;
+                    };
+                    let (was, is) = (on_overlay(was.start_frame()), on_overlay(is.start_frame()));
+                    if edges_apart(was, is) > 0.01 {
+                        return Err(format!(
+                            "{tag}: {window:?} keeps where it rides and starts at {is:?}, it started at {was:?}"
+                        ));
+                    }
+                }
                 for window in incoming.windows() {
                     let Some(want) = sent_by(&incoming, window) else {
                         continue;
@@ -631,10 +646,8 @@ mod tests {
                         continue;
                     }
                     let got = folded.destination(window);
-                    let honoured = got.is_some_and(|got| {
-                        (got.origin.x - want.origin.x).abs() <= GROUP_TOLERANCE + 0.01
-                            && (got.origin.y - want.origin.y).abs() <= GROUP_TOLERANCE + 0.01
-                    });
+                    let honoured =
+                        got.is_some_and(|got| edges_apart(got, want) <= GROUP_TOLERANCE + 0.01);
                     if !honoured {
                         return Err(format!(
                             "{tag}: {window:?} sent to {got:?}, the pass sends it to {want:?}"
@@ -661,11 +674,20 @@ mod tests {
         Ok(())
     }
 
+    /// Whether two members ride alike: one container, or one kind of path of their own.
+    fn rides_alike(a: Member, b: Member) -> bool {
+        match (a, b) {
+            (Member::Rigid { key: a, .. }, Member::Rigid { key: b, .. }) => a == b,
+            (a, b) => std::mem::discriminant(&a) == std::mem::discriminant(&b),
+        }
+    }
+
     /// The push contract, over flights of the look `make` gives: one to three pushes against an end
     /// reaching a flight that moves, each 10-300ms after the one before. No window the flight draws
-    /// jumps as a push reaches it, within the half point placing on whole points allows; some push
-    /// draws a window more than a point further toward its wall than the flight without it draws it;
-    /// and once every track has ended, every window is home where its plan sends it.
+    /// jumps as a push reaches it, within the half point placing on whole points allows; against each
+    /// of the four walls, some push draws a window more than a point further toward it than the
+    /// flight without it draws it; and once every track has ended, every window is home where its
+    /// plan sends it.
     fn pushes_out_and_home_without_a_jump(
         make: &dyn Fn() -> Box<dyn Choreography>,
     ) -> Result<(), String> {
@@ -676,7 +698,7 @@ mod tests {
             OverlayVector::new(0.0, EDGE_BOUNCE_OVERSHOOT),
         ];
         let mut rng = Gen(173);
-        let mut toward = 0;
+        let mut toward = [0usize; 4];
         for run in 0..RUNS {
             let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
             flight.start(&[]);
@@ -684,7 +706,8 @@ mod tests {
             for step in 0..1 + rng.below(3) {
                 let tag = format!("seed 173 run {run} step {step}");
                 now += rng.pt(10.0, 300.0) / 1000.0;
-                let wall = walls[rng.below(4) as usize];
+                let side = rng.below(4) as usize;
+                let wall = walls[side];
                 let without = flight.score.clone();
                 let edits = flight.choreography.push(&flight.score, &Cue::Plain, wall, PLAIN, now);
                 flight.fold(&edits);
@@ -712,12 +735,15 @@ mod tests {
                     let at = now + PLAIN * k as f64 / 8.0;
                     flight.drawn.iter().any(|window| further(at, window))
                 });
-                toward += usize::from(pushed);
+                toward[side] += usize::from(pushed);
             }
             lands_on_its_plan(&flight, now, &format!("seed 173 run {run}"))?;
         }
-        if toward == 0 {
-            return Err(format!("no push in {RUNS} runs drew a window toward its wall"));
+        if let Some(side) = toward.iter().position(|pushed| *pushed == 0) {
+            let wall = walls[side];
+            return Err(format!(
+                "no push against {wall:?} in {RUNS} runs drew a window toward its wall"
+            ));
         }
         Ok(())
     }
@@ -742,21 +768,35 @@ mod tests {
         }
     }
 
-    /// The fold contract rejects a look whose fold keeps the plan it is given.
+    /// The fold contract rejects a look whose fold keeps the plan it is given, one that moves each
+    /// window where the pass sends it but keeps every resize at the size it starts at, and one that
+    /// starts every resize and entrance where it ends.
     #[test]
-    fn the_fold_contract_rejects_a_look_that_ignores_the_pass() {
+    fn the_fold_contract_rejects_a_look_that_ignores_the_pass_drops_resizes_or_moves_a_start() {
         let broken = folds_each_pass_before_the_motion(&|| Flawed::boxed(Flaw::IgnoresThePass))
             .expect_err("a fold that ignores the pass");
         assert!(broken.contains("the pass sends it to"), "{broken}");
+        let unresized = folds_each_pass_before_the_motion(&|| Flawed::boxed(Flaw::DropsResizes))
+            .expect_err("a fold that drops every resize");
+        assert!(unresized.contains("the pass sends it to"), "{unresized}");
+        let finished = folds_each_pass_before_the_motion(&|| Flawed::boxed(Flaw::StartsAtTheEnd))
+            .expect_err("a fold that starts every resize and entrance where it ends");
+        assert!(finished.contains("it started at"), "{finished}");
     }
 
-    /// The push contract rejects a look that plays no push, and one that starts every bounce from
-    /// rest wherever the one before is drawn.
+    /// The push contract rejects a look that plays no push, one that pushes only against the left
+    /// and right walls, and one that starts every bounce from rest wherever the one before is drawn.
     #[test]
-    fn the_push_contract_rejects_a_look_that_plays_no_push_or_pushes_from_rest() {
+    fn the_push_contract_rejects_a_look_that_skips_a_wall_or_pushes_from_rest() {
         let still = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PlaysNoPush))
             .expect_err("a push that plays nothing");
         assert!(still.contains("toward its wall"), "{still}");
+        let level = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PushesSideways))
+            .expect_err("a push only against the left and right walls");
+        assert!(
+            level.contains("(0.0, -72.0)") || level.contains("(0.0, 72.0)"),
+            "{level}"
+        );
         let from_rest = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PushesFromRest))
             .expect_err("a push from rest over a bounce");
         assert!(from_rest.contains("jumped"), "{from_rest}");
@@ -767,8 +807,14 @@ mod tests {
     enum Flaw {
         /// Its fold gives back the plan it is given.
         IgnoresThePass,
+        /// Its fold keeps every resize at the size it starts at.
+        DropsResizes,
+        /// Its fold starts every resize and entrance where it ends.
+        StartsAtTheEnd,
         /// Its push plays nothing.
         PlaysNoPush,
+        /// Its push plays nothing against the top or bottom wall.
+        PushesSideways,
         /// Its push starts every carrier's bounce from rest, wherever the one before is drawn.
         PushesFromRest,
     }
@@ -792,7 +838,23 @@ mod tests {
         fn fold(&self, plan: &FlightPlan, pass: &Pass) -> FlightPlan {
             match self.flaw {
                 Flaw::IgnoresThePass => plan.clone(),
-                Flaw::PlaysNoPush | Flaw::PushesFromRest => self.slide.fold(plan, pass),
+                Flaw::DropsResizes => {
+                    let mut folded = self.slide.fold(plan, pass);
+                    for path in &mut folded.changing {
+                        path.to.size = path.from.size;
+                    }
+                    folded
+                }
+                Flaw::StartsAtTheEnd => {
+                    let mut folded = self.slide.fold(plan, pass);
+                    for path in folded.changing.iter_mut().chain(&mut folded.entrances) {
+                        path.from = path.to;
+                    }
+                    folded
+                }
+                Flaw::PlaysNoPush | Flaw::PushesSideways | Flaw::PushesFromRest => {
+                    self.slide.fold(plan, pass)
+                }
             }
         }
 
@@ -822,8 +884,12 @@ mod tests {
         ) -> Vec<Edit> {
             let bounce = Bounce::from_rest(wall, Duration::from_secs_f64(seconds));
             match self.flaw {
-                Flaw::IgnoresThePass => self.slide.push(playing, cue, wall, seconds, now),
                 Flaw::PlaysNoPush => Vec::new(),
+                Flaw::PushesSideways if wall.y != 0.0 => Vec::new(),
+                Flaw::IgnoresThePass
+                | Flaw::DropsResizes
+                | Flaw::StartsAtTheEnd
+                | Flaw::PushesSideways => self.slide.push(playing, cue, wall, seconds, now),
                 Flaw::PushesFromRest => playing
                     .containers()
                     .filter(|key| carries_out_and_back(*key, wall))

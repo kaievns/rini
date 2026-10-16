@@ -110,8 +110,14 @@ piece and steps with the strip; pinned by
 by the same function, every container drawn where frame zero installs it and its leg taken to be where
 the last pass sends it: nothing has moved, and the pass's frames are places on the strip there. That
 is the look's rule too (`Slide::fold`), and frame zero is posed again from the folded plan. Every look's
-fold sends each window where the pass sends it, and frame zero draws it where the folded plan starts
-it; pinned by `every_look_folds_each_pass_before_the_motion`. What the flight does about a merge,
+fold sends each window to the frame the pass sends it to, size as well as place, and starts each
+window it leaves in its container, or on its kind of path of its own, where it started; frame zero
+draws each window where the folded plan starts it, so those windows hold still. A window the fold
+moves to another container or kind of path may start elsewhere: over the contract's 200 runs, 8 of
+258 such windows moved at frame zero under Slide, the farthest 1199pt, and none of 2552 that kept
+theirs (measured with a probe over the contract's seed; not checked on screen). The pass's own start
+frames bind no start: they are places on the strip as the last pass left it. Pinned by
+`every_look_folds_each_pass_before_the_motion`. What the flight does about a merge,
 the clock, the frames already sent and the entrances still reserved, is "Mid-flight passes" in
 `src/transitions/docs/coordination.md`.
 
@@ -359,8 +365,8 @@ way out while the strip's goes on from where it is drawn on a shortened one: the
 at most the offset the strip drew, until both are home. Handed the record's bounce, it used to jump
 by up to 72pt into phase with the strip. Both are pinned by
 `a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. Every look's push keeps both: no window
-jumps as a push reaches it, and every window comes home where its plan sends it
-(`every_look_pushes_out_and_home_without_a_jump`). A
+jumps as a push reaches it, a push against each of the four walls draws some window toward it, and
+every window comes home where its plan sends it (`every_look_pushes_out_and_home_without_a_jump`). A
 push of no length is a cut, drawn at rest (`a_push_of_no_length_is_a_cut`). A
 move's nudge (below) is the other out-and-back, on the same containers by the
 same rule, under its own key. Only a step still playing holds a step off (`steps` in
