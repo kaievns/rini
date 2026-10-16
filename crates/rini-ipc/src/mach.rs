@@ -65,7 +65,7 @@ unsafe extern "C" {
 pub type Handler = Box<dyn Fn(&[u8]) -> Option<Vec<u8>> + Send>;
 
 /// The registered port and what answers it. Leaked: the port's run loop source hands it to every
-/// message for as long as the process runs.
+/// message for as long as the process runs, always on the main run loop.
 struct Server {
     port: mach_port_t,
     bs_port: mach_port_t,
@@ -153,17 +153,17 @@ fn payload_of(message: &[u8]) -> Result<Payload<'_>, Malformed> {
     })
 }
 
+/// Every message CFMachPort hands over is answered if it asks to be, then destroyed whether or not:
+/// CFMachPort leaves a message's out-of-line memory and port rights to its callout.
 extern "C" fn mach_message_callback(
     _port: CFMachPortRef,
     message: *mut c_void,
     _size: CFIndex,
     info: *mut c_void,
 ) {
-    if info.is_null() || message.is_null() {
+    if message.is_null() {
         return;
     }
-    // SAFETY: `info` is the leaked `Server` `add_to_main_run_loop` gave the port's context.
-    let server = unsafe { &*info.cast::<Server>() };
     // SAFETY: CFMachPort hands over the buffer the kernel received into, valid until this callout
     // returns: a header, whose `msgh_size` counts the bytes of message the kernel wrote (mach_msg(2)).
     let bytes = unsafe {
@@ -171,23 +171,42 @@ extern "C" fn mach_message_callback(
         let size = start.add(offset_of!(mach_msg_header_t, msgh_size)).cast::<u32>();
         std::slice::from_raw_parts(start, (size.read_unaligned() as usize).max(HEADER))
     };
-    let Ok(header) = header_of(bytes) else { return };
-    if header.msgh_remote_port == 0 {
-        return;
-    }
-    match payload_of(bytes) {
-        Ok(Payload::Inline(payload)) => answer(server, &header, payload),
-        Ok(Payload::OutOfLine { address, size }) => {
-            // SAFETY: the kernel mapped `size` bytes at `address` for this out-of-line descriptor
-            // on receipt, and they stay mapped until `mach_msg_destroy` below.
-            let payload = unsafe { std::slice::from_raw_parts(address, size) };
-            answer(server, &header, payload);
+    if !info.is_null()
+        && let Some((header, payload)) = request_of(bytes)
+    {
+        // SAFETY: `info` is the leaked `Server` `add_to_main_run_loop` gave the port's context.
+        // This callout runs only on the main run loop that port's source was added to, so its
+        // `Send` but not `Sync` handler is only ever called from that one thread.
+        let server = unsafe { &*info.cast::<Server>() };
+        match payload {
+            Payload::Inline(payload) => answer(server, &header, payload),
+            Payload::OutOfLine { address, size } => {
+                // SAFETY: the kernel mapped `size` bytes at `address` for this out-of-line
+                // descriptor on receipt, and they stay mapped until `mach_msg_destroy` below.
+                let payload = unsafe { std::slice::from_raw_parts(address, size) };
+                answer(server, &header, payload);
+            }
         }
-        Err(malformed) => error!("mach_message_callback: message {}: {malformed}", header.msgh_id),
     }
     // SAFETY: `message` is the message just received, destroyed once and read no more, its
     // out-of-line memory included.
     let _ = unsafe { mach_msg_destroy(message.cast()) };
+}
+
+/// What a received message asks to be answered: its header and request, when it has a reply port
+/// to answer on and a request rini can read, said why when the request is unreadable.
+fn request_of(bytes: &[u8]) -> Option<(mach_msg_header_t, Payload<'_>)> {
+    let header = header_of(bytes).ok()?;
+    if header.msgh_remote_port == 0 {
+        return None;
+    }
+    match payload_of(bytes) {
+        Ok(payload) => Some((header, payload)),
+        Err(malformed) => {
+            error!("mach_message_callback: message {}: {malformed}", header.msgh_id);
+            None
+        }
+    }
 }
 
 /// `payload` handed to the server's handler, and its answer, if any, sent back to `request`.
@@ -490,6 +509,21 @@ mod tests {
         assert_eq!(payload_of(&complex(0, 10, MACH_MSG_OOL_DESCRIPTOR)), empty);
         let none = message(MACH_MSGH_BITS_COMPLEX, HEADER + BODY, &0u32.to_ne_bytes());
         assert_eq!(payload_of(&none), empty);
+    }
+
+    #[test]
+    fn only_a_readable_request_with_a_reply_port_is_answered() {
+        let request = message(0, HEADER + 8, b"{\"a\":1}\0");
+        let (header, payload) = request_of(&request).unwrap();
+        assert_eq!(
+            (header.msgh_remote_port, payload),
+            (7, Payload::Inline(b"{\"a\":1}\0"))
+        );
+        let mut no_reply_port = complex(0x1234_5678, 10, MACH_MSG_OOL_DESCRIPTOR);
+        no_reply_port[offset_of!(mach_msg_header_t, msgh_remote_port)..][..4].fill(0);
+        assert_eq!(request_of(&no_reply_port), None);
+        assert_eq!(request_of(&complex(5, 10, 0)), None);
+        assert_eq!(request_of(&request[..HEADER - 1]), None);
     }
 
     #[test]
