@@ -226,6 +226,11 @@ reference at all (`no_bool_is_taken_by_reference`): a `bool` is `Copy`, and one 
 through `&mut` is a return value. A struct with more than three `bool` fields fails `struct_excessive_bools`
 unless each flag stands on its own and its allow says so.
 
+No type outside a test holds a positional tuple of more than three fields: not a field, a
+parameter, a return, an alias, a generic argument, a tuple struct or an enum's tuple variant
+(`no_production_type_holds_a_positional_tuple_over_three`). Clippy's `type_complexity` passes a
+flat four-tuple, so the test reads the tree; four fields or more are a struct naming each.
+
 No `use` in `src/app` gives a module another name
 (`no_module_in_the_app_is_imported_under_another_name`): `crate::workspaces` imported as
 `layout` beside a real `crate::layout` sent a reader to the wrong feature. A type may still be

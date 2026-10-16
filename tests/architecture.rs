@@ -2069,3 +2069,274 @@ fn no_command_match_catches_the_rest() {
     }
     assert!(broken.is_empty(), "{}", broken.join("\n"));
 }
+
+/// What came last before a bracket, as far as telling a type from an expression goes. `&`, `*`,
+/// `mut`, `const`, `dyn` and `impl` leave it as it was, so `x: &(A, B)` is read as after the colon.
+#[derive(Clone, PartialEq)]
+enum Before {
+    Nothing,
+    /// A type is next: `->`, a lone `:`, or the `=` of a `type` alias.
+    TypeIntroducer,
+    Ident(String),
+    Punct(char),
+}
+
+/// What an open bracket holds.
+#[derive(Clone, Copy, PartialEq)]
+enum Inside {
+    Code,
+    /// An enum's variants, whose `Name(..)` is a tuple variant.
+    EnumBody,
+    Type,
+    /// A tuple type, whose fields are counted.
+    Tuple,
+}
+
+/// An open bracket: which, what it holds, its top-level commas, whether a comma was the last thing
+/// in it, and the line it opened on.
+struct Open {
+    bracket: char,
+    inside: Inside,
+    commas: usize,
+    trailing_comma: bool,
+    line: usize,
+}
+
+impl Open {
+    fn new(bracket: char, inside: Inside, line: usize) -> Self {
+        Self {
+            bracket,
+            inside,
+            commas: 0,
+            trailing_comma: false,
+            line,
+        }
+    }
+
+    fn typed(&self) -> bool { matches!(self.inside, Inside::Type | Inside::Tuple) }
+}
+
+/// Every positional tuple of `code` in a type, as the line it opens on and its field count: a
+/// tuple type after `->`, `:` or a `type` alias's `=`, in a type's generic arguments, slices and
+/// arrays, and the fields of a tuple struct or an enum's tuple variant. A tuple in an expression or
+/// a pattern, and the parameters of `Fn(..)` or `fn(..)`, are not types and are left out.
+fn positional_tuples(code: &str) -> Vec<(usize, usize)> {
+    let chars: Vec<char> = code.chars().collect();
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut found = Vec::new();
+    let mut stack: Vec<Open> = Vec::new();
+    let mut before = Before::Nothing;
+    let mut idents: (String, String) = (String::new(), String::new());
+    let (mut alias, mut line, mut i) = (false, 1, 0);
+    let mut enum_pending = false;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        let prev = i.checked_sub(1).map(|p| chars[p]);
+        if c == '\n' {
+            line += 1;
+            i += 1;
+            continue;
+        }
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if let Some(open) = stack.last_mut()
+            && c != ','
+            && !matches!(c, ')' | ']' | '>' | '}')
+        {
+            open.trailing_comma = false;
+        }
+        if ident(c) {
+            let start = i;
+            while i < chars.len() && ident(chars[i]) {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            match word.as_str() {
+                "mut" | "const" | "dyn" | "impl" => {}
+                "type" => {
+                    alias = true;
+                    before = Before::Ident(word.clone());
+                }
+                "enum" => {
+                    enum_pending = true;
+                    before = Before::Ident(word.clone());
+                }
+                _ => before = Before::Ident(word.clone()),
+            }
+            if !matches!(word.as_str(), "mut" | "const" | "dyn" | "impl") {
+                idents = (std::mem::take(&mut idents.1), word);
+            }
+            continue;
+        }
+        let in_type = stack.last().is_some_and(Open::typed);
+        let after_ident = matches!(before, Before::Ident(_)) && prev.is_some_and(ident);
+        match c {
+            '-' if next == Some('>') => {
+                before = Before::TypeIntroducer;
+                i += 2;
+                continue;
+            }
+            '=' if next == Some('>') => {
+                before = Before::Punct('=');
+                i += 2;
+                continue;
+            }
+            ':' if next == Some(':') => {
+                before = Before::Punct(':');
+                i += 2;
+                continue;
+            }
+            ':' => before = Before::TypeIntroducer,
+            '=' if alias && stack.iter().all(|open| open.bracket == '{') => {
+                alias = false;
+                before = Before::TypeIntroducer;
+            }
+            '&' | '*' | '\'' => {}
+            '<' if after_ident || prev == Some(':') => {
+                stack.push(Open::new('<', Inside::Type, line));
+                before = Before::Punct('<');
+            }
+            '(' | '[' => {
+                let introduced = before == Before::TypeIntroducer;
+                let enum_body = stack.last().is_some_and(|open| open.inside == Inside::EnumBody);
+                let named = after_ident;
+                let tuple_struct = named && idents.0 == "struct";
+                let variant = named && enum_body;
+                let typed = introduced || in_type || tuple_struct || variant;
+                let inside = match (typed, c == '(' && (!named || tuple_struct || variant)) {
+                    (false, _) => Inside::Code,
+                    (true, false) => Inside::Type,
+                    (true, true) => Inside::Tuple,
+                };
+                stack.push(Open::new(c, inside, line));
+                before = Before::Punct(c);
+            }
+            '{' => {
+                let inside = if std::mem::take(&mut enum_pending) {
+                    Inside::EnumBody
+                } else {
+                    Inside::Code
+                };
+                stack.push(Open::new('{', inside, line));
+                before = Before::Punct(c);
+            }
+            ',' => {
+                if let Some(open) = stack.last_mut() {
+                    open.commas += 1;
+                    open.trailing_comma = true;
+                }
+                before = Before::Punct(c);
+            }
+            ')' | ']' | '}' | '>' => {
+                let closes = match c {
+                    ')' => '(',
+                    ']' => '[',
+                    '}' => '{',
+                    _ => '<',
+                };
+                if let Some(open) = stack.pop_if(|open| open.bracket == closes) {
+                    let empty = prev == Some(open.bracket);
+                    let fields = if empty {
+                        0
+                    } else {
+                        open.commas + 1 - usize::from(open.trailing_comma)
+                    };
+                    if open.inside == Inside::Tuple && fields > 3 {
+                        found.push((open.line, fields));
+                    }
+                }
+                before = Before::Punct(c);
+            }
+            ';' => {
+                alias = false;
+                enum_pending = false;
+                before = Before::Punct(c);
+            }
+            _ => before = Before::Punct(c),
+        }
+        i += 1;
+    }
+    found
+}
+
+/// `source` with comments and literals blanked and every inline `#[cfg(test)]` module emptied,
+/// lines kept where they were.
+fn production_code(source: &str) -> String {
+    let inline = inline_test_ranges(source);
+    blank_comments(source, true)
+        .lines()
+        .enumerate()
+        .map(|(index, code)| {
+            if inline.iter().any(|lines| lines.contains(&(index + 1))) {
+                ""
+            } else {
+                code
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A tuple of four or more is a struct waiting for its field names: a call site reads `.3` and a
+/// swap of two fields of one type compiles.
+#[test]
+fn no_production_type_holds_a_positional_tuple_over_three() {
+    let files: Vec<PathBuf> = rust_files(Path::new("src"))
+        .into_iter()
+        .chain(rust_files(Path::new("crates")))
+        .collect();
+    let tests = test_files(&files);
+    let mut broken = Vec::new();
+    for path in files.iter().filter(|path| !tests.contains(path)) {
+        let source = fs::read_to_string(path).expect("readable source");
+        for (line, fields) in positional_tuples(&production_code(&source)) {
+            broken.push(format!("{}:{line}: a tuple of {fields}", slash(path)));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "name these fields in a struct:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_positional_tuple_is_counted_in_a_type_and_never_in_an_expression_or_a_pattern() {
+    let source = r#"struct Wide(u8, u8, u8, u8);
+struct Narrow(u8, u8, u8);
+enum Event {
+    Moved(WindowId, CGRect, bool, Option<u32>),
+    Named { at: (u8, u8, u8, u8) },
+    Small(u8, (u8, u8), u8),
+}
+type Row = (u8, u8, u8, u8, u8);
+fn split(rows: &[(u8, u8, u8, u8)]) -> Option<(u8, u8, u8, u8)> {
+    let (a, b, c, d) = rows[0];
+    let pair: (u8, u8, u8,) = (a, b, c);
+    match (a, b, c, d) {
+        (1, _, _, _) => call(a, b, c, d),
+        _ => None,
+    }
+}
+fn table(map: HashMap<u32, Vec<(
+    u8,
+    u8,
+    u8,
+    u8,
+)>>) {}
+fn callback(f: impl Fn(u8, u8, u8, u8) -> u8, g: fn(u8, u8, u8, u8)) {}
+fn pattern((a, b, c, d): (u8, u8, u8)) { let s = "(a, b, c, d)"; }
+"#;
+    assert_eq!(positional_tuples(&blank_comments(source, true)), vec![
+        (1, 4),
+        (4, 4),
+        (5, 4),
+        (8, 5),
+        (9, 4),
+        (9, 4),
+        (17, 4),
+    ]);
+}
