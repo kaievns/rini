@@ -1,7 +1,7 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::ffi::c_void;
+use std::mem::ManuallyDrop;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -119,6 +119,7 @@ impl ApplicationObserver {
             observing: [Cell::new(false), Cell::new(false)],
             notified: [Cell::new(false), Cell::new(false)],
         });
+        // SAFETY: `init` on a freshly allocated NSObject subclass with its ivars set returns it.
         unsafe { msg_send![super(observer), init] }
     }
 
@@ -128,6 +129,8 @@ impl ApplicationObserver {
             return;
         }
         ivars.observing(what).set(true);
+        // SAFETY: the selector's argument types; KVO keeps `self` unretained, and `Drop` removes it
+        // before it is freed.
         unsafe {
             let _: () = msg_send![
                 &*ivars.app,
@@ -159,6 +162,7 @@ impl ApplicationObserver {
         if !ivars.observing(what).replace(false) {
             return;
         }
+        // SAFETY: the selector's argument types, for an observation `observing` says was added.
         let _ = exception::catch(AssertUnwindSafe(|| unsafe {
             let _: () = msg_send![
                 &*ivars.app,
@@ -181,8 +185,12 @@ impl Drop for ApplicationObserver {
 static APPLICATION_CALLBACK: Lazy<Mutex<Option<ApplicationCallback>>> =
     Lazy::new(|| Mutex::new(None));
 
-static APPLICATION_OBSERVERS: Lazy<Mutex<HashMap<pid_t, usize>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+thread_local! {
+    /// The observer of each application waited on, on the thread that asks: the main thread. Never
+    /// dropped, so no observer messages AppKit from a thread-exit destructor.
+    static APPLICATION_OBSERVERS: ManuallyDrop<RefCell<HashMap<pid_t, Retained<ApplicationObserver>>>> =
+        ManuallyDrop::new(RefCell::new(HashMap::new()));
+}
 
 pub fn set_application_callback<F>(callback: F)
 where F: Fn(pid_t, AppInfo) + Send + Sync + 'static {
@@ -233,12 +241,8 @@ pub fn ensure_finished_launching_observer(pid: pid_t, info: AppInfo) {
 }
 
 pub fn remove_application_observer(pid: pid_t) {
-    let observer = APPLICATION_OBSERVERS.lock().remove(&pid);
-    if let Some(observer) = observer {
-        unsafe {
-            let _ = Retained::from_raw(observer as *mut ApplicationObserver);
-        }
-    }
+    let observer = APPLICATION_OBSERVERS.with(|observers| observers.borrow_mut().remove(&pid));
+    drop(observer);
 }
 
 fn observe_application(
@@ -248,15 +252,14 @@ fn observe_application(
     observe: impl FnOnce(&ApplicationObserver),
 ) {
     let pid = app.pid();
-    let mut observers = APPLICATION_OBSERVERS.lock();
-    let raw = match observers.entry(pid) {
-        Entry::Occupied(entry) => *entry.get(),
-        Entry::Vacant(entry) => {
-            let observer = ApplicationObserver::new(app, info, callback);
-            *entry.insert(Retained::into_raw(observer) as usize)
-        }
-    };
-    observe(unsafe { &*(raw as *const ApplicationObserver) });
+    let observer = APPLICATION_OBSERVERS.with(|observers| {
+        let mut observers = observers.borrow_mut();
+        let observer = observers
+            .entry(pid)
+            .or_insert_with(|| ApplicationObserver::new(app, info, callback));
+        Retained::clone(observer)
+    });
+    observe(&observer);
 }
 
 pub fn running_apps() -> impl Iterator<Item = (pid_t, AppInfo)> {
@@ -330,8 +333,8 @@ pub fn image_pixels(
     size: f64,
 ) -> Option<Retained<objc2_core_graphics::CGImage>> {
     let mut rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(size, size));
-    // A raw pointer, not `Some(&mut _)`: the parameter is `*mut NSRect` and AppKit writes the rect it
-    // actually chose back into it, which is why it cannot be a temporary.
+    // SAFETY: `rect` is a local, not a temporary, because AppKit writes the rect it chose back into
+    // it; the parameter is `*mut NSRect`. No context and no hints are given.
     unsafe { image.CGImageForProposedRect_context_hints(&mut rect, None, None) }
 }
 
@@ -425,4 +428,42 @@ fn bundle_info_for_pid(pid: pid_t) -> (Option<String>, Option<PathBuf>) {
             (bundle_id, path)
         })
         .unwrap_or((None, None))
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2::rc::Weak;
+
+    use super::*;
+
+    fn watched(app: Retained<NSRunningApplication>) -> Weak<ApplicationObserver> {
+        let info = AppInfo {
+            bundle_id: None,
+            localized_name: None,
+        };
+        let mut watched = None;
+        observe_application(app, info, Arc::new(|_, _| {}), |observer| {
+            watched = Some(Weak::new(observer))
+        });
+        watched.expect("observe is handed the observer")
+    }
+
+    /// The map holds the one retain that keeps an observer alive, so removing its entry frees it.
+    #[test]
+    fn an_application_has_one_observer_until_it_is_removed() {
+        let app = NSRunningApplication::currentApplication();
+        let pid = app.pid();
+        let first = watched(app.clone());
+        let again = watched(app);
+
+        let observer = first.load().expect("the map keeps the observer alive");
+        assert!(
+            again.load().is_some_and(|again| std::ptr::eq(&*again, &*observer)),
+            "asked again, the same observer"
+        );
+        drop(observer);
+
+        remove_application_observer(pid);
+        assert!(first.load().is_none(), "removed, it is freed");
+    }
 }
