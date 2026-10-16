@@ -232,8 +232,8 @@ impl SpaceAffinity<'_> {
     /// True when a window has been parked off-strip: it overlaps its screen by no
     /// more than the hidden sliver, so nothing meaningful of it is on display.
     ///
-    /// Used to sort parked columns to the back of the raise order. Floating windows
-    /// are never considered parked — they are positioned by the user, and a small
+    /// A raise leaves parked windows out (`raise_order::drop_parked`), as a strip regroup does.
+    /// Floating windows are never considered parked — they are positioned by the user, and a small
     /// window near a screen edge is not the same thing as a scrolled-away column.
     pub(crate) fn is_window_parked_offscreen(&self, wid: WindowId) -> bool {
         // Generous relative to the 1pt parking sliver: a parked window can sit a

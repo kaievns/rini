@@ -846,10 +846,9 @@ fn wsid_rekey_preserves_non_default_workspace_without_app_rules() {
 /// Each display switches workspaces independently, and a workspace is the SAME workspace on
 /// every display.
 ///
-/// This is the core of the restructure. Previously each display got its own set of workspace
-/// objects, so "coding" on the built-in and "coding" on the external were unrelated; moving a
-/// window between displays had to guess a target by ordinal, and an unplug scattered windows
-/// into whichever workspace shared an index.
+/// "coding" on the built-in and "coding" on the external are one workspace, so moving a window
+/// between displays guesses no target by ordinal and an unplug leaves no window in whichever
+/// workspace shares an index.
 #[test]
 fn displays_share_workspaces_but_switch_between_them_independently() {
     let mut reactor = test_reactor();
