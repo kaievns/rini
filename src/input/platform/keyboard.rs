@@ -11,7 +11,7 @@ use std::str::FromStr;
 use std::sync::LazyLock;
 
 use anyhow::anyhow;
-use objc2_core_foundation::CFData;
+use objc2_core_foundation::{CFData, CFRetained, CFString, CFType};
 use objc2_core_graphics::{CGEvent, CGEventField};
 use parking_lot::Mutex;
 
@@ -275,12 +275,11 @@ const fn build_cg_keycode_table() -> [Option<KeyCode>; 0x80] {
 
 const CG_KEYCODE_TABLE: [Option<KeyCode>; 0x80] = build_cg_keycode_table();
 
-type CFStringRef = *const c_void;
-
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
-    fn TISCopyCurrentASCIICapableKeyboardLayoutInputSource() -> *mut c_void;
-    fn TISGetInputSourceProperty(keyboard: *const c_void, property: CFStringRef) -> *mut c_void;
+    /// Takes nothing, and answers an input source rini owns under the Copy rule, or null.
+    safe fn TISCopyCurrentASCIICapableKeyboardLayoutInputSource() -> Option<NonNull<CFType>>;
+    fn TISGetInputSourceProperty(keyboard: &CFType, property: &CFString) -> *mut c_void;
     fn UCKeyTranslate(
         keyLayoutPtr: *const u8,
         virtualKeyCode: u16,
@@ -293,8 +292,10 @@ unsafe extern "C" {
         actualStringLength: *mut isize,
         unicodeString: *mut u16,
     ) -> i32;
-    fn LMGetKbdType() -> u8;
-    static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
+    /// Takes nothing and reads the keyboard's hardware type.
+    safe fn LMGetKbdType() -> u8;
+    /// An immutable `CFString` constant the Text Input Sources framework exports.
+    safe static kTISPropertyUnicodeKeyLayoutData: &'static CFString;
 }
 
 const VIRTUAL_KEYCODE_NUMS: &[u16] = &[
@@ -312,30 +313,31 @@ fn generate_virtual_keymap() -> StdHashMap<String, KeyCode> {
     let _guard = KEYMAP_GENERATION_LOCK.lock();
     let mut keymap = StdHashMap::new();
 
-    let keyboard = unsafe { TISCopyCurrentASCIICapableKeyboardLayoutInputSource() };
-    if keyboard.is_null() {
+    let Some(keyboard) = TISCopyCurrentASCIICapableKeyboardLayoutInputSource() else {
         tracing::warn!("Could not get ASCII-capable keyboard layout input source");
         return keymap;
-    }
+    };
+    // SAFETY: a Copy-rule input source is a +1 reference this function owns, released on drop.
+    let keyboard: CFRetained<CFType> = unsafe { CFRetained::from_raw(keyboard) };
 
-    let layout_data = NonNull::new(unsafe {
-        TISGetInputSourceProperty(keyboard, kTISPropertyUnicodeKeyLayoutData).cast::<CFData>()
-    });
-
+    // SAFETY: `keyboard` is a live input source and the key is the framework's own. Under the Get
+    // rule the answer is borrowed from `keyboard`, which outlives every use of it below.
+    let layout_data =
+        unsafe { TISGetInputSourceProperty(&keyboard, kTISPropertyUnicodeKeyLayoutData) };
+    // SAFETY: a non-null property is a live CF object, borrowed from `keyboard`.
+    let layout_data = unsafe { layout_data.cast::<CFType>().as_ref() }
+        .and_then(|property| property.downcast_ref::<CFData>());
     let Some(layout_data) = layout_data else {
         tracing::warn!("Could not get keyboard layout data");
-        unsafe {
-            rini_skylight_sys::CFRelease(keyboard.cast());
-        }
         return keymap;
     };
 
-    let layout_ptr = unsafe { CFData::byte_ptr(layout_data.as_ref()) };
+    let layout_ptr = layout_data.byte_ptr();
 
     const K_UC_KEY_ACTION_DOWN: u16 = 0;
     const K_UC_NO_DEAD_KEYS: u32 = 1;
 
-    let kbd_type: u32 = unsafe { LMGetKbdType() }.into();
+    let kbd_type: u32 = LMGetKbdType().into();
     let mut chars = [0u16; 4];
     let mut actual_len: isize = 0;
 
@@ -345,6 +347,8 @@ fn generate_virtual_keymap() -> StdHashMap<String, KeyCode> {
         };
 
         let mut dead_key_state: u32 = 0;
+        // SAFETY: `layout_ptr` is the layout's bytes, alive while `keyboard` is; `chars` is passed
+        // with its own length, and both out-parameters are live locals.
         let status = unsafe {
             UCKeyTranslate(
                 layout_ptr,
@@ -370,10 +374,6 @@ fn generate_virtual_keymap() -> StdHashMap<String, KeyCode> {
 
             keymap.entry(s).or_insert(key_code_enum);
         }
-    }
-
-    unsafe {
-        rini_skylight_sys::CFRelease(keyboard.cast());
     }
 
     keymap

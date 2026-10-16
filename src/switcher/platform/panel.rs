@@ -266,15 +266,13 @@ impl SwitcherPanel {
     pub fn new(mtm: MainThreadMarker, on_pick: OnPick, pictures: Pictures) -> Option<Self> {
         // A placeholder frame: every open recomputes it from the screen it is showing on.
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(600.0, 200.0));
-        let window: Retained<NSPanel> = unsafe {
-            msg_send![
-                NSPanel::alloc(mtm),
-                initWithContentRect: frame,
-                styleMask: NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
-                backing: NSBackingStoreType::Buffered,
-                defer: false,
-            ]
-        };
+        let window = NSPanel::initWithContentRect_styleMask_backing_defer(
+            NSPanel::alloc(mtm),
+            frame,
+            NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
+            NSBackingStoreType::Buffered,
+            false,
+        );
 
         window.setOpaque(false);
         let clear = NSColor::clearColor();
@@ -301,13 +299,15 @@ impl SwitcherPanel {
 
         // Dark, pinned rather than inherited, so a machine in light mode does not get a light glass
         // under a dark wash.
-        if let Some(dark) = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }) {
+        // SAFETY: an immutable `NSString` constant AppKit exports.
+        let dark_aqua = unsafe { NSAppearanceNameDarkAqua };
+        if let Some(dark) = NSAppearance::appearanceNamed(dark_aqua) {
             window.setAppearance(Some(&dark));
         }
 
         // Clear Liquid Glass, which is what macOS's own switcher is made of: a light blur that keeps the
-        // shape of what is behind it. The heavy `HUDWindow` blur this replaced was working, and over a
-        // dark desktop it averaged everything to one flat slab. The glass rounds its own corners, and
+        // shape of what is behind it. The heavy `HUDWindow` blur averages a dark desktop to one flat
+        // slab. The glass rounds its own corners, and
         // its `tintColor` shifts hue rather than brightness, so the darkening is a layer inside it.
         let backing = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), frame);
         backing.setStyle(NSGlassEffectViewStyle::Clear);
@@ -318,6 +318,8 @@ impl SwitcherPanel {
             hits: RefCell::new(Hits::default()),
             on_pick,
         });
+        // SAFETY: `NSView`'s designated initialiser takes the frame and returns the receiver, whose
+        // ivars are set above.
         let view: Retained<SwitcherView> = unsafe { msg_send![super(view), initWithFrame: frame] };
         view.setWantsLayer(true);
         backing.setContentView(Some(&view));
@@ -513,20 +515,25 @@ impl SwitcherPanel {
             caption.setAnchorPoint(CGPoint::new(0.0, 0.0));
             caption.setContentsScale(self.scale);
             caption.setZPosition(2.0);
-            unsafe {
-                caption.setFontSize(11.0);
-                caption.setAlignmentMode(objc2_quartz_core::kCAAlignmentCenter);
-                caption.setTruncationMode(objc2_quartz_core::kCATruncationEnd);
-                // n11, primary text. Both lines of the caption share it: the contrast law asks for
-                // n9 or brighter for anything that is reading matter rather than furniture, and one
-                // text layer cannot carry two colours. Splitting the app name onto n10 would need a
-                // second layer per row, which is a change to make when the panel is worth polishing.
-                caption.setForegroundColor(Some(&token(N11, 1.0)));
-                // No `setFont`. CATextLayer's `font` is a CFTypeRef taking a name, a CGFont or a
-                // CTFont, and none of the three bridges from an NSFont without a cast this file would
-                // be the only place in the tree to need. The default face at this size is legible, and
-                // a font is a thing to choose once the panel is worth polishing.
-            }
+            caption.setFontSize(11.0);
+            // SAFETY: both are immutable `NSString` constants Core Animation exports.
+            let (alignment, truncation) = unsafe {
+                (
+                    objc2_quartz_core::kCAAlignmentCenter,
+                    objc2_quartz_core::kCATruncationEnd,
+                )
+            };
+            caption.setAlignmentMode(alignment);
+            caption.setTruncationMode(truncation);
+            // n11, primary text. Both lines of the caption share it: the contrast law asks for
+            // n9 or brighter for anything that is reading matter rather than furniture, and one
+            // text layer cannot carry two colours. Splitting the app name onto n10 would need a
+            // second layer per row, which is a change to make when the panel is worth polishing.
+            caption.setForegroundColor(Some(&token(N11, 1.0)));
+            // No `setFont`. CATextLayer's `font` is a CFTypeRef taking a name, a CGFont or a
+            // CTFont, and none of the three bridges from an NSFont without a cast this file would
+            // be the only place in the tree to need. The default face at this size is legible, and
+            // a font is a thing to choose once the panel is worth polishing.
             root.addSublayer(&caption);
             self.captions.push(caption);
 
@@ -634,9 +641,9 @@ impl SwitcherPanel {
             if let Some(tile) = self.tiles.get(index) {
                 // Scaled to fit rather than cropped: a cropped thumbnail of a browser is a rectangle
                 // of text.
-                draw_picture(tile, pictures.get(&row.window), unsafe {
-                    objc2_quartz_core::kCAGravityResizeAspect
-                });
+                // SAFETY: an immutable `NSString` constant Core Animation exports.
+                let fit = unsafe { objc2_quartz_core::kCAGravityResizeAspect };
+                draw_picture(tile, pictures.get(&row.window), fit);
             }
             let slots = cards_behind(&row.behind);
             for (card, slot) in self.behind.get(index).into_iter().flatten().zip(slots) {
@@ -653,9 +660,8 @@ impl SwitcherPanel {
             }
             if let Some(caption) = self.captions.get(index) {
                 let text = caption_text(row);
-                unsafe {
-                    caption.setString(Some(&*NSString::from_str(&text)));
-                }
+                // SAFETY: an `NSString`, one of the two classes a text layer's `string` takes.
+                unsafe { caption.setString(Some(&*NSString::from_str(&text))) };
             }
         }
         CATransaction::commit();
@@ -671,8 +677,9 @@ impl SwitcherPanel {
         CATransaction::setDisableActions(movement == Move::Snap);
         if movement == Move::Glide {
             CATransaction::setAnimationDuration(GLIDE_SECONDS);
-            let ease =
-                CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionEaseOut });
+            // SAFETY: an immutable `NSString` constant Core Animation exports.
+            let ease_out = unsafe { kCAMediaTimingFunctionEaseOut };
+            let ease = CAMediaTimingFunction::functionWithName(ease_out);
             CATransaction::setAnimationTimingFunction(Some(&ease));
         }
         for (index, rect) in strip.rows.iter().enumerate() {
@@ -766,9 +773,9 @@ fn draw_card_behind(
     match slot {
         CardBehind::Shows(window) => {
             card.setHidden(false);
-            draw_picture(card, pictures.get(&window), unsafe {
-                objc2_quartz_core::kCAGravityResizeAspectFill
-            });
+            // SAFETY: an immutable `NSString` constant Core Animation exports.
+            let fill = unsafe { objc2_quartz_core::kCAGravityResizeAspectFill };
+            draw_picture(card, pictures.get(&window), fill);
         }
         CardBehind::Hidden => {
             clear_contents(card);
@@ -817,9 +824,11 @@ mod tests {
         let card = CALayer::layer();
         draw_card_behind(&card, CardBehind::Shows(window), &pictures);
         assert!(!card.isHidden());
+        // SAFETY: `contents` is only checked for presence, never used as any type.
         assert!(unsafe { card.contents() }.is_some(), "its window's picture");
         draw_card_behind(&card, CardBehind::Hidden, &pictures);
         assert!(card.isHidden());
+        // SAFETY: as above, presence only.
         assert!(unsafe { card.contents() }.is_none(), "let go of");
     }
 

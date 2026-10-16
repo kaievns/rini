@@ -159,7 +159,7 @@ impl Reactor {
                 else {
                     continue;
                 };
-                // Do not fight macOS over a window on a display that is no longer attached;
+                // Do not fight macOS over a window on a display that has been detached;
                 // those are handled by repatriation when the display returns.
                 if !attached.iter().any(|(_, space)| *space == source_space) {
                     continue;
@@ -191,16 +191,15 @@ impl Reactor {
 
     /// Send windows that belong on `display_uuid` back to it after it reappears.
     ///
-    /// A replug used to be handled by remapping whole SPACES: the display's old space id
-    /// was migrated onto its new one. That is wrong whenever the windows moved in the
-    /// meantime. Unplugging evacuates the external's windows onto the built-in, where the
-    /// user keeps working — closing some, opening others, reordering the strip. The old
-    /// space is by then a stale snapshot, so remapping it wholesale sent back whichever
-    /// windows happened to occupy those slots (Excel and Slack, in the reported case,
-    /// instead of the two terminals) and reshuffled the built-in's strip on the way out.
+    /// Per window, not per space: migrating the display's old space id onto its new one is
+    /// wrong whenever the windows moved in the meantime. Unplugging evacuates the external's
+    /// windows onto the built-in, where the user keeps working — closing some, opening others,
+    /// reordering the strip. The old space is by then a stale snapshot, so remapping it
+    /// wholesale sends back whichever windows happen to occupy those slots (Excel and Slack, in
+    /// the reported case, instead of the two terminals) and reshuffles the built-in's strip.
     ///
-    /// Per-window affinity replaces that: each window remembers the display it was last
-    /// deliberately placed on, and only windows whose home is this display move. Windows
+    /// So each window remembers the display it was last deliberately placed on, and only
+    /// windows whose home is this display move. Windows
     /// with no affinity for it are left exactly where they are, which is what keeps the
     /// other display's column order intact.
     pub(super) fn repatriate_windows_to_display(
@@ -244,8 +243,8 @@ impl Reactor {
         // move_window_to_space inserts each window after the current selection and then
         // selects it. So moving them in order lays them down contiguously, in that order,
         // instead of scattering them among whatever is already on the display. Repatriating
-        // in WindowId order — which is what it used to do — is why two terminals the user
-        // had kept side by side came back as terminal, Chrome, terminal, editor.
+        // in WindowId order brings two terminals the user had kept side by side back as
+        // terminal, Chrome, terminal, editor.
         for window in windows {
             let Some(source_space) = self.affinity().assigned_space_for_window_id(window) else {
                 continue;

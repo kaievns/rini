@@ -300,25 +300,20 @@ impl Reactor {
                 space,
             );
         }
-        // Deliberately NOT remapping a reconnected display's whole SPACE onto its new id.
+        // Deliberately NOT remapping a reconnected display's whole SPACE onto its new id, though
+        // macOS mints a new space id on every reconnect (observed 479 -> 484 -> 487 -> 516 -> 552
+        // for one monitor) and the layout saved under the old id is otherwise orphaned:
         //
-        // An earlier fix did exactly that, keyed by display UUID, because macOS mints a new
-        // space id on every reconnect (observed 479 -> 484 -> 487 -> 516 -> 552 for one
-        // monitor) and the layout saved under the old id is otherwise orphaned. It made the
-        // replug worse, not better, for two reasons:
+        //   - The old space is a snapshot from before the unplug. Its windows were evacuated to
+        //     the remaining display and the user carried on working there, so replaying it moves
+        //     back whichever windows now occupy those slots rather than the ones that had been on
+        //     the external.
+        //   - The layout engine's remap_space drops the workspace layouts already on the target
+        //     space id, discarding the layout of any window macOS placed there.
         //
-        //   - The old space is a snapshot from before the unplug. Its windows were long
-        //     since evacuated to the remaining display and the user carried on working
-        //     there, so replaying it moved back whichever windows now occupied those slots
-        //     rather than the ones that had actually been on the external.
-        //   - remap_space deletes the auto-created workspaces already sitting on the target
-        //     space id, and that drops the WindowStore assignments of any window macOS had
-        //     placed there. Those windows were then re-assigned from scratch, which is what
-        //     reshuffled the other display's strip.
-        //
-        // Per-window affinity handles this instead: see repatriate_windows_to_display, run
-        // once the topology delta has settled. Startup space-id churn is a genuinely
-        // different case and is still remapped, by reconcile_startup_spaces.
+        // Per-window affinity handles this instead: see repatriate_windows_to_display, run once
+        // the topology delta has settled. Startup space-id churn is a different case and is
+        // remapped, by reconcile_startup_spaces.
         for screen in &self.space_state.screens {
             let (Some(space), Some(display_uuid)) = (screen.space, screen.display_uuid_opt())
             else {

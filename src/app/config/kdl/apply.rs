@@ -566,7 +566,7 @@ fn refuse_unsupported(
     }
 }
 
-/// A rule's `focus-ring` or `border`: what it writes, `on` and `off` refused together as in `layout`,
+/// A rule's `focus-ring` or `border`: what it writes, `on` with `off` refused as in `layout`,
 /// and no block turning the band on by being written, as niri's rules have it.
 fn band_rule(part: Option<BandPart>, problems: &mut Vec<Problem>) -> BandRule {
     let Some(part) = part else { return BandRule::default() };

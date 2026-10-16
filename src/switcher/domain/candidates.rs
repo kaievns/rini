@@ -281,7 +281,7 @@ mod tests {
         assert!(!Scope::App(7).stacks());
     }
 
-    /// A focus record for a window that is no longer a candidate must not resurrect it.
+    /// A focus record for a window that has stopped being a candidate must not resurrect it.
     #[test]
     fn a_focus_record_for_a_gone_window_adds_nothing() {
         let mut order = FocusOrder::default();

@@ -71,10 +71,8 @@ pub struct InputTap {
     tap_generation: Cell<u64>,
 }
 
-// SAFETY: InputTap is constructed on the input thread and all access occurs on
-// that same thread (CFRunLoop callback + channel recv both run on the input
-// thread's run loop). The Send impl is required only to move the struct across
-// the thread::spawn boundary.
+// SAFETY: `tap` is the one field that is not `Send`, and it is `None` until `run` makes a tap on the
+// thread it runs on. `run` takes `self` into an `Rc` there, so no tap ever leaves that thread.
 unsafe impl Send for InputTap {}
 
 #[derive(Debug, Clone, Copy)]
@@ -88,11 +86,13 @@ pub type Receiver = channel::Receiver<Request>;
 
 struct CallbackCtx {
     this: Rc<InputTap>,
-    recovery_tx: tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
-    tap_generation: u64,
 }
 
+/// # Safety
+///
+/// `ptr` is a `CallbackCtx` `create_tap_with_mask` boxed, not freed before and not used after.
 unsafe fn drop_mouse_ctx(ptr: *mut std::ffi::c_void) {
+    // SAFETY: the caller hands over the box's only owner.
     unsafe { drop(Box::from_raw(ptr as *mut CallbackCtx)) };
 }
 
@@ -119,13 +119,18 @@ impl InputTap {
         recovery_tx: tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) -> Option<tap::EventTap> {
         let generation = self.tap_generation.get().wrapping_add(1);
-        let ctx = Box::new(CallbackCtx {
-            this: Rc::clone(self),
-            recovery_tx,
-            tap_generation: generation,
-        });
+        let ctx = Box::new(CallbackCtx { this: Rc::clone(self) });
         let ctx_ptr = Box::into_raw(ctx) as *mut std::ffi::c_void;
+        let disabled_tx = recovery_tx.clone();
+        let on_disabled: tap::OnDisabled = Box::new(move || {
+            let _ = disabled_tx.send(tap::Recovery::TapDisabled(generation));
+        });
+        let on_invalidated: tap::OnInvalidated = Arc::new(move || {
+            let _ = recovery_tx.send(tap::Recovery::TapInvalidated(generation));
+        });
 
+        // SAFETY: `ctx_ptr` is the `CallbackCtx` `mouse_callback` reads and `drop_mouse_ctx` frees,
+        // owned by the tap from here until it drops it.
         let tap = unsafe {
             tap::EventTap::new_with_options_and_recovery_callbacks(
                 CGTapOpt::Default,
@@ -133,8 +138,8 @@ impl InputTap {
                 Some(mouse_callback),
                 ctx_ptr,
                 Some(drop_mouse_ctx),
-                Some(event_tap_disabled),
-                Some(event_tap_invalidated),
+                on_disabled,
+                on_invalidated,
             )
         };
 
@@ -144,7 +149,8 @@ impl InputTap {
                 Some(tap)
             }
             Err(error) => {
-                unsafe { drop(Box::from_raw(ctx_ptr as *mut CallbackCtx)) };
+                // SAFETY: on `Err` the tap never took `ctx_ptr`, so this is its only owner.
+                unsafe { drop_mouse_ctx(ctx_ptr) };
                 error!(
                     mask = %format_args!("{mask:#x}"),
                     generation,
@@ -472,7 +478,7 @@ impl InputTap {
         };
         let now = Instant::now();
         let age = pointer::event_age(
-            unsafe { mach_absolute_time() },
+            mach_absolute_time(),
             CGEvent::timestamp(Some(event)),
             self.timebase,
         );
@@ -591,6 +597,10 @@ fn key_event_kind(event_type: CGEventType) -> Option<KeyEventKind> {
 
 fn resolve_hotkey(spec: &str) -> Option<Hotkey> { Hotkey::from_str(spec).ok() }
 
+/// # Safety
+///
+/// `user_info` is null or the `CallbackCtx` the tap was made with, still alive, and `event_ref` is
+/// the event Core Graphics passes, valid for the call.
 unsafe extern "C-unwind" fn mouse_callback(
     _proxy: CGEventTapProxy,
     event_type: CGEventType,
@@ -600,7 +610,9 @@ unsafe extern "C-unwind" fn mouse_callback(
     if user_info.is_null() {
         return event_ref.as_ptr();
     }
+    // SAFETY: a live `CallbackCtx`, as the caller guarantees.
     let ctx = unsafe { &*(user_info as *const CallbackCtx) };
+    // SAFETY: the event Core Graphics passes, valid for the call.
     let event = unsafe { event_ref.as_ref() };
 
     if event_type == CGEventType::MouseMoved && !ctx.this.admit_mouse_move(event) {
@@ -612,22 +624,6 @@ unsafe extern "C-unwind" fn mouse_callback(
     } else {
         core::ptr::null_mut()
     }
-}
-
-unsafe extern "C-unwind" fn event_tap_disabled(user_info: *mut std::ffi::c_void) {
-    if user_info.is_null() {
-        return;
-    }
-    let ctx = unsafe { &*(user_info as *const CallbackCtx) };
-    let _ = ctx.recovery_tx.send(tap::Recovery::TapDisabled(ctx.tap_generation));
-}
-
-unsafe extern "C-unwind" fn event_tap_invalidated(user_info: *mut std::ffi::c_void) {
-    if user_info.is_null() {
-        return;
-    }
-    let ctx = unsafe { &*(user_info as *const CallbackCtx) };
-    let _ = ctx.recovery_tx.send(tap::Recovery::TapInvalidated(ctx.tap_generation));
 }
 
 #[inline]
@@ -646,12 +642,14 @@ struct MachTimebaseInfo {
 }
 
 unsafe extern "C" {
-    fn mach_absolute_time() -> u64;
+    /// Takes nothing and reads a clock.
+    safe fn mach_absolute_time() -> u64;
     fn mach_timebase_info(info: *mut MachTimebaseInfo) -> i32;
 }
 
 fn mach_timebase() -> pointer::Timebase {
     let mut info = MachTimebaseInfo { numer: 0, denom: 0 };
+    // SAFETY: `info` is a live, writable `mach_timebase_info_data_t`, laid out as C declares it.
     if unsafe { mach_timebase_info(&mut info) } != 0 {
         warn!("mach_timebase_info failed; left presses are timed when the tap sees them");
     }

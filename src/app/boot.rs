@@ -67,8 +67,8 @@ pub fn config_or_default(path: &Path) -> (Config, Option<String>) {
     }
 }
 
-/// Why a missing `path` is not simply the defaults: a `config.toml` beside it is a config that was
-/// written and is no longer read.
+/// Why a missing `path` is not simply the defaults: a `config.toml` beside it is a config the user
+/// wrote in a format rini does not read.
 fn leftover_toml(path: &Path) -> Option<String> {
     let toml = path.with_file_name("config.toml");
     toml.exists().then(|| {
@@ -160,8 +160,8 @@ mod tests {
         assert!(report.contains("config.toml"), "{report}");
     }
 
-    /// The history this exists for: one mistyped keybinding used to take the window manager down at
-    /// launch, and with nothing managing windows there is no way to open an editor to fix it.
+    /// One mistyped keybinding must not take the window manager down at launch: with nothing
+    /// managing windows there is no way to open an editor to fix it.
     #[test]
     fn an_unparseable_config_falls_back_to_the_defaults_and_says_so() {
         let (_dir, path) = temp_config("config.kdl", "animations {\n    off \"not a bool\"\n}\n");

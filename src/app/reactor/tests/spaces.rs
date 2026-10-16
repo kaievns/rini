@@ -20,7 +20,7 @@ fn it_manages_windows_on_enabled_spaces() {
 
     let _events = apps.simulate_events();
     // Tiled onto the space, at the configured column width rather than the whole screen: a
-    // lone column no longer expands to fill the viewport, because that made a window's size
+    // lone column does not expand to fill the viewport, which would make a window's size
     // depend on how many neighbours its workspace held. What this test is actually about is
     // that the window got managed at all, so it asserts placement, not full width.
     let frame = apps.windows.get(&WindowId::new(1, 1)).expect("Window was not resized").frame;

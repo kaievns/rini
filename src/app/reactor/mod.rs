@@ -193,8 +193,8 @@ pub enum Event {
     /// Left mouse button was released.
     ///
     /// Layout changes are suppressed while the button is down so that they
-    /// don't interfere with drags. This event is used to update the layout in
-    /// case updates were supressed while the button was down.
+    /// don't interfere with drags. This event updates the layout in
+    /// case updates were suppressed while the button was down.
     ///
     /// Can interleave wrongly with the `MouseState` carried on app-actor frame events: this arrives
     /// on the input thread while those arrive per application, so a frame report generated while the
@@ -611,7 +611,7 @@ impl Reactor {
         window_tx_store: WindowTxStore,
         reads: SystemReads,
     ) -> Reactor {
-        // Apps that are no longer running were already dropped from the restored state, at load
+        // Apps that have quit were already dropped from the restored state, at load
         // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
         // window server id is gone AND whose bundle is not running.
         let (raise_manager_tx, _rx) = channels::channel();

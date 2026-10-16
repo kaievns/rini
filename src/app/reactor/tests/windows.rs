@@ -243,18 +243,12 @@ fn stale_cleanup_uses_ordered_state_instead_of_cached_visibility() {
     );
 }
 
-/// Switching away from a workspace must not erase where focus was in it.
+/// Switching away from a workspace and back MUST land on the window focused in it, not on its
+/// first column, whatever window was focused while away.
 ///
-/// apply_focus_response cleared the workspace's remembered focus whenever the focused window
-/// was not one of its members — which is every ordinary focus change to another display or
-/// workspace. Switching back then fell through to the first column, reported as always
-/// landing on the first window and reading as visual chaos.
-///
-/// CAVEAT: this test passes with that clearing restored, so it documents the intended
-/// property rather than pinning the fix. The clearing branch is only reached when focus lands
-/// on a window outside the workspace being applied, and the test harness drives focus through
-/// paths that do not produce that combination. Left in place because the property is worth
-/// stating; do not read a green result here as proof the fix works.
+/// The harness cannot reach the branch where focus lands on a window outside the workspace being
+/// applied, so this states the property without pinning that branch: a green result does not
+/// prove it.
 #[test]
 fn switching_away_and_back_returns_to_the_same_window() {
     let mut reactor = test_reactor();
@@ -276,9 +270,8 @@ fn switching_away_and_back_returns_to_the_same_window() {
     // Sit on the SECOND window, then leave the workspace and come back.
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, second));
     reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(1));
-    // Focus something that is NOT a member of workspace 0 while away. This is the case that
-    // used to erase the memory: apply_focus_response cleared it whenever the focused window
-    // was not one of the target workspace's own windows.
+    // Focus something that is NOT a member of workspace 0 while away. The memory must survive
+    // a focused window that is not one of the target workspace's own.
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
     reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(0));
 
@@ -471,7 +464,7 @@ fn an_unwatched_application_that_quits_takes_its_native_fullscreen_records() {
     );
 }
 
-/// A window the application no longer lists and the window server has ordered out is retired by
+/// A window the application has stopped listing and the window server has ordered out is retired by
 /// discovery, and forgotten once.
 #[test]
 fn a_window_stale_cleanup_retires_is_forgotten_once() {
@@ -494,7 +487,7 @@ fn a_window_stale_cleanup_retires_is_forgotten_once() {
     assert_eq!(forgotten(&mut pictures), vec![gone]);
 }
 
-/// A minimised window is no longer managed, and the window server closing it still forgets it once.
+/// A minimised window is not managed, and the window server closing it still forgets it once.
 #[test]
 fn a_minimised_window_the_window_server_closes_is_forgotten_once() {
     let (mut apps, mut reactor) = test_context();

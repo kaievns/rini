@@ -892,9 +892,9 @@ fn displays_share_workspaces_but_switch_between_them_independently() {
 
 /// A window keeps its workspace when its display's native space id changes.
 ///
-/// macOS mints a new space id on every reconnect. Windows macOS had already moved to the
-/// incoming id used to be silently dropped, because the remap replaced the target's window
-/// set instead of merging into it.
+/// macOS mints a new space id on every reconnect. Windows macOS has already moved to the
+/// incoming id stay: the remap merges into the target's window set rather than replacing it,
+/// which would drop them silently.
 #[test]
 fn reconnect_under_a_new_space_id_keeps_every_windows_workspace() {
     let mut reactor = test_reactor();
@@ -1716,17 +1716,17 @@ fn moving_a_window_between_workspaces_keeps_its_column_width() {
 
 /// A window's width must not change because its destination workspace is emptier.
 ///
-/// The exact reported repro: a full-size window moved from workspace 1 to 2 to 3 on ONE
+/// The exact reported repro: a full-size window sent from workspace 1 to 2 to 3 on ONE
 /// display went half-size on 2 (which held other windows) and full again on 3 (which was
-/// empty). Two causes, both fixed:
-///   - a lone column used to be rendered at the full viewport width, so "alone" and
-///     "deliberately full width" were indistinguishable, and
-///   - the full-width MODE was dropped by `remove_window` on the way out of a tree, with
-///     nothing recording that the user had asked for it.
+/// empty). Two rules hold it:
+///   - a lone column is rendered at its own width, not the full viewport, so "alone" and
+///     "deliberately full width" stay distinct, and
+///   - the full-width MODE outlives the tree the window leaves, as something the user asked
+///     for.
 ///
-/// Width is now remembered per DISPLAY, so it survives any number of workspace hops. The
-/// window here is alone on workspace 3 and shares workspace 2, which is what made the old
-/// behaviour flip back and forth.
+/// Width is remembered per DISPLAY, so it survives any number of workspace hops. The window
+/// here is alone on workspace 3 and shares workspace 2, the pair that makes a width rule keyed
+/// on neighbours flip back and forth.
 #[test]
 fn a_full_width_window_stays_full_width_across_workspaces() {
     let mut reactor = test_reactor();
@@ -2031,7 +2031,7 @@ mod query_view {
     use super::*;
 
     /// A query is a read. Asking about a space the engine has never seen must not create its
-    /// default workspaces as a side effect, which `list_workspaces` used to do.
+    /// default workspaces as a side effect.
     #[test]
     fn querying_an_unknown_space_creates_nothing() {
         let reactor = test_reactor();

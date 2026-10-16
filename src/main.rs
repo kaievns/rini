@@ -58,7 +58,8 @@ async fn supervise(name: &'static str, fut: impl Future<Output = ()>) {
 /// Without it macOS applies its own tiling to windows rini is moving and the two fight.
 fn prepare_process() -> MainThreadMarker {
     if std::env::var_os("RUST_BACKTRACE").is_none() {
-        // SAFETY: We are single threaded at this point.
+        // SAFETY: no other thread exists yet to read the environment: logging and every actor start
+        // after this.
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
     log::init_logging();
@@ -75,6 +76,8 @@ fn prepare_process() -> MainThreadMarker {
     // Opened now, after the main connection, rather than by the first read on whichever thread.
     once_cell::sync::Lazy::force(&rini::windows::platform::window_server::READ_CONNECTION);
 
+    // SAFETY: the delegate is the one pointer it takes, and null detaches the bridge, so nothing is
+    // left for the window server to call back into.
     unsafe { SLSWindowManagementBridgeSetDelegate(std::ptr::null_mut()) };
     mtm
 }
@@ -416,6 +419,8 @@ fn tune_the_system(config: &Config) {
         );
     }
 
+    // SAFETY: the system-wide element is a live, owned `AXUIElement` for the call, which takes no
+    // pointers.
     unsafe { AXUIElement::new_system_wide().set_messaging_timeout(1.0) };
 
     CGSetLocalEventsSuppressionInterval(0.0);

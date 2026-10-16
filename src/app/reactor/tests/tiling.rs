@@ -1017,7 +1017,7 @@ mod strip_regroup {
         reactor.state_front_to_back(&[904, 902, 901, 903]);
 
         // The layout still believes a strip window has focus: rini has not yet been told the new
-        // window took it, which is the race the old rule turned into a visible bug.
+        // window took it, the race a regroup must not turn into a visible bug.
         reactor.send_layout_event(LayoutEvent::WindowFocused(SpaceId::new(1), WindowId::new(1, 1)));
         reactor.regroup_after_layout();
 
@@ -1229,9 +1229,8 @@ mod strip_regroup {
     }
 }
 
-/// The measured artefact: a floating window re-placed by one point animated on its own, and because the
-/// overlay is opaque and spans the display, every OTHER window on screen was replaced by wallpaper for
-/// 350ms. Windows a pass does not move still have to be handed over, so the overlay can draw them.
+/// A pass that moves only some windows MUST still hand over the ones it leaves alone ("Correctness
+/// the user can see" in `specs/animation.md`).
 #[test]
 fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     let (mut apps, mut reactor) = test_context();
@@ -1268,8 +1267,8 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
             crate::transitions::platform::engine::Event::Animate { windows, .. } => {
                 animated = windows
             }
-            // Opposite vectors are not a pan, so this must not reach the strip path: that path takes
-            // its windows from the layout and so never had this bug to begin with.
+            // Opposite vectors are not a pan, so this must not reach the strip path, which takes
+            // its windows from the layout.
             crate::transitions::platform::engine::Event::AnimateSurface { .. } => {
                 panic!("a layout that is not a pan must go to the per-window path")
             }
@@ -1369,7 +1368,7 @@ fn a_pass_s_requests_carry_each_tiled_window_s_place_on_the_strip() {
     );
 }
 
-/// Focus moved from the first window to the second since the last batch: the second wears the ring
+/// Focus went from the first window to the second since the last batch: the second wears the ring
 /// and holds focus where the pass ends and the first neither, each request saying so with the
 /// decoration every managed window wears.
 #[test]
@@ -1955,8 +1954,7 @@ fn a_left_edge_drag_let_go_over_the_window_behind_its_edge_keeps_its_focus_and_r
     assert_eq!(strip.reactor.layout().focused_window(), Some(strip.other));
 }
 
-/// Kai, 2026-10-06, after the left edge first grew to the left: "it makes a weird back and fourth
-/// wobble on release". The release scrolls the strip by the left edge's travel, and the window the
+/// The release scrolls the strip by the left edge's travel, and the window the
 /// drag resized already stands where that scroll puts it: its tile flies from where it was let go,
 /// not from its new frame shifted back by the scroll, and the column before it pans from where it
 /// stands. "Resizing with the mouse" in `specs/strip.md`.
@@ -2021,10 +2019,10 @@ fn a_left_edge_drags_release_draws_the_dragged_window_from_where_it_was_let_go()
     );
 }
 
-/// Kai, 2026-10-07: "wher i resize a ghosty window by the left size it still does a small 1-2px
-/// wobble during the animation when i release". With gaps, a dragged column gave up its share of
-/// the gap, so the window landed 1-3pt from where it was let go and its tile slid there. Kai's gaps
-/// of 3, and a drag to a width two of which fit abreast, whose share is 1.5pt.
+/// With gaps, the window MUST end where the cursor let go, to the point: a dragged column keeps
+/// its whole dragged width rather than giving up its share of the gap. Gaps of 3 and a drag to a
+/// width two of which fit abreast, whose share is 1.5pt. "Resizing with the mouse" in
+/// `specs/strip.md`.
 #[test]
 fn a_left_edge_drags_release_leaves_the_dragged_window_exactly_where_it_was_let_go() {
     let mut strip = Strip::with_columns(3);
@@ -2084,11 +2082,10 @@ fn a_left_edge_drags_release_leaves_the_dragged_window_exactly_where_it_was_let_
     assert_eq!(strip.on_screen(last), dropped);
 }
 
-/// Kai, 2026-10-07: "if the window's right edge is at the screens right edge and i _shrink_ the
-/// window by the left edge, on release during the strip animation the off-screen window on the
-/// right jumps under the resized window by what looks like ~100px and then animates away". The
-/// shrink keeps the right edge, so the column after it keeps its place beyond the screen's right
-/// edge while the columns before it scroll right. "Resizing with the mouse" in `specs/strip.md`.
+/// A column parked beyond the right edge MUST NOT be seen when a column flush with that edge is
+/// shrunk by its left edge. The shrink keeps the right edge, so the column after it keeps its place
+/// beyond the screen's right edge while the columns before it scroll right. "Resizing with the
+/// mouse" in `specs/strip.md`.
 #[test]
 fn a_left_edge_shrink_flush_right_leaves_the_column_beyond_the_right_edge_where_it_was() {
     let mut strip = Strip::with_columns(3);
@@ -2214,7 +2211,7 @@ mod title_bar_zoom {
             self.app_reports(self.window, frame, MouseState::Up);
         }
 
-        /// A later click back onto the window: where the zoom used to be undone.
+        /// A later click back onto the window, which must leave the column as the zoom left it.
         fn click_back(&mut self) {
             let content = self.frame_of(self.window).mid();
             self.press(content, false);
@@ -2425,8 +2422,8 @@ mod title_bar_zoom {
         strip.assert_ends_at_full_width("the second press still held");
     }
 
-    // rini's last write still pending when the app zooms: the report used to read as that write
-    // landing a few points off and be swallowed, and the click wrote the column back.
+    // rini's last write still pending when the app zooms: the report must not be read as that
+    // write landing a few points off and swallowed, or the click writes the column back.
     #[test]
     fn a_zoom_over_a_pending_write_still_ends_at_full_width() {
         let mut strip = Strip::new();
@@ -2599,10 +2596,10 @@ fn land_layout_passes(
     passes
 }
 
-/// Kai's report of 2026-10-09, "alt-R is broken now, doesn't animate anything": the strip's last
-/// column at the left edge, the columns before it parked, is resized where it stands by `Mod+R` with
-/// nothing else on screen moving, and the pass was placed rather than flown. Every press flies, from
-/// each width the column can be at, the app answering each write with the frame it was given.
+/// The strip's last column at the left edge, the columns before it parked, is resized where it
+/// stands by `Mod+R` with nothing else on screen moving. Every press MUST fly, from each width the
+/// column can be at, the app answering each write with the frame it was given. "What animates" in
+/// `specs/animation.md`.
 #[test]
 fn every_mod_r_on_the_last_column_flies() {
     use crate::layout::ResizeOrientation;
@@ -2877,9 +2874,9 @@ fn a_drag_released_inside_a_frame_report_is_the_reports_press() {
     assert_eq!(*reactor.cause(), report);
 }
 
-/// Reported 2026-09-30: only the 50/50 pair at the start of a strip showed a move; everywhere else
-/// the window jumped to its new place and a navigation pan played on top. A move that scrolls the
-/// strip draws the moved window and the column it passes starting from each other's slots.
+/// A move that scrolls the strip MUST draw the moved window and the column it passes starting from
+/// each other's slots, not the finished layout panning into view. "Moving a window along the
+/// strip" in `specs/animation.md`.
 #[test]
 fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
     let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
@@ -2929,11 +2926,12 @@ fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
     }
 }
 
-/// Reported 2026-09-30: only a full-size window should wobble, and the wobble goes the other way.
-/// A full-size window the camera follows does not move on screen at all, so the move steps the
-/// whole strip a third of the display away from where it went and back, the column it passed held
-/// on the strip beneath it. That column's real window still goes to its layout frame. The reactor
-/// asks for the plain duration: the look stretches the flight only if it takes the step.
+/// Only a full-size window steps, away from where it goes ("Moving a window along the strip" in
+/// `specs/animation.md`). A full-size window the camera follows does not move on screen at all, so
+/// the move steps the whole strip a third of the display away from where it went and back, the
+/// column it passed held on the strip beneath it. That column's real window still goes to its
+/// layout frame. The reactor asks for the plain duration: the look stretches the flight only if it
+/// takes the step.
 #[test]
 fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
     for (direction, sign) in [(Direction::Right, -1.0), (Direction::Left, 1.0)] {
@@ -3065,10 +3063,9 @@ fn a_move_that_scrolls_nothing_places_only_the_pair() {
     assert_eq!(placed, vec![WindowId::new(1, 1), WindowId::new(1, 2)]);
 }
 
-/// Reported in review 2026-09-30: with `center-focused-column "never"`, centring a column
-/// and then moving it drops the centring, so every window moves 576pt on screen with the scroll
-/// offset unchanged, and the move was drawn as the finished layout at frame zero. Every window
-/// starts where it really was.
+/// With `center-focused-column "never"`, centring a column and then moving it drops the centring,
+/// so every window moves 576pt on screen with the scroll offset unchanged. Every window MUST start
+/// where it really was ("Moving a window along the strip" in `specs/animation.md`).
 #[test]
 fn a_move_that_drops_the_centring_starts_every_window_where_it_was() {
     let (_apps, mut reactor, mut rx) = moving_strip_with(1.0 / 3.0, 5, |scrolling| {

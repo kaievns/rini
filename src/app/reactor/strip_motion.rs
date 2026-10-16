@@ -38,7 +38,7 @@ impl Reactor {
     ///
     /// Called when the overlay animation is far enough along that the real windows are hidden behind
     /// it. Each write is a synchronous request into another process, and those land at different
-    /// times, but that no longer matters: nothing is visible until the overlay comes down.
+    /// times, which does not matter here: nothing is visible until the overlay comes down.
     pub(super) fn apply_overlay_frames(&mut self, frames: Vec<(WindowId, CGRect)>) {
         let display = self
             .space_state

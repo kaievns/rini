@@ -432,7 +432,7 @@ pub(crate) fn emit_layout_events(
     let mut app_windows = windows_to_list(state, layout, &payload);
     // Pre-pass: update the VWM for all windows definitively assigned to a space before
     // processing any per-space layout events. Without this, the ordering of space events
-    // determines whether a window removed from one space's tree gets re-added by the
+    // determines whether a window taken out of one space's tree gets re-added by the
     // loop in sync_tiled_windows_for_app (which reads the VWM state at event time).
     // By updating the VWM upfront, the guard logic in sync_tiled_windows_for_app can
     // correctly identify cross-space moves regardless of event ordering.
