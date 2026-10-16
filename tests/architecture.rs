@@ -2572,7 +2572,7 @@ const HISTORY: [&str; 9] = [
 ];
 
 /// Comments that quote an external API's own words, by path and the quote, which a history
-/// phrasing inside them does not fail.
+/// phrasing inside the quote does not fail and one beside it in the same comment still does.
 const QUOTED_HISTORY: [(&str, &str); 0] = [];
 
 /// Each run of consecutive comment lines in `source` as one lowercase text, its comment markers
@@ -2610,9 +2610,30 @@ fn comment_runs(source: &str) -> Vec<(String, Vec<(usize, usize)>)> {
     runs
 }
 
-/// The 1-based line and phrasing of every history phrasing a comment in `source` holds as whole
-/// words, a line break inside the phrasing included, and the comment run it is in.
-fn history_phrasings(source: &str) -> Vec<(usize, &'static str, String)> {
+/// A history phrasing a comment holds: its 1-based line, the phrasing, the comment run it is in
+/// and its offset in that run.
+#[derive(Debug)]
+struct HistoryPhrasing {
+    line: usize,
+    phrase: &'static str,
+    run: String,
+    at: usize,
+}
+
+impl HistoryPhrasing {
+    /// Whether the phrasing sits wholly inside one place `quote` is in the run, lowercase, so the
+    /// quote excuses it and nothing written beside the quote.
+    fn inside(&self, quote: &str) -> bool {
+        let quote = quote.to_ascii_lowercase();
+        self.run.match_indices(&quote).any(|(start, _)| {
+            start <= self.at && self.at + self.phrase.len() <= start + quote.len()
+        })
+    }
+}
+
+/// Every history phrasing a comment in `source` holds as whole words, a line break inside the
+/// phrasing included, in line order.
+fn history_phrasings(source: &str) -> Vec<HistoryPhrasing> {
     let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
     let mut found = Vec::new();
     for (run, lines) in comment_runs(source) {
@@ -2624,11 +2645,16 @@ fn history_phrasings(source: &str) -> Vec<(usize, &'static str, String)> {
                     continue;
                 }
                 let line = lines.iter().rev().find(|(start, _)| *start <= at).map_or(0, |l| l.1);
-                found.push((line, phrase, run.clone()));
+                found.push(HistoryPhrasing {
+                    line,
+                    phrase,
+                    run: run.clone(),
+                    at,
+                });
             }
         }
     }
-    found.sort_by_key(|(line, phrase, _)| (*line, *phrase));
+    found.sort_by_key(|found| (found.line, found.phrase));
     found
 }
 
@@ -2640,13 +2666,15 @@ fn no_comment_in_src_or_crates_narrates_the_code_s_history() {
     let mut quoted = vec![false; QUOTED_HISTORY.len()];
     for path in ["src", "crates"].iter().flat_map(|dir| rust_files(Path::new(dir))) {
         let source = fs::read_to_string(&path).expect("readable source");
-        for (line, phrase, run) in history_phrasings(&source) {
-            let quote = QUOTED_HISTORY.iter().position(|(file, words)| {
-                *file == slash(&path) && run.contains(&words.to_ascii_lowercase())
-            });
+        for found in history_phrasings(&source) {
+            let quote = QUOTED_HISTORY
+                .iter()
+                .position(|(file, words)| *file == slash(&path) && found.inside(words));
             match quote {
                 Some(index) => quoted[index] = true,
-                None => broken.push(format!("{}:{line}: \"{phrase}\"", slash(&path))),
+                None => {
+                    broken.push(format!("{}:{}: \"{}\"", slash(&path), found.line, found.phrase))
+                }
             }
         }
     }
@@ -2679,7 +2707,7 @@ fn unused_to() {}
 "#;
     let found: Vec<(usize, &str)> = history_phrasings(source)
         .into_iter()
-        .map(|(line, phrase, _)| (line, phrase))
+        .map(|found| (found.line, found.phrase))
         .collect();
     assert_eq!(found, vec![
         (1, "used to"),
@@ -2689,4 +2717,23 @@ fn unused_to() {}
         (8, "any more"),
         (9, "an earlier attempt"),
     ]);
+}
+
+#[test]
+fn a_quote_excuses_only_the_history_phrasing_inside_it() {
+    let source = r#"// The API's own words: "this call no longer blocks".
+// The quote is apt, and the value used to be cached.
+"#;
+    let found = history_phrasings(source);
+    let excused: Vec<(usize, &str, bool)> = found
+        .iter()
+        .map(|found| {
+            (
+                found.line,
+                found.phrase,
+                found.inside("This call no longer blocks"),
+            )
+        })
+        .collect();
+    assert_eq!(excused, vec![(1, "no longer", true), (2, "used to", false)]);
 }
