@@ -86,8 +86,8 @@ pub fn zoom_depth(display_width: f64, pair_width: f64, narrower: f64) -> f64 {
 /// Where the view should be at the arc's middle, as the travel left to carry there: `pair` the span
 /// the pair fills and `view` the tiling area's, both in x as the layout ends, zoomed to `scale`
 /// about `centre`, the travel `start` at the first frame. A pair that fits takes the least change
-/// from `start` that puts all of it in view; one that does not is centred, clipped alike on both
-/// sides.
+/// from `start` that puts all of it in view; one that does not is drawn centred on the view, clipped
+/// alike on both sides.
 pub fn pair_view(pair: (f64, f64), view: (f64, f64), centre: f64, scale: f64, start: f64) -> f64 {
     let ((left, right), (lo, hi)) = (pair, view);
     if !scale.is_finite() || scale <= 0.0 {
@@ -98,7 +98,7 @@ pub fn pair_view(pair: (f64, f64), view: (f64, f64), centre: f64, scale: f64, st
         let most = left - centre + (centre - lo) / scale;
         start.max(least).min(most)
     } else {
-        (left + right) / 2.0 - centre
+        (left + right) / 2.0 - centre - ((lo + hi) / 2.0 - centre) / scale
     }
 }
 
@@ -145,14 +145,14 @@ fn frame_of(strip: &Strip, window: WindowId) -> Option<SurfaceRect> {
     strip.windows.iter().find(|(w, _)| *w == window).map(|&(_, frame)| frame)
 }
 
-/// The tiling area's span in x, and its centre.
+/// The tiling area's span in x, and the x of the display's centre, which a zoom is about.
 fn tiling(strip: &Strip) -> ((f64, f64), f64) {
     let area = strip.area;
     let (lo, hi) = (
         area.frame.min().x + area.outer_left,
         area.frame.max().x - area.outer_right,
     );
-    ((lo, hi), (lo + hi) / 2.0)
+    ((lo, hi), area.viewport.center().x)
 }
 
 /// The span `frames` fill in x.
@@ -735,6 +735,7 @@ mod tests {
         frame: VIEWPORT,
         outer_left: GAP,
         outer_right: GAP,
+        viewport: VIEWPORT,
     };
     const CENTRE: f64 = 864.0;
     const WIDTH: f64 = 1728.0;
@@ -750,13 +751,14 @@ mod tests {
         assert!((got - want).abs() <= slack, "{what}: {got:.4}, want {want:.4}");
     }
 
-    /// A press on a strip: every tiled window at its new frame, the pair a move swapped, and the
-    /// viewport's travel.
+    /// A press on a strip: every tiled window at its new frame, the pair a move swapped, the
+    /// viewport's travel, and the screen.
     struct Press {
         windows: Vec<(WindowId, SurfaceRect)>,
         pair: Vec<PairStart>,
         travel: f64,
         seconds: f64,
+        area: Area,
     }
 
     /// One flight of the look, every edit it answers folded into its score.
@@ -774,7 +776,7 @@ mod tests {
             Strip {
                 windows: &self.windows,
                 pair: &self.pair,
-                area: AREA,
+                area: self.area,
                 travel: OverlayVector::new(self.travel, 0.0),
                 seconds: self.seconds,
             }
@@ -806,7 +808,7 @@ mod tests {
                 seconds: self.seconds,
                 cue,
                 accents: &accents,
-                viewport: VIEWPORT,
+                viewport: self.area.viewport,
             };
             let mut zoom = ZoomArc::default();
             let posed = zoom.pose(&stage);
@@ -867,6 +869,7 @@ mod tests {
             pair,
             travel,
             seconds: PLAIN,
+            area: AREA,
         }
     }
 
@@ -883,6 +886,7 @@ mod tests {
             pair: Vec::new(),
             travel: -(w + GAP),
             seconds: PLAIN,
+            area: AREA,
         }
     }
 
@@ -1101,6 +1105,44 @@ mod tests {
                     "the wider keeps five sixths",
                 );
             }
+        }
+    }
+
+    /// A tiling area off the display's centre, by a Dock at the side or uneven outer gaps: two
+    /// full-width columns are still clipped alike on both sides of it at the arc's middle, as the
+    /// flight draws them zoomed about the display's centre.
+    #[test]
+    fn a_wide_pair_is_clipped_alike_about_a_tiling_area_off_the_display_centre() {
+        let docked = Area {
+            frame: rect(0.0, 0.0, WIDTH - 70.0, 1117.0),
+            ..AREA
+        };
+        let uneven = Area { outer_right: 40.0, ..AREA };
+        for area in [docked, uneven] {
+            let (lo, hi) = (
+                area.frame.min().x + area.outer_left,
+                area.frame.max().x - area.outer_right,
+            );
+            let width = hi - lo;
+            let press = Press {
+                area,
+                ..pair_move(width, width, true)
+            };
+            let flight = press.flown(Cue::Move {
+                window: wid(W),
+                direction: Direction::Right,
+            });
+            let (middle, end) = (BEGIN + ARC / 2.0, BEGIN + 2.0 * PLAIN);
+            let Some(Value::Zoom(zoom)) = flight.score.sample(Node::Strip, middle) else {
+                panic!("no zoom at the middle");
+            };
+            let x = |window: u32, at: f64| flight.score.drawn(wid(window), at).unwrap().min().x;
+            let carried = (x(C, middle) - zoom.shift.x) / zoom.scale - x(C, end);
+            let (left, right) = (x(N, end), x(W, end) + width);
+            let off_left = lo - zoom.draw(OverlayPoint::new(left + carried, 0.0)).x;
+            let off_right = zoom.draw(OverlayPoint::new(right + carried, 0.0)).x - hi;
+            assert!(off_left > 100.0, "{area:?}: {off_left:.1} off the left");
+            close(off_left, off_right, 0.01, "alike on both sides");
         }
     }
 
@@ -1415,10 +1457,10 @@ mod tests {
         }
     }
 
-    /// Kai, 2026-09-30 11:19, of navigation: "same end of the strip wiggle in zoomed out state", and
-    /// the burst it implies. A press the same way while the arc pans folds into it: nothing jumps,
-    /// what it adds leaves from rest, covering less in the first frame than an even speed landing
-    /// with the arc would, the strip goes one way and lands with the arc, where the press sends it.
+    /// "The zoom look" in `specs/animation.md`, a press merged into an arc: a press the same way
+    /// while the arc pans folds into it. Nothing jumps, what it adds leaves from rest, covering less
+    /// in the first frame than an even speed landing with the arc would, the strip goes one way and
+    /// lands with the arc, where the press sends it.
     #[test]
     fn a_press_the_same_way_folds_into_the_arc_and_lands_with_it() {
         let d = -862.5;

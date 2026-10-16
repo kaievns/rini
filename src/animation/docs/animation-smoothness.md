@@ -181,17 +181,22 @@ Every look keeps that speed for a window riding a container
 (`every_look_bends_a_flight_at_the_speed_it_moves`): across a pass, each edge's speed over the
 1/120s step either side, as the window is laid out on the strip, changes by no more than the
 motions themselves change it over the steps around it, and a half point over a step; the strip's
-zoom, its scale and shift, is held to the same rule on its own. Drawn as Core Animation's polyline a
+zoom, its scale and shift, is held to the same rule on its own, a strip the score holds no zoom for
+read at rest, as 429 of Zoom's 995 bends over the two seeds find it and 73 then start it zooming. Drawn as Core Animation's polyline a
 spring changes its speed at every sample, so the bend's own change, up to 4,008pt/s under Slide over
 seed 163's flights, is held against the motion's, at most 0.71 of it over the contract's two seeds; a
 look restarting each container on `MOTION_CURVE` from where it is drawn changes it by up to 9.3 times
-the motion's, and one sending the zoom home from rest where it is drawn is caught on the zoom
+the motion's, and one sending the zoom home from rest where it is drawn, or starting a strip with
+no zoom zooming at speed, is caught on the zoom
 (`the_speed_contract_rejects_a_look_that_restarts_the_motion_or_the_zoom_at_a_pass`), and Linear,
 before it carried its speed, by up to 79 times. Read drawn, a window through a zoom moves at both
 speeds, and the two turning opposite ways cancel the allowance though neither jumps: under Zoom,
 over seed 163, a spring let go at its container's own speed while the strip zoomed out changed an
-edge drawn 1,065pt left of the centre from 429 to -227pt/s against 633 allowed, and one started
-from rest with a shallow zoom from rest went from 0 to -297pt/s against 206. **Slide's loose tiles still restart:** a resize, entrance
+edge drawn 1,065pt left of the centre from 429 to -227pt/s against 633 allowed. In its run 25 a window
+at rest on a strip at rest starts left at -576pt/s laid out, within its 755 allowed, while a shallow
+zoom starts from rest at -0.15/s, within its 0.29/s, and draws it back towards the centre: drawn,
+the edge goes from 0 to -297pt/s, and the window's speeding up and the zoom's pulling harder each
+frame leave an allowance of 206. **Slide's loose tiles still restart:** a resize, entrance
 or floating window a pass bends starts `MOTION_CURVE` again from where it is drawn (`tile_leg`), so
 its speed jumps, against "Arriving mid-flight" in `specs/animation.md`. Over seed 163's flights
 a resizing tile's changed by a median 3,408pt/s and up to 16,676pt/s, and one a pass made resize

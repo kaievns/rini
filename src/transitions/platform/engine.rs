@@ -1465,6 +1465,7 @@ mod tests {
             frame: on(DISPLAY),
             outer_left: 4.0,
             outer_right: 4.0,
+            viewport: on(DISPLAY),
         }
     }
 

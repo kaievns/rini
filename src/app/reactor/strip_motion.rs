@@ -768,19 +768,18 @@ fn start_where_standing(
     );
 }
 
-/// The area a look stages a strip move in: the screen's frame in the overlay's space, with the
-/// strip's outer gaps.
+/// The area a look stages a strip move in: the screen's frame and the display in the overlay's
+/// space, with the strip's outer gaps.
 fn strip_area(
     screen_frame: CGRect,
     display_bounds: CGRect,
     gaps: &crate::layout::settings::Gaps,
 ) -> crate::animation::domain::choreography::Area {
+    let display = ScreenRect::from_cg(display_bounds);
     crate::animation::domain::choreography::Area {
-        frame: rini_geometry::to_overlay_space(
-            ScreenRect::from_cg(screen_frame),
-            ScreenRect::from_cg(display_bounds),
-        ),
+        frame: rini_geometry::to_overlay_space(ScreenRect::from_cg(screen_frame), display),
         outer_left: gaps.outer.left,
         outer_right: gaps.outer.right,
+        viewport: rini_geometry::to_overlay_space(display, display),
     }
 }

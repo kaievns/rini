@@ -107,8 +107,9 @@ A zoom of the strip is a look like any other (`domain/choreography/zoom.rs`): it
 `Node::Strip` hold a `Zoom` about the display's centre with no camera, and the travel a camera
 would carry rides each container's own track, so a zoom track lerps exactly between its samples
 (`Zoom::about`), and `Merged::bend` bends that travel with the rest of every container's movement.
-The speed contract reads a window's speed on the strip and the zoom's apart: drawn, the two turning
-opposite ways cancel its allowance though neither jumps.
+The speed contract reads a window's speed on the strip and the zoom's apart, a strip the score
+holds no zoom for at rest: drawn, the two turning opposite ways cancel its allowance though neither
+jumps.
 
 ## Reading order
 

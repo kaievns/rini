@@ -112,12 +112,14 @@ pub struct PairStart {
     pub passed: bool,
 }
 
-/// The screen a strip is shown on, and its outer gaps.
+/// The screen a strip is shown on, its outer gaps, and the display the overlay covers: what a zoom
+/// of the strip is centred on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Area {
     pub frame: OverlayRect,
     pub outer_left: f64,
     pub outer_right: f64,
+    pub viewport: OverlayRect,
 }
 
 /// A strip movement as a look stages it: every tiled window at its new frame, the pair a move
@@ -906,25 +908,25 @@ mod tests {
     /// pass leaves riding a container goes on at the speed it is drawn moving. A window is drawn
     /// through the strip's zoom, so each is read apart: each edge's speed as the window is laid out
     /// on the strip, and the zoom's scale and shift, each `Crossed` the bend within what the motions
-    /// change it, a laid-out edge with the half point a bend may move it as slack. Read drawn, a
-    /// window's speed and the zoom's turning opposite ways cancel the allowance though neither
-    /// jumps. A loose tile is outside it: Slide starts each one a pass bends from where it is drawn
+    /// change it, a laid-out edge with the half point a bend may move it as slack, and a strip the
+    /// score holds no zoom for read at rest. Read drawn, a window's speed and the zoom's turning
+    /// opposite ways cancel the allowance though neither jumps. A loose tile is outside it: Slide starts each one a pass bends from where it is drawn
     /// on `MOTION_CURVE` again, so its speed jumps, against "Arriving mid-flight" in
     /// `specs/animation.md`.
     fn bends_at_the_speed_it_moves(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
         let edges =
             |frame: OverlayRect| [frame.min().x, frame.min().y, frame.max().x, frame.max().y];
         let zoom = |score: &Score, at: f64| match score.sample(Node::Strip, at) {
-            Some(Value::Zoom(zoom)) => Some(Value::Zoom(zoom).parts()),
-            _ => None,
+            Some(Value::Zoom(zoom)) => Value::Zoom(zoom).parts(),
+            _ => Value::Zoom(Zoom::REST).parts(),
         };
         let mut moving = 0;
         bent_flights(make, &mut |bend| {
             let now = bend.now;
             let at = |k: f64| now + k * SAMPLE_STEP;
             for part in 0..3 {
-                let was = |k: f64| zoom(bend.playing, at(k)).map(|parts| parts[part]);
-                let is = |k: f64| zoom(&bend.bent.score, at(k)).map(|parts| parts[part]);
+                let was = |k: f64| Some(zoom(bend.playing, at(k))[part]);
+                let is = |k: f64| Some(zoom(&bend.bent.score, at(k))[part]);
                 if let Some(crossed) = Crossed::read(was, is, 1e-6).filter(Crossed::jumped) {
                     let Crossed { before, after, allowed } = crossed;
                     return Err(format!(
@@ -996,8 +998,8 @@ mod tests {
     }
 
     /// The speed contract rejects a look that starts every container a pass bends on a fresh curve
-    /// from where it is drawn, and one that sends the strip's zoom home from rest where it is drawn,
-    /// each keeping the bend contract.
+    /// from where it is drawn, one that sends the strip's zoom home from rest where it is drawn, and
+    /// one that starts an unzoomed strip zooming at speed, each keeping the bend contract.
     #[test]
     fn the_speed_contract_rejects_a_look_that_restarts_the_motion_or_the_zoom_at_a_pass() {
         let restarted = bends_at_the_speed_it_moves(&|| Flawed::boxed(Flaw::RestartsTheBend))
@@ -1008,6 +1010,11 @@ mod tests {
             .expect_err("a bend that restarts the zoom");
         assert!(zoomed.contains("the zoom's speed jumped"), "{zoomed}");
         bends_without_a_jump(&|| Flawed::boxed(Flaw::RestartsTheZoom)).expect("drawn where it was");
+        let started = bends_at_the_speed_it_moves(&|| Flawed::boxed(Flaw::StartsTheZoomAtSpeed))
+            .expect_err("a bend that starts a zoom at speed");
+        assert!(started.contains("the zoom's speed jumped"), "{started}");
+        bends_without_a_jump(&|| Flawed::boxed(Flaw::StartsTheZoomAtSpeed))
+            .expect("drawn where it was");
     }
 
     /// A pass as the reactor builds one for `flight`, from where its last pass sends every window: a
@@ -1626,6 +1633,9 @@ mod tests {
         /// Its motion zooms the strip out and back, and its bend sends the zoom home from where it
         /// is drawn on `EASE_IN_OUT`, from rest.
         RestartsTheZoom,
+        /// Its motion leaves the strip unzoomed, and its bend zooms it out and back from rest at
+        /// speed, on a straight line each way.
+        StartsTheZoomAtSpeed,
     }
 
     /// Slide but for one flaw, so a contract's check is seen to reject a look that breaks it.
@@ -1668,7 +1678,8 @@ mod tests {
                 | Flaw::CutsTheBend
                 | Flaw::RestartsTheBend
                 | Flaw::TracksRigidTiles
-                | Flaw::RestartsTheZoom => self.slide.fold(plan, pass),
+                | Flaw::RestartsTheZoom
+                | Flaw::StartsTheZoomAtSpeed => self.slide.fold(plan, pass),
             }
         }
 
@@ -1724,6 +1735,22 @@ mod tests {
                     Curve::Bezier(EASE_IN_OUT),
                 )));
             }
+            if let (Flaw::StartsTheZoomAtSpeed, None) =
+                (self.flaw, playing.sample(Node::Strip, now))
+            {
+                let out = Zoom {
+                    scale: zoom::STRIP_ZOOM,
+                    shift: OverlayVector::zero(),
+                };
+                bent.edits.push(Edit::Place(Node::Strip, Value::Zoom(Zoom::REST)));
+                bent.edits.push(Edit::Add(Track::samples(
+                    Node::Strip,
+                    Channel::Base,
+                    [Zoom::REST, out, Zoom::REST].map(Value::Zoom),
+                    now,
+                    pass.seconds,
+                )));
+            }
             for edit in &mut bent.edits {
                 let Edit::Add(track) = edit else { continue };
                 if track.channel() != Channel::Base {
@@ -1771,7 +1798,8 @@ mod tests {
                 | Flaw::CutsTheBend
                 | Flaw::RestartsTheBend
                 | Flaw::TracksRigidTiles
-                | Flaw::RestartsTheZoom => self.slide.push(playing, cue, wall, seconds, now),
+                | Flaw::RestartsTheZoom
+                | Flaw::StartsTheZoomAtSpeed => self.slide.push(playing, cue, wall, seconds, now),
                 Flaw::PushesSlowly => self.slide.push(playing, cue, wall, seconds * 10.0, now),
                 Flaw::PushesFromRest => playing
                     .containers()
@@ -1796,6 +1824,7 @@ mod tests {
             frame: VIEWPORT,
             outer_left: 4.0,
             outer_right: 4.0,
+            viewport: VIEWPORT,
         };
         for look in Look::ALL {
             let mut rng = Gen(37);

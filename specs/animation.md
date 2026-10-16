@@ -178,10 +178,11 @@ Zoom never steps; the step above is slide's.
 
 - At the arc's middle, a pair that fits the zoomed display MUST be in view whole, the view moved no
   further than that takes, and a pair wider than it MUST be centred, both columns clipped alike on
-  opposite sides: a third of each for two full-width columns, 431pt on the 1728pt display. The view
-  MUST end on the layout, the moved window back in focus, and MUST move one way, never winding up
-  first or running past the layout and settling back. Two halves at the start of the strip MUST
-  move only themselves.
+  opposite sides of the tiling area, a side Dock or uneven outer gaps putting it off the display's
+  centre the zoom is about: a third of each for two full-width columns, 431pt on the 1728pt
+  display. The view MUST end on the layout, the moved window back in focus, and MUST move one way,
+  never winding up first or running past the layout and settling back. Two halves at the start of
+  the strip MUST move only themselves.
 
 > **Reported 2026-09-30.** "i really like how the 50/50 windows swap looks like. but the fullsize
 > swap is not quite there, it's barely visible again. ... zoom out, but as you're zooming out move

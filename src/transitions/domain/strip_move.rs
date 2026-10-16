@@ -442,10 +442,12 @@ pub(crate) mod tests {
 
     /// The live display's screen.
     fn area() -> Area {
+        let frame = OverlayRect::new(Point::new(0.0, 0.0), Size::new(V, 1117.0));
         Area {
-            frame: OverlayRect::new(Point::new(0.0, 0.0), Size::new(V, 1117.0)),
+            frame,
             outer_left: GAP,
             outer_right: GAP,
+            viewport: frame,
         }
     }
 
@@ -685,8 +687,8 @@ pub(crate) mod tests {
 
     /// What the look staged is what lands on the surface: a window it starts elsewhere crosses from
     /// there, one it holds is drawn at that frame with no start of its own, every other window stays at
-    /// its new frame, and the accent is the look's. Every look stages some move, and some look holds a
-    /// column, as Slide does and Zoom never does. A plain press stages nothing.
+    /// its new frame, and the accent is the look's. Every look crosses some window, and some look
+    /// holds a column, as Slide does and Zoom never does. A plain press stages nothing.
     #[test]
     fn stage_move_applies_what_the_look_staged() {
         let area = area();
@@ -703,7 +705,7 @@ pub(crate) mod tests {
         ];
         let mut held = 0;
         for look in Look::ALL {
-            let mut staged = 0;
+            let mut crossed = 0;
             for ((before, from_offset), direction) in cases.clone() {
                 let travel = travel_from(from_offset);
                 let cue = Cue::Move { window: wid(W), direction };
@@ -732,9 +734,9 @@ pub(crate) mod tests {
                     assert_eq!(*is, expected, "{look:?} {direction:?}");
                 }
                 held += staging.held.len();
-                staged += staging.from.len() + staging.held.len();
+                crossed += staging.from.len();
             }
-            assert!(staged > 0, "{look:?} staged nothing");
+            assert!(crossed > 0, "{look:?}: {crossed} crossed");
 
             let (before, from_offset) = full_width_move(Direction::Right);
             let mut windows = before.clone();
@@ -903,6 +905,7 @@ pub(crate) mod tests {
                 frame: VIEWPORT,
                 outer_left: OUTER,
                 outer_right: OUTER,
+                viewport: VIEWPORT,
             };
             let travel = pan_travel(OFFSET, REST);
             let step = match stage_move(&mut windows, &cue, area, travel, super::PLAIN, Look::Slide)
