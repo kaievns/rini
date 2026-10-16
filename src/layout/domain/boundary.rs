@@ -13,11 +13,9 @@ use crate::layout::Direction;
 /// display is a legitimate destination.
 ///
 /// **Each display is its own strip. Always.** Going right from the rightmost column stops, whether it
-/// is focus moving or a window. This was a setting (`isolate_displays`, default off) and is not any
-/// more: the behaviour it turned off — horizontal movement silently hopping displays mid-strip — is
-/// not one anybody wanted, and having the option meant two code paths where one of them was never
-/// used. Moving a window did not consult the setting at all, so a window pushed past the last column
-/// teleported to the other monitor while focus in the same direction stopped.
+/// is focus moving or a window, and no setting changes it: horizontal movement hopping displays
+/// mid-strip is not wanted, and focus and a moved window MUST stop at the same edge. The requirement
+/// and the report behind it are in `specs/focus.md`.
 ///
 /// Up and down are deliberately NOT strip axes. They move through the workspace stack, so a column's
 /// top is not an edge the surface can give against, and bouncing the strip vertically for one would

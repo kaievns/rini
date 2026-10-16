@@ -2404,3 +2404,133 @@ static MUTEX: Mutex<u8> = Mutex::new(0);
 "#;
     assert_eq!(static_muts(source), vec![1, 2]);
 }
+
+/// Phrasings that narrate where code came from or what it once did. A comment says what holds and
+/// the constraint it protects; the history of a change is in git and, when worth keeping, `docs/`.
+const HISTORY: [&str; 8] = [
+    "used to",
+    "no longer",
+    "previously",
+    "any more",
+    "anymore",
+    "lifted out",
+    "moved from",
+    "# history",
+];
+
+/// Comments that quote an external API's own words, by path and the quote, which a history
+/// phrasing inside them does not fail.
+const QUOTED_HISTORY: [(&str, &str); 0] = [];
+
+/// Each run of consecutive comment lines in `source` as one lowercase text, its comment markers
+/// dropped, with the 1-based line each of its words is on.
+fn comment_runs(source: &str) -> Vec<(String, Vec<(usize, usize)>)> {
+    let code = blank_comments(source, false);
+    let mut runs: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
+    let mut last = 0;
+    for (index, (line, blanked)) in source.lines().zip(code.lines()).enumerate() {
+        let text: String = line
+            .chars()
+            .zip(blanked.chars())
+            .map(|(c, kept)| if kept == ' ' { c } else { ' ' })
+            .collect();
+        let words: Vec<&str> = text
+            .split_whitespace()
+            .filter(|word| !word.chars().all(|c| matches!(c, '/' | '*' | '!')))
+            .collect();
+        if words.is_empty() {
+            continue;
+        }
+        if last + 1 != index + 1 || runs.is_empty() {
+            runs.push((String::new(), Vec::new()));
+        }
+        let (run, lines) = runs.last_mut().expect("a run was just pushed");
+        for word in words {
+            if !run.is_empty() {
+                run.push(' ');
+            }
+            lines.push((run.len(), index + 1));
+            run.push_str(&word.to_ascii_lowercase());
+        }
+        last = index + 1;
+    }
+    runs
+}
+
+/// The 1-based line and phrasing of every history phrasing a comment in `source` holds as whole
+/// words, a line break inside the phrasing included, and the comment run it is in.
+fn history_phrasings(source: &str) -> Vec<(usize, &'static str, String)> {
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let mut found = Vec::new();
+    for (run, lines) in comment_runs(source) {
+        for phrase in HISTORY {
+            for (at, _) in run.match_indices(phrase) {
+                let before = run[..at].chars().next_back();
+                let after = run[at + phrase.len()..].chars().next();
+                if word(before) || word(after) {
+                    continue;
+                }
+                let line = lines.iter().rev().find(|(start, _)| *start <= at).map_or(0, |l| l.1);
+                found.push((line, phrase, run.clone()));
+            }
+        }
+    }
+    found.sort_by_key(|(line, phrase, _)| (*line, *phrase));
+    found
+}
+
+/// No comment in `src/` or `crates/`, a test's included, narrates the code's history: a reader
+/// takes "this used to X" as a fact about the code, and it is a fact about a diff.
+#[test]
+fn no_comment_in_src_or_crates_narrates_the_code_s_history() {
+    let mut broken = Vec::new();
+    let mut quoted = vec![false; QUOTED_HISTORY.len()];
+    for path in ["src", "crates"].iter().flat_map(|dir| rust_files(Path::new(dir))) {
+        let source = fs::read_to_string(&path).expect("readable source");
+        for (line, phrase, run) in history_phrasings(&source) {
+            let quote = QUOTED_HISTORY.iter().position(|(file, words)| {
+                *file == slash(&path) && run.contains(&words.to_ascii_lowercase())
+            });
+            match quote {
+                Some(index) => quoted[index] = true,
+                None => broken.push(format!("{}:{line}: \"{phrase}\"", slash(&path))),
+            }
+        }
+    }
+    for ((file, words), used) in QUOTED_HISTORY.iter().zip(quoted) {
+        if !used {
+            broken.push(format!(
+                "{file}: \"{words}\" quotes nothing: remove it from QUOTED_HISTORY"
+            ));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "say what holds now and the constraint it protects, with the history in git or docs/:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_history_phrasing_is_found_in_a_comment_across_lines_and_never_in_code_or_inside_a_word() {
+    let source = r#"// This used to sleep.
+let s = "used to"; // the value caused total churn
+/// It is no
+/// longer here.
+fn unused_to() {}
+/* previously */ let any_more = 1;
+//! # History
+// Written out any more often than once.
+"#;
+    let found: Vec<(usize, &str)> = history_phrasings(source)
+        .into_iter()
+        .map(|(line, phrase, _)| (line, phrase))
+        .collect();
+    assert_eq!(found, vec![
+        (1, "used to"),
+        (3, "no longer"),
+        (6, "previously"),
+        (7, "# history"),
+        (8, "any more"),
+    ]);
+}

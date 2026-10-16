@@ -56,8 +56,8 @@ const BACKDROP_SIZE_TOLERANCE: f64 = 2.0;
 /// Can this picture be drawn at `frame` without visibly distorting it?
 ///
 /// Distinct from [`Coverage::is_usable`], which compares a capture against the window it was taken
-/// FROM. This compares it against the frame it is drawn INTO, which a cached picture routinely no
-/// longer matches. See "A capture can be usable and still be the wrong shape" in
+/// FROM. This compares it against the frame it is drawn INTO, which a picture cached before a resize
+/// routinely does not match. See "A capture can be usable and still be the wrong shape" in
 /// `src/pictures/docs/capture-research.md`.
 pub fn fits_frame<U: PointSpace>(covered: ScreenSize, frame: Size<U>) -> bool {
     within_stretch(covered, frame.respace())

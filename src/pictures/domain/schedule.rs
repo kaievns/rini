@@ -83,8 +83,8 @@ pub struct Held {
     pub taken: Instant,
 }
 
-/// Whether a warm captures a window drawn at `size`: nothing worth drawing is held, what is held no
-/// longer fits, or it is stale. See "A window that was resized keeps a usable picture" in
+/// Whether a warm captures a window drawn at `size`: nothing worth drawing is held, what is held does
+/// not fit `size`, or it is stale. See "A window that was resized keeps a usable picture" in
 /// `src/pictures/docs/capture-research.md`.
 pub fn wants_warm(held: Option<Held>, size: ScreenSize, now: Instant) -> bool {
     needs_capture(held.map(|held| held.coverage), size)
@@ -1001,8 +1001,8 @@ mod tests {
         );
     }
 
-    /// A warm asked for a window whose picture fits and is fresh is not worth a capture; one that no
-    /// longer fits, or has gone stale, is.
+    /// A warm asked for a window whose picture fits and is fresh is not worth a capture; one whose
+    /// picture does not fit its size, or has gone stale, is.
     #[test]
     fn a_warm_captures_only_what_needs_capturing_or_has_gone_stale() {
         let now = Instant::now();

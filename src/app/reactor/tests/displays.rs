@@ -710,9 +710,9 @@ fn it_keeps_discovered_windows_on_their_initial_screen() {
     reactor.handle_events(apps.make_app(1, windows));
 
     let _events = apps.simulate_events();
-    // Asserts WHICH SCREEN each window landed on, not how wide it ended up. A lone column no
-    // longer stretches to fill its viewport, so comparing against the full screen rect would
-    // be testing the column-width rule rather than the screen-affinity behaviour named here.
+    // Asserts WHICH SCREEN each window landed on, not how wide it ended up. A lone column keeps
+    // its own width rather than filling its viewport, so comparing against the full screen rect
+    // would be testing the column-width rule rather than the screen-affinity behaviour named here.
     let frame1 = apps.windows.get(&WindowId::new(1, 1)).expect("Window was not resized").frame;
     let frame2 = apps.windows.get(&WindowId::new(1, 2)).expect("Window was not resized").frame;
     assert!(
