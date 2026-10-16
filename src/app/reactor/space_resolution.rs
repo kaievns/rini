@@ -44,7 +44,7 @@ impl Candidates {
 ///
 /// A window macOS has taken fullscreen has no space rini claims, under this rule as under the
 /// others. It is on a space of its own and is not managed while it is there, so answering with the
-/// space it used to be assigned to is answering about a window that is not there.
+/// space it was last assigned to is answering about a window that is not there.
 pub(crate) fn authoritative(c: &Candidates) -> Option<SpaceId> {
     if c.native_fullscreen {
         return None;
@@ -232,7 +232,7 @@ mod tests {
 
     /// Every rule refuses a window macOS has taken fullscreen. It is on its own space and rini does
     /// not manage it while it is there, so there is no space to answer with — not even the one it was
-    /// assigned to before, which is the answer three of these used to give.
+    /// last assigned to.
     #[test]
     fn a_native_fullscreen_window_belongs_to_no_space_under_any_rule() {
         let c = Candidates {

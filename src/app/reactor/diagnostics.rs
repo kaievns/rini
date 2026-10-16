@@ -44,7 +44,7 @@ pub(crate) fn orphaned_windows(
         .collect()
 }
 
-/// Display homes recorded for windows that no longer exist.
+/// Display homes recorded for windows that have gone.
 ///
 /// Harmless on their own — a home is a small record — but they are how a leak shows itself: a window
 /// that died without its home being forgotten means some path removes a window without going through

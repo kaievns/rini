@@ -384,7 +384,7 @@ fn the_handover_is_measured_only_when_asked_and_never_off() {
 }
 
 /// rini taps no trackpad gestures (`specs/input.md`), so the swipes Kai's file configured are names
-/// it no longer knows, refused where they are written.
+/// it does not know, refused where they are written.
 #[test]
 fn the_old_swipe_nodes_are_refused_naming_the_line() {
     let report = refused(concat!(

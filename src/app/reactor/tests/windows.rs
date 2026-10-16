@@ -276,9 +276,8 @@ fn switching_away_and_back_returns_to_the_same_window() {
     // Sit on the SECOND window, then leave the workspace and come back.
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, second));
     reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(1));
-    // Focus something that is NOT a member of workspace 0 while away. This is the case that
-    // used to erase the memory: apply_focus_response cleared it whenever the focused window
-    // was not one of the target workspace's own windows.
+    // Focus something that is NOT a member of workspace 0 while away. The memory must survive
+    // a focused window that is not one of the target workspace's own.
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
     reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(0));
 
@@ -471,7 +470,7 @@ fn an_unwatched_application_that_quits_takes_its_native_fullscreen_records() {
     );
 }
 
-/// A window the application no longer lists and the window server has ordered out is retired by
+/// A window the application has stopped listing and the window server has ordered out is retired by
 /// discovery, and forgotten once.
 #[test]
 fn a_window_stale_cleanup_retires_is_forgotten_once() {
@@ -494,7 +493,7 @@ fn a_window_stale_cleanup_retires_is_forgotten_once() {
     assert_eq!(forgotten(&mut pictures), vec![gone]);
 }
 
-/// A minimised window is no longer managed, and the window server closing it still forgets it once.
+/// A minimised window is not managed, and the window server closing it still forgets it once.
 #[test]
 fn a_minimised_window_the_window_server_closes_is_forgotten_once() {
     let (mut apps, mut reactor) = test_context();

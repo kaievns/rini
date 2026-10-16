@@ -56,7 +56,7 @@ impl HeldKeys {
     /// Record the mask carried by an ordinary event, without touching the key set.
     pub fn observe_flags(&mut self, flags: u64) { self.flags = flags; }
 
-    /// Drop every modifier the mask says is no longer held.
+    /// Drop every modifier the mask says is up.
     ///
     /// Called when the flags and the cache may have drifted — a dropped event leaves a modifier stuck
     /// down, and a stuck modifier means every subsequent binding is evaluated as though it were held.

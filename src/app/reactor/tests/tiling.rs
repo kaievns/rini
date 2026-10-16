@@ -1017,7 +1017,7 @@ mod strip_regroup {
         reactor.state_front_to_back(&[904, 902, 901, 903]);
 
         // The layout still believes a strip window has focus: rini has not yet been told the new
-        // window took it, which is the race the old rule turned into a visible bug.
+        // window took it, the race a regroup must not turn into a visible bug.
         reactor.send_layout_event(LayoutEvent::WindowFocused(SpaceId::new(1), WindowId::new(1, 1)));
         reactor.regroup_after_layout();
 
@@ -1369,7 +1369,7 @@ fn a_pass_s_requests_carry_each_tiled_window_s_place_on_the_strip() {
     );
 }
 
-/// Focus moved from the first window to the second since the last batch: the second wears the ring
+/// Focus went from the first window to the second since the last batch: the second wears the ring
 /// and holds focus where the pass ends and the first neither, each request saying so with the
 /// decoration every managed window wears.
 #[test]
@@ -2214,7 +2214,7 @@ mod title_bar_zoom {
             self.app_reports(self.window, frame, MouseState::Up);
         }
 
-        /// A later click back onto the window: where the zoom used to be undone.
+        /// A later click back onto the window, which must leave the column as the zoom left it.
         fn click_back(&mut self) {
             let content = self.frame_of(self.window).mid();
             self.press(content, false);
@@ -2425,8 +2425,8 @@ mod title_bar_zoom {
         strip.assert_ends_at_full_width("the second press still held");
     }
 
-    // rini's last write still pending when the app zooms: the report used to read as that write
-    // landing a few points off and be swallowed, and the click wrote the column back.
+    // rini's last write still pending when the app zooms: the report must not be read as that
+    // write landing a few points off and swallowed, or the click writes the column back.
     #[test]
     fn a_zoom_over_a_pending_write_still_ends_at_full_width() {
         let mut strip = Strip::new();

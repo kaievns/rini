@@ -70,10 +70,10 @@ impl Reactor {
         }
         // autosave_current_layout, NOT save_current_layout: the latter also
         // normalizes floating-versus-tiled ownership and rewrites stored floating
-        // frames. Running that on every layout change broke un-fullscreening a
-        // floating window, because the frame it should return to had already been
+        // frames. Running that on every layout change breaks un-fullscreening a
+        // floating window, because the frame it should return to has already been
         // overwritten. The only live state an autosave changes is the forgetting
-        // above, of spaces macOS no longer lists and no window is on.
+        // above, of spaces macOS does not list and no window is on.
         if let Err(e) = self.layout_engine.autosave_current_layout(
             path.clone(),
             &self.state.windows,

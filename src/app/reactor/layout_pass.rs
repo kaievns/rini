@@ -394,7 +394,7 @@ impl Reactor {
             // Re-observe affinity before saving, so the file records the arrangement that
             // was just applied. This is the path that catches a window dragged between
             // displays, a new window opened, and any reshuffle of the strip — none of which
-            // produce a display snapshot, so none of which used to update affinity at all.
+            // produce a display snapshot, so nothing else updates affinity for them.
             self.sync_display_affinity_from_live_layout();
             self.autosave_layout();
         }
@@ -431,15 +431,14 @@ impl Reactor {
                 .layout
                 .gaps
                 .effective_for_display(display_uuid_opt.as_ref());
-            // A reconnected display's layout is NOT reattached here any more.
+            // A reconnected display's layout is NOT reattached here.
             //
-            // This ran a whole-space remap on every layout pass, from the display's last
-            // known space id onto its current one. Two problems: remap_space deletes the
-            // workspaces already on the target id and drops their window assignments, and a
-            // layout pass is far too hot a path to be mutating space identity from — it fired
-            // on ordinary space switches too. Window placement across a display change is now
-            // decided by per-window affinity in Reactor::repatriate_windows_to_display, which
-            // runs once per topology change.
+            // A whole-space remap from the display's last known space id onto its current one
+            // is wrong here twice: remap_space deletes the workspaces already on the target id
+            // and drops their window assignments, and a layout pass, which fires on ordinary
+            // space switches too, is far too hot a path to mutate space identity from. Window
+            // placement across a display change is decided by per-window affinity in
+            // Reactor::repatriate_windows_to_display, which runs once per topology change.
             self.layout_engine.update_space_display(
                 &mut self.state.display_memory,
                 space,

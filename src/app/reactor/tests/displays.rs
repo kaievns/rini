@@ -863,9 +863,8 @@ fn moving_tiled_window_to_display_applies_destination_layout_after_transfer_fram
         "expected transfer and tiled writes: {writes:?}"
     );
     // The subject here is ORDERING: the destination's own layout pass must have the last word,
-    // after the transfer frame. It used to be asserted as "the final frame equals the whole
-    // right-hand screen", which only held because a lone column filled its viewport. That rule
-    // is gone, so the check is now that the final frame is tiled ON the right-hand display.
+    // after the transfer frame. A lone column does not fill its viewport, so the check is that
+    // the final frame is tiled ON the right-hand display, not that it equals the screen.
     let last = writes.last().copied().expect("at least one write");
     assert!(
         right.contains(last.mid()),
@@ -2094,8 +2093,8 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
 
 /// Windows kept side by side must come back side by side.
 ///
-/// Repatriation used to run in WindowId order, which is unrelated to strip position, so two
-/// terminals the user had adjacent came back as terminal, Chrome, terminal, editor.
+/// Repatriation in WindowId order, which is unrelated to strip position, brings two terminals the
+/// user had adjacent back as terminal, Chrome, terminal, editor.
 #[test]
 fn replug_rebuilds_strip_adjacency() {
     let mut reactor = test_reactor();
@@ -2229,7 +2228,7 @@ fn closed_windows_do_not_keep_their_display_affinity() {
     );
 
     // The window is closed. This is the removal flavour the display-change path uses, and
-    // the one that used to leave affinity behind.
+    // it must not leave affinity behind.
     reactor.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(doomed));
     reactor.windows_mut().remove_window(doomed);
 
@@ -2496,7 +2495,7 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
         Some(built_in_space),
         Some(external_space),
     ]));
-    // The cursor is on the external display, which is what used to decide this.
+    // The cursor is on the external display, so following the active display picks the wrong one.
     reactor.handle_event(Event::ActiveDisplayChanged {
         menu_bar_space: Some(external_space),
         command_space: Some(external_space),

@@ -471,10 +471,10 @@ pub fn handle_space_lifecycle(
 /// is not managed while it is there, so a column reserved for it is a column reserved for a window
 /// that is not on screen.
 ///
-/// This used to require rini's own assignment to AGREE with the last user space it had seen. When
-/// they disagreed — or when no user space had been observed at all — the window stayed in the strip
-/// and the layout kept a gap for it. `from_space` is only for deciding whether the layout of a
-/// VISIBLE space changed and needs a pass; it is not a condition on leaving.
+/// rini's own assignment need not AGREE with the last user space it has seen, and no user space need
+/// have been observed at all: requiring either keeps the window in the strip and a gap in the layout
+/// for it. `from_space` is only for deciding whether the layout of a VISIBLE space changed and needs
+/// a pass; it is not a condition on leaving.
 pub(crate) fn fullscreen_departure(
     tracked_window: Option<WindowId>,
     assigned_space: Option<SpaceId>,
@@ -522,9 +522,8 @@ fn record_fullscreen_window(
 mod workflow_tests {
     use super::*;
 
-    /// The case that used to keep a fullscreen window in the strip: rini's assignment and the last
-    /// user space it saw disagree. It still leaves, because macOS having the window is not a claim
-    /// rini's bookkeeping gets to veto.
+    /// rini's assignment and the last user space it saw disagree. The window still leaves the strip,
+    /// because macOS having the window is not a claim rini's bookkeeping gets to veto.
     #[test]
     fn a_fullscreen_window_leaves_the_strip_even_when_the_spaces_disagree() {
         let window = WindowId::new(7, 1);

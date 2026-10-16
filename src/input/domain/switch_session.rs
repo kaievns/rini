@@ -143,7 +143,7 @@ impl SwitchSession {
     /// Install the keys the switchers answer to, ending any session in progress.
     ///
     /// Called when the bindings change. Ending the session is the point: the keys it was watching for
-    /// may no longer exist, so there would be nothing left to close it.
+    /// may be gone, so there would be nothing left to close it.
     pub fn set_keys(&mut self, keys: Vec<SwitchKeys>) -> Option<Signal> {
         self.keys = keys;
         self.live.take().map(|_| Signal::Cancel)
@@ -151,7 +151,7 @@ impl SwitchSession {
 
     pub fn is_live(&self) -> bool { self.live.is_some() }
 
-    /// End a live session because the tap can no longer be trusted about what is held.
+    /// End a live session because the tap cannot be trusted about what is held.
     ///
     /// Called when the tap is rebuilt or re-enabled. Commits rather than cancels: the user pressed the
     /// key meaning to go somewhere, and losing the keyboard is not a reason to pretend they did not.
@@ -176,7 +176,7 @@ impl SwitchSession {
             && event.at.saturating_duration_since(live.opened) >= MAX_SESSION
         {
             self.live = None;
-            // Pass the event through: it is not part of the switch any more, and if it happens to
+            // Pass the event through: the switch is over, and if the event happens to
             // be the trigger the next branch would have opened a fresh session on a key the user
             // is still holding from the last one.
             return Verdict::pass_with(Signal::Commit);
@@ -531,7 +531,7 @@ mod tests {
         assert_eq!(session.abandon(), None, "and it is idempotent");
     }
 
-    /// The keys it was watching for may no longer exist, so there would be nothing left to close it.
+    /// The keys it was watching for may be gone, so there would be nothing left to close it.
     #[test]
     fn changing_the_keys_cancels_a_session_in_progress() {
         let base = Instant::now();

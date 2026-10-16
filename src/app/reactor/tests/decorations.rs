@@ -262,7 +262,7 @@ fn a_window_macos_takes_into_native_fullscreen_is_sent_held() {
     );
 }
 
-/// A Space a display stops showing is no longer active, so its windows are sent no band at all.
+/// A Space a display stops showing is inactive, so its windows are sent no band at all.
 #[test]
 fn a_window_on_a_space_its_display_is_not_showing_is_sent_no_band() {
     let mut desk = desk();

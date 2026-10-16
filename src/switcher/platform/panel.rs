@@ -306,8 +306,8 @@ impl SwitcherPanel {
         }
 
         // Clear Liquid Glass, which is what macOS's own switcher is made of: a light blur that keeps the
-        // shape of what is behind it. The heavy `HUDWindow` blur this replaced was working, and over a
-        // dark desktop it averaged everything to one flat slab. The glass rounds its own corners, and
+        // shape of what is behind it. The heavy `HUDWindow` blur averages a dark desktop to one flat
+        // slab. The glass rounds its own corners, and
         // its `tintColor` shifts hue rather than brightness, so the darkening is a layer inside it.
         let backing = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), frame);
         backing.setStyle(NSGlassEffectViewStyle::Clear);

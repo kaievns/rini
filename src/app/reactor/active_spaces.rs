@@ -251,8 +251,8 @@ impl Reactor {
                 continue;
             }
 
-            // If the authoritative active-space snapshot no longer includes a
-            // previously visible window and WindowServer cannot confirm a new
+            // If the authoritative active-space snapshot leaves out a window
+            // that was visible and WindowServer cannot confirm a new
             // native space for it, drop the stale origin-space ownership. Keeping
             // the old assignment lets later discovery/MC refresh rebuild the
             // origin layout from stale workspace state.

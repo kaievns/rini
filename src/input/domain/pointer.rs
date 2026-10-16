@@ -1,8 +1,8 @@
 //! When the pointer is worth looking at, and when the last answer still stands.
 //!
 //! The session tap sees every mouse move the hardware produces. Two rules keep that from becoming
-//! a window-server query per event, and both used to live inside the tap's callback where nothing
-//! could reach them — in the file with the worst code-to-test ratio in the tree.
+//! a window-server query per event, and they live here, outside the tap's callback, so tests can
+//! reach them.
 
 use std::time::Duration;
 
