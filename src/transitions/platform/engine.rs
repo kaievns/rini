@@ -1464,12 +1464,14 @@ mod tests {
         use std::sync::{Arc, Mutex};
 
         use super::*;
-        use crate::animation::domain::motion::score::Score;
+        use crate::animation::domain::motion::score::{Score, Track};
         use crate::animation::event::Event::{Committed, Unavailable};
         use crate::animation::event::{Crops, OverlayTurn, Played, RestPlacement};
         use crate::pictures::domain::route::Route;
         use crate::pictures::platform::service::Command as Asked;
+        use crate::transitions::domain::flight_score::FlightScore;
         use crate::transitions::domain::journal::{Burst, Mark, Stamped};
+        use crate::transitions::domain::running::zooming::{Zooming, deep};
         use crate::windows::domain::info::WindowServerInfo;
         use crate::windows::platform::window_server::FakeWindowServer;
 
@@ -3543,6 +3545,48 @@ mod tests {
             assert!(
                 sent.iter().any(|sent| matches!(sent, Sent::Flying(false))),
                 "settled"
+            );
+        }
+
+        /// A look is staged on the display the engine covers: frame zero and the motion zoom the
+        /// strip about its overlay's centre, and a display beside the built-in one is covered from
+        /// the overlay's origin.
+        #[test]
+        fn a_look_zooms_the_strip_about_the_display_it_is_staged_on() {
+            let mut h = Harness::new();
+            let pan = h.pan();
+            h.step(pan);
+            let running = h.engine.running.as_mut().expect("flying");
+            running.score = FlightScore::of(Box::new(Zooming(Look::Slide.choreography())));
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            let shown = h.step(frame_zero);
+            let staged = batches(&shown)
+                .into_iter()
+                .flat_map(|batch| &batch.commands)
+                .find_map(|command| match command {
+                    Render::Stage { score, .. } => Some(score.clone()),
+                    _ => None,
+                })
+                .expect("frame zero staged");
+            let covered = to_overlay_space(DISPLAY, DISPLAY);
+            assert_eq!(staged.model(Node::Strip), Some(deep(covered)));
+            h.commit(only_batch(&shown).seq);
+            let score = h.engine.running.as_ref().expect("flying").score.score();
+            let begin = score.tracks(Node::Strip).map(Track::begin).next().expect("zooming");
+            assert_eq!(score.sample(Node::Strip, begin), Some(deep(covered)));
+
+            let beside = rect(1728.0, -200.0, 2560.0, 1440.0);
+            h.step(Event::SetDisplay {
+                id: 2,
+                frame: beside,
+                scale: 2.0,
+                top_band: BAND,
+                rests: true,
+            });
+            assert_eq!(
+                h.engine.viewport(),
+                OverlayRect::new(Point::origin(), Size::new(2560.0, 1440.0))
             );
         }
 

@@ -801,6 +801,80 @@ impl TileOf {
 }
 
 #[cfg(test)]
+pub(in crate::transitions) mod zooming {
+    use rini_geometry::space::{OverlayRect, OverlayVector};
+
+    use crate::animation::domain::choreography::{Choreography, Cue, Pass, Retarget, Stage};
+    use crate::animation::domain::motion::plan;
+    use crate::animation::domain::motion::score::{
+        Channel, Curve, Edit, Node, Score, Track, Value, Zoom,
+    };
+
+    /// A test-only look over Slide: the strip drawn at `DEPTH` about the display's centre at
+    /// frame zero, and back to rest over the motion.
+    #[derive(Debug)]
+    pub struct Zooming(pub Box<dyn Choreography>);
+
+    pub const DEPTH: f64 = 0.88;
+
+    pub fn deep(viewport: OverlayRect) -> Value {
+        Value::Zoom(Zoom::about(DEPTH, viewport.center(), OverlayVector::zero()))
+    }
+
+    impl Choreography for Zooming {
+        fn plan(&self, pass: plan::ReflowPlan, cue: &Cue) -> plan::FlightPlan {
+            self.0.plan(pass, cue)
+        }
+
+        fn fold(&self, plan: &plan::FlightPlan, pass: &Pass) -> plan::FlightPlan {
+            self.0.fold(plan, pass)
+        }
+
+        fn pose(&self, stage: &Stage) -> Score {
+            let mut score = self.0.pose(stage);
+            score.apply(&Edit::Place(Node::Strip, deep(stage.viewport)));
+            score
+        }
+
+        fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
+            let mut edits = self.0.compose(playing, stage, begin);
+            edits.push(Edit::Place(Node::Strip, Value::Zoom(Zoom::REST)));
+            edits.push(Edit::Add(Track::between(
+                Node::Strip,
+                Channel::Base,
+                deep(stage.viewport),
+                Value::Zoom(Zoom::REST),
+                begin,
+                stage.seconds,
+                Curve::Linear,
+            )));
+            edits
+        }
+
+        fn retarget(
+            &mut self,
+            playing: &Score,
+            plan: &plan::FlightPlan,
+            pass: &Pass,
+            now: f64,
+        ) -> Retarget {
+            self.0.retarget(playing, plan, pass, now)
+        }
+
+        fn push(
+            &mut self,
+            playing: &Score,
+            cue: &Cue,
+            wall: OverlayVector,
+            seconds: f64,
+            now: f64,
+        ) -> Vec<Edit> {
+            self.0.push(playing, cue, wall, seconds, now)
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use rini_core::ids::WindowServerId;
     use rini_geometry::space::{OverlayPoint, Point, SurfacePoint, SurfaceRect};
@@ -1007,9 +1081,9 @@ mod tests {
 
     /// What the flight composed, as the coordinator's commands change it.
     mod composed {
+        use super::super::zooming::{Zooming, deep};
         use super::*;
-        use crate::animation::domain::choreography::{Choreography, Retarget};
-        use crate::animation::domain::motion::score::{Channel, Curve, Node, Track, Value, Zoom};
+        use crate::animation::domain::motion::score::{Node, Value, Zoom};
 
         #[test]
         fn frame_zeros_pictures_are_worn_by_their_tiles_and_a_window_with_none_is_the_caches() {
@@ -1297,76 +1371,14 @@ mod tests {
             assert_eq!(tile.snapshot.coverage, repaint.coverage);
         }
 
-        /// A test-only look over Slide: the strip drawn at `DEPTH` about the display's centre at
-        /// frame zero, and back to rest over the motion.
-        #[derive(Debug)]
-        struct Zooming(Box<dyn Choreography>);
-
-        const DEPTH: f64 = 0.88;
-
-        fn deep(viewport: OverlayRect) -> Value {
-            Value::Zoom(Zoom::about(DEPTH, viewport.center(), OverlayVector::zero()))
-        }
-
-        impl Choreography for Zooming {
-            fn plan(&self, pass: plan::ReflowPlan, cue: &Cue) -> plan::FlightPlan {
-                self.0.plan(pass, cue)
-            }
-
-            fn fold(&self, plan: &plan::FlightPlan, pass: &Pass) -> plan::FlightPlan {
-                self.0.fold(plan, pass)
-            }
-
-            fn pose(&self, stage: &Stage) -> Score {
-                let mut score = self.0.pose(stage);
-                score.apply(&Edit::Place(Node::Strip, deep(stage.viewport)));
-                score
-            }
-
-            fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
-                let mut edits = self.0.compose(playing, stage, begin);
-                edits.push(Edit::Place(Node::Strip, Value::Zoom(Zoom::REST)));
-                edits.push(Edit::Add(Track::between(
-                    Node::Strip,
-                    Channel::Base,
-                    deep(stage.viewport),
-                    Value::Zoom(Zoom::REST),
-                    begin,
-                    stage.seconds,
-                    Curve::Linear,
-                )));
-                edits
-            }
-
-            fn retarget(
-                &mut self,
-                playing: &Score,
-                plan: &plan::FlightPlan,
-                pass: &Pass,
-                now: f64,
-            ) -> Retarget {
-                self.0.retarget(playing, plan, pass, now)
-            }
-
-            fn push(
-                &mut self,
-                playing: &Score,
-                cue: &Cue,
-                wall: OverlayVector,
-                seconds: f64,
-                now: f64,
-            ) -> Vec<Edit> {
-                self.0.push(playing, cue, wall, seconds, now)
-            }
-        }
-
-        /// A look zooms the strip about the display the flight is drawn on from the stage alone:
-        /// frame zero and the motion each carry the display the overlay covers, on the built-in
-        /// display and on one beside it.
+        /// A look zooms the strip about the viewport the flight is handed, from the stage alone:
+        /// frame zero and the motion each carry it, the built-in display's overlay and a larger
+        /// display's, both at the overlay's origin. The engine handing over its own display is
+        /// `a_look_zooms_the_strip_about_the_display_it_is_staged_on`.
         #[test]
-        fn a_look_zooms_the_strip_about_the_display_it_is_staged_on() {
-            let beside = OverlayRect::new(Point::new(1728.0, -200.0), Size::new(2560.0, 1440.0));
-            for viewport in [VIEWPORT, beside] {
+        fn a_look_zooms_the_strip_about_the_viewport_it_is_handed() {
+            let larger = OverlayRect::new(Point::origin(), Size::new(2560.0, 1440.0));
+            for viewport in [VIEWPORT, larger] {
                 let (mut running, _) = posed();
                 running.score = FlightScore::of(Box::new(Zooming(Look::Slide.choreography())));
                 let score = running.pose(viewport);
