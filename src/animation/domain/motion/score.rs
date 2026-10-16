@@ -20,14 +20,17 @@ pub const SAMPLE_STEP: f64 = 1.0 / 120.0;
 /// How far back `Score::rate` reads a movement's speed from: within one of its samples.
 const RATE_READ: f64 = 1e-4;
 
-/// What a track moves: the strip's zoom, a container's position, or a tile's frame inside its
-/// container.
+/// What a track moves: the strip's zoom, a container's position, a tile's frame inside its
+/// container, or how far a tile is lifted.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Node {
     /// What every container but the floating one rides, drawn through its zoom.
     Strip,
     Container(GroupKey),
     Tile(WindowId),
+    /// How far the tile is lifted off the strip, from 0 to 1: a renderer draws a shadow under it
+    /// that deep. Dropped with its tile.
+    Lift(WindowId),
 }
 
 impl Node {
@@ -37,6 +40,7 @@ impl Node {
             (Node::Strip, Value::Zoom(_))
                 | (Node::Container(_), Value::Point(_))
                 | (Node::Tile(_), Value::Rect(_))
+                | (Node::Lift(_), Value::Number(_))
         )
     }
 }
@@ -71,22 +75,25 @@ impl Zoom {
     pub fn draw(self, p: OverlayPoint) -> OverlayPoint { p * self.scale + self.shift }
 }
 
-/// The strip holds a `Zoom`, a container a `Point` and a tile a `Rect`, on every channel.
+/// The strip holds a `Zoom`, a container a `Point`, a tile a `Rect` and a lift a `Number`, on every
+/// channel.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Value {
     Point(OverlayPoint),
     Rect(GroupRect),
     Zoom(Zoom),
+    Number(f64),
 }
 
 impl Value {
-    /// The value's numbers: a point's x and y, a frame's origin and size, or a zoom's scale and
-    /// shift, zeros after.
+    /// The value's numbers: a point's x and y, a frame's origin and size, a zoom's scale and shift,
+    /// or the number, zeros after.
     pub fn parts(self) -> [f64; 4] {
         match self {
             Value::Point(p) => [p.x, p.y, 0.0, 0.0],
             Value::Rect(r) => [r.origin.x, r.origin.y, r.size.width, r.size.height],
             Value::Zoom(z) => [z.scale, z.shift.x, z.shift.y, 0.0],
+            Value::Number(n) => [n, 0.0, 0.0, 0.0],
         }
     }
 
@@ -99,6 +106,7 @@ impl Value {
                 scale: a,
                 shift: OverlayVector::new(b, c),
             }),
+            Value::Number(_) => Value::Number(a),
         }
     }
 
@@ -201,8 +209,8 @@ impl Track {
     }
 
     /// Panics unless there are two keys or more, in order from 0 to 1, one curve per segment, every
-    /// value of the kind the node holds, the strip's on `Base` alone, and `seconds` is not
-    /// negative.
+    /// value of the kind the node holds, the strip's and a lift's on `Base` alone, and `seconds` is
+    /// not negative.
     pub fn keyframes(
         node: Node,
         channel: Channel,
@@ -236,8 +244,8 @@ impl Track {
             "{node:?} holds one kind of value: {keys:?}"
         );
         assert!(
-            node != Node::Strip || channel == Channel::Base,
-            "the strip's zoom has no accent: {channel:?}"
+            matches!(node, Node::Container(_) | Node::Tile(_)) || channel == Channel::Base,
+            "{node:?} has no accent: {channel:?}"
         );
         assert!(seconds >= 0.0, "{seconds}s");
         Track {
@@ -310,7 +318,7 @@ pub enum Edit {
     /// A tile into a container: its first edit, a tile joining a flight's included; a later one
     /// moves it to another container.
     Ride(WindowId, GroupKey),
-    /// A node out, with every track on it; a tile with its ride.
+    /// A node out, with every track on it; a tile with its ride and its lift.
     Drop(Node),
     /// How deep every container and tile is drawn, a cut: depth does not interpolate.
     Bank(Banding),
@@ -356,6 +364,7 @@ impl Score {
         self.tracks.retain(|(on, _), _| *on != node);
         if let Node::Tile(window) = node {
             self.parents.remove(&window);
+            self.remove(Node::Lift(window));
         }
     }
 
@@ -375,7 +384,7 @@ impl Score {
     pub fn containers(&self) -> impl Iterator<Item = GroupKey> + '_ {
         self.models.keys().filter_map(|node| match node {
             Node::Container(key) => Some(*key),
-            Node::Strip | Node::Tile(_) => None,
+            Node::Strip | Node::Tile(_) | Node::Lift(_) => None,
         })
     }
 
@@ -1332,7 +1341,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "the strip's zoom has no accent")]
+    #[should_panic(expected = "Strip has no accent")]
     fn the_strips_zoom_has_no_accent() {
         Track::samples(
             Node::Strip,
@@ -1345,6 +1354,40 @@ mod tests {
             0.0,
             1.0,
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "Lift(WindowId { pid: 7, idx: 1 }) has no accent")]
+    fn a_lift_has_no_accent() {
+        let numbers = [0.0, 1.0, 0.0].map(Value::Number);
+        Track::samples(
+            Node::Lift(WindowId::new(7, 1)),
+            Channel::Bounce,
+            numbers,
+            0.0,
+            1.0,
+        );
+    }
+
+    /// A lift goes with its tile: dropping the tile drops the lift's model and track.
+    #[test]
+    fn a_dropped_tile_takes_its_lift_with_it() {
+        let window = WindowId::new(7, 1);
+        let mut score = Score::default();
+        score.apply(&Edit::Ride(window, GroupKey::STILL));
+        score.apply(&Edit::Place(Node::Tile(window), rect(0.0, 0.0, 10.0, 10.0)));
+        score.apply(&Edit::Place(Node::Lift(window), Value::Number(0.0)));
+        let bell = [0.0, 1.0, 0.0].map(Value::Number);
+        score.apply(&Edit::Add(Track::samples(
+            Node::Lift(window),
+            Channel::Base,
+            bell,
+            0.0,
+            1.0,
+        )));
+        assert_eq!(score.sample(Node::Lift(window), 0.5), Some(Value::Number(1.0)));
+        score.apply(&Edit::Drop(Node::Tile(window)));
+        assert_eq!(score, Score::default());
     }
 
     /// `plays` says whether any node has a track of the channel playing: from its begin up to its
@@ -1491,6 +1534,7 @@ mod tests {
                     self.within(200.0, 1720.0),
                     self.within(200.0, 1081.0),
                 ),
+                Node::Lift(_) => Value::Number(self.next()),
             }
         }
 

@@ -307,6 +307,31 @@ fn deepening(score: &Score, seconds: f64, now: f64) -> bool {
     turn < 1.0 && turn <= scale_drawn(score, now)
 }
 
+/// `window`'s tile lifted off the strip and set down again over `length` from `begin`, on the arc's
+/// bell, sampled, and placed down; nothing for no length.
+fn lift(making: &mut Making, window: WindowId, begin: f64, length: f64) {
+    if length <= 0.0 || making.score.parent(window).is_none() {
+        return;
+    }
+    let count = sample_count(length);
+    let values = (0..=count).map(|k| {
+        Value::Number(if k == count {
+            0.0
+        } else {
+            nudge_displacement(k as f64 / count as f64)
+        })
+    });
+    let node = Node::Lift(window);
+    making.push(Edit::Place(node, Value::Number(0.0)));
+    making.push(Edit::Add(Track::samples(
+        node,
+        Channel::Base,
+        values,
+        begin,
+        length,
+    )));
+}
+
 /// Whether a push against `wall` is against a side of the strip.
 fn sideways(wall: OverlayVector) -> bool { wall.y == 0.0 && wall.x != 0.0 }
 
@@ -444,8 +469,8 @@ pub struct ZoomArc {
 impl ZoomArc {
     /// The motion from frame zero on an arc, from `begin` over `bell.length`: every strip container
     /// carried its travel on `camera_progress` and its swap on `ZOOM_CURVE`, sampled; the floating
-    /// one and every loose tile on `MOTION_CURVE`; the strip zoomed out and back; and a push that
-    /// waited, with the strip zoomed.
+    /// one and every loose tile on `MOTION_CURVE`; the strip zoomed out and back, the window a move
+    /// moves lifted on the same bell; and a push that waited, with the strip zoomed.
     fn arc(&mut self, playing: &Score, stage: &Stage, begin: f64, bell: Bell) -> Vec<Edit> {
         let pushes: Vec<Accent> = stage
             .accents
@@ -501,6 +526,9 @@ impl ZoomArc {
             begin,
             bell.length,
         );
+        if let Some(swap) = bell.swap {
+            lift(&mut making, swap.moved, begin, bell.length);
+        }
         for accent in &pushes {
             if let Accent::Push { wall, seconds } = *accent {
                 for track in zoomed_push(&making.score, wall, seconds, begin) {
@@ -721,8 +749,8 @@ impl Choreography for ZoomArc {
     /// (`folds`), or every container on a spring from where the score has it at the speed it is
     /// drawn moving; a container opened for a member leaving another as fast as that one, and one
     /// opened for a newcomer on `MOTION_CURVE`; every loose tile on `MOTION_CURVE`. A move or a
-    /// focus press brought with no arc playing plays a shallow one from now; one playing is left as
-    /// it is.
+    /// focus press brought with no arc playing plays a shallow one from now, a move lifting the
+    /// window it moves on it; one playing is left as it is.
     fn retarget(&mut self, playing: &Score, plan: &FlightPlan, pass: &Pass, now: f64) -> Retarget {
         self.centre = Some(pass.viewport.center());
         let mut merged = Merged::new(playing, plan, pass, now);
@@ -750,6 +778,9 @@ impl Choreography for ZoomArc {
                 now,
                 seconds,
             );
+            if let Some(Accent::Arc { swap: Some(swap), .. }) = pass.accent {
+                lift(&mut merged.making, swap.moved, now, seconds);
+            }
         }
         merged.retarget()
     }
@@ -1127,6 +1158,55 @@ mod tests {
             flight.score.track(Node::Container(still), Channel::Base).is_none(),
             "C stays"
         );
+    }
+
+    /// Kai, 2026-09-30 07:39: "so it'd look like the window is lifted above the strip", and at
+    /// 11:13 "reduce the zoomout gap to 0". The window a move moves is lifted on the arc's bell,
+    /// sampled as the zoom is and set down where it lands, and drawn zoomed as far as the strip,
+    /// its lift its shadow alone; the window it passes and a focus press's lift nothing.
+    #[test]
+    fn a_move_lifts_the_window_it_moves_on_the_arc() {
+        let flight = pair_move(1722.0, 1722.0, false).flown(Cue::Move {
+            window: wid(W),
+            direction: Direction::Left,
+        });
+        let lift = flight.score.track(Node::Lift(wid(W)), Channel::Base).expect("lifted");
+        assert_eq!((lift.begin(), lift.form()), (BEGIN, Form::Samples));
+        close(lift.seconds(), ARC, 1e-12, "the arc's length");
+        assert_eq!(flight.score.model(Node::Lift(wid(W))), Some(Value::Number(0.0)));
+        let count = sample_count(ARC);
+        assert_eq!(lift.keys().len(), count + 1);
+        for (k, (_, value)) in lift.keys().iter().enumerate() {
+            let want = if k == count {
+                0.0
+            } else {
+                nudge_displacement(k as f64 / count as f64)
+            };
+            assert_eq!(*value, Value::Number(want), "key {k}");
+        }
+        let middle = BEGIN + ARC / 2.0;
+        let (moved, passed) = (
+            flight.score.drawn(wid(W), middle).unwrap(),
+            flight.score.drawn(wid(N), middle).unwrap(),
+        );
+        close(
+            moved.size.width / 1722.0,
+            passed.size.width / 1722.0,
+            1e-12,
+            "no depth",
+        );
+        assert!(
+            flight.score.model(Node::Lift(wid(N))).is_none(),
+            "the passed one"
+        );
+
+        let focused = focus_right(859.5).flown(Cue::Focus { from: wid(W), to: wid(N) });
+        for window in [W, N, C] {
+            assert!(
+                focused.score.model(Node::Lift(wid(window))).is_none(),
+                "{window}"
+            );
+        }
     }
 
     /// Kai, 2026-09-30 09:14: "for two full-sized windows swap i imagine both of them clipped by
@@ -1738,8 +1818,8 @@ mod tests {
     }
 
     /// A move or a focus press that scrolls, merged into a flight with no arc playing, plays a
-    /// shallow arc from now, at rest at its first frame; merged into one playing, it leaves that arc
-    /// as it is.
+    /// shallow arc from now, at rest at its first frame, a move lifting the window it moves on it;
+    /// merged into one playing, it leaves that arc as it is.
     #[test]
     fn a_press_merged_mid_flight_zooms_only_when_no_arc_plays() {
         let moved = Accent::Arc {
@@ -1777,6 +1857,12 @@ mod tests {
                 STRIP_ZOOM,
                 1e-3,
                 "shallow",
+            );
+            let lift = plain.score.track(Node::Lift(wid(N)), Channel::Base);
+            let lifts = matches!(accent, Accent::Arc { swap: Some(_), .. });
+            assert_eq!(
+                lift.map(|t| (t.begin(), t.ends())),
+                lifts.then_some((now, arc.ends()))
             );
 
             let mut zoomed = focus_right(859.5).flown(Cue::Focus { from: wid(W), to: wid(N) });

@@ -170,7 +170,8 @@ Zoom never steps; the step above is slide's.
 - The zoom MUST go only as deep as the pair needs: 0.88 for two half-width columns, deeper for a
   wider pair until the narrower column keeps two thirds of itself in view with the pair centred, and
   never past 0.7. The moved window MUST zoom out as far as the strip: no depth between them, its
-  lift shown by a shadow alone. Not yet met: the moved window has no lift shadow.
+  lift shown by a shadow alone, cast beside its own and fading in and out on the arc's bell, 0.45
+  deep, 24pt soft and 16pt down at the middle, as the spike cast it.
 
 > **Reported 2026-09-30.** "way too much zoom, also the strip should zoom out more than the current
 > window so it'd look like the window is lifted above the strip". The first scratch zoomed the strip,
@@ -1009,8 +1010,11 @@ and the `the_*_contract_rejects_*` tests beside them show each contract fails a 
 `slide_draws_every_seeded_flight_as_it_did` and `zoom_draws_every_seeded_flight_as_it_did` pin what
 each look draws. Zoom's arc, its depth, its view and its merges are held by the tests in its file,
 `a_wide_pair_is_centred_at_the_middle_clipped_alike_on_both_sides` and
-`a_press_the_same_way_folds_into_the_arc_and_lands_with_it` among them, and the overlay plays its
-arc in `a_zoom_flight_plays_its_arc_exactly`. The reactor names each press along the strip to the
+`a_press_the_same_way_folds_into_the_arc_and_lands_with_it`,
+`a_burst_at_an_end_bounces_from_where_it_is_drawn_zoomed_out_at_every_turn` and
+`a_move_lifts_the_window_it_moves_on_the_arc` among them, and the overlay plays its arc in
+`a_zoom_flight_plays_its_arc_exactly` and the moved window's lift in
+`a_lifted_tile_casts_the_lifts_shadow_as_its_score_has_it`. The reactor names each press along the strip to the
 look: a focus press that scrolls the strip, held by
 `a_focus_press_along_the_strip_names_where_it_went_and_one_at_an_end_where_it_stayed` and
 `a_focus_press_that_scrolls_the_strip_names_itself_and_zooms_under_zoom`, and the move or focus

@@ -51,6 +51,10 @@ use crate::pictures::platform::layer::{
 };
 use crate::pictures::platform::picture::Picture;
 
+mod lift;
+
+use lift::Lift;
+
 /// Above every managed window (CG layer 0), below utility panels and notification banners (19+).
 /// See "Level and coverage" in `src/animation/docs/capture-overlay-research.md`.
 const OVERLAY_LEVEL: isize = 18;
@@ -263,6 +267,13 @@ fn as_frame(value: Value) -> GroupRect {
     match value {
         Value::Rect(frame) => frame,
         _ => unreachable!("a tile holds a frame"),
+    }
+}
+
+fn as_number(value: Value) -> f64 {
+    match value {
+        Value::Number(number) => number,
+        _ => unreachable!("a lift holds a number"),
     }
 }
 
@@ -644,6 +655,8 @@ struct Tile {
     /// The part of the contents image that is the tile's picture, which the crop pieces' contents
     /// are composed with: all of it unless the picture is a region of a composite.
     region: ContentsRect,
+    /// The shadow it casts lifted off the strip, once the score has lifted it.
+    lift: Option<Lift>,
 }
 
 /// The layers a crop-drawn tile is composed of, children of the tile's picture layer: the nine
@@ -1149,10 +1162,15 @@ impl Tree {
             if let Some(Value::Rect(frame)) = score.model(Node::Tile(window)) {
                 self.place_tile(window, frame);
             }
+            match score.model(Node::Lift(window)) {
+                Some(lifted) => self.place_lift(window, as_number(lifted)),
+                None => self.drop_node(Node::Lift(window)),
+            }
         }
         let tracks: Vec<Track> = std::iter::once(Node::Strip)
             .chain(score.containers().map(Node::Container))
             .chain(score.tiles().map(|(window, _)| Node::Tile(window)))
+            .chain(score.tiles().map(|(window, _)| Node::Lift(window)))
             .flat_map(|node| score.tracks(node).cloned().collect::<Vec<_>>())
             .collect();
         for track in &tracks {
@@ -1176,6 +1194,9 @@ impl Tree {
                 }
                 Edit::Place(Node::Tile(window), value) => {
                     self.place_tile(*window, as_frame(*value))
+                }
+                Edit::Place(Node::Lift(window), value) => {
+                    self.place_lift(*window, as_number(*value))
                 }
                 Edit::Add(track) => self.install(track, tiles, new_leg),
                 Edit::Cut(node, channel) => self.cut(*node, *channel),
@@ -1248,6 +1269,13 @@ impl Tree {
         place_tile(entry, frame, -(within as f64));
     }
 
+    /// `window`'s tile lifted `share` of the way once nothing plays on its lift.
+    fn place_lift(&mut self, window: WindowId, share: f64) {
+        if let Some(entry) = self.tile_layers.get_mut(&window) {
+            entry.lift().set(share);
+        }
+    }
+
     /// Whether `track` is the replica's track on its node with only its end moved, as a snap makes it.
     fn moves_only_the_end(&self, track: &Track) -> bool {
         let end = track.keys()[track.keys().len() - 1].1;
@@ -1316,6 +1344,18 @@ impl Tree {
                 });
                 self.crops.add(install_tile_track(entry, track, corner));
             }
+            Node::Lift(window) => {
+                let Some(entry) = self.tile_layers.get_mut(&window) else {
+                    return;
+                };
+                let lift = entry.lift();
+                if track.seconds() <= 0.0 {
+                    lift.cut();
+                    return;
+                }
+                let opacity = |value| number_object(lift::opacity(as_number(value)));
+                lift.play(&animation(track, "shadowOpacity", opacity));
+            }
         }
     }
 
@@ -1342,6 +1382,11 @@ impl Tree {
                 }
                 remove_resize(entry);
             }
+            Node::Lift(window) => {
+                if let Some(lift) = self.tile_layers.get(&window).and_then(|e| e.lift.as_ref()) {
+                    lift.cut();
+                }
+            }
         }
     }
 
@@ -1352,6 +1397,12 @@ impl Tree {
             Node::Tile(window) => {
                 if let Some(entry) = self.tile_layers.remove(&window) {
                     entry.remove();
+                }
+            }
+            Node::Lift(window) => {
+                let entry = self.tile_layers.get_mut(&window);
+                if let Some(lift) = entry.and_then(|entry| entry.lift.take()) {
+                    lift.layer().removeFromSuperlayer();
                 }
             }
             Node::Container(key) => {
@@ -1603,14 +1654,33 @@ fn new_tile(container: &CALayer) -> Tile {
         crop_of: None,
         anchors: Anchors::default(),
         region: WHOLE,
+        lift: None,
     }
 }
 
 impl Tile {
-    /// The layers that ride the tile's frame: the picture, the caster and the hairline.
-    fn layers(&self) -> [&CALayer; 3] {
+    /// The layers that ride the tile's frame: the picture, the caster, the hairline and the lift's
+    /// caster.
+    fn layers(&self) -> Vec<&CALayer> {
         let [shadow, hairline] = self.decorations.frame_layers();
-        [&self.picture, shadow, hairline]
+        let mut layers = vec![&*self.picture, shadow, hairline];
+        layers.extend(self.lift.as_ref().map(Lift::layer));
+        layers
+    }
+
+    /// The lift's caster, made beside the tile's own and laid with it unless it has one.
+    fn lift(&mut self) -> &Lift {
+        let (picture, decorations) = (&self.picture, &self.decorations);
+        self.lift.get_or_insert_with(|| {
+            let container = picture.superlayer().unwrap_or_else(|| picture.clone());
+            let lift = Lift::new(&container);
+            let frame = picture.frame();
+            let size = TileSize::from_cg(frame.size);
+            lift.layer().setFrame(frame);
+            lift.shape(size, decorations.corner_at(size));
+            lift.stack(picture.zPosition());
+            lift
+        })
     }
 
     /// Moves the tile's layers under `container` unless they are already there.
@@ -1630,6 +1700,9 @@ impl Tile {
     fn remove_animations(&self) {
         self.picture.removeAllAnimations();
         self.decorations.remove_animations();
+        if let Some(lift) = &self.lift {
+            lift.layer().removeAllAnimations();
+        }
         if let Some(grid) = &self.crop_grid {
             for layer in grid.layers() {
                 layer.removeAllAnimations();
@@ -1641,6 +1714,9 @@ impl Tile {
     fn stack(&self, z: f64) {
         self.picture.setZPosition(z);
         self.decorations.stack(z);
+        if let Some(lift) = &self.lift {
+            lift.stack(z);
+        }
     }
 }
 
@@ -1660,6 +1736,9 @@ fn place_tile(tile: &Tile, frame: GroupRect, z: f64) {
     tile.stack(z);
     tile.decorations.place(size);
     tile.picture.setCornerRadius(tile.decorations.corner_at(size));
+    if let Some(lift) = &tile.lift {
+        lift.shape(size, tile.decorations.corner_at(size));
+    }
     if resized {
         layout_crop_grid(tile, size);
     }
@@ -3690,33 +3769,79 @@ mod tests {
             for (window, _) in replica.tiles() {
                 let entry = &tree.tile_layers[&window];
                 let track = replica.track(Node::Tile(window), Channel::Base);
+                let lift = replica.track(Node::Lift(window), Channel::Base);
+                let lifting = lift.is_some_and(|track| track.seconds() > 0.0);
                 for (index, layer) in entry.layers().into_iter().enumerate() {
                     let caster = index == 1;
-                    match track {
-                        Some(track) => {
-                            assert_eq!(
-                                installed(layer, TILE_ANIMATION_KEY, point_in),
-                                expected(track, |v| as_frame(v).origin.to_cg())
-                            );
-                            let resizes = track.keys().windows(2).any(|pair| {
-                                rini_geometry::stretch::is_a_resize(
-                                    as_frame(pair[0].1).size,
-                                    as_frame(pair[1].1).size,
-                                )
-                            });
-                            let keys = match (resizes, caster) {
-                                (true, true) => sorted([
-                                    TILE_ANIMATION_KEY,
-                                    TILE_SIZE_KEY,
-                                    "rini.tile.shadow.path",
-                                ]),
-                                (true, false) => sorted([TILE_ANIMATION_KEY, TILE_SIZE_KEY]),
-                                (false, _) => sorted([TILE_ANIMATION_KEY]),
-                            };
-                            assert_eq!(rini_keys(layer), keys, "{window:?}");
-                        }
-                        None => assert!(rini_keys(layer).is_empty(), "{window:?}"),
+                    let mut keys = Vec::new();
+                    if index == 3 && lifting {
+                        keys.push(lift::LIFT_KEY);
                     }
+                    if let Some(track) = track {
+                        assert_eq!(
+                            installed(layer, TILE_ANIMATION_KEY, point_in),
+                            expected(track, |v| as_frame(v).origin.to_cg())
+                        );
+                        let resizes = track.keys().windows(2).any(|pair| {
+                            rini_geometry::stretch::is_a_resize(
+                                as_frame(pair[0].1).size,
+                                as_frame(pair[1].1).size,
+                            )
+                        });
+                        keys.extend(match (resizes, caster) {
+                            (true, true) => {
+                                vec![TILE_ANIMATION_KEY, TILE_SIZE_KEY, "rini.tile.shadow.path"]
+                            }
+                            (true, false) => vec![TILE_ANIMATION_KEY, TILE_SIZE_KEY],
+                            (false, _) => vec![TILE_ANIMATION_KEY],
+                        });
+                    }
+                    assert_eq!(rini_keys(layer), sorted(keys), "{window:?} layer {index}");
+                }
+            }
+            plays_its_lifts(tree);
+        }
+
+        /// Every tile the replica lifts casts the lift's shadow and no other does: its caster under
+        /// the tile's container at the tile's frame, behind its picture as the tile's own caster is,
+        /// shadowed as `LIFT_SHADOW` and shaped and masked for the tile's size `LIFT_REACH` out, at
+        /// the replica's share of the lift's opacity, its track installed as itself on
+        /// `shadowOpacity` unless it has no length.
+        fn plays_its_lifts(tree: &Tree) {
+            use crate::decorations::domain::shape::{LIFT_REACH, mask_frame};
+            use crate::decorations::domain::style::LIFT_SHADOW;
+            let replica = &tree.replica;
+            for (window, _) in replica.tiles() {
+                let entry = &tree.tile_layers[&window];
+                let model = replica.model(Node::Lift(window));
+                assert_eq!(entry.lift.is_some(), model.is_some(), "{window:?}");
+                let (Some(lift), Some(model)) = (&entry.lift, model) else {
+                    continue;
+                };
+                let caster = lift.layer();
+                let (parent, under) = (caster.superlayer(), entry.picture.superlayer());
+                assert!(parent.zip(under).is_some_and(|(p, u)| std::ptr::eq(&*p, &*u)));
+                assert_eq!(caster.frame(), entry.picture.frame(), "{window:?}");
+                assert_eq!(caster.zPosition(), entry.picture.zPosition() + SHADOW_Z);
+                assert_eq!(caster.shadowRadius(), LIFT_SHADOW.radius);
+                assert_eq!(caster.shadowOffset(), CGSize::new(0.0, LIFT_SHADOW.offset_y));
+                let opacity = |value: Value| lift::opacity(as_number(value));
+                assert_eq!(f64::from(caster.shadowOpacity()), opacity(model) as f32 as f64);
+                let size = TileSize::from_cg(entry.picture.frame().size);
+                let silhouette = caster.shadowPath().expect("a silhouette");
+                let bounds = objc2_core_graphics::CGPath::bounding_box(Some(&silhouette));
+                assert_eq!(bounds.size, size.to_cg(), "{window:?}");
+                let mask = caster.mask().expect("masked");
+                assert_eq!(mask.frame(), mask_frame(size, LIFT_REACH).to_cg(), "{window:?}");
+                match replica.track(Node::Lift(window), Channel::Base) {
+                    Some(track) if track.seconds() > 0.0 => {
+                        assert_eq!(
+                            installed(caster, lift::LIFT_KEY, number_in),
+                            expected(track, opacity)
+                        );
+                        assert_eq!(key_path(caster, lift::LIFT_KEY), "shadowOpacity");
+                    }
+                    _ => assert!(!rini_keys(caster).contains(&lift::LIFT_KEY.to_string())),
                 }
             }
         }
@@ -4028,6 +4153,10 @@ mod tests {
                 })
                 .collect();
             assert!(base.iter().any(|t| t.node() == Node::Strip), "the arc");
+            assert!(
+                base.iter().any(|t| t.node() == Node::Lift(a)),
+                "the moved window lifted"
+            );
             assert!(base.len() >= 3, "the arc and the containers: {}", base.len());
             for track in &base {
                 assert_eq!((track.begin(), track.seconds()), (100.0, 0.35 * 2.2 / 3.0));
@@ -4112,6 +4241,101 @@ mod tests {
                 Value::Zoom(Zoom::REST)
             );
             plays_exactly(&tree);
+        }
+
+        /// A tile the score lifts casts the lift's shadow as the score has it: placed and played, a
+        /// track of no length and a cut taking the lift's animation off and leaving its caster, a
+        /// ride carrying the caster to the tile's new container, a pose without the lift and a drop
+        /// of it taking the caster away, a pose with it making one again, and a drop of the tile
+        /// taking the tile's lift with it.
+        #[test]
+        fn a_lifted_tile_casts_the_lifts_shadow_as_its_score_has_it() {
+            let _core_animation = hold_core_animation();
+            let window = wid(1);
+            let frame: GroupRect = typed(4.0, 32.0, 859.0, 1081.0);
+            let tiles = [overlay_tile(
+                window,
+                typed(4.0, 32.0, 859.0, 1081.0),
+                typed(4.0, 32.0, 859.0, 1081.0),
+                false,
+            )];
+            let lifting = |begin: f64, seconds: f64| {
+                let bell = (0..=30)
+                    .map(|k| Value::Number((std::f64::consts::PI * k as f64 / 30.0).sin().powi(2)));
+                Edit::Add(Track::samples(
+                    Node::Lift(window),
+                    Channel::Base,
+                    bell,
+                    begin,
+                    seconds,
+                ))
+            };
+            let other = GroupKey::Rigid(1);
+            let opened = [
+                Edit::Place(
+                    Node::Container(GroupKey::STILL),
+                    Value::Point(OverlayPoint::origin()),
+                ),
+                Edit::Place(
+                    Node::Container(other),
+                    Value::Point(OverlayPoint::new(10.0, 0.0)),
+                ),
+                Edit::Ride(window, GroupKey::STILL),
+                Edit::Place(Node::Tile(window), Value::Rect(frame)),
+            ];
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            let mut score = Score::default();
+            let mut play = |tree: &mut Tree, edits: &[Edit]| {
+                for edit in edits {
+                    score.apply(edit);
+                }
+                tree.play(edits, &tiles);
+                assert_eq!(tree.replica, score);
+                plays_exactly(tree);
+                score.clone()
+            };
+            play(&mut tree, &opened);
+            assert!(tree.tile_layers[&window].lift.is_none(), "nothing lifted");
+            play(&mut tree, &[
+                Edit::Place(Node::Lift(window), Value::Number(0.0)),
+                lifting(5.0, 0.257),
+            ]);
+            let caster = |tree: &Tree| {
+                tree.tile_layers[&window].lift.as_ref().map(|l| Retained::from(l.layer()))
+            };
+            let lifted = caster(&tree).expect("a caster");
+            play(&mut tree, &[lifting(5.0, 0.0)]);
+            assert!(rini_keys(&lifted).is_empty(), "no length");
+            play(&mut tree, &[
+                lifting(5.0, 0.257),
+                Edit::Cut(Node::Lift(window), Channel::Base),
+            ]);
+            assert!(rini_keys(&lifted).is_empty(), "cut");
+            let held = play(&mut tree, &[
+                Edit::Place(Node::Lift(window), Value::Number(0.5)),
+                lifting(5.0, 0.257),
+                Edit::Ride(window, other),
+            ]);
+            assert!(
+                caster(&tree).is_some_and(|c| std::ptr::eq(&*c, &*lifted)),
+                "the same caster"
+            );
+            let mut set_down = held.clone();
+            set_down.apply(&Edit::Drop(Node::Lift(window)));
+            tree.pose(&set_down, &tiles);
+            assert!(caster(&tree).is_none(), "posed without the lift");
+            tree.pose(&held, &tiles);
+            plays_exactly(&tree);
+            assert!(caster(&tree).is_some(), "posed with it");
+            play(&mut tree, &[Edit::Drop(Node::Lift(window))]);
+            assert!(caster(&tree).is_none(), "dropped");
+            play(&mut tree, &[
+                Edit::Place(Node::Lift(window), Value::Number(0.0)),
+                lifting(5.0, 0.257),
+            ]);
+            let lifted = caster(&tree).expect("a caster");
+            play(&mut tree, &[Edit::Drop(Node::Tile(window))]);
+            assert!(lifted.superlayer().is_none(), "gone with its tile");
         }
 
         /// For every look, a snap moves where a tile's own leg ends and keeps how the tile is drawn,

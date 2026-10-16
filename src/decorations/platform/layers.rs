@@ -621,9 +621,14 @@ pub fn silhouette_path(size: TileSize, corner: f64) -> CFRetained<CGPath> {
 /// even-odd so the inside is the hole. Always one rect plus one rounded rect of the same segments,
 /// so two mask paths interpolate.
 pub fn shadow_mask_path(size: TileSize, corner: f64) -> CFRetained<CGMutablePath> {
-    let (whole, hole, radius) = shape::shadow_mask(size, corner);
+    mask_path(size, corner, SHADOW_REACH)
+}
+
+/// `shadow_mask_path` reaching `reach` out.
+pub fn mask_path(size: TileSize, corner: f64, reach: f64) -> CFRetained<CGMutablePath> {
+    let (whole, hole, radius) = shape::mask(size, corner, reach);
     // The mask layer's own points start at the mask's corner, one reach out from the tile's.
-    let into_mask = Vector::new(SHADOW_REACH, SHADOW_REACH);
+    let into_mask = Vector::new(reach, reach);
     let path = CGMutablePath::new();
     // SAFETY: a null transform means the rect is added as given, to a path we just created.
     unsafe {

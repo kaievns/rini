@@ -35,6 +35,14 @@ const FOCUSED_SHADOW: ShadowStyle = ShadowStyle {
     offset_y: 12.0,
 };
 
+/// The shadow under a tile lifted off the strip all the way, cast beside its own: the zoom look's
+/// moved window at the arc's middle.
+pub const LIFT_SHADOW: ShadowStyle = ShadowStyle {
+    opacity: 0.45,
+    radius: 24.0,
+    offset_y: 16.0,
+};
+
 /// A band rini draws outside a window, as niri's focus ring and border are: its width in points, and
 /// its paint, a colour or a gradient, on the window holding focus, on a window drawn urgent and on
 /// the others that wear it.
@@ -245,7 +253,7 @@ impl Rings {
 mod tests {
     use super::*;
     use crate::decorations::domain::paint::Colour;
-    use crate::decorations::domain::shape::SHADOW_REACH;
+    use crate::decorations::domain::shape::{LIFT_REACH, SHADOW_REACH};
 
     const RING: Band = Band {
         width: 4.0,
@@ -577,6 +585,7 @@ mod tests {
         for style in [UNFOCUSED_SHADOW, FOCUSED_SHADOW] {
             assert!(SHADOW_REACH > style.radius * 3.0 + style.offset_y);
         }
+        const { assert!(LIFT_REACH > LIFT_SHADOW.radius * 3.0 + LIFT_SHADOW.offset_y) };
     }
 
     #[test]
@@ -584,6 +593,7 @@ mod tests {
         // Flipped view: positive y is down the screen.
         const { assert!(UNFOCUSED_SHADOW.offset_y > 0.0) };
         const { assert!(FOCUSED_SHADOW.offset_y > 0.0) };
+        const { assert!(LIFT_SHADOW.offset_y > 0.0) };
     }
 
     #[test]

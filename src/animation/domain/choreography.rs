@@ -1523,7 +1523,7 @@ mod tests {
     /// `random_pass` builds them, some bringing an arc and some reached by a push first: the score
     /// after the motion starts and after each pass or push, and each one's edits. A change to how
     /// Zoom moves changes it.
-    const ZOOM_SCORES: u64 = 0xbbeb_6ba6_71d6_9e05;
+    const ZOOM_SCORES: u64 = 0x7e3f_2c8e_1bc2_f480;
 
     /// Zoom draws over seed 163's flights what `ZOOM_SCORES` holds: the strip's zoom and every
     /// node's place, ride and tracks, and every edit a pass or a push answers; some passes fold into

@@ -15,6 +15,10 @@ pub const FALLBACK_RADIUS: f64 = 16.0;
 /// about 54pt) is spent, so the mask never clips it.
 pub const SHADOW_REACH: f64 = 70.0;
 
+/// Room the lift's mask leaves for its shadow: past where its blur (three radii plus the offset,
+/// 88pt) is spent.
+pub const LIFT_REACH: f64 = 100.0;
+
 /// A tile's corner radius: its window's, as the window server reports it, else `FALLBACK_RADIUS`,
 /// clamped to half the shorter side, since Core Animation draws a corner past it as given.
 pub fn radius(reported: Option<f64>, size: TileSize) -> f64 {
@@ -38,10 +42,13 @@ pub fn outline(size: TileSize, corner: f64) -> (TileRect, f64) {
 }
 
 /// The shadow mask's rect: the window grown by `SHADOW_REACH` on every side.
-pub fn shadow_mask_frame(size: TileSize) -> TileRect {
+pub fn shadow_mask_frame(size: TileSize) -> TileRect { mask_frame(size, SHADOW_REACH) }
+
+/// A mask's rect: the window grown by `reach` on every side.
+pub fn mask_frame(size: TileSize, reach: f64) -> TileRect {
     TileRect::new(
-        Point::new(-SHADOW_REACH, -SHADOW_REACH),
-        Size::new(size.width + 2.0 * SHADOW_REACH, size.height + 2.0 * SHADOW_REACH),
+        Point::new(-reach, -reach),
+        Size::new(size.width + 2.0 * reach, size.height + 2.0 * reach),
     )
 }
 
@@ -55,8 +62,13 @@ pub fn silhouette(size: TileSize, corner: f64) -> (TileRect, f64) {
 /// The shadow mask's shape: its whole rect, and the silhouette with corners of `corner` as the hole
 /// wound even-odd inside it, with the hole's corner radius.
 pub fn shadow_mask(size: TileSize, corner: f64) -> (TileRect, TileRect, f64) {
+    mask(size, corner, SHADOW_REACH)
+}
+
+/// `shadow_mask` reaching `reach` out.
+pub fn mask(size: TileSize, corner: f64, reach: f64) -> (TileRect, TileRect, f64) {
     let (hole, corner) = silhouette(size, corner);
-    (shadow_mask_frame(hole.size), hole, corner)
+    (mask_frame(hole.size, reach), hole, corner)
 }
 
 /// A band's width in points as it is drawn on a display of `scale`, as niri rounds one
@@ -390,6 +402,9 @@ mod tests {
         assert_eq!(whole, rect(-70.0, -70.0, 999.0, 1221.0));
         assert_eq!((hole, corner), silhouette(size, 16.0));
         assert_eq!(hole.origin, Point::origin());
+        let (whole, lifted, _) = mask(size, 16.0, LIFT_REACH);
+        assert_eq!(whole, rect(-100.0, -100.0, 1059.0, 1281.0));
+        assert_eq!(lifted, hole);
     }
 
     #[test]

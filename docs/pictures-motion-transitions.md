@@ -78,11 +78,11 @@ only while none does, through SkyLight where its window is wholly on the display
 ## `animation`
 
 A `Score` is everything that moves in one transition, as data: tracks of keyframes on the strip's
-zoom, containers and tiles, on three channels (the movement, the bounce, the nudge), each segment linear or a cubic
-Bezier, and instant cuts (place, reparent, depth, drop). It is the fold of
-its edits, and evaluates at any instant to what Core Animation plays: a spring leg as the polyline of
-its samples, the bounce's way home on the `(0.42, 0, 0.58, 1)` Bezier. A picture swap is not a score
-edit: it changes what a tile shows, never where it is.
+zoom, containers, tiles and how far a tile is lifted, on three channels (the movement, the bounce,
+the nudge), each segment linear or a cubic Bezier, and instant cuts (place, reparent, depth, drop).
+It is the fold of its edits, and evaluates at any instant to what Core Animation plays: a spring leg
+as the polyline of its samples, the bounce's way home on the `(0.42, 0, 0.58, 1)` Bezier. A picture
+swap is not a score edit: it changes what a tile shows, never where it is.
 
 A `Look` is how a flight moves, chosen as the flight begins; `Look::ALL` holds every look, and each
 passes the same tests. Its `Choreography` makes the flight's plan, composes a score from a stage,
@@ -110,8 +110,10 @@ rest of every container's movement and the strip's zoom is left playing through 
 rides the movement as an `Accent::Arc`. The reactor names every press along the strip it plays, a
 focus press that scrolls as `Cue::Focus` and the press a bounce at a side of the strip ran into, and
 the flight's clock ends with the arc as the motion starts (`Event::Fit`); a merge still restarts it
-at the plain length (`specs/animation.md`, "The zoom look", not yet met). A container scaled on its
-own, as the parked spike lifted the moved window, is not in the score.
+at the plain length (`specs/animation.md`, "The zoom look", not yet met). The window a move moves is
+lifted on the arc's bell (`Node::Lift`), which the overlay draws as a shadow beside the tile's own
+(`src/animation/platform/overlay/lift.rs`); a container scaled on its own, as the parked spike first
+lifted it, is not in the score.
 
 ## `transitions`
 
