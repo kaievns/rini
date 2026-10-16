@@ -32,7 +32,7 @@ knows the features and converts what they emit.
 | `reactor/events/focus.rs` | `resolve`: the space and window a workflow's focus request lands on |
 | `reactor/events/outcome.rs` | `EventOutcome`: what a reducer leaves for after its mutation, in order (window-server updates, discoveries, app requests, raises and refreshes), `absorb`, which merges two, `absorb_ahead`, which takes in what is left of work handed back mid-drain, and `take_work_before_arrange`, which splits off what goes before the arrange and keeps whether it focused a window |
 | `reactor/events/space.rs` | The window server's windows appearing and going, native Mission Control entered and left, and space lifecycle, with the fullscreen departure and last-known user space rules |
-| `reactor/events/system.rs` | Menus opening and closing, waking from sleep, a raise completing or timing out, and the WM controller's sender registering |
+| `reactor/events/system.rs` | Menus opening and closing, waking from sleep, a raise completing or timing out, and the controller's sender registering |
 | `reactor/events/window.rs` | One window's events: created, destroyed, minimized and back, its frame changing (`classify_window_frame_change`), its title, and the mouse moving over it |
 | `reactor/events/window_discovery.rs` | An application's window list: which known windows are stale and leave, which are new, and the layout events they make |
 | `reactor/commands.rs` | What a command MEANS before it is carried out: which window "index 3" is, which display "next" is |
