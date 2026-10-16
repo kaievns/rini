@@ -19,7 +19,9 @@ use objc2_foundation::NSArray;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
-pub static G_CONNECTION: Lazy<cid_t> = Lazy::new(|| unsafe { SLSMainConnectionID() });
+pub static G_CONNECTION: Lazy<cid_t> =
+    // SAFETY: takes no argument; answers this process's own connection, made on the first call.
+    Lazy::new(|| unsafe { SLSMainConnectionID() });
 
 #[allow(non_camel_case_types, reason = "SkyLight's C name")]
 pub type cid_t = i32;
