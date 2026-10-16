@@ -98,7 +98,8 @@ display the overlay covers (`viewport`):
    (`src/app/reactor/strip_motion.rs`, `src/app/reactor/animation.rs`).
 
 A zoom of the strip is a look like any other: its tracks on `Node::Strip` hold a `Zoom`, and its
-`retarget` bends them beside `Merged::bend` (`docs/pictures-motion-transitions.md`).
+`retarget` bends them beside `Merged::bend` (`docs/pictures-motion-transitions.md`). A track lerps
+a zoom's scale and shift, not its camera, so one changing both samples its track (`Zoom::about`).
 
 ## Reading order
 
