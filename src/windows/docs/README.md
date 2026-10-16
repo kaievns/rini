@@ -156,6 +156,8 @@ Cross-feature detail is at the top of the tree: [`docs/architecture.md`](../../.
 ## Known debt
 
 **One request has no test of its own.** `WindowMaybeDestroyed`, which the reactor sends when a
-tracked window leaves a fullscreen space, makes the app actor refresh its visible windows
+tracked window leaves a fullscreen space, or leaves its user space without the window server
+reporting it ordered out (`src/app/reactor/events/space.rs`), makes the app actor refresh its
+visible windows when the window is its own pid's and one it knows
 (`platform/app_actor/requests.rs`); no test drives it on `FakeAx` (`docs/cleanup-round-1.md`,
 section 2).
