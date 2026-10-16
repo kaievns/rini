@@ -216,24 +216,46 @@ fn clippy_section() -> String {
     section.split("\n## ").next().unwrap().to_owned()
 }
 
-/// The roadmap is not in the repo, so the row of every id an allow cites is in docs/testing.md, and
-/// a row no allow cites any more is gone from it.
-#[test]
-fn every_roadmap_id_an_allow_cites_has_a_row_in_docs_testing() {
-    let mut cited: Vec<String> = rust_sources(&["src", "crates"])
-        .iter()
-        .flat_map(|(_, source)| source.split("reason = \"P").skip(1).map(str::to_owned))
+/// The roadmap ids the allows in `source` cite as their reason.
+fn roadmap_ids_cited(source: &str) -> impl Iterator<Item = String> + '_ {
+    source
+        .split("reason = \"P")
+        .skip(1)
         .map(|rest| format!("P{}", rest.split('"').next().unwrap()))
-        .collect();
-    cited.sort();
-    cited.dedup();
-    let mut rows: Vec<String> = clippy_section()
+}
+
+/// The ids of the rows of the id table in `section`.
+fn roadmap_id_rows(section: &str) -> impl Iterator<Item = String> + '_ {
+    section
         .lines()
         .filter_map(|line| line.strip_prefix("| P"))
         .map(|rest| format!("P{}", rest.split(' ').next().unwrap()))
+}
+
+/// The roadmap is not in the repo, so the row of every id an allow cites is in docs/testing.md, and
+/// a row no allow cites is gone from it, down to a table with no rows.
+#[test]
+fn every_roadmap_id_an_allow_cites_has_a_row_in_docs_testing() {
+    let id = format!("P{}.{}", 2, 2);
+    assert_eq!(
+        roadmap_ids_cited(&format!("#[allow(x, reason = \"{id}\")]")).collect::<Vec<_>>(),
+        std::slice::from_ref(&id)
+    );
+    assert_eq!(
+        roadmap_id_rows(&format!("| Id | Task | Done when |\n| {id} | a task | done |"))
+            .collect::<Vec<_>>(),
+        [id]
+    );
+    let mut cited: Vec<String> = rust_sources(&["src", "crates"])
+        .iter()
+        .flat_map(|(_, source)| roadmap_ids_cited(source).collect::<Vec<_>>())
         .collect();
+    cited.sort();
+    cited.dedup();
+    let section = clippy_section();
+    assert!(section.contains("\n| Id | Task | Done when |\n"));
+    let mut rows: Vec<String> = roadmap_id_rows(&section).collect();
     rows.sort();
-    assert!(!cited.is_empty());
     assert_eq!(
         rows, cited,
         "the id table in docs/testing.md against the ids allows cite"
