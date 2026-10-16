@@ -380,6 +380,10 @@ destination for a window already moving.
 
 - The frame written to a window is the layout's answer, never the animation's. A window parked off the
   strip is written its real park position; the tile is merely drawn heading off the edge.
+- A flight MUST draw every window on its display, the ones its pass leaves where they are included:
+  the overlay is opaque and spans the display, so a window it is not handed shows as wallpaper for
+  the whole flight. Measured: a floating window re-placed by one point flew alone and every other
+  window on screen showed as wallpaper for 350ms.
 - A flight's frames MUST be written to the windows ending on the display before the windows ending
   parked off it. Each write is several round trips the app answers one after another, and a strip
   switch interleaves the leaving window's park with the arriving windows' places: written first, a
@@ -494,6 +498,9 @@ destination for a window already moving.
 > Read from the code, each can pin a display-sized capture. Read from the code and measured with
 > vmmap, 2026-10-06: the overlay kept the last flight's desktop after the lift, 29.5MB at 3456x2234,
 > beside the newer one rendered at the release after it.
+
+- rini MUST offer no debug action: a bind naming `debug`, `serialize`, `show-timing`,
+  `debug-warm-snapshots` or `debug-overlay-slide` MUST be refused as an unknown action.
 
 > **Reported 2026-10-15.** Kai's decision on the debug actions: "delete". The debug slide and the
 > warm were the only paths that pictured a window rini does not manage, so the requirements on those

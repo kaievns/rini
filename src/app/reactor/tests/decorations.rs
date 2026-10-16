@@ -606,9 +606,9 @@ fn reload_config(
     reactor.handle_test_batch(vec![Event::ConfigUpdated(Box::new(config))]);
 }
 
-/// Kai, 2026-10-08: "not make it transparrent, i mean disable the feature". With the ring and the
-/// border off the rest windows are turned off once, the window server's frames and orders go
-/// unfollowed, and focus moving sends nothing; turning the ring back on starts it all again.
+/// With the ring and the border off the rest windows are turned off once, the window server's
+/// frames and orders go unfollowed, and focus moving sends nothing; turning the ring back on starts
+/// it all again. "Off" in `specs/decorations.md`.
 #[test]
 fn with_the_ring_and_the_border_off_the_rest_windows_are_turned_off_and_nothing_is_followed() {
     let mut desk = desk();
@@ -701,10 +701,11 @@ fn told(rest: &mut Receiver) -> Vec<(&'static str, Option<(ScreenRect, Instant)>
     out
 }
 
-/// Kai, 2026-10-08: "all the animations are _significantly_ slower with the rings". A press that
-/// flies tells the rest windows the display its overlay covers before the model the press changed,
-/// so that model waits for the lift instead of being drawn while the show waits, and tells the
-/// engine there is something to place ahead of the lift; off, nothing, and nothing to place.
+/// A flight MUST be as fast with the ring on as off ("Through a flight" in `specs/decorations.md`).
+/// A press that flies tells the rest windows the display its overlay covers before the model the
+/// press changed, so that model waits for the lift instead of being drawn while the show waits, and
+/// tells the engine there is something to place ahead of the lift; off, nothing, and nothing to
+/// place.
 #[test]
 fn a_press_that_flies_tells_the_rest_windows_before_its_model() {
     use crate::transitions::platform::engine::Event as Engine;

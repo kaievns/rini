@@ -1329,8 +1329,7 @@ fn a_niri_debug_section_points_at_nothing_rini_refuses() {
     assert!(!help.contains("`debug`"), "{report}");
 }
 
-/// Kai deleted the debug actions on 2026-10-15 ("The pictures held" in `specs/animation.md`), so a
-/// bind naming one is an unknown action.
+/// A bind naming a debug action is an unknown action ("The pictures held" in `specs/animation.md`).
 #[test]
 fn the_debug_actions_are_gone() {
     for name in [
@@ -1348,7 +1347,7 @@ fn the_debug_actions_are_gone() {
     }
 }
 
-/// Kai deleted the scoped manual layouts on 2026-10-15 (`specs/persistence.md`).
+/// No bind saves or restores a layout file of its own (`specs/persistence.md`).
 #[test]
 fn no_action_saves_or_restores_a_layout_file() {
     for bind in [
@@ -1364,7 +1363,7 @@ fn no_action_saves_or_restores_a_layout_file() {
     }
 }
 
-/// Kai deleted the native Space switch on 2026-10-15 ("Native Spaces" in `specs/displays.md`).
+/// No action switches the native Space ("Native Spaces" in `specs/displays.md`).
 #[test]
 fn no_action_switches_the_native_space() {
     for name in ["switch-space-left", "switch-space-right"] {
@@ -1376,8 +1375,7 @@ fn no_action_switches_the_native_space() {
     }
 }
 
-/// Kai kept only the explode half of `toggle-stack` on 2026-10-15 ("Folding" in `specs/strip.md`),
-/// so the old name is told where both halves went.
+/// A bind naming `toggle-stack` is told where both halves went ("Folding" in `specs/strip.md`).
 #[test]
 fn toggle_stack_is_refused_for_explode_column_and_the_left_fold() {
     let report = refused("binds {\n    Mod+Shift+Comma { toggle-stack; }\n}\n");
