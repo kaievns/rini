@@ -1105,6 +1105,56 @@ fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The most words a README line may hold: a README is a map read at a glance, and a line past this
+/// is a finding that belongs in a doc of its own.
+const README_LINE_WORDS: usize = 80;
+
+/// Each line of `text` with more than `limit` whitespace-separated words: its 1-based line and its
+/// count.
+fn lines_over(text: &str, limit: usize) -> Vec<(usize, usize)> {
+    text.lines()
+        .enumerate()
+        .map(|(index, line)| (index + 1, line.split_whitespace().count()))
+        .filter(|&(_, words)| words > limit)
+        .collect()
+}
+
+/// No `README.md` in the repo, measurement data aside, has a line over `README_LINE_WORDS` words.
+#[test]
+fn no_readme_line_runs_past_80_words() {
+    let mut files = vec![PathBuf::from("README.md")];
+    for dir in ["docs", "specs", "src", "crates", "tools"] {
+        collect_markdown(Path::new(dir), &mut files);
+    }
+    let mut broken = Vec::new();
+    for path in files {
+        let name = slash(&path);
+        if !name.ends_with("README.md") || name.contains("docs/data/") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).expect("readable README");
+        for (line, words) in lines_over(&text, README_LINE_WORDS) {
+            broken.push(format!("{name}:{line}: {words} words"));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "cut the line to its rule and move the detail into a doc of its own:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_line_is_counted_in_whitespace_separated_words() {
+    let text = format!(
+        "{}\n| a | {}|\n\n{}",
+        "word ".repeat(81),
+        "word ".repeat(80),
+        "word ".repeat(80)
+    );
+    assert_eq!(lines_over(&text, 80), vec![(1, 81), (2, 84)]);
+}
+
 /// Words in a sentence that say its test count is a measurement of its time, not what holds now.
 const MEASURED_THEN: [&str; 2] = ["when audited", "at commit"];
 

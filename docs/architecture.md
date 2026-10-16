@@ -294,7 +294,8 @@ of `reactor/` and `reactor/events/`),
 `every_long_name_a_doc_cites_is_still_defined` fails on a backticked snake_case name of four words
 or more in the docs, a test's included, that is no longer a function or a field (the names quoted
 from other code are `OTHERS_NAMES`, the ones recorded as deleted `GONE_NAMES`), and
-`every_spec_is_listed_in_the_index` stops a spec nothing links to, and
+`every_spec_is_listed_in_the_index` stops a spec nothing links to,
+`no_readme_line_runs_past_80_words` holds every README line to 80 words, and
 `the_implementation_audit_states_a_test_count_only_as_measured_then` lets
 `docs/implementation-audit.md` give a test count only in a sentence saying when it was measured.
 A stale sentence reads exactly like
