@@ -3639,8 +3639,9 @@ mod tests {
         }
 
         /// Every look's flight posed and played, then bent by a pan with a window joining and the
-        /// floating window leaving: the tree plays exactly its replica, and the replica is the fold
-        /// of the edits it was handed.
+        /// floating window leaving: the tree plays exactly its replica, the replica is the fold of
+        /// the edits it was handed, the joiner rides a container in it, the floating window has no
+        /// tile in it and every container in it carries a tile.
         #[test]
         fn the_overlay_plays_exactly_its_score() {
             let _core_animation = hold_core_animation();
@@ -3746,16 +3747,15 @@ mod tests {
             for edit in &bent.edits {
                 score.apply(edit);
             }
-            assert!(
-                bent.edits.iter().any(|edit| matches!(edit, Edit::Ride(w, _) if *w == f)),
-                "{look:?}: f joins"
-            );
-            assert!(
-                bent.edits.contains(&Edit::Drop(Node::Container(GroupKey::Floating))),
-                "{look:?}"
-            );
             tree.play(&bent.edits, &tiles);
             assert_eq!(tree.replica, score, "{look:?}");
+            assert!(tree.replica.parent(f).is_some(), "{look:?}: f joins");
+            assert!(tree.replica.parent(e).is_none(), "{look:?}: e leaves");
+            let empty = tree
+                .replica
+                .containers()
+                .find(|key| !tree.replica.tiles().any(|(_, rides)| rides == *key));
+            assert_eq!(empty, None, "{look:?}: a container no tile rides");
             assert!(
                 tree.lifted.is_none(),
                 "{look:?}: the twin goes with the floating container"
