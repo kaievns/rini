@@ -61,8 +61,8 @@ pub enum ReactorCommand {
     ToggleSpaceActivated,
     /// Spread each display's windows back across workspaces by their recorded affinity.
     ///
-    /// Recovery for a state where windows have piled into one workspace. Before this the only
-    /// remedy was deleting the layout file.
+    /// Recovery for a state where windows have piled into one workspace, short of deleting the
+    /// layout file.
     RedistributeWindows,
     FocusWindow {
         window_id: WindowId,
@@ -102,8 +102,8 @@ pub enum SwitchScope {
     Workspace,
     /// The focused application's windows, wherever they are, one step per window. cmd-`.
     ///
-    /// macOS's own cmd-` only offers windows on the current Space, so with three Ghostty windows over
-    /// two rini workspaces it never reached the third. This offers every one of them.
+    /// macOS's own cmd-` only offers windows on the current Space, so it misses an application's
+    /// windows on rini's other workspaces. This offers every one of them.
     App,
 }
 
@@ -172,14 +172,14 @@ mod tests {
         names.0
     }
 
-    /// Kai deleted the native Space switch on 2026-10-15 (`specs/displays.md`).
+    /// rini does not switch the native Space (`specs/displays.md`).
     #[test]
     fn no_wire_command_switches_the_native_space() {
         let sent = serde_json::json!({ "switch_space": "left" });
         assert!(serde_json::from_value::<ReactorCommand>(sent).is_err());
     }
 
-    /// Kai kept only the explode half of `toggle_stack` on 2026-10-15 (`specs/strip.md`).
+    /// The explode is `explode_column`, and `toggle_stack` is no command (`specs/strip.md`).
     #[test]
     fn the_explode_is_explode_column_and_toggle_stack_reads_as_nothing() {
         let explode = serde_json::from_value::<LayoutCommand>(serde_json::json!("explode_column"));

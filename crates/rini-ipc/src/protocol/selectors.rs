@@ -39,8 +39,8 @@ pub enum RelativeDisplay {
 ///
 /// `Relative` MUST come before `Uuid`. The enum is untagged, so serde tries the variants in
 /// declaration order and `Uuid(String)` accepts ANY string: with `Uuid` first, `selector = "next"`
-/// parsed as a display whose UUID is literally "next", found nothing, and the command did nothing at
-/// all. That is how the `move_window_to_display` binding sat dead.
+/// parses as a display whose UUID is literally "next", finds nothing, and the command does nothing
+/// at all.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum DisplaySelector {
@@ -54,16 +54,16 @@ pub enum DisplaySelector {
 mod tests {
     use super::*;
 
-    /// The defect this variant exists for. `Uuid(String)` accepts anything, so the keyword has to be
-    /// tried first or it is read as the name of a display nobody has.
+    /// `Uuid(String)` accepts anything, so the keyword has to be tried first or it is read as the
+    /// name of a display nobody has.
     #[test]
     fn next_is_a_keyword_and_not_the_name_of_a_display() {
         let parsed: DisplaySelector = serde_json::from_str("\"next\"").expect("parses");
         assert_eq!(parsed, DisplaySelector::Relative(RelativeDisplay::Next));
     }
 
-    /// Everything else still parses as what it looks like, so putting the keyword first has not
-    /// shadowed the other three.
+    /// Everything else parses as what it looks like: the keyword first shadows none of the other
+    /// three.
     #[test]
     fn the_other_selectors_are_unaffected() {
         let uuid: DisplaySelector = serde_json::from_str("\"37D8832A-2D66\"").expect("parses");
@@ -76,8 +76,8 @@ mod tests {
         assert_eq!(direction, DisplaySelector::Direction(Direction::Right));
     }
 
-    /// The wire shape is the one a plain string had, so a client sending `"next"` reaches the step
-    /// and any other string, "Next" included, still reaches a name.
+    /// On the wire a step is a plain string, so a client sending `"next"` reaches the step and any
+    /// other string, "Next" included, reaches a name.
     #[test]
     fn a_workspace_step_is_a_keyword_and_anything_else_is_a_name() {
         let parse = |json: &str| serde_json::from_str::<WorkspaceSelector>(json).expect("parses");

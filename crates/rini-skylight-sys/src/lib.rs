@@ -223,8 +223,8 @@ unsafe extern "C" {
     pub fn CGEventSourceCreate(state: CGEventSourceStateID) -> *mut CFType;
     pub fn CGWarpMouseCursorPosition(point: CGPoint) -> CGError;
 
-    /// Physical size of a display in millimetres. Used to map a cursor crossing by real-world
-    /// position rather than by fraction, which matters whenever two displays differ in size.
+    /// Physical size of a display in millimetres, which maps a cursor crossing by real-world
+    /// position rather than by fraction, as two displays of different sizes need.
     pub fn CGDisplayScreenSize(display: u32) -> CGSize;
     /// Re-couple the hardware mouse to the on-screen cursor after a warp.
     ///

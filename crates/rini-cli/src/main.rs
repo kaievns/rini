@@ -731,7 +731,7 @@ mod tests {
         }
     }
 
-    /// Kai deleted the scoped manual layouts on 2026-10-15 (`specs/persistence.md`).
+    /// No layout file is saved or loaded on request (`specs/persistence.md`).
     #[test]
     fn no_subcommand_saves_or_loads_a_layout_file() {
         for subcommand in ["save-layout", "load-layout"] {
@@ -746,7 +746,7 @@ mod tests {
         }
     }
 
-    /// Kai deleted the native Space switch on 2026-10-15 (`specs/displays.md`).
+    /// rini does not switch the native Space (`specs/displays.md`).
     #[test]
     fn no_subcommand_switches_the_native_space() {
         let error = Cli::try_parse_from(["rini-cli", "execute", "space", "switch", "left"])
@@ -755,7 +755,7 @@ mod tests {
         assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
     }
 
-    /// Kai kept only the explode half of `toggle-stack` on 2026-10-15 (`specs/strip.md`).
+    /// The explode is `explode-column`, and `toggle-stack` is no subcommand (`specs/strip.md`).
     #[test]
     fn layout_explode_column_is_the_explode_and_toggle_stack_is_gone() {
         let cli = Cli::try_parse_from(["rini-cli", "execute", "layout", "explode-column"])

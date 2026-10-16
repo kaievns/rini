@@ -148,10 +148,8 @@ pub struct DiagnosticWindow {
 
 /// Everything needed to reason about one space's strip, in one place.
 ///
-/// Added because diagnosing multi-monitor problems from `query windows` alone led to
-/// three wrong conclusions in a row: that query defaults to a single space's active
-/// workspace, so windows on the other display looked missing, then dead, then
-/// unmanaged. All three were artefacts of the tool rather than real defects.
+/// `query windows` answers a single space's active workspace, so a window on the other display is
+/// absent from it, which reads as missing, dead or unmanaged when it is none of them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DiagnosticSpace {
     pub space_id: u64,
@@ -176,8 +174,7 @@ pub struct DiagnosticSpace {
 ///
 /// `DiagnosticSpace` only covers the workspace currently visible on each display, which is a
 /// genuine trap: counting windows across the `spaces` list answers "what is on screen now",
-/// not "where do these windows live". Tallying that way made a workspace switch look like it
-/// had lost 14 windows when they were simply on a workspace that was no longer showing.
+/// not "where do these windows live".
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DiagnosticDisplayCensus {
     pub display_uuid: String,
@@ -194,10 +191,8 @@ pub struct DiagnosticDisplayCensus {
     /// that are not currently showing.
     ///
     /// `DiagnosticSpace.windows` and `query windows --space-id` BOTH report only the visible
-    /// workspace, so neither can answer "where is this app's other window". Chasing a third
-    /// Ghostty window that cmd-` would not reach meant switching every display through every
-    /// workspace and diffing the output, which still missed windows on the unfocused display
-    /// because a switch only moves the focused one.
+    /// workspace, so neither can answer "where is this app's other window". Switching through the
+    /// workspaces to look misses the unfocused display's, since a switch moves only the focused one.
     pub windows: Vec<DiagnosticCensusWindow>,
 }
 
@@ -223,7 +218,7 @@ pub struct DiagnosticsData {
     /// Workspaces holding windows but belonging to no attached display, i.e. left
     /// over from a previous space generation.
     pub orphaned_workspaces: Vec<String>,
-    /// Affinity entries whose window no longer exists.
+    /// Affinity entries whose window is gone.
     pub stale_homes: Vec<WindowId>,
     pub windows_managed: usize,
 }
