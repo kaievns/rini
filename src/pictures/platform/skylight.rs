@@ -37,6 +37,8 @@ fn composite(windows: &[WindowServerId]) -> Option<CFRetained<CGImage>> {
         return None;
     }
     let ids: Vec<u32> = windows.iter().map(|w| w.as_u32()).collect();
+    // SAFETY: `ids` holds the `ids.len()` window numbers the call is told of and outlives it, on the
+    // read connection, which lives for the process.
     let array: *mut CFArray<CGImage> = unsafe {
         SLSHWCaptureWindowList(
             *READ_CONNECTION,
@@ -484,6 +486,8 @@ fn rgba_context(
 fn active_display_bounds() -> Vec<CGRect> {
     let mut ids = [0u32; 16];
     let mut count = 0u32;
+    // SAFETY: `ids` has room for the `ids.len()` displays the call may write, and `count` is a live
+    // out-parameter.
     let err = unsafe {
         objc2_core_graphics::CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count)
     };

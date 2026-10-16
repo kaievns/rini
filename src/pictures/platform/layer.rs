@@ -70,23 +70,10 @@ mod tests {
     use crate::pictures::domain::region::WHOLE;
     use crate::pictures::platform::bitmap::rgba_bitmap_context;
     use crate::pictures::platform::picture::{LazyGround, test_picture};
+    use crate::pictures::platform::surface::{Layout, new_surface};
 
     fn test_surface() -> CFRetained<objc2_io_surface::IOSurfaceRef> {
-        use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
-        use objc2_io_surface::{
-            IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceHeight, kIOSurfaceWidth,
-        };
-        let keys: [&CFString; 3] =
-            unsafe { [kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement] };
-        let values = [
-            CFNumber::new_i64(1),
-            CFNumber::new_i64(1),
-            CFNumber::new_i64(4),
-        ];
-        let value_refs: [&CFNumber; 3] = std::array::from_fn(|i| &*values[i]);
-        // SAFETY: the three keys an IOSurface needs, each with a number.
-        unsafe { IOSurfaceRef::new(CFDictionary::from_slices(&keys, &value_refs).as_opaque()) }
-            .expect("a surface")
+        new_surface(1, 1, Layout::default(), |_, _| Some(())).expect("a surface")
     }
 
     fn contents_address(layer: &CALayer) -> Option<usize> {

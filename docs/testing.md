@@ -212,8 +212,9 @@ the cause, so the cure is the seam: `ScreenCache` now asks its `System` for the 
 and each display's space, and its tests read no SkyLight. On 2026-10-16 the lib tests aborted in 4
 of 10 runs before that and in 0 of 20 after, and `bin/check.sh` in 0 of 20 consecutive runs
 after. If it comes back, the crash report in `~/Library/Logs/DiagnosticReports` names the tests
-whose threads are in SkyLight. The tests that build capture fixtures avoid `IOSurface` for the
-same reason, and use a CPU bitmap instead.
+whose threads are in SkyLight. The `edges_are_painted` tests read a plain closure rather than a
+capture's buffer for the same reason; the `pictures::platform` tests that need an `IOSurface` make
+it through `surface::new_surface`.
 
 ## What a flight costs is measured on the screen, by the timing battery
 

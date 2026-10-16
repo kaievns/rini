@@ -13,7 +13,7 @@ use objc2_core_graphics::{
     CGColorSpaceModel, CGContext, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
     CGInterpolationQuality,
 };
-use objc2_io_surface::{IOSurfaceLockOptions, IOSurfaceRef};
+use objc2_io_surface::IOSurfaceRef;
 use rini_geometry::space::ScreenPoint;
 
 use crate::pictures::domain::ground::{Ground, ground};
@@ -28,6 +28,7 @@ use crate::pictures::platform::bitmap::{
     THUMBPRINT_SIDE, bitmap_context, rgba_bitmap_context, thumbprint,
 };
 use crate::pictures::platform::picture::{Picture, Pixels, image_size};
+use crate::pictures::platform::surface::read_locked;
 
 /// The band print of a picture: its top `BAND_PT` at the picture's own scale, drawn down to
 /// `BAND_PRINT`. `None` for a surface.
@@ -110,12 +111,7 @@ fn surface_thumbprint(surface: &IOSurfaceRef) -> Option<Vec<u8>> {
     let (side, points) = (THUMBPRINT_SIDE, THUMBPRINT_POINTS);
     // The middle of the `at`th of `side * points` equal steps across `length` pixels.
     let step = |at: usize, length: usize| (at * 2 + 1) * length / (side * points * 2);
-    // SAFETY: locked for reading, and every read below is inside `stride * height`.
-    unsafe {
-        if surface.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) != 0 {
-            return None;
-        }
-        let base = surface.base_address().as_ptr() as *const u8;
+    read_locked(surface, |pixels| {
         let mut print = Vec::with_capacity(side * side * 4);
         for row in 0..side {
             for column in 0..side {
@@ -123,19 +119,17 @@ fn surface_thumbprint(surface: &IOSurfaceRef) -> Option<Vec<u8>> {
                 for down in 0..points {
                     let y = step(row * points + down, height);
                     for across in 0..points {
-                        let pixel =
-                            base.add(y * stride + step(column * points + across, width) * 4);
+                        let pixel = y * stride + step(column * points + across, width) * 4;
                         for (channel, at) in [2, 1, 0, 3].into_iter().enumerate() {
-                            sum[channel] += *pixel.add(at) as usize;
+                            sum[channel] += pixels[pixel + at] as usize;
                         }
                     }
                 }
                 print.extend(sum.map(|total| (total / (points * points)) as u8));
             }
         }
-        surface.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
-        Some(print)
-    }
+        print
+    })
 }
 
 /// The ground of a picture's pixels, read off its body samples, in the colour space
@@ -217,23 +211,21 @@ fn surface_samples(surface: &IOSurfaceRef) -> Option<Vec<[u8; 4]>> {
     if width == 0 || height == 0 || stride < width * 4 {
         return None;
     }
-    // SAFETY: locked for reading, and every read below is inside `stride * height`.
-    unsafe {
-        if surface.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) != 0 {
-            return None;
-        }
-        let base = surface.base_address().as_ptr() as *const u8;
-        let samples = body_points()
+    read_locked(surface, |pixels| {
+        body_points()
             .map(|(u, v)| {
                 let x = ((u * width as f64) as usize).min(width - 1);
                 let y = ((v * height as f64) as usize).min(height - 1);
-                let pixel = base.add(y * stride + x * 4);
-                [*pixel.add(2), *pixel.add(1), *pixel, *pixel.add(3)]
+                let pixel = y * stride + x * 4;
+                [
+                    pixels[pixel + 2],
+                    pixels[pixel + 1],
+                    pixels[pixel],
+                    pixels[pixel + 3],
+                ]
             })
-            .collect();
-        surface.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
-        Some(samples)
-    }
+            .collect()
+    })
 }
 
 /// What a window's first picture, `crop`, says of it: whether it is translucent, from the picture
@@ -344,6 +336,7 @@ mod tests {
     use crate::pictures::domain::coverage::Coverage;
     use crate::pictures::domain::print::bodies_differ;
     use crate::pictures::platform::picture::test_picture;
+    use crate::pictures::platform::surface::{Layout, new_surface};
 
     /// An image of `width` x `height` pixels, `paint` filling it in user space (origin bottom left).
     fn image(width: usize, height: usize, paint: impl Fn(&CGContext)) -> CFRetained<CGImage> {
@@ -672,6 +665,7 @@ mod tests {
         let (w, h) = (400usize, 300usize);
         let radius = 20.0;
         let rounded = image(w, h, |ctx| {
+            // SAFETY: a null transform is allowed, and means none.
             let path = unsafe {
                 objc2_core_graphics::CGPath::with_rounded_rect(
                     rect(0.0, 0.0, w as f64, h as f64),
@@ -738,41 +732,21 @@ mod tests {
         assert_ne!(small, print(60, 40, [200, 20, 30, 255]));
     }
 
-    fn test_surface(width: i64, height: i64, bgra_of_rgba: [u8; 4]) -> CFRetained<IOSurfaceRef> {
-        use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
-        use objc2_io_surface::{kIOSurfaceBytesPerElement, kIOSurfaceHeight, kIOSurfaceWidth};
-        let keys: [&CFString; 3] =
-            unsafe { [kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement] };
-        let values = [
-            CFNumber::new_i64(width),
-            CFNumber::new_i64(height),
-            CFNumber::new_i64(4),
-        ];
-        let value_refs: [&CFNumber; 3] = std::array::from_fn(|i| &*values[i]);
-        // SAFETY: the three keys an IOSurface needs, each with a number.
-        let surface =
-            unsafe { IOSurfaceRef::new(CFDictionary::from_slices(&keys, &value_refs).as_opaque()) }
-                .expect("a surface");
+    fn test_surface(
+        width: usize,
+        height: usize,
+        bgra_of_rgba: [u8; 4],
+    ) -> CFRetained<IOSurfaceRef> {
         let [r, g, b, a] = bgra_of_rgba;
-        // SAFETY: locked for writing, within `stride * height`.
-        unsafe {
-            assert_eq!(
-                surface.lock(IOSurfaceLockOptions::empty(), std::ptr::null_mut()),
-                0
-            );
-            let base = surface.base_address().as_ptr() as *mut u8;
-            let stride = surface.bytes_per_row();
-            for y in 0..height as usize {
-                for x in 0..width as usize {
-                    let pixel = base.add(y * stride + x * 4);
-                    *pixel = b;
-                    *pixel.add(1) = g;
-                    *pixel.add(2) = r;
-                    *pixel.add(3) = a;
+        new_surface(width, height, Layout::default(), |bytes, stride| {
+            for y in 0..height {
+                for x in 0..width {
+                    let pixel = y * stride + x * 4;
+                    bytes[pixel..pixel + 4].copy_from_slice(&[b, g, r, a]);
                 }
             }
-            surface.unlock(IOSurfaceLockOptions::empty(), std::ptr::null_mut());
-        }
-        surface
+            Some(())
+        })
+        .expect("a surface")
     }
 }

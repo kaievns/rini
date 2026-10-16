@@ -26,11 +26,13 @@ pub fn bitmap_context(
     space: &CGColorSpace,
     info: CGBitmapInfo,
 ) -> Option<CFRetained<CGContext>> {
-    // SAFETY: a fresh context; CG owns and frees the backing store with it.
-    let ctx = unsafe {
-        CGBitmapContextCreate(std::ptr::null_mut(), width, height, 8, 0, Some(space), info.0)
-    };
-    unsafe { Some(CFRetained::from_raw(std::ptr::NonNull::new(ctx)?)) }
+    // SAFETY: a null `data` has Core Graphics allocate the buffer and free it with the context, and a
+    // context from a Create function comes at +1, which the `CFRetained` takes over.
+    unsafe {
+        let ctx =
+            CGBitmapContextCreate(std::ptr::null_mut(), width, height, 8, 0, Some(space), info.0);
+        Some(CFRetained::from_raw(std::ptr::NonNull::new(ctx)?))
+    }
 }
 
 /// `image` drawn into an image of its own, premultiplied BGRA, the layout Core Animation draws from
