@@ -245,7 +245,8 @@ impl WindowIterator {
         let Some(radii) = NonNull::new(unsafe { read(self.iter) }) else {
             return Vec::new();
         };
-        // SAFETY: the call answers a CFArray of CFNumbers at +1, which the `CFRetained` takes.
+        // SAFETY: the call answers a new CFArray of CFNumbers at +1 despite its Get name, measured
+        // in `crates/rini-skylight-sys/docs/README.md`, and the `CFRetained` takes that +1.
         let radii = unsafe { CFRetained::from_raw(radii) };
         radii.iter().filter_map(|corner| corner.as_f64()).collect()
     }

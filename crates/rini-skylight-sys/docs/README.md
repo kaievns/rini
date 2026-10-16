@@ -15,6 +15,12 @@ launching there, and which macOS first has this one is not known, so its caller 
 `dlsym` (`src/windows/platform/window_server.rs`, beside the query keys it resolves the same way)
 and reads no radius without it. The crate stays declarations only.
 
+**`SLSWindowIteratorGetCornerRadii` answers +1, despite its Get name**: each call makes a new array
+the caller releases, and nothing else holds it. Measured on macOS 26.7.1 on 2026-10-16 over 24
+windows: an array held once more by the probe reads a retain count of 2 inside an autorelease pool,
+after it drains, after the iterator is released and after the query is released, and a second call
+on the same window answers another array (`docs/data/2026-10-16-radii-ownership/`).
+
 ## The shape that matters
 
 **The value types are vocabulary, the functions are API.** `SpaceId` is a number the

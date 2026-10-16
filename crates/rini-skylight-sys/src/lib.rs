@@ -396,7 +396,8 @@ unsafe extern "C" {
 }
 
 /// `SLSWindowIteratorGetCornerRadii`: the current window's four corner radii in points, a CFArray of
-/// CFNumbers the caller releases, or null. Not linked: a macOS without it must still launch, so its
+/// CFNumbers the caller releases, or null: +1 despite its Get name, measured in `docs/README.md`.
+/// Not linked: a macOS without it must still launch, so its
 /// caller resolves it at run time.
 pub type SLSWindowIteratorGetCornerRadiiFn =
     unsafe extern "C" fn(iterator: *mut CFType) -> *mut CFArray<CFNumber>;
