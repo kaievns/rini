@@ -83,12 +83,14 @@ resolver = "3"
 
 [workspace.lints.rust]
 redundant_lifetimes = "warn"
+unsafe_op_in_unsafe_fn = "deny"
 unused_macro_rules = "warn"
 
 [workspace.lints.clippy]
 allow_attributes_without_reason = "warn"
 fn_params_excessive_bools = "deny"
 struct_excessive_bools = "warn"
+undocumented_unsafe_blocks = "deny"
 
 [workspace.dependencies]
 dashmap = "6.1.0"
