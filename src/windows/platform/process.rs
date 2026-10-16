@@ -15,8 +15,8 @@ impl ProcessInfo {
             processInfoLength: size_of::<ProcessInfoRec>() as _,
             ..ProcessInfoRec::default()
         };
-        // SAFETY: `psn` is borrowed for the call, and `info` is a local whose length field gives
-        // the 72 bytes the call writes at most.
+        // SAFETY: `psn` is borrowed for the call, `info`'s length field bounds the 72 bytes written,
+        // and `processName` and `processAppRef` are null, so the call writes through neither.
         cg_ok(unsafe { GetProcessInformation(&psn, &mut info) })?;
 
         Ok(Self {

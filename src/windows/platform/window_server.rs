@@ -845,7 +845,8 @@ impl WindowServer for LiveWindowServer {
             .collect()
     }
 
-    // credit: https://github.com/Hammerspoon/hammerspoon/issues/370#issuecomment-545545468
+    // Event-record layout, length byte 0xf8 at 0x04:
+    // https://github.com/Hammerspoon/hammerspoon/issues/370#issuecomment-545545468
     fn make_key_window(&self, pid: pid_t, wsid: WindowServerId) -> Result<(), CGError> {
         #[allow(non_upper_case_globals, reason = "SkyLight's constant name")]
         const kCPSUserGenerated: u32 = 0x200;

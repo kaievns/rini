@@ -14,6 +14,9 @@ use rini_core::ids::pid_t;
 use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
 
 /// An observer for accessibility events.
+///
+/// Drop it only once the run loop it was installed on has stopped for good: the drop frees the
+/// contexts its callbacks read and leaves its run-loop source in place.
 pub struct Observer {
     callback: Callback,
     observer: CFRetained<AXObserver>,
@@ -219,8 +222,8 @@ unsafe extern "C-unwind" fn internal_callback(
     _notif: NonNull<CFString>,
     data: *mut c_void,
 ) {
-    // SAFETY: `data` is the refcon `add_notification_inner` registered, a context the observer
-    // keeps until it drops, delivered on the run loop of the thread that owns the observer.
+    // SAFETY: `data` is a context the `!Send` observer keeps on this run loop's thread until it
+    // drops, and each owner drops it only once this run loop has stopped for good.
     let Some(ctx) = (unsafe { data.cast::<SubscriptionContext>().as_ref() }) else {
         return;
     };
@@ -237,8 +240,8 @@ unsafe extern "C-unwind" fn internal_callback_with_notification(
     _notif: NonNull<CFString>,
     data: *mut c_void,
 ) {
-    // SAFETY: `data` is the refcon `add_notification_inner` registered, a context the observer
-    // keeps until it drops, delivered on the run loop of the thread that owns the observer.
+    // SAFETY: `data` is a context the `!Send` observer keeps on this run loop's thread until it
+    // drops, and each owner drops it only once this run loop has stopped for good.
     let Some(ctx) = (unsafe { data.cast::<SubscriptionContext>().as_ref() }) else {
         return;
     };
