@@ -1128,8 +1128,8 @@ mod tests {
     /// reaching a flight that moves, each 10-300ms after the one before. No window the flight draws
     /// jumps as a push reaches it, within the half point placing on whole points allows; against each
     /// of the four walls, some push draws a window more than a point further toward it than the
-    /// flight without it draws it; and once every track has ended, every window is home where its
-    /// plan sends it.
+    /// flight without it draws it; and every window is home where its plan sends it once every track
+    /// has ended, which is no later than one bounce after the last push or the end of the motion.
     fn pushes_out_and_home_without_a_jump(
         make: &dyn Fn() -> Box<dyn Choreography>,
     ) -> Result<(), String> {
@@ -1144,6 +1144,7 @@ mod tests {
         for run in 0..RUNS {
             let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
             flight.start(&[]);
+            let motion_end = BEGIN + flight.score.remaining(BEGIN);
             let mut now = BEGIN;
             for step in 0..1 + rng.below(3) {
                 let tag = format!("seed 173 run {run} step {step}");
@@ -1180,6 +1181,12 @@ mod tests {
                 toward[side] += usize::from(pushed);
             }
             lands_on_its_plan(&flight, now, &format!("seed 173 run {run}"))?;
+            let (lands, due) = (now + flight.score.remaining(now), motion_end.max(now + PLAIN));
+            if lands > due + 1e-6 {
+                return Err(format!(
+                    "seed 173 run {run}: home at {lands:.3}s, due by {due:.3}s, one bounce after the last push or the motion's end"
+                ));
+            }
         }
         if let Some(side) = toward.iter().position(|pushed| *pushed == 0) {
             let wall = walls[side];
@@ -1227,9 +1234,10 @@ mod tests {
     }
 
     /// The push contract rejects a look that plays no push, one that pushes only against the left
-    /// and right walls, and one that starts every bounce from rest wherever the one before is drawn.
+    /// and right walls, one that starts every bounce from rest wherever the one before is drawn, and
+    /// one whose bounce plays ten times as long as it is given.
     #[test]
-    fn the_push_contract_rejects_a_look_that_skips_a_wall_or_pushes_from_rest() {
+    fn the_push_contract_rejects_a_look_that_skips_a_wall_pushes_from_rest_or_lands_late() {
         let still = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PlaysNoPush))
             .expect_err("a push that plays nothing");
         assert!(still.contains("toward its wall"), "{still}");
@@ -1242,6 +1250,9 @@ mod tests {
         let from_rest = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PushesFromRest))
             .expect_err("a push from rest over a bounce");
         assert!(from_rest.contains("jumped"), "{from_rest}");
+        let slow = pushes_out_and_home_without_a_jump(&|| Flawed::boxed(Flaw::PushesSlowly))
+            .expect_err("a push that bounces ten times as long");
+        assert!(slow.contains("after the last push"), "{slow}");
     }
 
     /// The digest of what Slide draws over seed 163's flights, posed, composed with the accents
@@ -1368,6 +1379,8 @@ mod tests {
         PushesSideways,
         /// Its push starts every carrier's bounce from rest, wherever the one before is drawn.
         PushesFromRest,
+        /// Its push plays a bounce ten times as long as it is given.
+        PushesSlowly,
         /// Its bend moves nothing: every node it would carry is cut to where it ends.
         CutsTheBend,
         /// Its bend starts every container it carries on `MOTION_CURVE` from where it is, at the
@@ -1411,6 +1424,7 @@ mod tests {
                 Flaw::PlaysNoPush
                 | Flaw::PushesSideways
                 | Flaw::PushesFromRest
+                | Flaw::PushesSlowly
                 | Flaw::CutsTheBend
                 | Flaw::RestartsTheBend => self.slide.fold(plan, pass),
             }
@@ -1476,6 +1490,7 @@ mod tests {
                 | Flaw::PushesSideways
                 | Flaw::CutsTheBend
                 | Flaw::RestartsTheBend => self.slide.push(playing, cue, wall, seconds, now),
+                Flaw::PushesSlowly => self.slide.push(playing, cue, wall, seconds * 10.0, now),
                 Flaw::PushesFromRest => playing
                     .containers()
                     .filter(|key| carries_out_and_back(*key, wall))

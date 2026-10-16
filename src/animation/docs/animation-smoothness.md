@@ -397,7 +397,9 @@ at most the offset the strip drew, until both are home. Handed the record's boun
 by up to 72pt into phase with the strip. Both are pinned by
 `a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. Every look's push keeps both: no window
 jumps as a push reaches it, a push against each of the four walls draws some window toward it, and
-every window comes home where its plan sends it (`every_look_pushes_out_and_home_without_a_jump`). A
+every window comes home where its plan sends it, no later than one bounce after the last push or the
+motion's own end, which Slide meets exactly over the contract's seed
+(`every_look_pushes_out_and_home_without_a_jump`). A
 push of no length is a cut, drawn at rest (`a_push_of_no_length_is_a_cut`). A
 move's nudge (below) is the other out-and-back, on the same containers by the
 same rule, under its own key. Only a step still playing holds a step off (`steps` in
