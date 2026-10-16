@@ -308,9 +308,8 @@ impl Reactor {
         //     the remaining display and the user carried on working there, so replaying it moves
         //     back whichever windows now occupy those slots rather than the ones that had been on
         //     the external.
-        //   - remap_space deletes the auto-created workspaces already sitting on the target space
-        //     id, which drops the WindowStore assignments of any window macOS placed there. Those
-        //     windows are then re-assigned from scratch, reshuffling the other display's strip.
+        //   - The layout engine's remap_space drops the workspace layouts already on the target
+        //     space id, discarding the layout of any window macOS placed there.
         //
         // Per-window affinity handles this instead: see repatriate_windows_to_display, run once
         // the topology delta has settled. Startup space-id churn is a different case and is

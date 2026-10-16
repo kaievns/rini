@@ -434,8 +434,8 @@ impl Reactor {
             // A reconnected display's layout is NOT reattached here.
             //
             // A whole-space remap from the display's last known space id onto its current one
-            // is wrong here twice: remap_space deletes the workspaces already on the target id
-            // and drops their window assignments, and a layout pass, which fires on ordinary
+            // is wrong here twice: the layout engine's remap_space drops the workspace layouts
+            // already on the target id, and a layout pass, which fires on ordinary
             // space switches too, is far too hot a path to mutate space identity from. Window
             // placement across a display change is decided by per-window affinity in
             // Reactor::repatriate_windows_to_display, which runs once per topology change.
