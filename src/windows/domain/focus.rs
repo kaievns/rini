@@ -383,7 +383,7 @@ mod tests {
         fn wid(pid: rini_core::ids::pid_t, idx: u32) -> WindowId { WindowId::new(pid, idx) }
 
         /// A panel of another application, Spotlight's or Raycast's, takes the keys while the
-        /// application in front stays in front: its window is no longer drawn focused, though it is
+        /// application in front stays in front: its window stops being drawn focused, though it is
         /// still that application's main window. Another application coming to the front with no
         /// window reported leaves none either.
         #[test]

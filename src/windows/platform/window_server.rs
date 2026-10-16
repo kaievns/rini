@@ -87,7 +87,7 @@ fn now_us() -> u64 {
 
 pub fn note_windowserver_activity(wsid: u32) {
     LAST_WINDOWSERVER_ACTIVITY_US.store(now_us(), Ordering::SeqCst);
-    // Keep this trace low-cost; it's only used to stabilize display churn.
+    // Keep this trace low-cost; only display churn's settling reads the activity.
     tracing::trace!(wsid, "windowserver activity");
 }
 
@@ -616,7 +616,7 @@ fn copy_spaces(id: WindowServerId) -> Option<CFRetained<CFArray<CFNumber>>> {
 impl WindowServer for LiveWindowServer {
     fn get_window(&self, id: WindowServerId) -> Option<WindowServerInfo> {
         // A single-window query rather than `get_windows(&[id])`: a query for one window handed a
-        // different number back means the id no longer names that window, and a recycled id must
+        // different number back means the id names another window now, and a recycled id must
         // not be answered.
         let query = WindowIterator::new(&[id])?;
         if query.count() != 1 || query.advance().is_none() {

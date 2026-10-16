@@ -213,8 +213,8 @@ impl WindowCatalogue {
         self.window_servers.entry(wsid).or_default()
     }
 
-    /// Drops a record that no longer says anything. The workspaces context calls this after it
-    /// removes an assignment, since an assignment used to be one of the things that kept a record.
+    /// Drops a record that says nothing. The workspaces context calls this after it removes an
+    /// assignment, since the assignment can be all that kept the record.
     pub fn prune_window_record(&mut self, window_id: WindowId) {
         let should_remove =
             self.windows.get(&window_id).is_some_and(WindowRecord::remembers_nothing);

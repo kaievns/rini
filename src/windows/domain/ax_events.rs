@@ -1,7 +1,7 @@
 //! What the Accessibility boundary's answers mean, without any Accessibility in it.
 //!
-//! Two rules the per-app thread used to carry inline, neither reachable from a test because the file
-//! holding them needs a live `AXUIElement` to do anything at all.
+//! Two rules of the per-app thread, kept out of its files because they need a live `AXUIElement` to
+//! do anything at all, which no test has.
 //!
 //! The first decides whether a failed request means the window is gone. Getting that wrong is not a
 //! small matter: rini reacts to "gone" by destroying its record and telling the reactor, and
@@ -19,7 +19,7 @@ use rini_core::ids::{WindowId, pid_t};
 /// keeps the rule below testable without an `AXUIElement`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AxFailure {
-    /// The element itself is no longer valid. This is the ONLY answer that means the window is gone.
+    /// The element itself is invalid. This is the ONLY answer that means the window is gone.
     ElementInvalid,
     /// The application did not answer. It is busy, or mid-launch, or wedged — but it is still there.
     AppBusy,

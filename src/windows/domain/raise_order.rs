@@ -324,10 +324,9 @@ mod tests {
     /// The measured case: clicking the left half of a 50/50 pair left the floating Settings window between
     /// the two terminals, in front of one and behind the other.
     ///
-    /// This test used to assert `[Floating, Tiled]` was broken too, generalising from the measured
-    /// sandwich to "a floating window in front of ANY strip window". That generalisation was the bug:
-    /// a newly opened window is frontmost with the whole strip behind it, so it matched, and the strip
-    /// was raised back over a window the user had just opened.
+    /// Only a floating window between strip windows breaks it, not `[Floating, Tiled]`, one in front
+    /// of the whole strip: a newly opened window is frontmost with the strip behind it, and raising
+    /// the strip back over it hides the window the user just opened.
     #[test]
     fn a_floating_window_inside_the_strip_breaks_the_rule() {
         assert!(tiled_is_behind(&[Tiled, Floating, Tiled, Tiled]));

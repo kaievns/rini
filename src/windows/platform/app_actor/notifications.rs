@@ -1,7 +1,7 @@
 //! What the application's notifications tell the reactor: windows created, destroyed, moved,
 //! miniaturized and retitled, the application hidden and shown, and a change of main window.
 //!
-//! A notification for an element a window no longer has says nothing about the window: after a
+//! A notification for an element a window has since lost says nothing about the window: after a
 //! wake a refresh rebinds the window to a new element, and a late one for the old is ignored.
 
 use objc2_application_services::AXError;

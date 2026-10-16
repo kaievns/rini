@@ -37,9 +37,7 @@ const AX_POLL_TIMEOUT: Duration = Duration::from_secs(30);
 ///
 /// One call for both questions because `AXIsProcessTrustedWithOptions` answers both: the prompt
 /// option is what decides whether macOS puts the permission dialog up, and the return value is the
-/// answer either way. The two were written out separately, differing only in
-/// `kCFBooleanFalse` versus `kCFBooleanTrue` — which is precisely the difference between asking
-/// quietly and interrupting the user, and worth a named argument rather than a copied body.
+/// answer either way.
 ///
 /// macOS shows the dialog at most once per process; later prompting calls return without one.
 fn ax_trusted(prompt: Prompt) -> bool {

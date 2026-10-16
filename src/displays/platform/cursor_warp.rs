@@ -45,20 +45,9 @@
 //! the displays are stacked and nothing about the desk. It comes from the config's
 //! `warp-mouse-across-stacked-outputs upper-side=`, defaulting to `left`.
 //!
-//! This was originally implemented the other way round, pairing right-goes-up with left-goes-down,
-//! which sent the pointer to the opposite screen AND to the wrong edge of it.
-//!
-//! # History
-//!
-//! Ported from `okibi-warp`, a standalone Swift daemon that lived in the config directory
-//! with its own LaunchAgent. Bringing it in-tree removes the separate build step and the
-//! agent, and more importantly lets it CHECK its own precondition: the daemon assumed the
-//! displays were stacked and would have fought a side-by-side arrangement silently. This
-//! version verifies the geometry every tick and does nothing when it does not hold.
-//!
-//! An earlier approach (paneru's `horizontal_mouse_warp`) needed a hand-tuned pixel offset
-//! that broke whenever the arrangement changed. Everything here is derived from
-//! `CGDisplayBounds` at runtime, so docking and rearranging need no intervention.
+//! It checks its own precondition every tick: when the displays are not stacked it does nothing,
+//! rather than fight an arrangement it was not made for. Every edge comes from `CGDisplayBounds` at
+//! run time, never a hand-tuned pixel offset, so docking and rearranging need no intervention.
 //!
 //! # Permissions
 //!
@@ -108,7 +97,7 @@ const POLL: Duration = Duration::from_millis(8);
 /// displays repeatedly.
 const COOLDOWN: Duration = Duration::from_millis(250);
 
-/// Probe distance used to ask "is there a display beyond this edge".
+/// Probe distance for asking "is there a display beyond this edge".
 const BEYOND_PROBE: f64 = 10.0;
 
 #[derive(Debug)]
@@ -242,9 +231,9 @@ fn cursor_position() -> Option<CGPoint> {
 
 /// Where the cursor should be warped to, or None if this position is not a warp trigger.
 ///
-/// Split out as a free function over plain geometry so the decision can be unit tested
-/// without a display or a running actor. Every branch here is a reason NOT to warp, which
-/// matters: warping when macOS would have handled the crossing natively means fighting it.
+/// Plain geometry, so the decision is tested without a display or a running actor. Every branch
+/// here is a reason NOT to warp, which matters: warping when macOS would have handled the
+/// crossing natively means fighting it.
 fn warp_target(
     screens: &[WarpScreen],
     cursor: CGPoint,

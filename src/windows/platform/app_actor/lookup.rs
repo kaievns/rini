@@ -132,8 +132,8 @@ impl<W: AxWorld> State<W> {
     pub(super) fn remove_stale_windows(&mut self) {
         let mut to_remove = Vec::new();
         for (&wid, window) in self.windows.iter() {
-            // `kAXWindowsAttribute` is space-filtered and cannot be used to decide
-            // whether a tracked window still exists globally. Only drop state when
+            // `kAXWindowsAttribute` is space-filtered and cannot decide whether a
+            // tracked window still exists globally. Only drop state when
             // the element itself has become invalid.
             if let Err(error) = self.ax.role(&window.elem)
                 && is_gone(Self::failure_of(&error))
