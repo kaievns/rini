@@ -52,11 +52,10 @@ pub enum Request {
         window: WindowId,
         frame: CGRect,
         txid: TransactionId,
-        enhanced_ui: SuppressEnhancedUi,
     },
-    SetBatchWindowFrame(Vec<(WindowId, CGRect)>, TransactionId, SuppressEnhancedUi),
+    SetBatchWindowFrame(Vec<(WindowId, CGRect)>, TransactionId),
     /// Position-only batch reserved for virtual workspace switches.
-    SetWorkspaceSwitchPositions(Vec<(WindowId, CGPoint)>, TransactionId, SuppressEnhancedUi),
+    SetWorkspaceSwitchPositions(Vec<(WindowId, CGPoint)>, TransactionId),
     /// Raise the windows within a single space, in the given order. All windows must be
     /// in the same space, or they will not be raised correctly.
     ///
@@ -72,25 +71,17 @@ pub enum Request {
 }
 
 impl Request {
+    /// Whether this request writes a frame or a position, which turns the app's Enhanced User
+    /// Interface off for the whole burst it arrives in.
     #[inline]
     pub(crate) fn disables_enhanced_ui(&self) -> bool {
-        match self {
-            Self::SetWindowFrame { enhanced_ui, .. }
-            | Self::SetBatchWindowFrame(_, _, enhanced_ui)
-            | Self::SetWorkspaceSwitchPositions(_, _, enhanced_ui) => {
-                *enhanced_ui == SuppressEnhancedUi::Yes
-            }
-            _ => false,
-        }
+        matches!(
+            self,
+            Self::SetWindowFrame { .. }
+                | Self::SetBatchWindowFrame(..)
+                | Self::SetWorkspaceSwitchPositions(..)
+        )
     }
-}
-
-/// Whether the app's Enhanced User Interface is turned off for the burst of requests carrying a
-/// frame write: one `Yes` in the burst turns it off for all of them.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum SuppressEnhancedUi {
-    Yes,
-    No,
 }
 
 /// Which of the raise manager's sequences a raise belongs to, so its completions and timeout are
@@ -120,38 +111,21 @@ pub enum Quiet {
 mod tests {
     use super::*;
 
-    fn frame_write(enhanced_ui: SuppressEnhancedUi) -> Request {
-        Request::SetWindowFrame {
-            window: WindowId::new(1, 1),
-            frame: CGRect::ZERO,
-            txid: TransactionId::default(),
-            enhanced_ui,
-        }
-    }
-
-    /// Only a frame or position write that asks for it turns Enhanced User Interface off.
+    /// Every frame or position write turns Enhanced User Interface off, and nothing else does.
     #[test]
-    fn a_write_turns_enhanced_ui_off_only_when_it_asks_to() {
+    fn every_frame_or_position_write_turns_enhanced_ui_off() {
         let txid = TransactionId::default();
         let cases = [
-            (frame_write(SuppressEnhancedUi::Yes), true),
-            (frame_write(SuppressEnhancedUi::No), false),
             (
-                Request::SetBatchWindowFrame(Vec::new(), txid, SuppressEnhancedUi::Yes),
+                Request::SetWindowFrame {
+                    window: WindowId::new(1, 1),
+                    frame: CGRect::ZERO,
+                    txid,
+                },
                 true,
             ),
-            (
-                Request::SetBatchWindowFrame(Vec::new(), txid, SuppressEnhancedUi::No),
-                false,
-            ),
-            (
-                Request::SetWorkspaceSwitchPositions(Vec::new(), txid, SuppressEnhancedUi::Yes),
-                true,
-            ),
-            (
-                Request::SetWorkspaceSwitchPositions(Vec::new(), txid, SuppressEnhancedUi::No),
-                false,
-            ),
+            (Request::SetBatchWindowFrame(Vec::new(), txid), true),
+            (Request::SetWorkspaceSwitchPositions(Vec::new(), txid), true),
             (
                 Request::Raise {
                     windows: Vec::new(),

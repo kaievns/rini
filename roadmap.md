@@ -36,6 +36,11 @@ requirement itself; this list only collects them.
   resolver looks for the key window on that space, probed only with one display. A comment
   inherited from rift said it "does not work", with no case recorded (`specs/focus.md`, "Which
   window is focused").
+- **A display with no UUID leaves records that are never pruned.** CoreGraphics reports no UUID
+  for it, so it is named `cgdisplay-{id}` from its `ScreenId` (`DisplayUuid::fallback`). The id can
+  change across a reconnect, and each new one leaves the old name's records behind in the layout
+  file. A reused id hands the old display's homes, strips, widths and launch slots to the next
+  display with no UUID (`src/displays/docs/README.md`, "Known debt").
 - **A restart once restored a layout mirrored.** After a deploy restart on 2026-10-10 the columns
   came back in reverse order, with one window stacked that had stood alone. Seen once, not
   reproduced; the cause is not known.

@@ -1,7 +1,7 @@
 use rini_core::ids::WindowId;
 use tracing::debug;
 
-use crate::app::controller::Sender as WmSender;
+use crate::app::controller::Sender as ControllerSender;
 use crate::app::reactor::MenuState;
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::CommunicationManager;
@@ -81,10 +81,10 @@ pub fn handle_raise_timeout(sequence_id: RaiseSequence) -> EventOutcome {
     EventOutcome::no_change().with_raise_request(raise::Event::RaiseTimeout { sequence_id })
 }
 
-pub fn handle_register_wm_sender(
+pub fn handle_register_controller_sender(
     communication: &mut CommunicationManager,
-    sender: WmSender,
+    sender: ControllerSender,
 ) -> EventOutcome {
-    communication.wm_sender = Some(sender);
+    communication.controller_sender = Some(sender);
     EventOutcome::no_change()
 }

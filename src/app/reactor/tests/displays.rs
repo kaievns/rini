@@ -848,7 +848,7 @@ fn moving_tiled_window_to_display_applies_destination_layout_after_transfer_fram
         .into_iter()
         .flat_map(|request| match request {
             Request::SetWindowFrame { window: wid, frame, .. } if wid == moved => vec![frame],
-            Request::SetBatchWindowFrame(frames, _, _) => frames
+            Request::SetBatchWindowFrame(frames, _) => frames
                 .into_iter()
                 .filter_map(|(wid, frame)| (wid == moved).then_some(frame))
                 .collect(),

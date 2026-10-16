@@ -60,7 +60,7 @@ impl From<crate::windows::platform::lifecycle::AppLifecycle> for WmEvent {
     }
 }
 
-pub struct WmController {
+pub struct Controller {
     config: crate::app::config::Config,
     config_tx: config::actor::Sender,
     events_tx: reactor::Sender,
@@ -72,7 +72,7 @@ pub struct WmController {
     app_threads: AppThreads,
 }
 
-impl WmController {
+impl Controller {
     pub fn new(
         config: crate::app::config::Config,
         config_tx: config::actor::Sender,
@@ -106,7 +106,7 @@ impl WmController {
         }
     }
 
-    #[instrument(name = "wm_controller::handle_event", skip(self))]
+    #[instrument(name = "controller::handle_event", skip(self))]
     pub fn handle_event(&mut self, event: WmEvent) {
         debug!("handle_event");
         use reactor::Event;
@@ -395,7 +395,7 @@ mod tests {
         let (config_tx, _config_rx) = channels::channel();
         let (events_tx, mut events_rx) = channels::channel();
         let (event_tap_tx, _event_tap_rx) = channels::channel();
-        let (mut controller, _sender) = WmController::new(
+        let (mut controller, _sender) = Controller::new(
             crate::app::config::Config::reference(),
             config_tx,
             events_tx,

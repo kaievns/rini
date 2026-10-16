@@ -12,7 +12,7 @@ use tracing::debug;
 
 use super::{Reactor, ScreenInfo};
 use crate::transitions::domain::request::SurfaceWindow;
-use crate::windows::domain::request::{Request, SuppressEnhancedUi};
+use crate::windows::domain::request::Request;
 use crate::workspaces::Direction;
 
 /// Where the active workspace's strip has each window: every window at its strip frame, a parked
@@ -84,12 +84,7 @@ impl Reactor {
                 self.transactions.insert(wsid, txid, frame);
             }
             if let Some(app) = self.apps.get(&wid.pid) {
-                _ = app.handle.send(Request::SetWindowFrame {
-                    window: wid,
-                    frame,
-                    txid,
-                    enhanced_ui: SuppressEnhancedUi::Yes,
-                });
+                _ = app.handle.send(Request::SetWindowFrame { window: wid, frame, txid });
             }
         }
         if skipped > 0 {

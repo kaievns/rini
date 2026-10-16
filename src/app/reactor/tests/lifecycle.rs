@@ -24,7 +24,7 @@ fn config_reload_propagates_non_keybinding_changes_to_the_controller() {
 
     reactor.handle_event(Event::ConfigUpdated(Box::new(updated.clone())));
 
-    let (_, event) = wm_rx.try_recv().expect("config update should reach wm controller");
+    let (_, event) = wm_rx.try_recv().expect("config update should reach the controller");
     let WmEvent::ConfigUpdated(actual) = event else {
         panic!("expected config update, got {event:?}");
     };

@@ -1558,7 +1558,7 @@ fn frames_written(requests: &[Request], wid: WindowId) -> Vec<CGRect> {
     for request in requests {
         match request {
             Request::SetWindowFrame { window: w, frame, .. } if *w == wid => out.push(*frame),
-            Request::SetBatchWindowFrame(frames, _, _) => {
+            Request::SetBatchWindowFrame(frames, _) => {
                 out.extend(frames.iter().filter(|(w, _)| *w == wid).map(|(_, f)| *f))
             }
             _ => {}

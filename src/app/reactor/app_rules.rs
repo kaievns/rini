@@ -9,7 +9,7 @@ use tracing::warn;
 
 use super::{Reactor, WindowFilter};
 use crate::windows::domain::info::AppInfo;
-use crate::windows::domain::request::{Request, SuppressEnhancedUi};
+use crate::windows::domain::request::Request;
 use crate::windows::domain::transaction::TransactionId;
 use crate::workspaces::LayoutEvent;
 use crate::workspaces::domain::app_rules::AfterRules;
@@ -115,7 +115,6 @@ impl Reactor {
                     window: placement.window,
                     frame,
                     txid: transaction,
-                    enhanced_ui: SuppressEnhancedUi::Yes,
                 })
             {
                 warn!(window = ?placement.window, %error, "failed to apply app-rule placement");

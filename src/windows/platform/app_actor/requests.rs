@@ -34,12 +34,12 @@ impl<W: AxWorld> State<W> {
             Request::SetWindowFrame { window, frame, txid, .. } => {
                 self.set_frame(window, frame, txid)?
             }
-            Request::SetBatchWindowFrame(frames, txid, _) => {
+            Request::SetBatchWindowFrame(frames, txid) => {
                 for (wid, desired) in frames {
                     self.set_frame(wid, desired, txid)?;
                 }
             }
-            Request::SetWorkspaceSwitchPositions(positions, txid, _) => {
+            Request::SetWorkspaceSwitchPositions(positions, txid) => {
                 for (wid, position) in positions {
                     self.set_switch_position(wid, position, txid)?;
                 }
@@ -176,7 +176,6 @@ mod tests {
     use super::super::fixtures::{PID, announced, app_with, peer, raisable, rect, state_with};
     use super::*;
     use crate::windows::domain::ax_events::AxNotificationKind;
-    use crate::windows::domain::request::SuppressEnhancedUi;
     use crate::windows::platform::ax::world::FakeAx;
 
     /// A frame write that changes the size is size, then position, then size AGAIN.
@@ -210,7 +209,6 @@ mod tests {
                 window: wid,
                 frame: desired,
                 txid: TransactionId::default(),
-                enhanced_ui: SuppressEnhancedUi::No,
             })
             .expect("the write succeeds");
 
@@ -250,7 +248,6 @@ mod tests {
                 window: wid,
                 frame: desired,
                 txid: TransactionId::default(),
-                enhanced_ui: SuppressEnhancedUi::No,
             })
             .expect("the write succeeds");
 
@@ -289,7 +286,6 @@ mod tests {
                 window: wid,
                 frame: desired,
                 txid: TransactionId::default(),
-                enhanced_ui: SuppressEnhancedUi::No,
             })
             .expect("the write succeeds");
 
@@ -340,7 +336,6 @@ mod tests {
             .handle_request(Request::SetBatchWindowFrame(
                 vec![(kept_wid, to_kept), (unread_wid, to_unread)],
                 TransactionId::default(),
-                SuppressEnhancedUi::No,
             ))
             .expect("the writes succeed");
 
@@ -365,11 +360,8 @@ mod tests {
         let to = rect(400., 0., 100., 100.);
 
         let frames = vec![(untracked, to), (foreign, to), (wids[0], to)];
-        let done = state.handle_request(Request::SetBatchWindowFrame(
-            frames,
-            TransactionId::default(),
-            SuppressEnhancedUi::No,
-        ));
+        let done =
+            state.handle_request(Request::SetBatchWindowFrame(frames, TransactionId::default()));
 
         assert!(matches!(done, Ok(false)));
         assert_eq!(state.ax.positions.borrow().as_slice(), &[(7, to.origin)]);
@@ -393,7 +385,6 @@ mod tests {
             .handle_request(Request::SetWorkspaceSwitchPositions(
                 vec![(wids[0], CGPoint::new(600., 0.))],
                 txid,
-                SuppressEnhancedUi::No,
             ))
             .expect("handled");
         state.handle_notification(7, AxNotificationKind::WindowMoved, Some(wids[0]));

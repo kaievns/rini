@@ -66,9 +66,7 @@ use crate::transitions::domain::request::Cause;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
 use crate::windows::domain::raise::RaiseManager;
-use crate::windows::domain::request::{
-    AppThreadHandle, Quiet, RaiseSequence, Request, SuppressEnhancedUi,
-};
+use crate::windows::domain::request::{AppThreadHandle, Quiet, RaiseSequence, Request};
 use crate::windows::domain::transaction::{TransactionId, WindowTxStore};
 use crate::windows::platform::mouse::MouseState;
 use crate::workspaces::domain::display_memory::DisplayMemory;
@@ -259,7 +257,7 @@ pub enum Event {
 
     Command(Command),
 
-    RegisterWmSender(crate::app::controller::Sender),
+    RegisterControllerSender(crate::app::controller::Sender),
 
     ConfigUpdated(Box<Config>),
 
@@ -450,7 +448,7 @@ impl Event {
             | Event::AttentionChanged(_)
             | Event::Query(_)
             | Event::Command(_)
-            | Event::RegisterWmSender(_)
+            | Event::RegisterControllerSender(_)
             | Event::ConfigUpdated(_)
             | Event::ConfigFileRead { .. } => return None,
         })
@@ -666,7 +664,7 @@ impl Reactor {
                 transitions_tx: None,
                 pictures: None,
                 raise_manager_tx,
-                wm_sender: None,
+                controller_sender: None,
                 events_tx: None,
             },
             last_sls_notification_ids: Vec::new(),
@@ -1066,7 +1064,6 @@ impl Reactor {
                 window: write.window,
                 frame: write.frame,
                 txid: transaction,
-                enhanced_ui: SuppressEnhancedUi::Yes,
             })
         {
             warn!(window = ?write.window, %error, "failed to write requested window frame");
@@ -1115,8 +1112,8 @@ impl Reactor {
         }
 
         for event in outcome.wm_events {
-            if let Some(wm) = self.communication_manager.wm_sender.as_ref() {
-                wm.send(event);
+            if let Some(controller) = self.communication_manager.controller_sender.as_ref() {
+                controller.send(event);
             }
         }
 
@@ -1172,8 +1169,8 @@ impl Reactor {
     }
 
     fn publish_service_config(&mut self, config: Config) {
-        if let Some(wm) = &self.communication_manager.wm_sender {
-            wm.send(crate::app::controller::WmEvent::ConfigUpdated(Box::new(config)));
+        if let Some(controller) = &self.communication_manager.controller_sender {
+            controller.send(crate::app::controller::WmEvent::ConfigUpdated(Box::new(config)));
         }
         // Re-sends both the flag and the geometry, so toggling
         // warp_cursor_between_stacked_displays applies without a restart.
