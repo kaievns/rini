@@ -2,7 +2,7 @@
 //! rini's Mach service: the bootstrap name, the receive port on a CFRunLoop, request dispatch and
 //! replies. Built on `rini_mach_sys`.
 use core::mem::{offset_of, size_of};
-use core::ptr::null;
+use core::ptr::{null, null_mut};
 use std::ffi::CString;
 use std::os::raw::{c_int, c_void};
 
@@ -19,6 +19,7 @@ fn bs_name() -> CString {
 }
 pub fn is_mach_server_registered() -> bool { mach_get_bs_port(&bs_name()) != 0 }
 type CFIndex = isize;
+type Boolean = u8;
 type CFAllocatorRef = *const c_void;
 type CFStringRef = *const c_void;
 type CFMachPortRef = *const c_void;
@@ -42,13 +43,13 @@ unsafe extern "C" {
         portNum: mach_port_t,
         callout: CFMachPortCallBack,
         context: *const CFMachPortContext,
-        shouldFreeInfo: u8,
+        shouldFreeInfo: *mut Boolean,
     ) -> CFMachPortRef;
 
     fn CFMachPortCreateRunLoopSource(
         allocator: CFAllocatorRef,
         port: CFMachPortRef,
-        order: c_int,
+        order: CFIndex,
     ) -> CFRunLoopSourceRef;
 
     fn CFRunLoopAddSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
@@ -294,10 +295,16 @@ fn add_to_main_run_loop(server: &'static Server) -> bool {
         release: None,
         copyDescription: None,
     };
-    // SAFETY: the context is live for the call, which copies it; its `info` is `'static` and the
-    // callout has CFMachPortCallBack's signature.
+    // SAFETY: the declaration matches CFMachPort.h's; the context is live for the call, which
+    // copies it, its `info` is `'static`, and the callout has CFMachPortCallBack's signature.
     let cf_mach_port = unsafe {
-        CFMachPortCreateWithPort(null(), server.port, Some(mach_message_callback), &cf_context, 0)
+        CFMachPortCreateWithPort(
+            null(),
+            server.port,
+            Some(mach_message_callback),
+            &cf_context,
+            null_mut(),
+        )
     };
     if cf_mach_port.is_null() {
         error!(
@@ -306,7 +313,8 @@ fn add_to_main_run_loop(server: &'static Server) -> bool {
         );
         return false;
     }
-    // SAFETY: `cf_mach_port` is the live CFMachPort just created.
+    // SAFETY: the declaration matches CFMachPort.h's, and `cf_mach_port` is the live CFMachPort
+    // just created.
     let source = unsafe { CFMachPortCreateRunLoopSource(null(), cf_mach_port, 0) };
     if source.is_null() {
         error!("mach_server_begin: CFMachPortCreateRunLoopSource returned null");
