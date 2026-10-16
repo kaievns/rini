@@ -739,11 +739,13 @@ cause: a 1147pt window requested at 572pt (the layout's intended size) came back
 aspect-fitted into a corner, and the tile drew it at two-thirds size on black.
 The buffer is therefore sized from the window's frame at enumeration time;
 `target.size` only decides whether to capture. The check locks the
-`CVPixelBuffer`, not the IOSurface: creating or locking IOSurfaces from parallel
-test threads raced SkyLight's lazy initialisation and aborted the suite in 3% to
-8% of runs ("Cannot form weak reference to instance of class
-SLSWindowManagementFallbackBridge"), so the tests use plain closures and 1x1
-`CGImage` bitmaps.
+`CVPixelBuffer`, not the IOSurface. The suite abort once blamed on IOSurfaces
+made from parallel test threads ("Cannot form weak reference to instance of
+class SLSWindowManagementFallbackBridge") came from `ScreenCache` tests reading
+SkyLight at once, as `docs/testing.md` records. The `edges_are_painted` tests
+read a plain closure, the input `edges_are_painted` takes, and the
+`pictures::platform` tests that need an IOSurface make it through
+`surface::new_surface`.
 
 ### Why fixing it in the layer is the wrong fix
 

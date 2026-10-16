@@ -71,8 +71,6 @@ fn content_reaches_edges(buffer: &CVPixelBuffer) -> Option<bool> {
     if width == 0 || height == 0 {
         return None;
     }
-    // The pixel buffer's lock, not the IOSurface's: an IOSurface lock off the main thread races
-    // SkyLight's lazy initialisation.
     // SAFETY: `buffer` is a live pixel buffer, unlocked below with the same flags.
     if unsafe { CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly) } != 0 {
         return None;
@@ -465,8 +463,8 @@ mod tests {
         assert!(window_picture(&target(), size, None, Some(false), now).is_none());
     }
 
-    /// Alpha reader over a plain buffer whose top-left `fill_w` x `fill_h` pixels are painted.
-    /// Not a real IOSurface: creating one from a test thread races SkyLight's lazy initialisation.
+    /// Alpha reader whose top-left `fill_w` x `fill_h` pixels are painted, a closure because
+    /// `edges_are_painted` takes one.
     fn painted(fill_w: usize, fill_h: usize) -> impl Fn(usize, usize) -> u8 {
         move |x, y| if x < fill_w && y < fill_h { 255 } else { 0 }
     }
