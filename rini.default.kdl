@@ -136,7 +136,8 @@ animations {
     slowdown 1.0
 
     // How every movement is drawn. "slide", the only look so far, slides each window along the
-    // strip to its place. A flight keeps the look it began with; a reload's takes the next one.
+    // strip to its place. A flight keeps the look it began with; a reload's look applies from the
+    // next flight on.
     look "slide"
 
     // Uncomment `journal` to write every step of every transition to
