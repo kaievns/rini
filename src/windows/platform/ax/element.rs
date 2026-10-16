@@ -261,19 +261,27 @@ impl fmt::Debug for AXUIElement {
 }
 
 /// A struct an `AXValue` holds, and the `AXValueType` that names it.
-trait AxStruct: Default {
+///
+/// # Safety
+///
+/// `TYPE` names exactly `Self`'s C struct, since `AXValueGetValue` and `AXValueCreate` copy that
+/// type's size through a pointer to `Self`.
+unsafe trait AxStruct: Default {
     const TYPE: AXValueType;
 }
 
-impl AxStruct for CGPoint {
+// SAFETY: `kAXValueCGPointType` is a `CGPoint`.
+unsafe impl AxStruct for CGPoint {
     const TYPE: AXValueType = AXValueType::CGPoint;
 }
 
-impl AxStruct for CGSize {
+// SAFETY: `kAXValueCGSizeType` is a `CGSize`.
+unsafe impl AxStruct for CGSize {
     const TYPE: AXValueType = AXValueType::CGSize;
 }
 
-impl AxStruct for CGRect {
+// SAFETY: `kAXValueCGRectType` is a `CGRect`.
+unsafe impl AxStruct for CGRect {
     const TYPE: AXValueType = AXValueType::CGRect;
 }
 
