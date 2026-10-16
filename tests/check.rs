@@ -182,11 +182,11 @@ fn every_crate_inherits_the_workspace_lints() {
     }
 }
 
-/// Every unsafe block and `unsafe impl` says why it is sound and every unsafe operation in an unsafe
-/// fn sits in a block of its own, both denied in `[workspace.lints]` and allowed nowhere, and no
-/// source holds a `static mut`.
+/// Every unsafe block and `unsafe impl` says why it is sound, every unsafe operation in an unsafe
+/// fn sits in a block of its own and every public unsafe fn has a `# Safety` section, each denied
+/// in `[workspace.lints]` and allowed, expected or lowered to a warning nowhere.
 #[test]
-fn the_workspace_denies_undocumented_unsafe_and_holds_no_static_mut() {
+fn the_workspace_denies_undocumented_unsafe_and_no_source_allows_it() {
     let manifest = fs::read_to_string(Path::new(ROOT).join("Cargo.toml")).unwrap();
     let table = |name: &str| -> Vec<String> {
         let (_, rest) = manifest.split_once(&format!("\n[workspace.lints.{name}]\n")).unwrap();
@@ -195,6 +195,7 @@ fn the_workspace_denies_undocumented_unsafe_and_holds_no_static_mut() {
     let lints = [
         ("rust", "unsafe_op_in_unsafe_fn"),
         ("clippy", "undocumented_unsafe_blocks"),
+        ("clippy", "missing_safety_doc"),
     ];
     for (tool, lint) in lints {
         assert!(
@@ -202,14 +203,11 @@ fn the_workspace_denies_undocumented_unsafe_and_holds_no_static_mut() {
             "{lint} is not denied"
         );
     }
-    let static_mut = ["static", "mut "].join(" ");
     let mut offending = Vec::new();
     for (path, source) in rust_sources(&["src", "crates", "tests"]) {
         for (at, line) in source.lines().enumerate() {
-            let allows = line.contains("allow(") || line.contains("expect(");
-            if line.contains(&static_mut)
-                || (allows && lints.iter().any(|(_, lint)| line.contains(lint)))
-            {
+            let lowers = ["allow(", "expect(", "warn("].iter().any(|level| line.contains(level));
+            if lowers && lints.iter().any(|(_, lint)| line.contains(lint)) {
                 offending.push(format!("{path}:{}", at + 1));
             }
         }

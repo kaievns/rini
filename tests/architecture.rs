@@ -1671,7 +1671,7 @@ fn a_path_is_named_only_whole() {
 /// Names the docs quote that rini does not define: the window server's and SkyLight's internals as
 /// disassembled, yabai's and niri's functions as read from their source, and rustc's and clippy's
 /// lints.
-const OTHERS_NAMES: [&str; 16] = [
+const OTHERS_NAMES: [&str; 17] = [
     "managed_display_set_current_space",
     "post_space_lifecycle_notification",
     "managed_space_update_membership",
@@ -1688,6 +1688,7 @@ const OTHERS_NAMES: [&str; 16] = [
     "allow_attributes_without_reason",
     "unsafe_op_in_unsafe_fn",
     "fn_params_excessive_bools",
+    "multiple_unsafe_ops_per_block",
 ];
 
 /// Names the docs record as deleted: the audits' findings as they were found, and rift's options
@@ -2339,4 +2340,67 @@ fn pattern((a, b, c, d): (u8, u8, u8)) { let s = "(a, b, c, d)"; }
         (9, 4),
         (17, 4),
     ]);
+}
+
+/// The 1-based line of every `static mut` in `source`'s code, a `&'static mut` reference aside.
+fn static_muts(source: &str) -> Vec<usize> {
+    let code = blank_comments(source, true);
+    let mut tokens: Vec<(usize, String)> = Vec::new();
+    for (index, line) in code.lines().enumerate() {
+        let mut word = String::new();
+        for c in line.chars().chain(std::iter::once(' ')) {
+            if c.is_alphanumeric() || c == '_' {
+                word.push(c);
+                continue;
+            }
+            if !word.is_empty() {
+                tokens.push((index + 1, std::mem::take(&mut word)));
+            }
+            if !c.is_whitespace() {
+                tokens.push((index + 1, c.to_string()));
+            }
+        }
+    }
+    tokens
+        .windows(2)
+        .enumerate()
+        .filter(|(at, pair)| {
+            pair[0].1 == "static" && pair[1].1 == "mut" && (*at == 0 || tokens[at - 1].1 != "'")
+        })
+        .map(|(_, pair)| pair[0].0)
+        .collect()
+}
+
+/// A `static mut` is shared mutable state every reader reaches unsynchronised, so a value written
+/// once is a `OnceLock` or a leak and one written often sits behind a lock or an atomic.
+#[test]
+fn nothing_in_the_repo_holds_a_static_mut() {
+    let mut broken = Vec::new();
+    for path in ["src", "crates", "tests", "tools"]
+        .iter()
+        .filter(|dir| Path::new(dir).is_dir())
+        .flat_map(|dir| rust_files(Path::new(dir)))
+    {
+        for line in static_muts(&fs::read_to_string(&path).expect("readable source")) {
+            broken.push(format!("{}:{line}", slash(&path)));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "hold these in a OnceLock, a lock or an atomic:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_static_mut_is_found_in_code_and_never_in_a_comment_a_string_or_a_static_reference() {
+    let source = r#"static mut SERVER: u8 = 0;
+pub static
+    mut COUNT: u32 = 0;
+// static mut IN_A_COMMENT: u8 = 0;
+static NAME: &str = "static mut";
+fn borrow(slot: &'static mut u8) {}
+static MUTEX: Mutex<u8> = Mutex::new(0);
+"#;
+    assert_eq!(static_muts(source), vec![1, 2]);
 }

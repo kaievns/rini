@@ -260,8 +260,8 @@ agrees with CI only at the same version.
 Every crate takes its lints from `[workspace.lints]` in `Cargo.toml` (`[lints] workspace = true`,
 held by `every_crate_inherits_the_workspace_lints`): clippy's defaults, plus `redundant_lifetimes`,
 `unused_macro_rules`, `fn_params_excessive_bools` (denied, with `max-fn-params-bools = 1` in
-`clippy.toml`), `struct_excessive_bools`, `allow_attributes_without_reason`, and
-`undocumented_unsafe_blocks` and `unsafe_op_in_unsafe_fn`, both denied. The last means every
+`clippy.toml`), `undocumented_unsafe_blocks`, `unsafe_op_in_unsafe_fn` and `missing_safety_doc`
+(each denied), `struct_excessive_bools` and `allow_attributes_without_reason`. The last means every
 `#[allow]` says why, in one of two ways. One a roadmap task removes names the quality roadmap's task
 id (`reason = "P5.1"`) and sits on the one item it covers, and only when that task's done-criterion
 takes the lint away: splitting a function or a file leaves its parameter lists as long. One allowed
@@ -293,6 +293,9 @@ Nothing else in the repo cites an id; a comment or a doc names the work in words
 |---|---|---|
 
 Every unsafe block and `unsafe impl` carries a `// SAFETY:` comment naming the invariant it rests
-on, and every unsafe operation in an `unsafe fn` sits in an unsafe block of its own with its own
-comment. No source allows either lint or holds a `static mut`
-(`the_workspace_denies_undocumented_unsafe_and_holds_no_static_mut`).
+on, every unsafe operation in an `unsafe fn` sits in an unsafe block of its own with its own
+comment, and every public `unsafe fn` has a `# Safety` section. No source allows, expects or warns
+on any of the three lints (`the_workspace_denies_undocumented_unsafe_and_no_source_allows_it`).
+`multiple_unsafe_ops_per_block` is not on, because blocks under `src` and `crates` make two or
+more unsafe calls under one invariant. Nothing in `src`, `crates`, `tests` or `tools` holds a
+`static mut` (`nothing_in_the_repo_holds_a_static_mut`).
