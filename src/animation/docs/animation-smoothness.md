@@ -249,8 +249,7 @@ window itself is transparent, and the stand-in, one flat pixel, has no corners
 at all. The overlay clips such a tile's picture layer, crop pieces included, to
 the corner its hairline rounds to (`cornerRadius`, laid at every placement, with
 `masksToBounds`), whose corner a resize's track carries with the hairline's, so
-the clip stays clamped to the tile as it is ("The corner, measured" in
-`src/decorations/docs/README.md`); the shadow caster and the hairline are
+the clip stays clamped to the tile as it is (`src/decorations/docs/corner.md`); the shadow caster and the hairline are
 never clipped (`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`).
 The decision is in `docs/pictures-motion-transitions.md`. The pictures service
 bakes them (`capture_on_screen`). The flight engine marks each tile

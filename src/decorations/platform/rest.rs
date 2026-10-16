@@ -6,8 +6,8 @@
 //! overlay goes up, when its flight has landed and when it lifts. It reads the window server itself
 //! only as a landed flight places it, each frame drawn there. While no window can wear a band the reactor turns it
 //! off: every rest window is closed, and it does nothing until the next model.
-//! The rules are `domain::rest`; why panels are pooled, shown by alpha and ordered as they are is "At
-//! rest" in `src/decorations/docs/README.md`.
+//! The rules are `domain::rest`; why panels are pooled, shown by alpha and ordered as they are is
+//! `src/decorations/docs/rest-windows.md`.
 
 use std::cell::RefCell;
 use std::rc::Rc;

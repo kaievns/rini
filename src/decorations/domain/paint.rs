@@ -628,9 +628,9 @@ mod tests {
     }
 
     /// Core Animation mixes stops in a space of its own: offscreen it drew black to white at 147 in
-    /// the middle, a power of 1.8, where sRGB's values give 128 and linear light 186 ("Gradients" in
-    /// `src/decorations/docs/README.md`). Stops held within half a level in sRGB and in linear light
-    /// hold within one at that power.
+    /// the middle, a power of 1.8, where sRGB's values give 128 and linear light 186
+    /// (`src/decorations/docs/gradients.md`). Stops held within half a level in sRGB and in linear
+    /// light hold within one at that power.
     #[test]
     fn the_stop_count_keeps_each_space_within_one_level() {
         let mut most = 0;

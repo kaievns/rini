@@ -8,7 +8,7 @@ use rini_geometry::space::{Point, ScreenRect, Size, Tile, TileRect, TileSize};
 use crate::decorations::domain::style::{Decoration, OUTLINE_PT};
 
 /// The corner radius of a window the window server reports none for, in points: the commonest a
-/// standard window reports. See "The corner, measured" in `src/decorations/docs/README.md`.
+/// standard window reports. See `src/decorations/docs/corner.md`.
 pub const FALLBACK_RADIUS: f64 = 16.0;
 
 /// Room the mask leaves for the shadow: past where the focused blur (three radii plus the offset,

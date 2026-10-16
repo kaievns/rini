@@ -28,7 +28,7 @@ this crate just to hold a number.
 `SLSSetWindowLevel` and `SLSSetWindowSubLevel` act only on a window of the caller's own
 connection: rini sets them on its rest windows, copied from the window each decorates, and lets
 AppKit order the two ("Ordering a rest window" in
-[`src/decorations/docs/README.md`](../../../src/decorations/docs/README.md)). `SLSOrderWindow` is
+[`src/decorations/docs/rest-windows.md`](../../../src/decorations/docs/rest-windows.md)). `SLSOrderWindow` is
 not declared: against another process's window it did nothing (probe P1, same section).
 
 `SLSNewConnection` opens a further connection of rini's own. Every read that waits on the last Core
