@@ -40,9 +40,9 @@ mod tests {
     use super::*;
     use crate::space::ScreenSize;
 
-    /// The measured case. A strip re-fit took a window from 918pt to 917pt, and treating that one
-    /// point as a resize sent the whole layout to the Accessibility engine, which writes every
-    /// window separately and lets the strip come apart.
+    /// The measured case: a strip re-fit of a window from 918pt to 917pt is rounding. Read as a
+    /// resize, it sends the whole layout to the Accessibility engine, which writes every window
+    /// separately and lets the strip come apart.
     #[test]
     fn a_point_of_rounding_is_not_a_resize() {
         assert!(!is_a_resize(

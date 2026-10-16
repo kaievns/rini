@@ -5,12 +5,18 @@ use std::mem;
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{
-    CFAbsoluteTimeGetCurrent, CFIndex, CFRetained, CFRunLoop, CFRunLoopActivity, CFRunLoopObserver,
-    CFRunLoopObserverContext, CFRunLoopSource, CFRunLoopSourceContext, CFRunLoopTimer,
-    CFRunLoopTimerContext, kCFRunLoopCommonModes,
+    CFAbsoluteTimeGetCurrent, CFIndex, CFRetained, CFRunLoop, CFRunLoopActivity, CFRunLoopMode,
+    CFRunLoopObserver, CFRunLoopObserverContext, CFRunLoopSource, CFRunLoopSourceContext,
+    CFRunLoopTimer, CFRunLoopTimerContext, kCFRunLoopCommonModes,
 };
 
 use crate::turns::{self, MainTurn};
+
+/// `kCFRunLoopCommonModes`, the modes every source, timer and observer here is added in.
+pub(crate) fn common_modes() -> Option<&'static CFRunLoopMode> {
+    // SAFETY: a CoreFoundation constant, set before any Rust code runs and never written.
+    unsafe { kCFRunLoopCommonModes }
+}
 
 /// A core foundation run loop source.
 ///
@@ -22,18 +28,27 @@ use crate::turns::{self, MainTurn};
 #[derive(Clone, PartialEq)]
 pub struct WakeupHandle(CFRetained<CFRunLoopSource>, CFRetained<CFRunLoop>);
 
-// SAFETY:
-// - CFRunLoopSource and CFRunLoop are CoreFoundation/ObjC objects which are allowed to be used
-//   from multiple threads.
-// - This handle only exposes `wake()` (signal + wake_up). It does not expose the underlying
-//   handler or allow mutation of the run loop/source beyond signaling.
-// - Therefore it is safe to treat this as Send + Sync for the purposes of a Waker hot path.
+// SAFETY: the handle holds two retained CF objects, whose retain and release are atomic, and
+// reaches the handler only through `wake`: CFRunLoopSourceSignal and CFRunLoopWakeUp may be called
+// from any thread, and the handler runs only on the run loop it was added to. A handle dropped last
+// on another thread after that loop's thread ended frees the source there, through the run loop it
+// retains, and `release` then leaks the non-`Send` closure rather than drop it off its thread.
 unsafe impl Send for WakeupHandle {}
+// SAFETY: as for `Send`: `wake`, the one thing a shared handle does, is callable from any thread.
 unsafe impl Sync for WakeupHandle {}
 
 struct Handler<F> {
     ref_count: isize,
     func: F,
+    /// The thread that made it, the one `func` may be dropped on.
+    owner: libc::pthread_t,
+}
+
+/// The calling thread. It needs no thread-local, so it reads while the thread's run loop is torn
+/// down; only a thread begun after this one ended can share it.
+fn this_thread() -> libc::pthread_t {
+    // SAFETY: names the calling thread; no pointer is passed or read.
+    unsafe { libc::pthread_self() }
 }
 
 impl WakeupHandle {
@@ -46,27 +61,39 @@ impl WakeupHandle {
     /// run in relative to other run loop sources, and should normally be set to
     /// 0.
     pub fn for_current_thread<F: Fn() + 'static>(order: CFIndex, handler: F) -> WakeupHandle {
-        let handler_ptr = Box::into_raw(Box::new(Handler { ref_count: 0, func: handler }));
+        let handler_ptr = Box::into_raw(Box::new(Handler {
+            ref_count: 0,
+            func: handler,
+            owner: this_thread(),
+        }));
 
         // `info` is a *mut Handler<F>; retain/release keep its count and free the box at zero.
         unsafe extern "C-unwind" fn perform<F: Fn() + 'static>(info: *mut c_void) {
-            // SAFETY: `info` was created from a Box<Handler<F>> and is valid.
-            let handler = unsafe { &mut *(info as *mut Handler<F>) };
+            // SAFETY: `info` is the leaked Box<Handler<F>>, freed only by the last release, after
+            // the source's last perform. Shared, so a perform re-entered from a nested run of the
+            // loop aliases nothing mutable.
+            let handler = unsafe { &*(info as *const Handler<F>) };
             (handler.func)();
         }
         unsafe extern "C-unwind" fn retain<F>(info: *const c_void) -> *const c_void {
-            // SAFETY: `info` was created from a Box<Handler<F>> and is valid.
+            // SAFETY: `info` is the leaked Box<Handler<F>>; CF retains it once, as it creates the
+            // source, while nothing else can reach it.
             let handler = unsafe { &mut *(info as *mut Handler<F>) };
             handler.ref_count += 1;
             info
         }
         unsafe extern "C-unwind" fn release<F>(info: *const c_void) {
-            // SAFETY: `info` was created from a Box<Handler<F>> and is valid.
+            // SAFETY: `info` is the leaked Box<Handler<F>>; CF releases it as the source is freed,
+            // when no perform can be running.
             let handler = unsafe { &mut *(info as *mut Handler<F>) };
             handler.ref_count -= 1;
             if handler.ref_count == 0 {
-                // Recreate the Box to drop it.
-                mem::drop(unsafe { Box::from_raw(info as *mut Handler<F>) });
+                // SAFETY: the count retain raised is back to zero, so this is the box's last use.
+                let handler = unsafe { Box::from_raw(info as *mut Handler<F>) };
+                let Handler { func, owner, .. } = *handler;
+                if owner != this_thread() {
+                    mem::forget(func);
+                }
             }
         }
 
@@ -83,10 +110,12 @@ impl WakeupHandle {
             perform: Some(perform::<F>),
         };
 
+        // SAFETY: the context is live for the call, which copies it, and its callbacks each take
+        // the `Handler<F>` its `info` points at.
         let source = unsafe { CFRunLoopSource::new(None, order, &mut context as *mut _) };
 
         let run_loop = CFRunLoop::current().unwrap();
-        run_loop.add_source(source.as_deref(), unsafe { kCFRunLoopCommonModes });
+        run_loop.add_source(source.as_deref(), common_modes());
 
         WakeupHandle(source.unwrap(), run_loop)
     }
@@ -138,7 +167,8 @@ impl RepeatingTimer {
         };
 
         let fire_date = CFAbsoluteTimeGetCurrent() + seconds;
-        // SAFETY: the context pointer is valid, and the callout matches CFRunLoopTimerCallBack.
+        // SAFETY: the context is live for the call, which copies it; its `info` is the leaked
+        // handler, which `callout`, of CFRunLoopTimerCallBack's signature, reads as its own type.
         let timer = unsafe {
             CFRunLoopTimer::new(
                 None,
@@ -160,7 +190,7 @@ impl RepeatingTimer {
             drop(unsafe { Box::from_raw(handler_ptr) });
             return None;
         };
-        run_loop.add_timer(Some(&timer), unsafe { kCFRunLoopCommonModes });
+        run_loop.add_timer(Some(&timer), common_modes());
 
         Some(Self {
             timer,
@@ -175,7 +205,7 @@ impl Drop for RepeatingTimer {
         // Invalidate before freeing the handler: invalidation is what guarantees the callout will
         // not be entered again.
         self.timer.invalidate();
-        self.run_loop.remove_timer(Some(&self.timer), unsafe { kCFRunLoopCommonModes });
+        self.run_loop.remove_timer(Some(&self.timer), common_modes());
         if !self.handler.is_null() {
             // SAFETY: the timer is invalidated and removed, so the callout cannot run again, and
             // nothing else holds this pointer.
@@ -260,7 +290,7 @@ impl TurnObserver {
             drop(unsafe { Box::from_raw(handler_ptr) });
             return None;
         };
-        let modes = unsafe { kCFRunLoopCommonModes };
+        let modes = common_modes();
         run_loop.add_observer(Some(&woke), modes);
         run_loop.add_observer(Some(&sleeps), modes);
         Some(Self {
@@ -274,7 +304,7 @@ impl TurnObserver {
 
 impl Drop for TurnObserver {
     fn drop(&mut self) {
-        let modes = unsafe { kCFRunLoopCommonModes };
+        let modes = common_modes();
         for observer in [&self.woke, &self.sleeps] {
             observer.invalidate();
             self.run_loop.remove_observer(Some(observer), modes);
@@ -289,10 +319,62 @@ impl Drop for TurnObserver {
 mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     use super::*;
     use crate::executor::{Executor, sleep};
+
+    /// Records each thread it is dropped on.
+    struct DropProbe(Arc<Mutex<Vec<libc::pthread_t>>>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) { self.0.lock().unwrap().push(this_thread()); }
+    }
+
+    #[test]
+    fn a_handler_is_never_dropped_on_a_thread_other_than_the_one_that_made_it() {
+        let drops = Arc::new(Mutex::new(Vec::new()));
+        let handle = thread::spawn({
+            let drops = drops.clone();
+            move || {
+                let probe = DropProbe(drops);
+                WakeupHandle::for_current_thread(0, move || {
+                    let _ = &probe;
+                })
+            }
+        })
+        .join()
+        .unwrap();
+        assert!(
+            drops.lock().unwrap().is_empty(),
+            "the ended thread's loop still holds it"
+        );
+        drop(handle);
+        assert_eq!(
+            *drops.lock().unwrap(),
+            [],
+            "not dropped here, off the thread that made it"
+        );
+
+        let owner = thread::spawn({
+            let drops = drops.clone();
+            move || {
+                let probe = DropProbe(drops);
+                drop(WakeupHandle::for_current_thread(0, move || {
+                    let _ = &probe;
+                }));
+                this_thread()
+            }
+        })
+        .join()
+        .unwrap();
+        assert_eq!(
+            *drops.lock().unwrap(),
+            [owner],
+            "dropped as its own thread ended"
+        );
+    }
 
     #[test]
     fn a_turn_over_a_frame_is_handed_over_with_the_actor_that_held_it() {

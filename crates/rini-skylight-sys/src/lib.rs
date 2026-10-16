@@ -19,7 +19,9 @@ use objc2_foundation::NSArray;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
-pub static G_CONNECTION: Lazy<cid_t> = Lazy::new(|| unsafe { SLSMainConnectionID() });
+pub static G_CONNECTION: Lazy<cid_t> =
+    // SAFETY: takes no argument; answers this process's own connection, made on the first call.
+    Lazy::new(|| unsafe { SLSMainConnectionID() });
 
 #[allow(non_camel_case_types, reason = "SkyLight's C name")]
 pub type cid_t = i32;
@@ -221,8 +223,8 @@ unsafe extern "C" {
     pub fn CGEventSourceCreate(state: CGEventSourceStateID) -> *mut CFType;
     pub fn CGWarpMouseCursorPosition(point: CGPoint) -> CGError;
 
-    /// Physical size of a display in millimetres. Used to map a cursor crossing by real-world
-    /// position rather than by fraction, which matters whenever two displays differ in size.
+    /// Physical size of a display in millimetres, which maps a cursor crossing by real-world
+    /// position rather than by fraction, as two displays of different sizes need.
     pub fn CGDisplayScreenSize(display: u32) -> CGSize;
     /// Re-couple the hardware mouse to the on-screen cursor after a warp.
     ///

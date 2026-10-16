@@ -274,8 +274,8 @@ An allow over a whole crate or file, `#![allow]`, is one of these, held by
 
 | File | Allows |
 |---|---|
-| `crates/rini-mach-sys/src/lib.rs` | Mach's C names; unsafe operations and `missing_safety_doc`, P5.1 |
-| `crates/rini-ipc/src/mach.rs` | Mach's C names; unsafe operations and `missing_safety_doc`, P5.1 |
+| `crates/rini-mach-sys/src/lib.rs` | Mach's C names |
+| `crates/rini-ipc/src/mach.rs` | Mach's C names |
 | `crates/rini-skylight-sys/src/lib.rs` | SkyLight's C names |
 | `src/displays/platform/cgs_notify.rs` | SkyLight's C names |
 | `src/windows/platform/sub_level.rs` | SkyLight's C names |
@@ -290,8 +290,7 @@ Nothing else in the repo cites an id; a comment or a doc names the work in words
 
 | Id | Task | Done when |
 |---|---|---|
-| P5.1 | SAFETY comments everywhere; deny `undocumented_unsafe_blocks` and `unsafe_op_in_unsafe_fn`; replace `static mut SERVER` in `rini-ipc` | clippy clean with both denied; 0 `static mut` in the repo |
+| P5.1 | SAFETY comments everywhere; deny `undocumented_unsafe_blocks` and `unsafe_op_in_unsafe_fn` | clippy clean with both denied; 0 `static mut` in the repo |
 
-`unsafe_op_in_unsafe_fn` is not in `[workspace.lints]`. Edition 2024 warns on it already, and
-`rini-mach-sys` and `rini-ipc`'s `mach.rs` allow it with 47 unsafe operations outside an `unsafe`
-block, so P5.1 denies it once they are wrapped, with `undocumented_unsafe_blocks` beside it.
+`unsafe_op_in_unsafe_fn` is not in `[workspace.lints]`. Edition 2024 warns on it already, so P5.1
+denies it once every unsafe operation is wrapped, with `undocumented_unsafe_blocks` beside it.

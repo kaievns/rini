@@ -41,6 +41,17 @@ because other code can stop the run loop spuriously. Unwinding out of the task
 drops it (`executor_drops_main_task_on_unwind`), which is what lets a panicking
 actor thread release its channel senders.
 
+## A wakeup that outlives its thread
+
+A `Waker` can be held on another thread after the executor's thread ends. As that thread ends,
+CoreFoundation takes the source out of the run loop's modes but not out of its common-mode items, so
+the loop still holds it until the loop is freed, and the last `WakeupHandle`, which retains the loop,
+is what frees it (measured on macOS 26.7: the source's retain count falls from 3 to 2 as the thread
+ends, and its release runs where the last handle drops). So the handler can be freed on whichever
+thread drops the last `Waker`. The handler's closure holds the executor's `Weak`, which
+is not `Send`, so `release` drops it only on the thread that made it and leaks it on any other
+(`a_handler_is_never_dropped_on_a_thread_other_than_the_one_that_made_it`).
+
 ## Message channels
 
 `rini_runloop::channel` is an unbounded tokio mpsc carrying the sender's tracing

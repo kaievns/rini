@@ -413,10 +413,17 @@ impl NotificationCenterInner {
         if user_info.is_null() {
             return;
         }
-        let handler_ptr = user_info as *mut NotificationCenterInner;
+        /// The handler, dereferenced only by the work below, on the main queue.
+        struct OnMain(*const NotificationCenterInner);
+        // SAFETY: the pointer crosses to the main queue and is dereferenced only there, on the main
+        // thread that made the handler and is the only one to use it.
+        unsafe impl Send for OnMain {}
+        let handler = OnMain(user_info.cast::<NotificationCenterInner>().cast_const());
         let parsed = DisplayReconfigFlags::from_bits_truncate(flags);
-        queue::main().after_f_s(Time::NOW, (handler_ptr, parsed), |(handler_ptr, flags)| unsafe {
-            let handler = &*handler_ptr;
+        queue::main().after_f_s(Time::NOW, (handler, parsed), |(handler, flags)| {
+            // SAFETY: `user_info` is the handler `new` registered, which `watch_for_notifications`,
+            // never returning, keeps alive.
+            let handler = unsafe { &*handler.0 };
             handler.send_space_event(spaces::Notification::DisplayReconfigured { flags });
         });
     }

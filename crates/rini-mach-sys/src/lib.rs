@@ -1,7 +1,13 @@
 #![allow(non_camel_case_types, non_snake_case, reason = "Mach's C names")]
-#![allow(unsafe_op_in_unsafe_fn, clippy::missing_safety_doc, reason = "P5.1")]
 //! Raw Mach messaging: types, constants, the `mach_msg` family, bootstrap lookup, and the one
-//! helper the IPC server's second-instance check calls. No policy.
+//! helper that finds a registered service. No policy.
+//!
+//! # Safety
+//!
+//! A declaration with no precondition is `safe`. Every other is `unsafe` to call, and its caller
+//! owes what its man page asks: each pointer valid for the call, each out-pointer writable for the
+//! type it names, and a `mach_msg` buffer at least as long as the larger of its send and receive
+//! sizes. Port names need no proof: the kernel answers a bad one with an error.
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_void};
 
@@ -61,7 +67,7 @@ pub const fn MACH_MSGH_BITS_REMOTE(bits: u32) -> u32 { bits & 0xff }
 pub const fn MACH_MSGH_BITS_LOCAL(bits: u32) -> u32 { (bits >> 8) & 0xff }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct mach_msg_header_t {
     pub msgh_bits: mach_msg_bits_t,
     pub msgh_size: mach_msg_size_t,
@@ -93,26 +99,18 @@ pub struct mach_port_limits {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
-pub struct mach_msg_body_t {
-    pub msgh_descriptor_count: u32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct mach_msg_ool_descriptor_t {
-    pub address: *mut c_void,
-    pub size: u32,
-    pub deallocate: u8, // boolean_t
-    pub copy: u8,       // mach_msg_copy_options_t
-    pub pad1: u32,
-    pub type_: u32, // MACH_MSG_OOL_DESCRIPTOR = 1
-}
-
-#[repr(C)]
 pub struct mach_inline_message_t<const N: usize> {
     pub header: mach_msg_header_t,
     pub data: [u8; N],
+}
+
+impl<const N: usize> Default for mach_inline_message_t<N> {
+    fn default() -> Self {
+        Self {
+            header: mach_msg_header_t::default(),
+            data: [0; N],
+        }
+    }
 }
 
 #[repr(C)]
@@ -121,9 +119,18 @@ pub struct mach_receive_buffer_t<const N: usize> {
     pub trailer: [u8; 512],
 }
 
+impl<const N: usize> Default for mach_receive_buffer_t<N> {
+    fn default() -> Self {
+        Self {
+            message: mach_inline_message_t::default(),
+            trailer: [0; 512],
+        }
+    }
+}
+
 #[link(name = "System", kind = "framework")]
 unsafe extern "C" {
-    pub fn mach_task_self() -> mach_port_name_t;
+    pub safe fn mach_task_self() -> mach_port_name_t;
 
     pub fn task_get_special_port(
         task: mach_port_name_t,
@@ -200,15 +207,22 @@ pub const MAX_MESSAGE_SIZE_USIZE: usize = MAX_MESSAGE_SIZE as usize;
 pub type mach_message_t = mach_inline_message_t<MAX_MESSAGE_SIZE_USIZE>;
 pub type mach_buffer_t = mach_receive_buffer_t<MAX_MESSAGE_SIZE_USIZE>;
 
-pub unsafe fn mach_get_bs_port(bs_name: &CStr) -> mach_port_t {
+/// A send right to the service registered as `bs_name` in this task's bootstrap domain, or 0 when
+/// none is.
+pub fn mach_get_bs_port(bs_name: &CStr) -> mach_port_t {
     let mut bs_port: mach_port_t = 0;
-    if task_get_special_port(mach_task_self(), TASK_BOOTSTRAP_PORT, &mut bs_port) != KERN_SUCCESS {
+    // SAFETY: the out-pointer is a live local of the port type it is written as.
+    let found =
+        unsafe { task_get_special_port(mach_task_self(), TASK_BOOTSTRAP_PORT, &mut bs_port) };
+    if found != KERN_SUCCESS {
         error!("mach_get_bs_port: task_get_special_port failed");
         return 0;
     }
 
     let mut service_port: mach_port_t = 0;
-    let result = bootstrap_look_up(bs_port, bs_name.as_ptr(), &mut service_port);
+    // SAFETY: `bs_name` is NUL-terminated and borrowed across the call; the out-pointer is a live
+    // local of the port type it is written as.
+    let result = unsafe { bootstrap_look_up(bs_port, bs_name.as_ptr(), &mut service_port) };
     if result != KERN_SUCCESS {
         if result != BOOTSTRAP_UNKNOWN_SERVICE {
             error!(

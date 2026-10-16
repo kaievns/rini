@@ -228,7 +228,8 @@ struct PidRange(pid_t);
 // of `split_off`.
 impl Borrow<PidRange> for WindowId {
     fn borrow(&self) -> &PidRange {
-        // Safety: PidRange is repr(transparent).
+        // SAFETY: `PidRange` is `repr(transparent)` over `pid_t`, so a `&pid_t` is a valid
+        // `&PidRange` for the same borrow.
         unsafe { &*std::ptr::addr_of!(self.pid).cast() }
     }
 }

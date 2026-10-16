@@ -5,17 +5,15 @@ pub mod client;
 pub mod mach;
 pub mod protocol;
 
-use std::ffi::c_char;
-
 pub use client::RiniMachClient;
-use mach::{is_mach_server_registered, mach_server_run, send_mach_reply};
+use mach::{is_mach_server_registered, mach_server_run};
 pub use protocol::*;
-use rini_mach_sys::mach_msg_header_t;
 use serde::Serialize;
 use tracing::{error, info, trace};
 
-/// What the window manager answers over IPC. The daemon implements it in `src/app/api/backend.rs`;
-/// every method blocks the Mach server thread until the reactor replies.
+/// What the window manager answers over IPC. The daemon implements it in `src/app/api/backend.rs`.
+/// Every method is called on the main run loop and blocks the main thread until it returns, so none
+/// may wait on the main thread.
 pub trait Backend: Send + 'static {
     fn workspaces(&self, space: Option<u64>) -> Vec<crate::protocol::WorkspaceData>;
     fn windows(&self, space: Option<u64>) -> Vec<crate::protocol::WindowData>;
@@ -44,16 +42,11 @@ pub fn run_mach_server<B: Backend>(reactor: B) -> Result<(), String> {
             "Another Rini instance is already running; quit it before starting another.".into(),
         );
     }
-    info!("Spawning background Mach server thread");
+    info!("Registering the Mach service on a background thread, to be served on the main run loop");
 
     std::thread::spawn(move || {
         let handler = MachHandler { reactor };
-        unsafe {
-            mach_server_run(
-                Box::into_raw(Box::new(handler)) as *mut _,
-                handle_mach_request_c::<B>,
-            );
-        }
+        mach_server_run(Box::new(move |payload| handler.answer(payload)));
     });
 
     Ok(())
@@ -64,6 +57,43 @@ struct MachHandler<B: Backend> {
 }
 
 impl<B: Backend> MachHandler<B> {
+    /// The NUL-terminated JSON reply to a request's `payload`, read up to its first NUL; `None`, so
+    /// no reply, when the payload is empty or not UTF-8.
+    fn answer(&self, payload: &[u8]) -> Option<Vec<u8>> {
+        if payload.is_empty() {
+            return None;
+        }
+        let trimmed = match payload.iter().position(|&b| b == 0) {
+            Some(pos) => &payload[..pos],
+            None => payload,
+        };
+        let message = match std::str::from_utf8(trimmed) {
+            Ok(message) => message,
+            Err(e) => {
+                let lossy = String::from_utf8_lossy(trimmed);
+                error!(
+                    "Invalid UTF-8 in message after trimming NULs: {}. Contents (lossy): {}",
+                    e, lossy
+                );
+                return None;
+            }
+        };
+        let response = match serde_json::from_str(message) {
+            Ok(request) => self.handle_request(request),
+            Err(e) => {
+                error!("Failed to parse request: {}", e);
+                RiniResponse::Error {
+                    error: serde_json::json!({ "message": format!("Invalid request format: {}", e) }),
+                }
+            }
+        };
+        let mut response = serde_json::to_vec(&response).unwrap();
+        if response.last().copied() != Some(0) {
+            response.push(0);
+        }
+        Some(response)
+    }
+
     fn handle_request(&self, request: RiniRequest) -> RiniResponse {
         trace!("Handling request: {:?}", request);
 
@@ -139,82 +169,6 @@ fn success<T: Serialize>(data: T) -> RiniResponse {
         Err(e) => RiniResponse::Error {
             error: serde_json::json!({ "message": "Failed to serialize response", "details": e.to_string() }),
         },
-    }
-}
-
-unsafe extern "C" fn handle_mach_request_c<B: Backend>(
-    context: *mut std::ffi::c_void,
-    message: *mut c_char,
-    len: u32,
-    original_msg: *mut mach_msg_header_t,
-) {
-    if context.is_null() {
-        error!("Invalid context pointer");
-        return;
-    }
-    if message.is_null() || len == 0 {
-        return;
-    }
-
-    let handler = unsafe { &*(context as *const MachHandler<B>) };
-    let message_slice = unsafe { std::slice::from_raw_parts(message as *const u8, len as usize) };
-
-    let trimmed_slice = if let Some(pos) = message_slice.iter().position(|&b| b == 0) {
-        &message_slice[..pos]
-    } else {
-        message_slice
-    };
-
-    let message_str = match std::str::from_utf8(trimmed_slice) {
-        Ok(s) => s,
-        Err(e) => {
-            let lossy = String::from_utf8_lossy(trimmed_slice);
-            error!(
-                "Invalid UTF-8 in message after trimming NULs: {}. Contents (lossy): {}",
-                e, lossy
-            );
-            return;
-        }
-    };
-
-    let request: RiniRequest = match serde_json::from_str(message_str) {
-        Ok(req) => req,
-        Err(e) => {
-            error!("Failed to parse request: {}", e);
-            let error_response = RiniResponse::Error {
-                error: serde_json::json!({ "message": format!("Invalid request format: {}", e) }),
-            };
-            send_response(original_msg, &error_response);
-            return;
-        }
-    };
-
-    let response = handler.handle_request(request);
-    send_response(original_msg, &response);
-}
-
-fn send_response(original_msg: *mut mach_msg_header_t, response: &RiniResponse) {
-    let mut response_json = serde_json::to_vec(response).unwrap();
-
-    if response_json.last().copied() != Some(0) {
-        response_json.push(0);
-    }
-
-    unsafe {
-        if !send_mach_reply(
-            original_msg,
-            response_json.as_ptr() as *mut c_char,
-            response_json.len() as u32,
-        ) {
-            error!(
-                "Failed to send mach reply for message id {}",
-                if original_msg.is_null() {
-                    -1
-                } else {
-                    (*original_msg).msgh_id
-                }
-            );
-        }
     }
 }
 
@@ -345,5 +299,27 @@ mod tests {
         assert_eq!(fake.executed.lock().unwrap().as_slice(), [
             crate::protocol::Command::Layout(LayoutCommand::SwitchToWorkspace(2))
         ]);
+    }
+
+    #[test]
+    fn a_payload_is_answered_nul_terminated_and_one_rini_cannot_read_is_not_answered() {
+        let (handler, _) = handler();
+        let reply = handler.answer(b"\"get_metrics\"\0\0\0").expect("a reply");
+        let (json, nul) = reply.split_at(reply.len() - 1);
+        assert_eq!(nul, b"\0");
+        let reply: serde_json::Value = serde_json::from_slice(json).unwrap();
+        assert_eq!(reply["data"]["m"], 1);
+
+        let reply = handler.answer(b"nonsense\0").expect("an error reply");
+        let reply: serde_json::Value = serde_json::from_slice(&reply[..reply.len() - 1]).unwrap();
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("Invalid request format")
+        );
+
+        assert_eq!(handler.answer(b""), None);
+        assert_eq!(handler.answer(b"\xff\xfe\0"), None);
     }
 }
