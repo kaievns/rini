@@ -1,6 +1,6 @@
 //! Which width the next `Mod+R` asks for.
 //!
-//! Lifted out of `scrolling.rs` so the rule can be exercised without a layout, a column or a
+//! Kept apart from `scrolling.rs` so the rule can be exercised without a layout, a column or a
 //! selection. The whole content is "given the width a column has now, which preset comes next" —
 //! and the one subtlety that the full viewport is not held by the bounds like the others.
 

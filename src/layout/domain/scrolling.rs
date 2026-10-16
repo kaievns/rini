@@ -2827,8 +2827,8 @@ mod tests {
     }
 
     /// A full-width column must keep its strip-relative x, not be pinned to the
-    /// viewport origin. Regression test for `frame = tiling`, which lifted the
-    /// window out of the strip so it stayed put while everything scrolled past.
+    /// viewport origin. Framed as `tiling`, the window would leave the strip and
+    /// stay put while everything scrolls past.
     #[test]
     fn fullscreen_within_gaps_column_scrolls_with_the_strip() {
         let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
