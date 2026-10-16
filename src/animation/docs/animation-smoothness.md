@@ -339,14 +339,18 @@ Mechanics worth remembering:
   up to a point while no edge moves more than a half. A member a merge moves to another container
   starts at its plan frame and keeps the rounding its tile sat at; placed from the plan frame alone
   it jumped by up to a point, origin and width. A container the merge opens is placed where it
-  ends, but its movement starts where it installs, where its first member's container is drawn,
-  and not at the whole point nearest that: from there a member of another container moved into
-  it jumped by up to a point, a half for the container and a half for its own frame. That passed
-  a half point on 6 of seeds 1-40 and 163 of the bend contract's generator under Slide, the
-  farthest 0.82pt on seed 2, and on 1 under the test-only Linear look, 0.79pt (measured with a
-  probe not committed; not seen on screen). The contract runs seeds 163 and 2 and holds every
-  edge to a half point (`every_look_bends_a_flight_without_a_jump`); tile frames, and so where
-  every window lands, are as they were, within 0.88pt of its plan over those 41 seeds.
+  ends, and `Merged::bend` hands the look its movement from where it installs, where its first
+  member's container is drawn. Slide starts that movement at the whole point nearest there, so a
+  member of another container moved into it jumps by up to a point, a half for the container and
+  a half for its own frame: past a half point on 6 of seeds 1-40 and 163 of the bend contract's
+  generator, the farthest 0.82pt on seed 2 (measured with a probe not committed; not seen on
+  screen). The test-only Linear look starts it where it installs and stays within a half point
+  there. The contract runs seeds 163 and 2 and allows such a window a point (`OPENED_SLACK`,
+  `every_look_bends_a_flight_without_a_jump`). Starting Slide's there too keeps every window
+  within a half point, moves the start of such a container's spring by under a half point per
+  axis and leaves tile frames, and so where every window lands, as they are, within 0.88pt of
+  its plan over those 41 seeds, but changes Slide's output (`SLIDE_SCORES`), so Slide keeps the
+  whole point.
 
 Found on the first live run of the per-tile strip path: **floating tiles
 were drawn behind the desktop backdrop.** The band behind the strip sits

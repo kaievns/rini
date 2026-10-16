@@ -687,6 +687,7 @@ mod tests {
         newcomer: WindowId,
         playing: &'a Score,
         sent: &'a FlightPlan,
+        delta: &'a PlanDelta,
         bent: &'a Flight,
     }
 
@@ -709,7 +710,7 @@ mod tests {
                     let newcomer = wid(500 + step as u32);
                     let (incoming, pan) = random_pass(&mut rng, &mut flight, newcomer);
                     let (playing, sent) = (flight.score.clone(), flight.plan.clone());
-                    flight.merge(&incoming, pan, None, now);
+                    let delta = flight.merge(&incoming, pan, None, now).delta;
                     check(&Bend {
                         tag: format!("seed {seed} run {run} step {step}"),
                         now,
@@ -717,6 +718,7 @@ mod tests {
                         newcomer,
                         playing: &playing,
                         sent: &sent,
+                        delta: &delta,
                         bent: &flight,
                     })?;
                 }
@@ -726,15 +728,29 @@ mod tests {
     }
 
     /// The seeds of the bend contracts' flights: 163, and 2, which moves members of two containers
-    /// into one a pass opens, a member from the other drawn 0.82pt from where it was while
-    /// `Merged::bend` started the container's movement at the whole point nearest where it installs.
+    /// into one a pass opens, a member from the other drawn 0.82pt from where it was under Slide,
+    /// which starts the container's movement at the whole point nearest where it installs.
     const BEND_SEEDS: [u64; 2] = [163, 2];
+
+    /// How far a window a pass moves into a container it opens may be drawn from where it was: Slide
+    /// starts the container's movement on a whole point where its first member's container is drawn,
+    /// and a member from another container sat at another fraction, a half point each. See "Whole
+    /// points" in `src/animation/docs/animation-smoothness.md`.
+    const OPENED_SLACK: f64 = 1.0;
+
+    /// Whether the merge that left `delta` moved `window` into a container it opened.
+    fn moved_into_an_opened(delta: &PlanDelta, window: WindowId) -> bool {
+        delta.reparented.iter().any(|&(moved, _, to)| {
+            moved == window && delta.new_groups.iter().any(|group| group.key == to)
+        })
+    }
 
     /// The bend contract, over `bent_flights`: whatever a pass brings and whenever it lands, every
     /// window the flight drew before it is drawn where it was, and a window it brings rides beside
     /// the windows it sits beside in the layout: drawn where the pass has it, moved by as far as the
     /// container it rides is drawn from where the last pass sent it. Each edge within the half point
-    /// placing on whole points allows.
+    /// placing on whole points allows, and within a point for a window the pass moves into a
+    /// container it opens (`OPENED_SLACK`).
     fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
         let mut brought = 0;
         bent_flights(make, &mut |bend| {
@@ -775,7 +791,12 @@ mod tests {
                     return Err(format!("{tag}: {window:?} gone"));
                 };
                 let apart = edges_apart(is, was);
-                if apart > 0.5 + 1e-6 {
+                let slack = if moved_into_an_opened(bend.delta, window) {
+                    OPENED_SLACK
+                } else {
+                    0.5
+                };
+                if apart > slack + 1e-6 {
                     return Err(format!("{tag}: {window:?} jumped {apart}: {was:?} then {is:?}"));
                 }
             }
@@ -1260,7 +1281,7 @@ mod tests {
     /// half of them bringing a step: the score after the motion starts and after each pass, and each
     /// pass's edits. A change to how Slide moves changes it; one that only moves code between Slide
     /// and what every look shares keeps it.
-    const SLIDE_SCORES: u64 = 0x6373_4c6a_e8c8_829e;
+    const SLIDE_SCORES: u64 = 0xf63d_137b_00ac_6966;
 
     /// Slide draws over seed 163's flights what `SLIDE_SCORES` holds: every node's place, ride and
     /// tracks, and every edit a pass answers; some flights start stepping or pushed, and some passes
