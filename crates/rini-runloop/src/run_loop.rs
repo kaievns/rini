@@ -2,6 +2,7 @@
 
 use std::ffi::c_void;
 use std::mem;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{
@@ -130,13 +131,45 @@ impl WakeupHandle {
     }
 }
 
+/// A handler a CF callout reaches through its `info` pointer. The owner holds one count and each
+/// callout in progress its own, so a handler that drops its owner is freed only once it returns.
+struct SharedHandler<H>(*const H);
+
+impl<H> SharedHandler<H> {
+    fn new(handler: H) -> Self { Self(Rc::into_raw(Rc::new(handler))) }
+
+    fn info(&self) -> *mut c_void { self.0.cast_mut().cast() }
+
+    /// The handler, held for one callout.
+    ///
+    /// # Safety
+    ///
+    /// `info` is the [`info`](Self::info) of a `SharedHandler<H>` that has not dropped.
+    unsafe fn for_call(info: *mut c_void) -> Rc<H> {
+        let handler = info.cast_const().cast::<H>();
+        // SAFETY: `handler` came from `Rc::into_raw` and, by the caller's contract, the owner still
+        // holds the count `new` took.
+        unsafe {
+            Rc::increment_strong_count(handler);
+            Rc::from_raw(handler)
+        }
+    }
+}
+
+impl<H> Drop for SharedHandler<H> {
+    fn drop(&mut self) {
+        // SAFETY: gives back the count `new` took, once; a callout running now holds its own.
+        drop(unsafe { Rc::from_raw(self.0) });
+    }
+}
+
 /// A repeating timer on the current [`CFRunLoop`], invalidated on drop. The run-loop replacement for
 /// `tokio::time` (`docs/run-loop-executor.md`).
 pub struct RepeatingTimer {
     timer: CFRetained<CFRunLoopTimer>,
     run_loop: CFRetained<CFRunLoop>,
-    /// Type-erased so `Drop` frees it as the right type and runs the closure's own destructor.
-    handler: *mut Box<dyn Fn()>,
+    /// Held for its drop, which comes after `Drop` has invalidated the timer.
+    _handler: SharedHandler<Box<dyn Fn()>>,
 }
 
 impl RepeatingTimer {
@@ -149,25 +182,24 @@ impl RepeatingTimer {
             if info.is_null() {
                 return;
             }
-            // SAFETY: `info` is the pointer handed to CFRunLoopTimerContext below. It stays valid
-            // until Drop invalidates the timer, which is what prevents this running afterwards.
-            let handler = unsafe { &*(info as *const Box<dyn Fn()>) };
+            // SAFETY: `info` is the timer's handler, which its Drop frees only after invalidating the
+            // timer, so no callout starts once it is gone.
+            let handler = unsafe { SharedHandler::<Box<dyn Fn()>>::for_call(info) };
             handler();
         }
 
         let seconds = interval.as_secs_f64();
-        let handler: Box<dyn Fn()> = Box::new(handler);
-        let handler_ptr = Box::into_raw(Box::new(handler));
+        let handler = SharedHandler::new(Box::new(handler) as Box<dyn Fn()>);
         let mut context = CFRunLoopTimerContext {
             version: 0,
-            info: handler_ptr as *mut c_void,
+            info: handler.info(),
             retain: None,
             release: None,
             copyDescription: None,
         };
 
         let fire_date = CFAbsoluteTimeGetCurrent() + seconds;
-        // SAFETY: the context is live for the call, which copies it; its `info` is the leaked
+        // SAFETY: the context is live for the call, which copies it; its `info` is the shared
         // handler, which `callout`, of CFRunLoopTimerCallBack's signature, reads as its own type.
         let timer = unsafe {
             CFRunLoopTimer::new(
@@ -180,38 +212,22 @@ impl RepeatingTimer {
                 &mut context as *mut _,
             )
         };
-        let Some(timer) = timer else {
-            // SAFETY: the timer was never created, so nothing can reference the handler.
-            drop(unsafe { Box::from_raw(handler_ptr) });
-            return None;
-        };
-        let Some(run_loop) = CFRunLoop::current() else {
-            // SAFETY: as above, the timer was never scheduled.
-            drop(unsafe { Box::from_raw(handler_ptr) });
-            return None;
-        };
+        let timer = timer?;
+        let run_loop = CFRunLoop::current()?;
         run_loop.add_timer(Some(&timer), common_modes());
 
         Some(Self {
             timer,
             run_loop,
-            handler: handler_ptr,
+            _handler: handler,
         })
     }
 }
 
 impl Drop for RepeatingTimer {
     fn drop(&mut self) {
-        // Invalidate before freeing the handler: invalidation is what guarantees the callout will
-        // not be entered again.
         self.timer.invalidate();
         self.run_loop.remove_timer(Some(&self.timer), common_modes());
-        if !self.handler.is_null() {
-            // SAFETY: the timer is invalidated and removed, so the callout cannot run again, and
-            // nothing else holds this pointer.
-            drop(unsafe { Box::from_raw(self.handler) });
-            self.handler = std::ptr::null_mut();
-        }
     }
 }
 
@@ -225,7 +241,8 @@ pub struct TurnObserver {
     woke: CFRetained<CFRunLoopObserver>,
     sleeps: CFRetained<CFRunLoopObserver>,
     run_loop: CFRetained<CFRunLoop>,
-    handler: *mut Box<dyn Fn(MainTurn)>,
+    /// Held for its drop, which comes after `Drop` has invalidated both observers.
+    _handler: SharedHandler<Box<dyn Fn(MainTurn)>>,
 }
 
 impl TurnObserver {
@@ -245,14 +262,13 @@ impl TurnObserver {
             let Some(turn) = turns::sleeps(Instant::now()) else {
                 return;
             };
-            // SAFETY: `info` is the handler `install` boxed, freed only after `Drop` invalidated
-            // this observer, which is what stops it being called.
-            let handler = unsafe { &*(info as *const Box<dyn Fn(MainTurn)>) };
+            // SAFETY: `info` is the observer's handler, which its Drop frees only after
+            // invalidating this observer, so no callout starts once it is gone.
+            let handler = unsafe { SharedHandler::<Box<dyn Fn(MainTurn)>>::for_call(info) };
             handler(turn);
         }
 
-        let handler: Box<dyn Fn(MainTurn)> = Box::new(handler);
-        let handler_ptr = Box::into_raw(Box::new(handler));
+        let handler = SharedHandler::new(Box::new(handler) as Box<dyn Fn(MainTurn)>);
         let observer = |activity: CFRunLoopActivity,
                         order,
                         callout: unsafe extern "C-unwind" fn(_, _, _),
@@ -281,13 +297,11 @@ impl TurnObserver {
                 CFRunLoopActivity::BeforeWaiting,
                 CFIndex::MAX,
                 sleeps,
-                handler_ptr as *mut c_void,
+                handler.info(),
             ),
             CFRunLoop::current(),
         );
         let (Some(woke), Some(sleeps), Some(run_loop)) = observers else {
-            // SAFETY: no observer was added, so nothing can reference the handler.
-            drop(unsafe { Box::from_raw(handler_ptr) });
             return None;
         };
         let modes = common_modes();
@@ -297,7 +311,7 @@ impl TurnObserver {
             woke,
             sleeps,
             run_loop,
-            handler: handler_ptr,
+            _handler: handler,
         })
     }
 }
@@ -309,16 +323,12 @@ impl Drop for TurnObserver {
             observer.invalidate();
             self.run_loop.remove_observer(Some(observer), modes);
         }
-        // SAFETY: both observers are invalidated and removed, so the callout cannot run again, and
-        // nothing else holds this pointer.
-        drop(unsafe { Box::from_raw(self.handler) });
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use std::cell::{Cell, RefCell};
     use std::sync::{Arc, Mutex};
     use std::thread;
 
@@ -374,6 +384,33 @@ mod tests {
             [owner],
             "dropped as its own thread ended"
         );
+    }
+
+    #[test]
+    fn a_timer_dropped_by_its_own_handler_frees_the_handler_only_once_it_returns() {
+        let drops = Arc::new(Mutex::new(Vec::new()));
+        let drops_when_it_returned = Rc::new(Cell::new(None));
+        let slot: Rc<RefCell<Option<RepeatingTimer>>> = Rc::default();
+        let timer = RepeatingTimer::every(Duration::from_millis(5), {
+            let slot = slot.clone();
+            let probe = DropProbe(drops.clone());
+            let drops_when_it_returned = drops_when_it_returned.clone();
+            move || {
+                drop(slot.borrow_mut().take());
+                drops_when_it_returned.set(Some(probe.0.lock().unwrap().len()));
+            }
+        });
+        *slot.borrow_mut() = timer;
+
+        Executor::run(async { sleep(Duration::from_millis(30)).await });
+
+        assert!(slot.borrow().is_none(), "the handler ran and took its timer");
+        assert_eq!(
+            drops_when_it_returned.get(),
+            Some(0),
+            "its captures live through the call"
+        );
+        assert_eq!(drops.lock().unwrap().len(), 1, "and drop once it returns");
     }
 
     #[test]

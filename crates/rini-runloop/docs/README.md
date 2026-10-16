@@ -8,7 +8,7 @@ that machinery, and nothing else: no window, no workspace, no layout.
 | | |
 |---|---|
 | `executor.rs` | `Executor::run` / `run_main`: one future per run loop, polled from a manual `CFRunLoopSource`; `run_interactive`, `run` at the main thread's quality of service; `sleep`, the run-loop-backed replacement for `tokio::time::sleep` |
-| `run_loop.rs` | `WakeupHandle`, the manual source the executor polls from; `RepeatingTimer`, which `sleep` waits on; `TurnObserver`, the observer pair that opens a turn as the loop wakes and closes it as it goes back to sleep |
+| `run_loop.rs` | `WakeupHandle`, the manual source the executor polls from; `RepeatingTimer`, which `sleep` waits on; `TurnObserver`, the observer pair that opens a turn as the loop wakes and closes it as it goes back to sleep; a timer's or observer's handler may drop its own owner, and is freed once it returns |
 | `turns.rs` | a turn's time, folded: each actor's polls (`timed`), the time outside them, and the window changes noted (`changed`) from 50ms before it; a turn over 8ms is a `MainTurn` |
 | `timer.rs` | `Timer`: an awaitable `CFRunLoopTimer` |
 | `channel.rs` | An unbounded mpsc that carries the sender's tracing span with each message |
