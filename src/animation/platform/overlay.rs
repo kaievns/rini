@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObject};
+use objc2::runtime::AnyObject;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
@@ -124,8 +124,8 @@ fn timing_function(c: CubicBezier) -> Retained<CAMediaTimingFunction> {
 fn curve_function(curve: Curve) -> Retained<CAMediaTimingFunction> {
     match curve {
         Curve::Bezier(c) => timing_function(c),
-        // SAFETY: Core Animation's own timing function name.
         Curve::Linear => {
+            // SAFETY: an immutable `NSString` constant exported by Core Animation.
             CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionLinear })
         }
     }
@@ -220,7 +220,7 @@ fn switch(
     unsafe { keyframes.setValues(Some(&NSArray::from_retained_slice(&[before, after]))) };
     let times = [0.0, corner, 1.0].map(NSNumber::numberWithDouble);
     keyframes.setKeyTimes(Some(&NSArray::from_retained_slice(&times)));
-    // SAFETY: Core Animation's own calculation mode name.
+    // SAFETY: an immutable `NSString` constant exported by Core Animation.
     keyframes.setCalculationMode(unsafe { kCAAnimationDiscrete });
     keyframes.setDuration(track.seconds());
     keyframes.setBeginTime(track.begin());
@@ -749,6 +749,8 @@ impl TileOverlay {
         let converter = CoordinateConverter::from_height(primary_display_height());
         let cocoa_frame = converter.convert_rect(window_rect(frame, top_band))?;
 
+        // SAFETY: a fresh allocation on the main thread, which `mtm` proves, and a window never
+        // closed, so AppKit's release when closed never frees what the `Retained` owns.
         let window = unsafe {
             NSWindow::initWithContentRect_styleMask_backing_defer(
                 NSWindow::alloc(mtm),
@@ -780,8 +782,10 @@ impl TileOverlay {
         // Alpha is the show/hide mechanism: ordering in and out costs about 14ms each way.
         window.setAlphaValue(0.0);
 
+        // SAFETY: `initWithFrame:` takes the one `CGRect` given, and as an init consumes the fresh
+        // allocation and returns it retained, on the main thread `mtm` proves.
         let view: Retained<FlippedView> = unsafe {
-            objc2::msg_send![
+            msg_send![
                 FlippedView::alloc(mtm),
                 initWithFrame: CGRect::new(CGPoint::new(0.0, 0.0), window_rect(frame, top_band).size)
             ]
@@ -1593,9 +1597,7 @@ fn set_tile_content(
 ) -> Option<Duration> {
     match mode {
         ContentMode::Crop => {
-            unsafe {
-                let _: () = msg_send![&*entry.picture, setContents: std::ptr::null::<NSObject>()];
-            }
+            clear_contents(&entry.picture);
             let grid = entry.crop_grid.get_or_insert_with(|| new_crop_grid(&entry.picture));
             for piece in &grid.pieces {
                 piece.setContentsScale(scale);
@@ -1719,6 +1721,7 @@ mod tests {
     use crate::decorations::platform::layers::{
         assert_core_animation_held, hold_core_animation, shadow_mask_path, silhouette_path,
     };
+    use crate::pictures::platform::layer::test_components;
 
     /// The window starts a band below the display's top and loses that much height; the canvas holds
     /// the whole display, lifted by the band so the top is clipped. With no band the two are the
@@ -2850,12 +2853,9 @@ mod tests {
             let animation = unsafe { layer.animationForKey(&NSString::from_str(key_path)) }
                 .unwrap_or_else(|| panic!("nothing under {key_path}"));
             let cut = animation.downcast::<CAKeyframeAnimation>().expect("keyframes");
-            // SAFETY: Core Animation's own calculation mode name.
-            assert_eq!(
-                &*cut.calculationMode(),
-                unsafe { kCAAnimationDiscrete },
-                "held, then cut"
-            );
+            // SAFETY: an immutable `NSString` constant exported by Core Animation.
+            let discrete = unsafe { kCAAnimationDiscrete };
+            assert_eq!(&*cut.calculationMode(), discrete, "held, then cut");
             let times: Vec<f64> =
                 cut.keyTimes().expect("times").iter().map(|t| t.doubleValue()).collect();
             assert_eq!(times, [0.0, key, 1.0]);
@@ -2892,11 +2892,9 @@ mod tests {
             );
             let held = switched(layer, GROUND_COLOUR_KEY);
             let fill = |colour: usize| {
-                let colour = colour as *const objc2_core_graphics::CGColor;
-                // SAFETY: a colour the animation holds, read while the layer holds it.
-                let components =
-                    objc2_core_graphics::CGColor::components(Some(unsafe { &*colour }));
-                unsafe { std::slice::from_raw_parts(components, 4) }.to_vec()
+                // SAFETY: the address of a `CGColor` among the values of an animation the layer
+                // still holds, and the Core Animation hold keeps a commit from dropping it.
+                test_components(unsafe { &*(colour as *const objc2_core_graphics::CGColor) })
             };
             let fills: Vec<Vec<f64>> = held.iter().map(|colour| fill(*colour)).collect();
             assert_eq!(
@@ -3073,12 +3071,7 @@ mod tests {
     fn a_crop_drawn_tile_is_grounded_where_its_picture_ends() {
         use crate::pictures::domain::ground::Ground;
         use crate::pictures::platform::picture::{LazyGround, test_picture};
-        let fill = |layer: &CALayer| {
-            let colour = layer.backgroundColor().expect("filled");
-            // SAFETY: the colour's own four components, read while it is held.
-            let components = objc2_core_graphics::CGColor::components(Some(&colour));
-            unsafe { std::slice::from_raw_parts(components, 4) }.to_vec()
-        };
+        let fill = |layer: &CALayer| test_components(&layer.backgroundColor().expect("filled"));
         let mut before = test_picture(TileSize::new(859.0, 535.0));
         before.ground = LazyGround::known(Ground {
             r: 0.1,
@@ -3187,11 +3180,9 @@ mod tests {
             grid.pieces.iter().all(|piece| !piece.isHidden()),
             "the pieces show"
         );
-        // SAFETY: a read of the layer's own property.
-        assert!(
-            unsafe { tile.picture.contents() }.is_none(),
-            "nothing on the picture layer"
-        );
+        // SAFETY: a read of the layer's own property, which retains what it returns.
+        let contents = unsafe { tile.picture.contents() };
+        assert!(contents.is_none(), "nothing on the picture layer");
     }
 
     /// A clipped picture's corners are cut at its corner, and only the picture is: the shadow
@@ -4024,9 +4015,9 @@ mod tests {
                 tree.tile_layers[&window].decorations.hairline.cornerRadius()
             );
             let hairline = tree.tile_layers[&window].decorations.hairline.clone();
-            assert_eq!(&*picture.cornerCurve(), unsafe {
-                objc2_quartz_core::kCACornerCurveContinuous
-            });
+            // SAFETY: an immutable `NSString` constant exported by Core Animation.
+            let continuous = unsafe { objc2_quartz_core::kCACornerCurveContinuous };
+            assert_eq!(&*picture.cornerCurve(), continuous);
             assert_eq!(picture.cornerCurve(), hairline.cornerCurve());
             tree.play(
                 &[Edit::Place(
@@ -4042,7 +4033,7 @@ mod tests {
             );
             assert_eq!(
                 &*tree.tile_layers[&window].picture.cornerCurve(),
-                unsafe { objc2_quartz_core::kCACornerCurveContinuous },
+                continuous,
                 "a continuous 6pt corner reaching past half of 12pt keeps its curve"
             );
             tree.swap(window, &test_picture(ScreenSize::new(12.0, 400.0)), false, 0.0);

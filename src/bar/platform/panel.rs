@@ -189,6 +189,9 @@ impl BarPanel {
     pub fn new(mtm: MainThreadMarker, on_click: OnClick, on_moved: OnMoved) -> Option<Self> {
         // A placeholder frame: `place` puts it on its display.
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(100.0, layout::HEIGHT));
+        // SAFETY: `initWithContentRect:styleMask:backing:defer:` takes these four values, and as an init
+        // consumes the fresh allocation, on the main thread `mtm` proves. The panel is never closed, so
+        // AppKit's release when closed never frees what the `Retained` owns.
         let window: Retained<BarWindow> = unsafe {
             msg_send![
                 BarWindow::alloc(mtm),
@@ -213,7 +216,9 @@ impl BarPanel {
                 | NSWindowCollectionBehavior::IgnoresCycle
                 | NSWindowCollectionBehavior::FullScreenNone,
         );
-        if let Some(dark) = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }) {
+        // SAFETY: an immutable `NSString` constant exported by AppKit.
+        let dark_aqua = unsafe { NSAppearanceNameDarkAqua };
+        if let Some(dark) = NSAppearance::appearanceNamed(dark_aqua) {
             window.setAppearance(Some(&dark));
         }
 
@@ -222,6 +227,8 @@ impl BarPanel {
             on_click,
             on_moved,
         });
+        // SAFETY: `NSView`'s `initWithFrame:` takes the one `CGRect`, and as an init consumes the fresh
+        // allocation its ivars were set on, on the main thread `mtm` proves.
         let view: Retained<BarView> = unsafe { msg_send![super(view), initWithFrame: frame] };
         view.setWantsLayer(true);
         window.setContentView(Some(&view));
@@ -392,6 +399,7 @@ impl BarPanel {
             let layer = sublayer(parent);
             // Left, and as tall as its picture, so a picture is never scaled and a cut title is cut
             // rather than squeezed.
+            // SAFETY: an immutable `NSString` constant exported by Core Animation.
             layer.setContentsGravity(unsafe { kCAGravityLeft });
             layer.setMasksToBounds(true);
             Drawn {
@@ -504,9 +512,9 @@ impl BarPanel {
             animation.setToValue(Some(&NSValue::valueWithRect(to)));
         }
         animation.setDuration(SLIDE_SECONDS);
-        animation.setTimingFunction(Some(&CAMediaTimingFunction::functionWithName(unsafe {
-            kCAMediaTimingFunctionEaseOut
-        })));
+        // SAFETY: an immutable `NSString` constant exported by Core Animation.
+        let ease_out = unsafe { kCAMediaTimingFunctionEaseOut };
+        animation.setTimingFunction(Some(&CAMediaTimingFunction::functionWithName(ease_out)));
         self.tray.addAnimation_forKey(&animation, Some(&NSString::from_str(SLIDE_KEY)));
     }
 }
@@ -531,10 +539,10 @@ fn fade_animation(from: f64, to: f64, begin: f64) -> Retained<CABasicAnimation> 
     animation.setDuration(FADE_SECONDS);
     animation.setBeginTime(begin);
     // Held at `from` until its turn in the stagger comes.
-    animation.setFillMode(unsafe { kCAFillModeBackwards });
-    animation.setTimingFunction(Some(&CAMediaTimingFunction::functionWithName(unsafe {
-        kCAMediaTimingFunctionEaseInEaseOut
-    })));
+    // SAFETY: immutable `NSString` constants exported by Core Animation.
+    let (backwards, ease) = unsafe { (kCAFillModeBackwards, kCAMediaTimingFunctionEaseInEaseOut) };
+    animation.setFillMode(backwards);
+    animation.setTimingFunction(Some(&CAMediaTimingFunction::functionWithName(ease)));
     animation
 }
 

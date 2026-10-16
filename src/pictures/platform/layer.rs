@@ -49,7 +49,8 @@ pub fn ground_colour(picture: &Picture) -> Option<CFRetained<CGColor>> {
     let Ground { r, g, b, a } = picture.ground();
     let space = ground_space(&picture.image).or_else(CGColorSpace::new_device_rgb);
     let components = [r, g, b, a];
-    // SAFETY: the four components an RGB space with alpha takes, read during the call.
+    // SAFETY: `space` is RGB, as `sample_format` reads no other and device RGB is, so the call reads
+    // three components and alpha, all four alive during it.
     unsafe { CGColor::new(space.as_deref(), components.as_ptr()) }
 }
 
@@ -58,6 +59,15 @@ pub fn ground_colour(picture: &Picture) -> Option<CFRetained<CGColor>> {
 pub fn clear_contents(layer: &CALayer) {
     // SAFETY: no contents is a layer's own default.
     unsafe { layer.setContents(None) }
+}
+
+/// `colour`'s components, as many as it has.
+#[cfg(test)]
+pub(crate) fn test_components(colour: &CGColor) -> Vec<f64> {
+    let count = CGColor::number_of_components(Some(colour));
+    let components = CGColor::components(Some(colour));
+    // SAFETY: `components` points at the colour's `count` components, alive while it is borrowed.
+    unsafe { std::slice::from_raw_parts(components, count) }.to_vec()
 }
 
 #[cfg(test)]
@@ -95,8 +105,7 @@ mod tests {
         set_layer_ground(&layer, &picture);
         let colour = layer.backgroundColor().expect("filled");
         assert_eq!(CGColor::number_of_components(Some(&colour)), 4);
-        // SAFETY: the colour's own four components, read while it is held.
-        let got = unsafe { std::slice::from_raw_parts(CGColor::components(Some(&colour)), 4) };
+        let got = test_components(&colour);
         assert_eq!(got, [0.1, 0.2, 0.3, 0.95]);
     }
 
@@ -127,8 +136,7 @@ mod tests {
             Some(p3),
             "in P3"
         );
-        // SAFETY: the colour's own four components, read while it is held.
-        let got = unsafe { std::slice::from_raw_parts(CGColor::components(Some(&colour)), 4) };
+        let got = test_components(&colour);
         assert_eq!(got, [0.2, 0.5, 0.8, 1.0]);
     }
 

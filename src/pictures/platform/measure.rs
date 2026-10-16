@@ -495,7 +495,7 @@ mod tests {
         let space = display_p3();
         let bgra = CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order32Little.0;
         let ctx = bitmap_context(width, height, &space, CGBitmapInfo(bgra)).unwrap();
-        // SAFETY: the four components an RGB space with alpha takes, read during the call.
+        // SAFETY: Display P3 is RGB, so the call reads three components and alpha, all of `p3`.
         let colour =
             unsafe { objc2_core_graphics::CGColor::new(Some(&space), p3.as_ptr()) }.unwrap();
         CGContext::set_fill_color_with_color(Some(&ctx), Some(&colour));
