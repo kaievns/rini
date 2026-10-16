@@ -223,9 +223,10 @@ band names. A twin rather than a second plan group: every floating window rides
 one translation, so the twin is opened, moved, animated and dropped with
 the floating container (`layers_of`) and a tile moved between them lands where
 it was. It has to be a separate layer at all because tiles are children of their
-container and a container's `zPosition` alone decides its children's order
-against every other container — one floating container cannot put one
-application in front of the strip and another behind it. Found drawing zoom in
+container: a strip container's order against the floating container and its twin
+is the strip layer's `zPosition`, and the floating container's is its own, so
+one floating container cannot put one application in front of the strip and
+another behind it. Found drawing zoom in
 front of the strip for the length of a switch to 1Password and dropping it
 behind on landing ("Which windows come forward together", `specs/animation.md`).
 

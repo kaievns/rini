@@ -1322,7 +1322,10 @@ impl Tree {
     /// Takes away what `node`'s track on `channel` installed.
     fn cut(&self, node: Node, channel: Channel) {
         match node {
-            Node::Strip => self.strip.removeAnimationForKey(&NSString::from_str(STRIP_ZOOM_KEY)),
+            Node::Strip if channel == Channel::Base => {
+                self.strip.removeAnimationForKey(&NSString::from_str(STRIP_ZOOM_KEY))
+            }
+            Node::Strip => {}
             Node::Container(key) => {
                 let key_path = NSString::from_str(container_key(channel));
                 for layer in self.layers_of(key) {
@@ -3952,9 +3955,9 @@ mod tests {
             plays_exactly(&tree);
         }
 
-        /// A zoom posed plays on the strip layer as one played does; a track of no length, a cut and
-        /// a drop each take it off, the drop putting the strip back at rest, and a place draws the
-        /// strip at its model.
+        /// A zoom posed plays on the strip layer as one played does; a track of no length, a cut of
+        /// its channel and a drop each take it off, the drop putting the strip back at rest, a cut of
+        /// another channel leaves it playing, and a place draws the strip at its model.
         #[test]
         fn the_strip_layer_lets_go_of_its_zoom() {
             let _core_animation = hold_core_animation();
@@ -3991,7 +3994,13 @@ mod tests {
             plays_exactly(&tree);
             tree.play(&[home(0.0)], &[]);
             assert!(rini_keys(&tree.strip).is_empty(), "no length");
-            tree.play(&[home(0.35), Edit::Cut(Node::Strip, Channel::Base)], &[]);
+            tree.play(&[home(0.35), Edit::Cut(Node::Strip, Channel::Nudge)], &[]);
+            assert!(
+                !rini_keys(&tree.strip).is_empty(),
+                "a cut of a channel the zoom is not on"
+            );
+            plays_exactly(&tree);
+            tree.play(&[Edit::Cut(Node::Strip, Channel::Base)], &[]);
             assert!(rini_keys(&tree.strip).is_empty(), "cut");
             plays_exactly(&tree);
             tree.play(&[home(0.35), Edit::Drop(Node::Strip)], &[]);
