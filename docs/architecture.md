@@ -290,9 +290,11 @@ These tests in `tests/architecture.rs` hold this rather than good intentions:
 from the feature's root, every module of its `domain/` (and `src/app/docs/README.md` every module
 of `reactor/` and `reactor/events/`),
 `every_documented_path_resolves` fails on any path into `src/`, `crates/`, `tests/`, `docs/`,
-`specs/` or `tools/` that the docs, the code or the tools mention and that no longer exists,
+`specs/`, `tools/`, `bin/` or `.github/` that the docs, the code or the tools mention and that no
+longer exists,
 `every_long_name_a_doc_cites_is_still_defined` fails on a backticked snake_case name of four words
-or more in the docs, a test's included, that is no longer a function or a field (the names quoted
+or more, a test's included, in the docs, `CONTRIBUTING.md`, `CLAUDE.md` or `.github/`, that is no
+longer a function or a field (the names quoted
 from other code are `OTHERS_NAMES`, the ones recorded as deleted `GONE_NAMES`), and
 `every_spec_is_listed_in_the_index` stops a spec nothing links to,
 `no_readme_line_runs_past_80_words` holds every README line to 80 words, and

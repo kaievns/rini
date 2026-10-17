@@ -8,7 +8,8 @@ A spec is written so that someone who has never seen the code can tell whether a
 That means no file paths in a requirement, no function names in a requirement, and no "as implemented
 in". Those belong in the **Where it lives** section at the foot of each spec, which is allowed to rot
 loudly — `tests/architecture.rs` checks every path into `src/`, `crates/`, `tests/`, `docs/`,
-`specs/` or `tools/` that the docs, the code or the tools mention still resolves.
+`specs/`, `tools/`, `bin/` or `.github/` that the docs, the code or the tools mention still
+resolves.
 
 ## The rule
 

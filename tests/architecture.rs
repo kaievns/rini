@@ -797,6 +797,11 @@ fn every_feature_and_crate_documents_itself() {
     );
 }
 
+/// Where a path a doc or a comment points at starts.
+const PATH_ROOTS: [&str; 8] = [
+    "src/", "crates/", "tests/", "docs/", "specs/", "tools/", "bin/", ".github/",
+];
+
 /// Every path a doc or a comment points at still exists.
 ///
 /// Docs rotted three times before this: paths survived two renames of the tree and pointed at
@@ -807,13 +812,11 @@ fn every_documented_path_resolves() {
     let mut check = |text: &str, source: &str| {
         for candidate in text.split(['`', '(', ')', ' ', '\n', ',', ';', '"']) {
             let candidate = candidate.trim_end_matches(['.', ':', '\'']);
-            let is_path = ["src/", "crates/", "tests/", "docs/", "specs/", "tools/"]
-                .iter()
-                .any(|root| candidate.starts_with(root))
+            let is_path = PATH_ROOTS.iter().any(|root| candidate.starts_with(root))
                 && (candidate.ends_with('/')
                     || [
                         ".rs", ".md", ".toml", ".kdl", ".py", ".sh", ".swift", ".json", ".jsonl",
-                        ".csv", ".txt",
+                        ".csv", ".txt", ".yml",
                     ]
                     .iter()
                     .any(|extension| candidate.ends_with(extension)));
@@ -839,7 +842,7 @@ fn every_documented_path_resolves() {
         .collect();
     // The reference config is read by users, and points them at the docs.
     files.push(PathBuf::from("rini.default.kdl"));
-    for dir in ["docs", "specs", "src", "crates", "tools"] {
+    for dir in ["docs", "specs", "src", "crates", "tools", ".github"] {
         collect_markdown(Path::new(dir), &mut files);
     }
     for (dir, extensions) in [
@@ -1884,11 +1887,14 @@ fn declared_names(source: &str) -> Vec<String> {
     out
 }
 
-/// The markdown the identifier check reads: the root README, `docs/`, `specs/`, and every feature's
-/// and crate's own `docs/`.
+/// The markdown the identifier check reads: the root README, `CONTRIBUTING.md`, `CLAUDE.md`,
+/// `docs/`, `specs/`, `.github/`, and every feature's and crate's own `docs/`.
 fn documentation() -> Vec<PathBuf> {
-    let mut files = vec![PathBuf::from("README.md")];
-    for dir in ["docs", "specs"] {
+    let mut files: Vec<PathBuf> = ["README.md", "CONTRIBUTING.md", "CLAUDE.md"]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+    for dir in ["docs", "specs", ".github"] {
         collect_markdown(Path::new(dir), &mut files);
     }
     let mut inside = Vec::new();
