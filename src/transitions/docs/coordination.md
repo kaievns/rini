@@ -250,60 +250,61 @@ The two entry points feed the same `begin_group`:
   window rides, so it slides with its neighbour by construction. A pass is
   flown when something drawable moves or a flight is running
   (`worth_flying`).
-- **Strip movements** (`Event::AnimateSurface` — workspace switches, strip
-  pans and moves along the strip; the wire event the reactor builds from the
-  stacked-workspace geometry in `src/transitions/domain/strip_stack.rs`, carrying
-  `SurfaceWindow`s) start `Immediate`: they arrive once per keystroke and
-  latency is the enemy. `surface_plan` puts every window of the strip in
-  ONE group travelling by the viewport's travel (`surface_travel`,
-  `pan_travel`): one container, one position animation. The exception is a
-  move's swapped columns, which start from their old slots
-  (`SurfaceWindow::from`) and group by their own vectors, but for the column
-  a stepping move passes, which is held at its old slot on the strip; see
-  "The move flight, staged". Under a look that draws them (`Look::stack_gap`,
-  the zoom look's), every pan and bounce the reactor sends also carries the
-  strips of the workspaces above and below (`Reactor::strips_beside`): each
-  tiled window of either that the deepest zoom shows, at its own strip's
-  scroll, a usable height and `stack_gap` above or below, named by its
-  workspace's index (`SurfaceWindow::row`). It travels with the view up and
-  down only, in a group of its own per strip (`RigidGroup::beside`), never the
-  strip's even when both travel alike; a pan merged later moves it only up and
-  down, and names it standing where it is, so it votes itself there and stays.
-  It flies on its picture or the stand-in, ends off the display, so nothing
-  watches, holes or asks for it at frame zero, and the quiet warms it with
-  every window the flight drew. The engine drops these windows from a flight
-  whose look draws none. A switch under such a look stacks its strips the same
-  pitch apart and names every tiled window but the destination's by its
-  workspace's index (`Reactor::switch_rows`), with the strip above the first it
-  travels between and the one below the last drawn beside them as a pan draws
-  them (`Reactor::strips_at`), so a pan merged into it and a switch merged into
-  a pan agree on where each strip is and which windows are the strip's. Every
-  switch names itself to the look (`Cue::Switch`), which Zoom plays on an arc
-  and Slide ignores. A pan's member named of another strip than the container it
-  rides holds votes, and the container comes to hold the strip it names
-  (`Merge::vote`, `Merge::settle_group`): a switch merged into a pan drawing
-  the strips beside landed the destination 24pt low, its windows moved by the
-  switch's pitch from the pan's, and a pan merged into a switch that named
-  every window the strip's had the source win the switch's container and the
-  destination leave it. A plain pan also starts from where it stands
-  any window on screen at the press more than 2pt from where the travel draws
-  it (`start_where_standing`): the window a left-edge drag resized already
-  stands where the release's scroll puts it, and drawn back by the scroll it
-  jumped out by the drag's travel and slid back. A window at another height
-  at the press is parked, since a scroll never moves a window up or down:
-  macOS leaves up to 52pt of some parked windows on screen, more than
-  `is_off_screen` allows, and those flew in diagonally from the corner. A
-  parked window starts where the strip had it at the last pass
-  (`Reactor::take_strip_layout`), which is where the scroll carries it from
-  unless the pass also changed its place on the strip: the columns after a
-  left-edge shrink keep their place on screen, and drawn back by the scroll
-  the one parked beyond the right edge came the shrink onto the screen and
-  slid off. Pinned (floating) windows stand in the floating
-  container with `from == to`; a switch moves the floating container itself
-  by the same travel (`floating_travel`). Visual destinations are
-  deliberately distinct from `final_frames`: a leaving window animates
-  off-screen while its real frame goes to a park, and a held column is drawn
-  going beneath the moved window while its real window parks.
+- **Strip movements** (`Event::AnimateSurface` — workspace switches, strip pans
+  and moves along the strip; the wire event the reactor builds from the
+  stacked-workspace geometry in `src/transitions/domain/strip_stack.rs`,
+  carrying `SurfaceWindow`s) start `Immediate`: they arrive once per keystroke
+  and latency is the enemy. `surface_plan` puts every window of the strip in ONE
+  group travelling by the viewport's travel (`surface_travel`, `pan_travel`):
+  one container, one position animation. The exception is a move's swapped
+  columns, which start from their old slots (`SurfaceWindow::from`) and group by
+  their own vectors, but for the column a stepping move passes, which is held at
+  its old slot on the strip; see "The move flight, staged". Under a look that
+  draws them (`Look::stack_gap`, the zoom look's), every pan and bounce the
+  reactor sends also carries the strips of the workspaces above and below
+  (`Reactor::strips_beside`): each tiled window of either that the deepest zoom
+  shows, at its own strip's scroll, a usable height and `stack_gap` above or
+  below, named by its workspace's index (`SurfaceWindow::row`). It travels with
+  the view up and down only, in a group of its own per strip
+  (`RigidGroup::beside`), never the strip's even when both travel alike; a pan
+  merged later moves it only up and down, and names it standing where it is, so
+  it votes itself there and stays. It flies on its picture or the stand-in, ends
+  off the display, so nothing watches, holes or asks for it at frame zero, and
+  the quiet warms it with every window the flight drew. The engine drops these
+  windows from a pan or a bounce whose flight's look draws none. A switch under
+  such a look stacks its strips the same pitch apart and names every tiled
+  window but the destination's by its workspace's index
+  (`Reactor::switch_rows`), with the strip above the first it travels between
+  and the one below the last drawn beside them as a pan draws them
+  (`Reactor::strips_at`), so a pan merged into it and a switch merged into a pan
+  agree on where each strip is and which windows are the strip's. Every switch
+  names itself to the look (`Cue::Switch`), which Zoom plays on an arc and Slide
+  ignores. A switch reaching a flight whose look draws no strips beside, the
+  look reloaded mid-flight, keeps every strip it names and flies them as strips
+  of the surface (`start_surface`). A pan's member named of another strip than
+  the container it rides holds votes, and the container comes to hold the strip
+  it names (`Merge::vote`, `Merge::settle_group`): a switch merged into a pan
+  drawing the strips beside landed the destination 24pt low, its windows moved
+  by the switch's pitch from the pan's, and a pan merged into a switch that
+  named every window the strip's had the source win the switch's container and
+  the destination leave it. A plain pan also starts from where it stands any
+  window on screen at the press more than 2pt from where the travel draws it
+  (`start_where_standing`): the window a left-edge drag resized already stands
+  where the release's scroll puts it, and drawn back by the scroll it jumped out
+  by the drag's travel and slid back. A window at another height at the press is
+  parked, since a scroll never moves a window up or down: macOS leaves up to
+  52pt of some parked windows on screen, more than `is_off_screen` allows, and
+  those flew in diagonally from the corner. A parked window starts where the
+  strip had it at the last pass (`Reactor::take_strip_layout`), which is where
+  the scroll carries it from unless the pass also changed its place on the
+  strip: the columns after a left-edge shrink keep their place on screen, and
+  drawn back by the scroll the one parked beyond the right edge came the shrink
+  onto the screen and slid off. Pinned (floating) windows stand in the floating
+  container with `from == to`; a switch moves the floating container itself by
+  the same travel (`floating_travel`). Visual destinations are deliberately
+  distinct from `final_frames`: a leaving window animates off-screen while its
+  real frame goes to a park, and a held column is drawn going beneath the moved
+  window while its real window parks.
 
 ## Routing
 

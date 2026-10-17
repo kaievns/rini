@@ -2115,6 +2115,7 @@ mod tests {
         for look in Look::ALL {
             let mut rng = Gen(37);
             let mut focus = Gen(38);
+            let mut switches = Gen(39);
             let mut staged = 0;
             for run in 0..RUNS {
                 let count = 1 + rng.below(6) as u32;
@@ -2152,31 +2153,28 @@ mod tests {
                         direction: directions[rng.below(4) as usize],
                     },
                 };
-                let mut travel = OverlayVector::new(rng.pt(-900.0, 900.0), 0.0);
-                let cue = if focus.below(4) == 0 {
-                    travel = OverlayVector::new(0.0, focus.pt(-3.0, 3.0) * 1109.0);
-                    Cue::Switch
-                } else {
-                    cue
-                };
-                let strip = Strip {
-                    windows: &windows,
-                    pair: &pair,
-                    area,
-                    travel,
-                    seconds: PLAIN,
-                };
-                let staging = look.stage(&cue, &strip);
-                let mut seen: Vec<WindowId> = Vec::new();
-                for &(window, _) in staging.from.iter().chain(&staging.held) {
-                    assert!(
-                        pair.iter().any(|p| p.window == window),
-                        "{look:?} run {run} {cue:?}: {window:?} is not of the pair {pair:?}"
-                    );
-                    assert!(!seen.contains(&window), "{look:?} run {run}: {window:?} twice");
-                    seen.push(window);
+                let along = OverlayVector::new(rng.pt(-900.0, 900.0), 0.0);
+                let up = OverlayVector::new(0.0, switches.pt(-3.0, 3.0) * 1109.0);
+                for (cue, travel) in [(cue, along), (Cue::Switch, up)] {
+                    let strip = Strip {
+                        windows: &windows,
+                        pair: &pair,
+                        area,
+                        travel,
+                        seconds: PLAIN,
+                    };
+                    let staging = look.stage(&cue, &strip);
+                    let mut seen: Vec<WindowId> = Vec::new();
+                    for &(window, _) in staging.from.iter().chain(&staging.held) {
+                        assert!(
+                            pair.iter().any(|p| p.window == window),
+                            "{look:?} run {run} {cue:?}: {window:?} is not of the pair {pair:?}"
+                        );
+                        assert!(!seen.contains(&window), "{look:?} run {run}: {window:?} twice");
+                        seen.push(window);
+                    }
+                    staged += seen.len();
                 }
-                staged += seen.len();
             }
             assert!(staged > 0, "{look:?} staged nothing in {RUNS} runs");
         }

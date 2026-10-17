@@ -96,8 +96,8 @@ press along the strip (`EventResponse::moved`, `stepped` and `pushed` in
 bounce at a side of the strip carries the press that ran into it.
 A look that gives a `stack_gap` has the reactor draw the strips above and below beside every pan
 and bounce it sends, and stack a switch's strips the same gap apart, every one but the
-destination's named a strip beside; the flight engine drops them from a flight whose look gives
-none. The
+destination's named a strip beside; the flight engine drops a pan's or a bounce's from a flight
+whose look gives none, and keeps a switch's as strips of the surface. The
 flight's clock ends with the score the motion starts with (`Event::Fit`), so a look shorter than
 its press lifts as it lands; a merge still restarts it at the plain length (`specs/animation.md`,
 "The zoom look", not yet met):

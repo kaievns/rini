@@ -285,7 +285,9 @@ strip zooms out and back in while it moves. Zoom never steps; the step above is 
   container: a switch merged into a pan drew the destination 24pt below its frames, by the
   gap the switch's pitch lacked, and jumped at the lift; a pan merged into a switch that named
   every window the strip's moved the source's windows into the switch's container and the
-  destination's out of it.
+  destination's out of it. A switch reaching a flight whose look draws no strips beside, the look
+  reloaded to slide mid-flight, MUST still draw and land every strip it travels through: every
+  strip it passed vanished, dropped as such a flight drops a pan's strips beside.
 
 > **Reported 2026-10-17.** "okay, can you implement the zoomout between workspaces too? basically
 > when zoomout happens i should see the top/bottom strips (at a bit of a padding) and it applies to
@@ -1094,8 +1096,9 @@ either axis (`a_horizontal_press_merged_mid_switch_folds_into_the_arc_moving_onl
 (`a_zoom_switch_lifts_as_its_arc_lands_on_the_destination_at_rest`), and is named and drawn by the
 reactor with the strips beyond both ends
 (`under_zoom_a_switch_arcs_and_draws_the_strips_beyond_both_ends`,
-`under_zoom_the_first_switch_arcs`). The reactor names each press along the strip to the look: a
-focus press that scrolls the strip, held by
+`under_zoom_the_first_switch_arcs`), and a switch reaching a flight whose look draws no strips
+beside keeps its strips (`a_switch_naming_rows_merged_into_a_slide_flight_keeps_its_strips`). The
+reactor names each press along the strip to the look: a focus press that scrolls the strip, held by
 `a_focus_press_along_the_strip_names_where_it_went_and_one_at_an_end_where_it_stayed` and
 `a_focus_press_that_scrolls_the_strip_names_itself_and_zooms_under_zoom`, and the move or focus
 press a bounce at a side of the strip plays, held by

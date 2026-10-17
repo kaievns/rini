@@ -394,7 +394,9 @@ impl FlightEngine {
     /// animation, with a container of its own for each column a move swapped that crosses it, and a
     /// move's step (`accent`) stepping every strip container. A bounce from rest is one with no
     /// travel. The strips beside it are drawn only by a look that draws them, each in a container
-    /// of its own. See "The move flight, staged" in `src/transitions/docs/coordination.md`.
+    /// of its own; a switch's strips, which it names by row too, by every look, under one without
+    /// the strips beside as strips of the surface. See "The move flight, staged" in
+    /// `src/transitions/docs/coordination.md`.
     pub(super) fn start_surface(&mut self, flight: SurfaceFlight) {
         let SurfaceFlight {
             mut windows,
@@ -413,7 +415,11 @@ impl FlightEngine {
             return;
         };
         if look.stack_gap().is_none() {
-            windows.retain(|window| window.row.is_none());
+            if cue == Cue::Switch {
+                windows.iter_mut().for_each(|window| window.row = None);
+            } else {
+                windows.retain(|window| window.row.is_none());
+            }
         }
         let (kind, accent) = motion.kind(&windows, from_offset, to_offset);
         let shape = Shape {

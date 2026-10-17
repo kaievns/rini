@@ -3956,6 +3956,92 @@ mod tests {
             }
         }
 
+        /// A switch of two strips the reactor stacked for zoom, naming the source and the strip it
+        /// passes by row, under a slide flight, the look reloaded mid-flight or none flying, keeps
+        /// both and lands each where the switch sends it; a pan's rows it drops
+        /// (`a_flight_whose_look_draws_no_rows_drops_them`).
+        #[test]
+        fn a_switch_naming_rows_merged_into_a_slide_flight_keeps_its_strips() {
+            use crate::pictures::platform::picture::test_picture;
+            let pitch =
+                DISPLAY.size.height + crate::animation::domain::choreography::zoom::STACK_GAP;
+            for flying in [false, true] {
+                let mut h = Harness::new();
+                if flying {
+                    let pan = h.pan();
+                    h.step(pan);
+                    h.advance(Duration::from_millis(5));
+                    let frame_zero = h.frame_zero();
+                    let shown = only_batch(&h.step(frame_zero)).seq;
+                    h.commit(shown);
+                    h.advance(Duration::from_millis(50));
+                }
+                for window in [wid(2), wid(3)] {
+                    h.engine.pictures.insert(window, test_picture(ScreenSize::new(859.0, 1081.0)));
+                }
+                let mut switch = h.pan();
+                if let Event::AnimateSurface {
+                    windows,
+                    from_offset,
+                    to_offset,
+                    final_frames,
+                    look,
+                    cue,
+                    ..
+                } = &mut switch
+                {
+                    *from_offset = SurfacePoint::new(867.0, 0.0);
+                    *to_offset = SurfacePoint::new(867.0, 2.0 * pitch);
+                    windows[0].row = Some(0);
+                    for (id, row) in [(3, Some(1)), (2, None)] {
+                        let y = if row.is_some() { pitch } else { 2.0 * pitch };
+                        windows.push(SurfaceWindow {
+                            window: wid(id),
+                            server_id: WindowServerId::new(id),
+                            frame: rect(867.0, y, 859.0, 1081.0),
+                            row,
+                            ..windows[0]
+                        });
+                    }
+                    final_frames.push((wid(2), screen(rect(0.0, 0.0, 859.0, 1081.0))));
+                    *look = if flying { Look::Zoom } else { Look::Slide };
+                    *cue = Cue::Switch;
+                }
+                let Event::AnimateSurface {
+                    windows,
+                    from_offset,
+                    to_offset,
+                    ..
+                } = &switch
+                else {
+                    unreachable!()
+                };
+                let sent: Vec<(WindowId, OverlayRect)> = windows
+                    .iter()
+                    .map(|&window| {
+                        let unnamed = SurfaceWindow { row: None, ..window };
+                        (window.window, unnamed.travel(*from_offset, *to_offset).1)
+                    })
+                    .collect();
+                h.step(switch);
+                if !flying {
+                    h.advance(Duration::from_millis(5));
+                    let frame_zero = h.frame_zero();
+                    let shown = only_batch(&h.step(frame_zero)).seq;
+                    h.commit(shown);
+                }
+                let running = h.engine.running.as_ref().expect("flying");
+                assert_eq!(running.score.look(), Look::Slide, "flying {flying}");
+                for (window, lands) in sent {
+                    assert_eq!(
+                        running.score.score().drawn(window, 1e6),
+                        Some(to_overlay_space(screen(lands), DISPLAY)),
+                        "flying {flying}: {window:?} where the switch sends it"
+                    );
+                }
+            }
+        }
+
         #[test]
         fn the_renderer_replica_and_the_score_agree() {
             let mut h = Harness::new();
