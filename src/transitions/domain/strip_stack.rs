@@ -52,13 +52,16 @@ pub fn beside(index: usize, count: usize) -> Vec<(usize, isize)> {
     above.into_iter().chain(below).collect()
 }
 
-/// Whether any of `frame` shows on a display `viewport` big, on the surface at rest, with the strip
-/// zoomed out to `scale` about the display's centre.
-pub fn in_zoomed_view(frame: SurfaceRect, viewport: SurfaceRect, scale: f64) -> bool {
+/// Whether any of `frame` shows on a display `viewport` big, with the strip zoomed out to `scale`
+/// about the display's centre and pushed up to `reach` on screen either way, as a bounce carries it.
+pub fn in_zoomed_view(frame: SurfaceRect, viewport: SurfaceRect, scale: f64, reach: f64) -> bool {
     if !scale.is_finite() || scale <= 0.0 {
         return false;
     }
-    let half = Vector::new(viewport.size.width, viewport.size.height) / (2.0 * scale);
+    let half = Vector::new(
+        viewport.size.width + 2.0 * reach,
+        viewport.size.height + 2.0 * reach,
+    ) / (2.0 * scale);
     let centre = viewport.center();
     let seen = SurfaceRect::new(centre - half, (half * 2.0).to_size());
     frame.intersects(&seen)
@@ -300,7 +303,8 @@ mod tests {
     fn in_zoomed_view_keeps_what_the_deepest_zoom_shows() {
         use crate::animation::domain::choreography::zoom::ZOOM_DEEPEST;
         let viewport = rect(0.0, 0.0, 1728.0, 1117.0);
-        let at = |x: f64, y: f64| in_zoomed_view(rect(x, y, 859.0, 1077.0), viewport, ZOOM_DEEPEST);
+        let at =
+            |x: f64, y: f64| in_zoomed_view(rect(x, y, 859.0, 1077.0), viewport, ZOOM_DEEPEST, 0.0);
         assert!(at(-1228.0, 36.0), "its right edge just in, at -369");
         assert!(!at(-1230.0, 36.0), "its right edge at -371");
         assert!(at(2097.0, 36.0));
@@ -309,7 +313,40 @@ mod tests {
         assert!(at(4.0, 36.0 + 1109.0), "the row below, its top at 1145");
         assert!(!at(4.0, 36.0 - 2.0 * 1109.0), "two rows up");
         assert!(!at(4.0, 36.0 + 2.0 * 1109.0), "two rows down");
-        assert!(!in_zoomed_view(rect(4.0, 36.0, 859.0, 1077.0), viewport, 0.0));
+        assert!(!in_zoomed_view(
+            rect(4.0, 36.0, 859.0, 1077.0),
+            viewport,
+            0.0,
+            0.0
+        ));
+    }
+
+    /// A bounce pushes the deepest zoom 72pt on screen, 103pt on the surface, so the band reaches
+    /// x in [-473, 2201].
+    #[test]
+    fn in_zoomed_view_keeps_what_a_push_of_the_deepest_zoom_brings_in() {
+        use crate::animation::domain::choreography::zoom::ZOOM_DEEPEST;
+        use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
+        let viewport = rect(0.0, 0.0, 1728.0, 1117.0);
+        let at = |x: f64, reach: f64| {
+            in_zoomed_view(
+                rect(x, 36.0 - 1109.0, 859.0, 1077.0),
+                viewport,
+                ZOOM_DEEPEST,
+                reach,
+            )
+        };
+        assert!(!at(2150.0, 0.0), "a row window past the band at rest");
+        assert!(
+            at(2150.0, EDGE_BOUNCE_OVERSHOOT),
+            "brought in by a push toward the left wall"
+        );
+        assert!(
+            at(-1300.0, EDGE_BOUNCE_OVERSHOOT),
+            "brought in by a push toward the right wall"
+        );
+        assert!(!at(2202.0, EDGE_BOUNCE_OVERSHOOT));
+        assert!(!at(-1333.0, EDGE_BOUNCE_OVERSHOOT));
     }
 
     #[test]

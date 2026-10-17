@@ -116,9 +116,6 @@ impl Cue {
             Cue::Plain | Cue::Focus { .. } | Cue::Switch => None,
         }
     }
-
-    /// Whether the press is a move or a focus press along the strip.
-    pub fn along_strip(&self) -> bool { matches!(self, Cue::Move { .. } | Cue::Focus { .. }) }
 }
 
 /// Where one window of a moved pair started on the strip, and whether it is of the column passed

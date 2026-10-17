@@ -1377,7 +1377,8 @@ mod tests {
 
     /// Kai, 2026-10-17: "i should see the top/bottom strips (at a bit of a padding)". At a switch's
     /// middle the strips it travels between are in view with the gap between them zoomed: one row
-    /// down, about two thirds of the source above and of the destination below, 32pt apart at rest
+    /// down, 66% of the source below the bar and 67% of the destination above the display's
+    /// bottom, 32pt apart at rest
     /// and 23.6pt on screen; two rows down, the strip passed whole in view, 138pt of the source
     /// below the bar and 148pt of the destination above the display's bottom.
     #[test]
@@ -1401,9 +1402,11 @@ mod tests {
             "the gap",
         );
         close(destination.min().y - source.max().y, 23.6, 0.05, "on screen");
-        for (frame, what) in [(source, "the source"), (destination, "the destination")] {
-            let share = shown(frame) / frame.size.height;
-            assert!((0.6..0.72).contains(&share), "{what}: {share:.3} in view");
+        for (frame, share, what) in [
+            (source, 0.66, "the source"),
+            (destination, 0.67, "the destination"),
+        ] {
+            close(shown(frame) / frame.size.height, share, 0.005, what);
         }
 
         let two = switch_down(2, PLAIN * 2f64.sqrt());

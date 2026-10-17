@@ -272,14 +272,15 @@ strip zooms out and back in while it moves. Zoom never steps; the step above is 
   and the destination zooms back in, landing where the switch sends it, at rest. The arc MUST go as
   deep as a move of two columns a usable height tall and the pitch apart, the strip and the one it
   travels to: 0.738 on the laptop for a switch of one strip and the deepest for two or more, half
-  its travel carried at its middle. There, a switch of one strip shows about two thirds of each,
-  23.6pt apart on screen, and one of two shows the strip it passes whole, 138pt of the source below
-  the bar and 148pt of the destination above the display's bottom. The arc MUST run 2.2/3 of the
-  switch's own length, its stretch for the strips it crosses included: 0.257s for one, 0.363s for
-  two at the default 0.35s. The strip above the first it travels between and the one below the
-  last MUST be drawn beside them as a pan draws them, so a press merged into the switch finds them
-  drawn. Not yet met: a switch's floating windows travel on the arc's timing but unzoomed, so
-  mid-arc they are drawn further out than the strips they belong to.
+  its travel carried at its middle. There, a switch of one strip shows 66% of the source below the
+  bar and 67% of the destination above the display's bottom, 23.6pt apart on screen, and one of two
+  shows the strip it passes whole, 138pt of the source below the bar and 148pt of the destination
+  above the display's bottom. The arc MUST run 2.2/3 of the switch's own length, its stretch for the
+  strips it crosses included: 0.257s for one, 0.363s for two at the default 0.35s. The strip above
+  the first it travels between and the one below the last MUST be drawn beside them as a pan draws
+  them, so a press merged into the switch finds them drawn. Not yet met: a switch's floating windows
+  travel on the arc's timing but unzoomed, so mid-arc they are drawn further out than the strips
+  they belong to.
 - A push at an end of the workspace stack, by a switch or a move to the next or previous workspace
   with none beyond, MUST bounce zoomed out as a push at a side of the strip does: 0.88 where the
   bounce turns, 72pt on screen, every press of a burst zoomed out, the strip beside it carried with
@@ -1072,7 +1073,8 @@ each look draws. Zoom's arc, its depth, its view and its merges are held by the 
 `a_lifted_tile_casts_the_lifts_shadow_as_its_score_has_it`. The strips beside the one a zoom moves
 are placed by `src/transitions/domain/strip_stack.rs` (`rows_beside_a_strip_sit_the_gap_apart`,
 `the_gap_grows_to_the_band_left_above_or_below_the_strip`, `nothing_of_a_row_shows_at_rest`,
-`in_zoomed_view_keeps_what_the_deepest_zoom_shows`), named by the reactor under zoom alone
+`in_zoomed_view_keeps_what_the_deepest_zoom_shows`,
+`in_zoomed_view_keeps_what_a_push_of_the_deepest_zoom_brings_in`), named by the reactor under zoom alone
 (`under_zoom_a_pan_names_the_rows_beside_it`, `under_zoom_a_bounce_names_the_rows_beside_it`,
 `the_ends_of_the_stack_draw_no_strip_beyond`,
 `under_zoom_a_switch_stacks_the_strips_apart_and_names_all_but_the_destination`,

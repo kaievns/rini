@@ -263,9 +263,10 @@ The two entry points feed the same `begin_group`:
   draws them (`Look::stack_gap`, the zoom look's), every pan and bounce the
   reactor sends also carries the strips of the workspaces above and below
   (`Reactor::strips_beside`): each tiled window of either that the deepest zoom
-  shows, at its own strip's scroll, a usable height and `stack_gap` above or
-  below, named by its workspace's index (`SurfaceWindow::row`). It travels with
-  the view up and down only, in a group of its own per strip
+  shows, pushed `EDGE_BOUNCE_OVERSHOOT` either way as a bounce carries it, at its
+  own strip's scroll, a usable height and `stack_gap` above or below, named by
+  its workspace's index (`SurfaceWindow::row`). It travels with the view up and
+  down only, in a group of its own per strip
   (`RigidGroup::beside`), never the strip's even when both travel alike; a pan
   merged later moves it only up and down, and names it standing where it is, so
   it votes itself there and stays. It flies on its picture or the stand-in, ends

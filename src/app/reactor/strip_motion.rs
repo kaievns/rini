@@ -326,9 +326,10 @@ impl Reactor {
     }
 
     /// The strips above and below the active one on `space`'s display, as a look that zooms out
-    /// draws them beside it: each tiled window of either that the deepest zoom shows, at its own
-    /// strip's scroll, a usable height and the look's gap (`strip_stack::stack_gap`) above or
-    /// below. None for a look that draws none, or past either end of the stack.
+    /// draws them beside it: each tiled window of either that the deepest zoom shows, pushed as a
+    /// bounce carries it, at its own strip's scroll, a usable height and the look's gap
+    /// (`strip_stack::stack_gap`) above or below. None for a look that draws none, or past either
+    /// end of the stack.
     fn strips_beside(
         &mut self,
         space: SpaceId,
@@ -362,7 +363,8 @@ impl Reactor {
 
     /// Each tiled window of the strips `rows` name, each by its index in `workspaces`, the side it
     /// is drawn on of the strip at a row of the surface, and that row, that the deepest zoom shows
-    /// beside that strip, at its own strip's scroll and named by its index.
+    /// beside that strip, pushed as a bounce carries it, at its own strip's scroll and named by its
+    /// index.
     fn strips_at(
         &mut self,
         space: SpaceId,
@@ -370,6 +372,7 @@ impl Reactor {
         rows: &[(usize, isize, isize)],
         stack: &Stack,
     ) -> Vec<SurfaceWindow> {
+        use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
         use crate::transitions::domain::strip_stack::{in_zoomed_view, strip_frame};
         let Stack {
             screen,
@@ -403,7 +406,8 @@ impl Reactor {
                     continue;
                 };
                 let frame = ScreenRect::from_cg(frame);
-                if !in_zoomed_view(strip_frame(frame, origin, side, pitch), viewport, deepest) {
+                let seen = strip_frame(frame, origin, side, pitch);
+                if !in_zoomed_view(seen, viewport, deepest, EDGE_BOUNCE_OVERSHOOT) {
                     continue;
                 }
                 windows.push(SurfaceWindow {
@@ -437,9 +441,9 @@ impl Reactor {
     /// (`Left`/`Right`), or the top or bottom of the workspace stack (`Up`/`Down`). The active
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
     /// the real windows do not move. `press` is the move or focus press that ran into a side of the
-    /// strip, for the look to play it as it plays that press, and plain at the stack's ends. The
-    /// strips above and below ride beside it under a look that draws them (`strips_beside`). See
-    /// "Edge bounce" in `src/transitions/docs/coordination.md`.
+    /// strip, or the switch that ran into an end of the stack (`Cue::Switch`), for the look to play
+    /// it as it plays that press. The strips above and below ride beside it under a look that draws
+    /// them (`strips_beside`). See "Edge bounce" in `src/transitions/docs/coordination.md`.
     pub(super) fn start_edge_bounce(
         &mut self,
         space: SpaceId,
