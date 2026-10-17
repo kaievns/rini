@@ -292,19 +292,22 @@ Not bound by default: `switch-preset-column-width` (the `Mod+R` the specs name),
 
 ## How the project is kept
 
+- **`CONTRIBUTING.md` is the bar every change keeps.** The eight criteria, what holds each, and the
+  rules for code, tests, docs, commits and deploys. `CLAUDE.md` adds how an agent works to reach it.
 - **`specs/` is what rini must do.** Requirements as obligations; each one that came from a report
-  carries a **Reported** line quoting it. Anything I report becomes a requirement in the same change
+  carries a **Reported** line. Anything I report becomes a requirement in the same change
   that acts on it (`specs/README.md`).
 - **`docs/` is how the code came to be that way.** Measurements, findings and rejected approaches.
   Each feature and each library has its own, `src/<feature>/docs/README.md` and
   `crates/<crate>/docs/README.md`; `docs/` holds only what spans features.
   `docs/architecture.md` is the map.
 - **`tests/architecture.rs` holds the shape.** Every feature's `domain/` stays free of macOS, every
-  path the docs mention still resolves, and every spec is listed in the index.
+  path the docs mention still resolves, and every spec is listed in the index. `CONTRIBUTING.md`,
+  "The bar", names each check.
 - **What a flight costs is measured on the screen.** The timing battery in `tools/focuslab/` flies a
   fixed set of pans and switches and judges a build on 87 metrics. Screen recordings show how a
-  resize looks. Both run only after 300s with no input, and stop at the first foreign event
-  (`tools/focuslab/README.md`).
+  resize looks. Both run only while nobody is at the machine, under the idle rule in
+  `tools/focuslab/README.md`.
 - **Every transition can be read back.** The journal keeps the last 8192 steps in memory. With
   `animations { journal }` it writes them to `~/Library/Logs/rini/transitions.jsonl`
   (`src/transitions/docs/journal.md`).
