@@ -79,33 +79,37 @@ lands mid-arc, 3246 to 3538pt/s in one flight: the pass's own arc is dropped, bu
 its springs over 0.35s times `ZOOM_STRETCH`, 0.257s, at `spring_omega` 41.7 where 0.35s gives 30.6.
 Such a spring starts at the drawn speed and changes it fastest over its first frame, and the
 contract sized its allowance from the new motion's second. Kai kept the pace ("Arriving mid-flight"
-in `specs/animation.md`), so the contract also allows a laid-out edge what a spring that stiff
-changes over its first frame, let go where the edge is drawn at the speed it is drawn moving: over
-the pass's length, stretched by `ZOOM_STRETCH` when the pass brings an arc. Seed 60's window gained
-292pt/s; that spring changes 304pt/s, one over 0.35s 10pt/s, and the edge's allowance went from 286
-to 430pt/s; pinned by `a_bend_may_change_speed_as_far_as_a_spring_as_stiff_does_in_its_first_step`.
-Zoom now fails none; `every_look_keeps_the_speed_contract_over_a_thousand_seeds` counts every
-look's, ignored because it runs 143s in release. The looks the contract rejected it still rejects on
-every one of seeds 0-99, at the same first pass: a container restarting `MOTION_CURVE` jumps
-2557pt/s against 555 allowed, 327 before, and the two zoom flaws are read on the zoom, which takes
-no spring. A member the pass sends off the viewport does not vote while its container moves
-(`rides_out`): it has no visible destination, and on a switch the layout pass 16ms later parked the
-departing row's windows, each of which opened a sideways group and swept to the park's edge while
-the row travelled vertically (the zig-zag; log 1:07:36, "member reparented" to (1727,1065) and
-(-1719,1076)). A member of a still container has no motion to ride and leaves on its own vector. A
-rigid member the pass now resizes goes loose (`GroupKey::Loose`) at its presented frame. A newcomer
-joins a group travelling as it does in this pass or opens one; joins are resolved after the votes,
-because the votes change how far each group travels. A pan adds its travel to every group and every
-loose strip tile and changes no membership; members the pan does not compose (no usable picture)
-ride their group all the same. A move under a pan is the one exception: the members of a group that
-does not travel with the pan (the columns the move swapped that cross it) vote as in an ordinary
-pass, wherever their destination is, and the rest of each group they sit in holds the place the pan
-gave it. The merge reads two positions of every container and how fast its movement goes
-(`Presented`), evaluated from the flight's score (`Score::presented`): where it is drawn, any bounce
-or nudge riding it included, and where its movement has it. A member leaving a container for one of
-its own starts from the first, so it stays where it is drawn and still lands on its destination;
-pinned by `a_member_leaving_a_nudged_container_leaves_from_where_it_is_drawn`. Remaining travel of a
-member leaving its container is judged against the second. A newcomer is judged against neither, but
+in `specs/animation.md`), so under Zoom, across a pass bringing an arc, the contract also allows a
+laid-out edge the change a spring over the pass's length stretched by `ZOOM_STRETCH` makes over its
+first frame, let go where the edge is drawn at the speed it is drawn moving, and only in the way
+that spring makes it (`stiffer_on_an_arc`). Seed 60's window gained 292pt/s; that spring gains
+304pt/s, one over 0.35s 10pt/s, and the edge's allowance went from 286 to 430pt/s; pinned by
+`a_bend_may_change_speed_as_far_as_a_spring_as_stiff_does_in_its_first_step`, which also reads a
+bend slowing as far as a jump, and by
+`zoom_bends_a_pass_bringing_an_arc_within_its_stretched_spring`. Every other look, every pass
+bringing no arc and the zoom's own read keep the allowance from before. Allowing every look's every
+pass a spring over the plain or stretched length grew the allowance of Linear, which bends on no
+spring, 6.9 times on average and 48 times at most over the contract's two seeds, against 1.04 times
+for Slide. Zoom now fails none; `every_look_keeps_the_speed_contract_over_a_thousand_seeds` counts
+every look's, ignored because it runs 141s in release. A member the pass sends off the viewport
+does not vote while its container moves (`rides_out`): it has no visible destination, and on a
+switch the layout pass 16ms later parked the departing row's windows, each of which opened a
+sideways group and swept to the park's edge while the row travelled vertically (the zig-zag; log
+1:07:36, "member reparented" to (1727,1065) and (-1719,1076)). A member of a still container has no
+motion to ride and leaves on its own vector. A rigid member the pass now resizes goes loose
+(`GroupKey::Loose`) at its presented frame. A newcomer joins a group travelling as it does in this
+pass or opens one; joins are resolved after the votes, because the votes change how far each group
+travels. A pan adds its travel to every group and every loose strip tile and changes no membership;
+members the pan does not compose (no usable picture) ride their group all the same. A move under a
+pan is the one exception: the members of a group that does not travel with the pan (the columns the
+move swapped that cross it) vote as in an ordinary pass, wherever their destination is, and the rest
+of each group they sit in holds the place the pan gave it. The merge reads two positions of every
+container and how fast its movement goes (`Presented`), evaluated from the flight's score
+(`Score::presented`): where it is drawn, any bounce or nudge riding it included, and where its
+movement has it. A member leaving a container for one of its own starts from the first, so it stays
+where it is drawn and still lands on its destination; pinned by
+`a_member_leaving_a_nudged_container_leaves_from_where_it_is_drawn`. Remaining travel of a member
+leaving its container is judged against the second. A newcomer is judged against neither, but
 against where the last pass sent each container (the plan's model positions): every frame a pass
 carries is a place on the strip as the last pass left it, which the reactor builds from where that
 pass sends every window. A newcomer rides a group whose travel from there matches its own, placed in
@@ -185,22 +189,22 @@ leg is 97% home by half time, so the strip is at rest before the next press.
 Every look keeps that speed for a window riding a container
 (`every_look_bends_a_flight_at_the_speed_it_moves`): across a pass, each edge's speed over the
 1/120s step either side, as the window is laid out on the strip, changes by no more than the motions
-themselves change it over the steps around it, the motion after over its second step or as a spring
-as stiff as the pass's does over its first, whichever is more, and a half point over a step; the
-strip's zoom, its scale and shift, is held to the same rule on its own but for the spring, which it
-does not ride, a strip the score holds no zoom for read at rest, as 429 of Zoom's 995 bends over the
-two seeds find it and 73 then start it zooming. Drawn as Core Animation's polyline a spring changes
-its speed at every sample, so the bend's own change, up to 4,385pt/s under Slide over seed 163's
-flights, is held against the motion's, at most 0.71 of it over the contract's two seeds, 0.84 under
-Zoom; a look restarting each container on `MOTION_CURVE` from where it is drawn changes it by up to
-5.1 times the motion's, and jumps on 11,368 of the 31,272 edges the two seeds read, 9.3 times and
-11,382 before the spring's first step was allowed, and one sending the zoom home from rest where it
-is drawn, or starting a strip with no zoom zooming at speed, is caught on the zoom
-(`the_speed_contract_rejects_a_look_that_restarts_the_motion_or_the_zoom_at_a_pass`), and Linear,
-before it carried its speed, by up to 79 times. Read drawn, a window through a zoom moves at both
-speeds, and the two turning opposite ways cancel the allowance though neither jumps: under Zoom,
-over seed 163, a spring let go at its container's own speed while the strip zoomed out changed an
-edge drawn 1,065pt left of the centre from 429 to -227pt/s against 633 allowed. In its run 25 a
+themselves change it over the steps around it, the motion after over its second step or, under Zoom
+across a pass bringing an arc, as a spring over the stretched length changes it over its first and
+the same way, whichever is more, and a half point over a step; the strip's zoom, its scale and
+shift, is held to the same rule on its own but for the spring, which it does not ride, a strip the
+score holds no zoom for read at rest, as 429 of Zoom's 995 bends over the two seeds find it and 73
+then start it zooming. Drawn as Core Animation's polyline a spring changes its speed at every
+sample, so the bend's own change, up to 4,385pt/s under Slide over seed 163's flights, is held
+against the motion's, at most 0.71 of it over the contract's two seeds, 0.84 under Zoom; a look
+restarting each container on `MOTION_CURVE` from where it is drawn changes it by up to 9.3 times the
+motion's, and jumps on 11,382 of the 31,272 edges the two seeds read, and one sending the zoom home
+from rest where it is drawn, or starting a strip with no zoom zooming at speed, is caught on the
+zoom (`the_speed_contract_rejects_a_look_that_restarts_the_motion_or_the_zoom_at_a_pass`), and
+Linear, before it carried its speed, by up to 79 times. Read drawn, a window through a zoom moves at
+both speeds, and the two turning opposite ways cancel the allowance though neither jumps: under
+Zoom, over seed 163, a spring let go at its container's own speed while the strip zoomed out changed
+an edge drawn 1,065pt left of the centre from 429 to -227pt/s against 633 allowed. In its run 25 a
 window at rest on a strip at rest starts left at -576pt/s laid out, within its 755 allowed, while a
 shallow zoom starts from rest at -0.15/s, within its 0.29/s, and draws it back towards the centre:
 drawn, the edge goes from 0 to -297pt/s, and the window's speeding up and the zoom's pulling harder
