@@ -2223,6 +2223,24 @@ mod beside {
         }
     }
 
+    /// A pan sent after a switch under zoom draws the switch's source beside its strip, so the
+    /// source's active window, which the switch dressed in its active ring, wears none in the pan;
+    /// the merge wears what the pan sends (`a_pan_merged_into_a_switch_wears_the_source_beside`).
+    #[test]
+    fn a_pan_after_a_switch_dresses_the_source_beside() {
+        let (mut apps, mut reactor, mut rx) = stacked(Look::Zoom);
+        switched(&mut apps, &mut reactor, &mut rx, 0);
+        let switch = switched(&mut apps, &mut reactor, &mut rx, 1);
+        assert_eq!(
+            dressed(&switch.windows, 1),
+            (Ring::Active, false),
+            "the source's"
+        );
+        let pan = scrolled(&mut reactor, &mut rx);
+        assert_eq!(find(&pan.windows, 1).row, Some(0), "drawn beside");
+        assert_eq!(dressed(&pan.windows, 1), (Ring::None, false));
+    }
+
     /// The top of the stack has no strip above it and the bottom none below, and a strip beside
     /// draws only the windows the deepest zoom shows.
     #[test]

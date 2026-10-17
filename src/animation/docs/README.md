@@ -95,14 +95,14 @@ press along the strip (`EventResponse::moved`, `stepped` and `pushed` in
 `src/workspaces/engine.rs`) or a switch through the stack (`Cue::Switch`), and a bounce carries the
 press that ran into it: at a side of the strip the move or focus press, at an end of the stack a
 switch.
-A look that gives a `stack_gap` has the reactor draw the strips above and below beside every pan
-and bounce it sends, and stack a switch's strips the same gap apart, every one but the
-destination's named a strip beside; the strips it draws beside a pan's or a bounce's strip or
-beyond a switch's ends wear no ring and no focus (`Worn::beside`), and the strips a switch travels
-between what they wear under slide. The flight engine drops a pan's or a bounce's from a flight whose look
-gives none, and keeps a switch's as strips of the surface. The flight's clock ends with the score
-the motion starts with (`Event::Fit`), so a look shorter than its press lifts as it lands; a merge
-still restarts it at the plain length (`specs/animation.md`, "The zoom look", not yet met):
+A look that gives a `stack_gap` has the reactor draw the strips above and below beside every pan and
+bounce it sends, and stack a switch's strips the same gap apart, every one but the destination's
+named a strip beside; the strips it draws beside a pan's or a bounce's strip or beyond a switch's
+ends wear no ring and no focus (`Worn::beside`), and the strips a switch travels between wear what
+they wear under slide. The flight engine drops a pan's or a bounce's from a flight whose look gives
+none, and keeps a switch's as strips of the surface. The flight's clock ends with the score the
+motion starts with (`Event::Fit`), so a look shorter than its press lifts as it lands; a merge still
+restarts it at the plain length (`specs/animation.md`, "The zoom look", not yet met):
 
 1. `domain/choreography/<name>.rs`: a `Choreography` and a `stage`. Its `retarget` calls
    `Merged::new` and `Merged::bend` with a `Bending` of its own, and adds only motion; `linear.rs`

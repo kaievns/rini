@@ -2666,6 +2666,88 @@ mod tests {
             );
         }
 
+        /// A pan merged into a zoom switch draws the switch's source beside the destination: the
+        /// source's active window, flying in its active ring, wears none at once and keeps none to
+        /// the lift; the destination's, the same end, wears nothing again.
+        #[test]
+        fn a_pan_merged_into_a_switch_wears_the_source_beside() {
+            use crate::pictures::platform::picture::test_picture;
+            let pitch =
+                DISPLAY.size.height + crate::animation::domain::choreography::zoom::STACK_GAP;
+            let source = Worn {
+                wears_ring: Ring::Active,
+                ..Worn::default()
+            };
+            let destination = Worn {
+                wears_ring: Ring::Active,
+                holds_focus: true,
+                ..Worn::default()
+            };
+            let beside = Worn::beside(source.decoration);
+            let strips = |h: &Harness,
+                          from_offset: SurfacePoint,
+                          to_offset: SurfacePoint,
+                          worn,
+                          cue| {
+                let window = |id: u32, y: f64, row, worn| SurfaceWindow {
+                    worn,
+                    window: wid(id),
+                    server_id: WindowServerId::new(id),
+                    frame: rect(4.0, y, 1720.0, 1081.0),
+                    pinned: false,
+                    floating: false,
+                    from: None,
+                    row,
+                };
+                let lands = window(2, pitch, None, destination);
+                Event::AnimateSurface {
+                    windows: vec![window(1, 0.0, Some(0), worn), lands],
+                    from_offset,
+                    to_offset,
+                    final_frames: vec![(wid(2), screen(lands.travel(from_offset, to_offset).1))],
+                    focus: Some(wid(2)),
+                    focused_before: None,
+                    key: None,
+                    duration: Duration::from_millis(300),
+                    look: Look::Zoom,
+                    cue,
+                    area: area(),
+                    cause: h.cause(),
+                }
+            };
+            let mut h = Harness::new();
+            h.engine.pictures.insert(wid(2), test_picture(ScreenSize::new(1720.0, 1081.0)));
+            let switch = strips(
+                &h,
+                SurfacePoint::origin(),
+                SurfacePoint::new(0.0, pitch),
+                source,
+                Cue::Switch,
+            );
+            h.step(switch);
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            let shown = only_batch(&h.step(frame_zero)).seq;
+            h.commit(shown);
+            h.advance(Duration::from_millis(50));
+            let pan = strips(
+                &h,
+                SurfacePoint::new(0.0, pitch),
+                SurfacePoint::new(100.0, pitch),
+                beside,
+                Cue::Plain,
+            );
+            let sent = h.step(pan);
+            assert_eq!(
+                worn_again(&sent),
+                [(wid(1), beside)],
+                "at once, the source's alone"
+            );
+            let running = h.engine.running.as_ref().expect("flying");
+            let tile = running.tiles.iter().find(|t| t.window == wid(1)).expect("w1 flies");
+            assert_eq!(tile.worn, beside, "to the lift");
+        }
+
         /// A layout pass of `wid(1)` from `start` to `end` and of each of `others` from and to its
         /// own frame.
         fn pass_of(h: &Harness, others: &[(u32, ScreenRect, ScreenRect)]) -> Event {

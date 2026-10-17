@@ -1102,7 +1102,9 @@ are placed by `src/transitions/domain/strip_stack.rs` (`rows_beside_a_strip_sit_
 `under_slide_pans_bounces_and_switches_send_what_they_did`), dressed unfocused
 (`under_zoom_the_strips_beside_wear_no_ring`,
 `a_switch_dresses_its_strips_as_under_slide_and_the_strip_beyond_wears_no_ring`,
-`a_strip_beside_wears_no_ring_and_the_inactive_border`),
+`a_strip_beside_wears_no_ring_and_the_inactive_border`,
+`a_pan_after_a_switch_dresses_the_source_beside`,
+`a_pan_merged_into_a_switch_wears_the_source_beside`),
 kept in containers of their own that only the view up and down moves
 (`each_other_strip_rides_a_container_of_its_own_even_travelling_as_the_strip_does`,
 `a_pan_merged_leaves_every_row_where_it_is`,
