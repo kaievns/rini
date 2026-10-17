@@ -164,9 +164,11 @@ The production reader behind its injection is held by
 
 ## The suite runs in parallel, and a Core Animation read-back holds its lock
 
-`cargo test` runs on libtest's default threads, one per core: `.cargo/config.toml` sets no
-`RUST_TEST_THREADS`. On 2026-10-15, on 12 cores, the lib suite's 2770 tests took 8.9s to 9.7s
-in each of 20 consecutive `cargo test --workspace` runs, all green, where one thread took 54.7s.
+`cargo test` runs on libtest's default threads, one per core: no cargo config, script or workflow
+sets `RUST_TEST_THREADS` or `--test-threads`
+(`nothing_sets_the_number_of_threads_the_suite_runs_on`). On 2026-10-15, on 12 cores, the lib
+suite's 2770 tests took 8.9s to 9.7s in each of 20 consecutive `cargo test --workspace` runs, all
+green, where one thread took 54.7s.
 
 One kind of test is serialised: a test that installs an animation on a layer and reads it back.
 A probe installed one animation 300 times per row and read each back 50 times, while a second

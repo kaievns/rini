@@ -182,6 +182,40 @@ fn every_crate_inherits_the_workspace_lints() {
     }
 }
 
+/// Whether `text` sets the number of threads libtest runs on, by its variable or its flag.
+fn sets_test_threads(text: &str) -> bool {
+    text.contains("RUST_TEST_THREADS") || text.contains("--test-threads")
+}
+
+/// The suite runs on libtest's default threads, one per core, so no cargo config, script or
+/// workflow sets a thread count (docs/testing.md, "The suite runs in parallel").
+#[test]
+fn nothing_sets_the_number_of_threads_the_suite_runs_on() {
+    for text in [
+        "[env]\nRUST_TEST_THREADS = \"1\"\n",
+        "cargo test --workspace -- --test-threads=1",
+        "env:\n  RUST_TEST_THREADS: 4\n",
+    ] {
+        assert!(sets_test_threads(text), "{text}");
+    }
+    assert!(!sets_test_threads("cargo test --locked --workspace"));
+    let mut files = vec![Path::new(ROOT).join(".cargo/config.toml")];
+    for dir in ["bin", ".github/workflows"] {
+        for entry in fs::read_dir(Path::new(ROOT).join(dir)).unwrap() {
+            files.push(entry.unwrap().path());
+        }
+    }
+    let setting: Vec<String> = files
+        .iter()
+        .filter(|path| sets_test_threads(&fs::read_to_string(path).unwrap()))
+        .map(|path| path.strip_prefix(ROOT).unwrap().display().to_string())
+        .collect();
+    assert!(
+        setting.is_empty(),
+        "leave the thread count to libtest: {setting:?}"
+    );
+}
+
 /// Every Rust source under `dirs`, by path from the root, in path order.
 fn rust_sources(dirs: &[&str]) -> Vec<(String, String)> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
