@@ -682,36 +682,37 @@ Tiles sit on whole points so the lift does not pop by a fraction ("Whole points"
 
 A command that pushes past an end of the strip (the first/last column) or of the workspace stack
 (next/prev at the bottom/top, which never wraps, or nothing further to skip to) used to stop dead,
-which read as a dropped keypress. The layout reports it as `EventResponse::edge_hit`. Four places
-report it: `move_focus_internal`'s fallback (`focus_strip_end`) and `MoveNode`'s, both left/right
-only, and `handle_workspace_command` and `move_window_to_workspace`, both up/down. Moving reports it
-because moving without a cue was indistinguishable from a stuck key — the same reason a focus press
-does. A `MoveWindowToWorkspace` naming a workspace outright reports nothing: not finding workspace 7
-is a request that cannot be honoured, not a push against an end, so `workspace_stack_direction`
-answers only for `next`/`prev`. The reactor (`start_edge_bounce`) sends `Event::Bounce` with the
-active workspace's surface and `edge_bounce_overshoot` (`src/animation/domain/motion/plan.rs`):
-`EDGE_BOUNCE_OVERSHOOT` (72pt) the way the content would have gone, so going right pulls the strip
-left and the next workspace pulls the row up. It was 36pt and was reported as too small to notice —
-2% of a 1720pt viewport; 72 is 4%, still far short of a column. A bounce at a side of the strip
-names the press that ran into it, the move by the window it pushed (`EventResponse::pushed`) and the
-focus press by the window focus stayed on (`EventResponse::stepped`), and one at an end of the stack
-names the switch or the move to another workspace that ran into it as a switch (`Cue::Switch`,
-`edge_press` in `src/app/reactor/layout_pass.rs`): the look plays the bounce as it plays that press,
-Zoom zoomed out either way. Under a look that draws them, the bounce carries the strips above and
-below too, as a pan does ("Layout changes and strip movements"), and every container gives, theirs
-included. The actor (`start_bounce`) composes a transition of the bounce kind when none is running:
-every tile at rest, nothing written and nothing watched, the bounce played as the motion starts,
-once frame zero is up. On a flight that moves it adds the bounce at once; on one that does not move
-yet it waits for the motion (`RunningAnimation::push`, which keeps it with `FlightScore::wait`), the
-latest push in place of any before it and its press the one frame zero shows unless it is plain, and
-plays as the motion starts. Either way the coordinator's clock runs for as long as the score plays:
-set to end with it as the motion starts (`Event::Fit`), run on for a push on a moving flight
-(`Event::Extend`). Every push that reaches a moving flight shows: each container's bounce is a track
-in the flight's score, and a push while it plays starts that container's next from where it is
-drawn, the clock extended to the new ones' return. Frame zero posed again has nothing playing, and
-the lift drops the score, so the next push starts every bounce from rest; an engine's record of the
-bounce kept past either pushed from where nothing was drawn and the surface jumped. Both are pinned
-by `a_push_starts_each_carrier_from_where_its_bounce_is_drawn`, the wait by
+which read as a dropped keypress. The layout reports it as `EventResponse::edge_hit`, from
+`move_focus_internal`'s fallback (`focus_strip_end`), `MoveNode`'s and `MoveNodeToEnd`'s, all
+left/right only, and from `handle_workspace_command` and `move_window_to_workspace`, both up/down.
+Moving reports it because moving without a cue was indistinguishable from a stuck key — the same
+reason a focus press does. A `MoveWindowToWorkspace` naming a workspace outright reports nothing:
+not finding workspace 7 is a request that cannot be honoured, not a push against an end, so
+`workspace_stack_direction` answers only for `next`/`prev`. The reactor (`start_edge_bounce`) sends
+`Event::Bounce` with the active workspace's surface and `edge_bounce_overshoot`
+(`src/animation/domain/motion/plan.rs`): `EDGE_BOUNCE_OVERSHOOT` (72pt) the way the content would
+have gone, so going right pulls the strip left and the next workspace pulls the row up. It was 36pt
+and was reported as too small to notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a
+column. A bounce at a side of the strip names the press that ran into it, the move by the window it
+pushed (`EventResponse::pushed`) and the focus press by the window focus stayed on
+(`EventResponse::stepped`), and one at an end of the stack names the switch or the move to another
+workspace that ran into it as a switch (`Cue::Switch`, `edge_press` in
+`src/app/reactor/layout_pass.rs`): the look plays the bounce as it plays that press, Zoom zoomed out
+either way. Under a look that draws them, the bounce carries the strips above and below too, as a
+pan does ("Layout changes and strip movements"), and every container gives, theirs included. The
+actor (`start_bounce`) composes a transition of the bounce kind when none is running: every tile at
+rest, nothing written and nothing watched, the bounce played as the motion starts, once frame zero
+is up. On a flight that moves it adds the bounce at once; on one that does not move yet it waits for
+the motion (`RunningAnimation::push`, which keeps it with `FlightScore::wait`), the latest push in
+place of any before it and its press the one frame zero shows unless it is plain, and plays as the
+motion starts. Either way the coordinator's clock runs for as long as the score plays: set to end
+with it as the motion starts (`Event::Fit`), run on for a push on a moving flight (`Event::Extend`).
+Every push that reaches a moving flight shows: each container's bounce is a track in the flight's
+score, and a push while it plays starts that container's next from where it is drawn, the clock
+extended to the new ones' return. Frame zero posed again has nothing playing, and the lift drops the
+score, so the next push starts every bounce from rest; an engine's record of the bounce kept past
+either pushed from where nothing was drawn and the surface jumped. Both are pinned by
+`a_push_starts_each_carrier_from_where_its_bounce_is_drawn`, the wait by
 `an_accent_before_the_motion_waits_for_it` and, where the flight decides it,
 `a_push_before_the_flight_moves_waits_for_it_and_one_after_plays_at_once`. How the bounce is drawn,
 and how a push re-kicks it, is "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
@@ -727,29 +728,32 @@ move that does not scroll. For a full-width column even a per-window flight
 shows nothing: the camera follows the moved window, and the column it passes
 is parked off screen at both ends, so `worth_animating` culls it.
 
-**A move is a strip movement with a swap.** `MoveNode` that swaps two columns
-reports `EventResponse::moved` (not a pull out of a stack, which resizes, not a
-vertical move, not a move onto another display). The reactor routes it to
-`start_strip_pan` with the strip movement, zero when the strip did not move on
-screen, and the surface is built exactly as a pan's, every window at its NEW
-frame. The moved column and the column it passed also get a start (`swap_starts` in
-`src/transitions/domain/strip_move.rs`): the two fill the span they fill
-now, in the order they had before. For W of width a and N of width b with gap
-g, moving right, W started at N's new x and N at N's new x + a + g; moving
-left, W at W's new x + b + g and N at W's new x. Every window of a stacked N
-shifts by one amount. What is done with the pair is the look's: the reactor
-names the press (`Cue::Move`; a focus press along the strip is `Cue::Focus`, from
-`EventResponse::stepped`, a move before it), and as the movement reaches the flight engine,
-`stage_move` hands the strip and the pair to the look of the flight it joins,
-else the one it asks for (`Look::stage`, `src/animation/domain/choreography.rs`),
-and puts what it staged on the surface. The strips beside it are no part of the
-strip it stages: a column of one is never the column passed, nor starts
-elsewhere (`a_move_staged_beside_other_strips_passes_a_column_of_its_own`). Slide, the default look
-(`src/animation/domain/choreography/slide.rs`), has W cross from its start, and
-N cross from its own unless the move steps, when it is held; the three rules
-below are Slide's. `surface_plan` groups by travel vector, so the strip is one
-container and each crossing column has its own; the moved window holds focus, so its
-container is drawn first (`band_plan`) and N slides beneath it.
+**A move is a strip movement with a swap.** `MoveNode` that swaps two columns, and
+`MoveNodeToEnd` that takes a lone window's column to an end of the strip, report
+`EventResponse::moved` with how many columns the window passed (not a pull out of a stack,
+which resizes, not a vertical move, not a move onto another display). The reactor routes
+it to `start_strip_pan` with the strip movement, zero when the strip did not move on screen,
+and the surface is built exactly as a pan's, every window at its NEW frame. The moved column
+and the columns it passed also get a start (`move_starts` in
+`src/transitions/domain/strip_move.rs`): together they fill the span they fill now, in the
+order they had before. For W of width a and N of width b with gap g, moving right, W started
+at N's new x and N at N's new x + a + g; moving left, W at W's new x + b + g and N at W's new
+x. Past several columns, each column passed shifts back by a + g, and W starts at the far
+end of the span. Every window of a stacked column shifts by one amount, and the columns
+passed all shift by the same, so `surface_plan` makes them one container. What is done with
+the pair is the look's: the reactor names the press (`Cue::Move`, with the columns passed; a
+focus press along the strip is `Cue::Focus`, from `EventResponse::stepped`, a move before
+it), and as the movement reaches the flight engine, `stage_move` hands the strip and the pair
+to the look of the flight it joins, else the one it asks for (`Look::stage`,
+`src/animation/domain/choreography.rs`), and puts what it staged on the surface. The strips
+beside it are no part of the strip it stages: a column of one is never a column passed, nor
+starts elsewhere (`a_move_staged_beside_other_strips_passes_a_column_of_its_own`). Slide, the
+default look (`src/animation/domain/choreography/slide.rs`), has W cross from its start, and
+each column passed cross from its own unless the move steps, when it is held; the three rules
+below are Slide's. `surface_plan` groups by travel vector, so the strip is one container and
+the moved column and the columns passed have one each; the moved window holds focus, so its
+container is drawn first (`band_plan`) and the columns passed slide beneath it
+(`a_move_past_several_columns_crosses_every_one`).
 
 **Which moves step.** Only a moved column that fills the viewport steps
 (`fills_viewport`): its width is the tiling area's, the display's usable width
@@ -765,14 +769,16 @@ window went, and back (`nudge`): a move right steps the strip left and opens
 the right side, where N was. It went toward where the window went, opening the
 side N was heading for.
 
-**The column passed is held.** For a move that steps, Slide holds N:
-`stage_move` gives N its old slot as its surface frame and no start of its own,
+**The columns passed are held.** For a move that steps, Slide holds N, and every other
+column passed alike: `stage_move` gives N its old slot as its surface frame and no start of its own,
 so it rides the strip's container: its tile starts where N was on screen and moves only as the strip
-does, W slides over it, and it finishes beneath W, covered. Only the drawing is
+does, W slides over it, and it finishes at its old slot. N's slot and any other W now holds finish
+beneath W, covered; a column further out, which only a move to an end passes, finishes past W, off
+screen (`a_full_width_move_past_several_columns_steps_and_holds_every_one`). Only the drawing is
 held. N's real window goes to its layout frame, off screen, as for any move:
 `final_frames` are unchanged, the handover compares real windows with them, and
 nothing of it lands on screen to be watched. A
-move that does not step keeps both columns crossing.
+move that does not step keeps every column crossing.
 
 The step starts only on a flight that moves: one still collecting passes
 poses frame zero again with each, which has nothing playing, so a move

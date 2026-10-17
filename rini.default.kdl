@@ -346,6 +346,7 @@ binds {
     //   focus-column-left / focus-column-right        stop at the end of the strip
     //   focus-window-or-monitor-up / -down            within the column, then the display above/below
     //   move-window-left / move-window-right          a lone window swaps columns; a stacked one leaves as a new column
+    //   move-window-to-first / move-window-to-last    the same, to that end of the strip in one press
     //   move-window-up-or-to-monitor-up / move-window-down-or-to-monitor-down
     //   toggle-fold-left / toggle-fold-right          fold the window into the column on that side, or back
     //                                                 out to the row it came from; pressing one key twice undoes it
@@ -391,6 +392,8 @@ binds {
     Mod+Shift+J { move-window-down-or-to-monitor-down; }
     Mod+Shift+K { move-window-up-or-to-monitor-up; }
     Mod+Shift+L { move-window-right; }
+    Mod+Shift+U { move-window-to-first; }
+    Mod+Shift+O { move-window-to-last; }
 
     Mod+1 { focus-workspace 1; }
     Mod+2 { focus-workspace 2; }

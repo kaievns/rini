@@ -14,7 +14,7 @@ use super::{Reactor, ScreenInfo};
 use crate::decorations::domain::style::Worn;
 use crate::transitions::domain::request::SurfaceWindow;
 use crate::windows::domain::request::Request;
-use crate::workspaces::Direction;
+use crate::workspaces::{Direction, StripMove};
 
 /// Where the active workspace's strip has each window: every window at its strip frame, a parked
 /// one where the strip has it rather than at its park.
@@ -38,7 +38,7 @@ struct Stack<'a> {
 pub(super) struct StripPan<'a> {
     pub(super) final_frames: Vec<(WindowId, CGRect)>,
     pub(super) delta: CGPoint,
-    pub(super) moved: Option<(WindowId, Direction)>,
+    pub(super) moved: Option<StripMove>,
     pub(super) stepped: Option<(WindowId, WindowId)>,
     pub(super) standing: &'a [crate::transitions::domain::request::AnimationRequest],
     pub(super) laid_out: &'a [(WindowId, CGRect)],
@@ -181,18 +181,18 @@ impl Reactor {
     }
 
     /// Animates a strip scroll as one horizontal viewport pan, the horizontal twin of a workspace
-    /// switch, and a move along the strip as that pan with a swap. Returns true when the strip
-    /// surface took over.
+    /// switch, and a move along the strip as that pan with the move staged. Returns true when the
+    /// strip surface took over.
     ///
     /// `delta` is how far the strip moved, zero when it did not. The strip surface holds the whole
     /// active workspace at its final positions, and the viewport starts shifted back by `delta` so
     /// the strip appears to arrive from where it was, then settles. A `moved` window is the press's
     /// cue, which the flight engine has a look stage (`strip_move::stage_move`) as the movement
     /// reaches it, the look of the flight it joins, else the config's: Slide starts the moved column
-    /// and the column it passed from the slots they held before the move, so the two are seen
-    /// changing places, unless the moved column fills the viewport, when the whole strip steps and
-    /// the column it passed is held on the strip beneath it. See "The move flight, staged" in
-    /// `src/transitions/docs/coordination.md`.
+    /// and every column it passed from the slots they held before the move
+    /// (`strip_move::move_starts`), so the moved column is seen crossing them, unless it fills the
+    /// viewport, when the whole strip steps and each column it passed is held on the strip beneath
+    /// it. See "The move flight, staged" in `src/transitions/docs/coordination.md`.
     ///
     /// `final_frames` are the pass's windows on this workspace whose frames changed: the real windows
     /// placed once the surface covers them. A window that did not move is not re-placed, as on the
@@ -801,11 +801,8 @@ impl Reactor {
 
     /// The window the current command moved along the strip, if this pass lays it out; taken, so
     /// only one pass draws the move.
-    pub(crate) fn take_move_in(
-        &mut self,
-        layout: &[(WindowId, CGRect)],
-    ) -> Option<(WindowId, Direction)> {
-        let (window, _) = self.moved_along_strip?;
+    pub(crate) fn take_move_in(&mut self, layout: &[(WindowId, CGRect)]) -> Option<StripMove> {
+        let window = self.moved_along_strip?.window;
         if !layout.iter().any(|(wid, _)| *wid == window) {
             return None;
         }
@@ -921,12 +918,16 @@ fn report_target_out_of_view(
 
 /// The press a strip movement names to its look: a move before a focus press, either before none.
 fn pan_cue(
-    moved: Option<(WindowId, Direction)>,
+    moved: Option<StripMove>,
     stepped: Option<(WindowId, WindowId)>,
 ) -> crate::animation::domain::choreography::Cue {
     use crate::animation::domain::choreography::Cue;
     match (moved, stepped) {
-        (Some((window, direction)), _) => Cue::Move { window, direction },
+        (Some(moved), _) => Cue::Move {
+            window: moved.window,
+            direction: moved.direction,
+            columns_passed: moved.columns_passed,
+        },
         (None, Some((from, to))) => Cue::Focus { from, to },
         (None, None) => Cue::Plain,
     }

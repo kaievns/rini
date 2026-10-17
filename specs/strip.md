@@ -336,6 +336,24 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > them right, so on screen they kept their place, and the one parked beyond the right edge was drawn
 > the shrink onto the screen and slid off. It now starts where the strip had it at the last pass.
 
+## Moving along the strip
+
+- **`move-window-to-first` and `move-window-to-last` MUST take the focused window to that end of
+  its strip in one press**, as `move-window-left` and `-right` take it one place: a window alone in
+  its column MUST take the column there, past every column between, which keep their order, and a
+  window stacked in a column MUST leave it as a new column at that end, the first or last column's
+  own included. The window MUST keep focus, and the strip MUST scroll to show it. A lone window's
+  column already at that end MUST NOT move, and the press MUST bounce the view as a move into an
+  end does (`animation.md`, "Pushing past an end"). The default binds are `Mod+Shift+U` and
+  `Mod+Shift+O`.
+- The move MUST be seen as a move of one place is: the moved window crossing from where it was,
+  and every column it passes crossing on by one place, or held in its place where Slide steps a
+  moved column that fills the viewport (`animation.md`, "Moving a window along the strip").
+
+> **Reported 2026-10-18.** "i want you to make alt-shift-u/o to move current window to the
+> beginning/end of its strip. with animation". Kai's `Mod` is Alt. niri's `move-column-to-first`
+> and `move-column-to-last` were refused as niri's alone, with no rini action to point to.
+
 ## Folding
 
 - `Mod+Comma` folds and unfolds toward the column on the LEFT. `Mod+Period` does the same toward the column on
@@ -413,7 +431,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 `src/layout/domain/scrolling/width.rs` its width keys, full width and the presets among them,
 `src/layout/domain/constraints.rs` the widths, `src/layout/domain/column_width.rs` the width a column
 holds and a window carries, `src/layout/domain/strip.rs` the geometry,
-`src/workspaces/engine/commands/` the commands.
+`src/workspaces/engine/commands/` the commands, a move to an end among them in
+`src/workspaces/engine/commands/arrange.rs`.
 Which edge a mouse drag moves, and what it asks of the column, is `src/layout/domain/edge_drag.rs`.
 A title-bar zoom is told from a resize by `src/windows/domain/zoom.rs`, and the full-width toggle both
 routes share is in `src/workspaces/engine/commands/floating.rs`. Taking a window off the strip and

@@ -274,6 +274,7 @@ The default binds, with `Mod` as Alt (`input › mod-key`):
 | `Mod+H` / `Mod+L` | focus the column left or right |
 | `Mod+J` / `Mod+K` | focus the window below or above, then the display below or above |
 | `Mod+Shift+H/J/K/L` | move the window |
+| `Mod+Shift+U` / `Mod+Shift+O` | move the window to the start or the end of its strip |
 | `Mod+1`..`Mod+4` | show a workspace |
 | `Mod+Shift+1`..`Mod+Shift+4` | send the window to a workspace, focus staying here |
 | `Mod+Tab` | the previous workspace |

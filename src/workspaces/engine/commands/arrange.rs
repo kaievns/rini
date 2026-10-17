@@ -1,4 +1,4 @@
-//! Moving windows within the strip: swaps, node moves, folding and stacking.
+//! Moving windows within the strip: swaps, node moves, moves to an end, folding and stacking.
 //!
 //! One arm per command. `impl LayoutEngine` across modules is the pattern `engine/persistence/`
 //! already uses.
@@ -10,8 +10,10 @@ use tracing::debug;
 
 use super::CommandTarget;
 use crate::layout::domain::boundary::strip_edge;
+use crate::layout::{LayoutId, StripEnd};
 use crate::workspaces::domain::command::ArrangeCommand;
-use crate::workspaces::engine::{EventResponse, LayoutEngine, WindowStore};
+use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
+use crate::workspaces::engine::{EventResponse, LayoutEngine, StripMove, WindowStore};
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_arrange_command(
@@ -41,7 +43,11 @@ impl LayoutEngine {
                 let selected = tree.selected_window(layout);
                 if self.workspace_tree_mut(workspace_id).move_selection(layout, direction) {
                     return EventResponse {
-                        moved: selected.filter(|_| swapping).map(|window| (window, direction)),
+                        moved: selected.filter(|_| swapping).map(|window| StripMove {
+                            window,
+                            direction,
+                            columns_passed: 1,
+                        }),
                         ..EventResponse::default()
                     };
                 }
@@ -91,6 +97,10 @@ impl LayoutEngine {
                 }
                 EventResponse::default()
             }
+            ArrangeCommand::MoveNodeToEnd(end) => {
+                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
+                self.move_node_to_end(workspace_id, layout, end)
+            }
             ArrangeCommand::ToggleFold(side) => {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
                 let raise_windows =
@@ -103,6 +113,37 @@ impl LayoutEngine {
                     self.workspace_tree_mut(workspace_id).explode_column_of_selection(layout);
                 Self::response_for_raised_windows(raise_windows)
             }
+        }
+    }
+
+    /// The selection taken to `end` of the strip, as a move of one place takes it: a lone window's
+    /// column named with how many columns it passed, a stacked window leaving as a new column named
+    /// with nothing, and a lone window already there pushing against the end, which bounces.
+    fn move_node_to_end(
+        &mut self,
+        workspace_id: VirtualWorkspaceId,
+        layout: LayoutId,
+        end: StripEnd,
+    ) -> EventResponse {
+        let direction = end.direction();
+        let tree = self.workspace_tree(workspace_id);
+        let swapping = !tree.parent_of_selection_is_stacked(layout);
+        let columns_passed = tree.columns_toward(layout, end);
+        let selected = tree.selected_window(layout);
+        if self.workspace_tree_mut(workspace_id).move_selection_to_end(layout, end) {
+            return EventResponse {
+                moved: selected.filter(|_| swapping).map(|window| StripMove {
+                    window,
+                    direction,
+                    columns_passed,
+                }),
+                ..EventResponse::default()
+            };
+        }
+        EventResponse {
+            edge_hit: strip_edge(direction),
+            pushed: selected,
+            ..EventResponse::default()
         }
     }
 }

@@ -4,7 +4,7 @@
 //! `platform` because it touches nothing outside itself. `ScrollingLayoutSystem` is the seam every
 //! other feature reaches it through. See `src/layout/docs/strip.md`.
 
-pub use rini_ipc::protocol::{Direction, ResizeOrientation};
+pub use rini_ipc::protocol::{Direction, ResizeOrientation, StripEnd};
 
 pub mod domain;
 pub mod settings;

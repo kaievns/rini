@@ -12,7 +12,7 @@ use crate::app::reactor::*;
 use crate::displays::domain::topology::Topology;
 use crate::windows::domain::raise::{self, RaiseRequest};
 use crate::windows::domain::request::Request;
-use crate::workspaces::{LayoutCommand, LayoutEvent, WorkspaceCommand};
+use crate::workspaces::{Direction, LayoutCommand, LayoutEvent, WorkspaceCommand};
 
 #[test]
 fn layout_query_exposes_active_and_inactive_workspace_container_trees() {

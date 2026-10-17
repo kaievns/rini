@@ -2151,6 +2151,7 @@ mod tests {
             let moved = Cue::Move {
                 window: w,
                 direction: rini_ipc::protocol::Direction::Left,
+                columns_passed: 1,
             };
             press(&mut running, &second, (rest, rest), w, moved);
             assert_eq!(running.cue, moved);

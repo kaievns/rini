@@ -50,6 +50,14 @@ fn table() -> Vec<(Action, Lowered)> {
         (Action::MoveWindowLeft, layout(LayoutCommand::MoveNode(Left))),
         (Action::MoveWindowRight, layout(LayoutCommand::MoveNode(Right))),
         (
+            Action::MoveWindowToFirst,
+            layout(LayoutCommand::MoveNodeToEnd(StripEnd::First)),
+        ),
+        (
+            Action::MoveWindowToLast,
+            layout(LayoutCommand::MoveNodeToEnd(StripEnd::Last)),
+        ),
+        (
             Action::MoveWindowDownOrToMonitorDown,
             layout(LayoutCommand::MoveNode(Down)),
         ),

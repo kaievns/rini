@@ -10,7 +10,7 @@ link the daemon, so anything it needs has to be in the protocol.
 |---|---|
 | `protocol/commands.rs` | `LayoutCommand`, `Command`: every action rini can be asked to take, and `ConfigCommand`: reload the running config, or apply a KDL fragment over it |
 | `protocol/queries.rs` | The shapes a query answers in: `ContainerTreeNode`, the diagnostics census, window and workspace views |
-| `protocol/layout.rs` | `Direction`, `ResizeOrientation`, `LayoutKind` |
+| `protocol/layout.rs` | `Direction`, `StripEnd`, `ResizeOrientation`, `LayoutKind` |
 | `mach.rs` | The Mach service: registering `git.kaievns.rini`, finding a request's payload in the message the kernel delivered (`payload_of`), and answering it on the reply port it came with |
 | `client.rs` | The client half, used by `rini-cli` and anything else that asks |
 

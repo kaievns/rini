@@ -1,12 +1,13 @@
 //! Zoom: a press along the strip, and a switch through the workspace stack, plays as one arc. The
 //! strip zooms out about the display's centre and back in on a sin² bell while every container
 //! crosses to where its pass sends it, the travel they all carry eased so the view is where the swap
-//! needs it at the arc's middle, and the two columns a move swapped crossing on a curve of their
-//! own. A pan merged mid-arc, along or across the strip, folds into the containers' movement and
-//! lands with the arc; any other pass bends them on a spring from where the score has them, as fast
-//! as they are drawn moving. A push at an end bounces with the strip zoomed out. It plans, folds and
-//! poses as Slide does, and composes as Slide does without an arc. See "The zoom look" in
-//! `specs/animation.md`, and "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
+//! needs it at the arc's middle, and a move's column and the columns it passed crossing on a curve
+//! of their own. A pan merged mid-arc, along or across the strip, folds into the containers'
+//! movement and lands with the arc; any other pass bends them on a spring from where the score has
+//! them, as fast as they are drawn moving. A push at an end bounces with the strip zoomed out. It
+//! plans, folds and poses as Slide does, and composes as Slide does without an arc. See "The zoom
+//! look" in `specs/animation.md`, and "The overlay engine" in
+//! `src/animation/docs/animation-smoothness.md`.
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayPoint, OverlayVector, SurfaceRect};
@@ -129,12 +130,12 @@ pub fn camera_progress(share: f64, f: f64) -> f64 {
     1.0 - (1.0 - u) * (1.0 - u) - 2.0 * u * (1.0 - u) * (1.5 - 2.0 * share)
 }
 
-/// What Zoom does with a press on the strip. A move crosses both columns of its pair from where they
-/// start, nothing held and no step, on an arc as deep as the pair needs, the travel carried to show
-/// the pair at its middle. A focus press that scrolls the strip between two of its windows pans on
-/// an arc as deep as a move of the same two columns, half of it carried at the middle, and a switch
-/// on one as deep as the two strips it travels between need (`switch_arc`). Anything else stages
-/// nothing.
+/// What Zoom does with a press on the strip. A move crosses every column of its pair, the moved one
+/// and each it passed, from where they start, nothing held and no step, on an arc as deep as the
+/// pair needs, the travel carried to show the pair at its middle. A focus press that scrolls the
+/// strip between two of its windows pans on an arc as deep as a move of the same two columns, half
+/// of it carried at the middle, and a switch on one as deep as the two strips it travels between
+/// need (`switch_arc`). Anything else stages nothing.
 pub fn stage(cue: &Cue, strip: &Strip) -> Staging {
     let accent = match *cue {
         Cue::Move { window, .. } => return staged_move(window, strip),
@@ -201,7 +202,8 @@ fn staged_move(moved: WindowId, strip: &Strip) -> Staging {
     }
 }
 
-/// The pair's two columns, each by one window and how far it crosses, its frame less its start.
+/// The moved column and the columns it passed, each side by one window and how far it crosses, its
+/// frame less its start: every column passed crosses as far.
 fn swap_of(strip: &Strip) -> Option<Swap> {
     let by = |passed: bool| {
         strip.pair.iter().filter(|p| p.passed == passed).find_map(|p| {
@@ -423,8 +425,8 @@ fn by_of(crossing: &[(GroupKey, OverlayVector)], key: GroupKey) -> OverlayVector
         .map_or(OverlayVector::zero(), |&(_, by)| by)
 }
 
-/// The containers of `plan` a move's `swap` crosses, each by how far: none unless its two columns
-/// ride two containers.
+/// The containers of `plan` a move's `swap` crosses, each by how far: none unless the moved column
+/// and the columns passed ride two containers.
 fn crossing_of(plan: &FlightPlan, swap: Option<Swap>) -> Vec<(GroupKey, OverlayVector)> {
     let key = |window| match plan.member(window) {
         Some(Member::Rigid { key, .. }) => Some(key),
@@ -980,7 +982,7 @@ mod tests {
         }
     }
 
-    /// W, `w` wide, moved past N, `n` wide, as `swap_starts` stages it on the laptop. Right: W at
+    /// W, `w` wide, moved past N, `n` wide, as `move_starts` stages it on the laptop. Right: W at
     /// [3, 3 + w] before and after, the view following it, N from its right, and C, as wide as N,
     /// left of N riding the strip. Left: the pair at the start of the strip, W from N's right, and
     /// C right of the pair, so nothing scrolls.
@@ -1100,6 +1102,7 @@ mod tests {
                 Cue::Move {
                     window: wid(W),
                     direction: Direction::Right,
+                    columns_passed: 1,
                 },
                 0.88,
             ),
@@ -1544,6 +1547,7 @@ mod tests {
             let mut flight = press.flown(Cue::Move {
                 window: wid(W),
                 direction: Direction::Right,
+                columns_passed: 1,
             });
             let strip = flight.score.track(Node::Strip, Channel::Base).expect("an arc").clone();
             assert_eq!(strip.form(), Form::Samples);
@@ -1612,6 +1616,7 @@ mod tests {
         let flight = pair_move(859.5, 859.5, false).flown(Cue::Move {
             window: wid(W),
             direction: Direction::Left,
+            columns_passed: 1,
         });
         let (depth, _, swap) = arc_of(flight.accent);
         assert_eq!(depth, STRIP_ZOOM);
@@ -1652,6 +1657,7 @@ mod tests {
         let flight = pair_move(1722.0, 1722.0, false).flown(Cue::Move {
             window: wid(W),
             direction: Direction::Left,
+            columns_passed: 1,
         });
         let lift = flight.score.track(Node::Lift(wid(W)), Channel::Base).expect("lifted");
         assert_eq!((lift.begin(), lift.form()), (BEGIN, Form::Samples));
@@ -1708,6 +1714,7 @@ mod tests {
                     &Cue::Move {
                         window: wid(W),
                         direction: Direction::Right,
+                        columns_passed: 1,
                     },
                     &press.strip(),
                 )
@@ -1760,6 +1767,7 @@ mod tests {
             let flight = press.flown(Cue::Move {
                 window: wid(W),
                 direction: Direction::Right,
+                columns_passed: 1,
             });
             let (middle, end) = (BEGIN + ARC / 2.0, BEGIN + 2.0 * PLAIN);
             let Some(Value::Zoom(zoom)) = flight.score.sample(Node::Strip, middle) else {
@@ -1784,6 +1792,7 @@ mod tests {
         let flight = pair_move(1722.0, 1722.0, true).flown(Cue::Move {
             window: wid(W),
             direction: Direction::Right,
+            columns_passed: 1,
         });
         let (_, share, _) = arc_of(flight.accent);
         close(share, 0.5, 1e-9, "a straight pan");
@@ -1858,6 +1867,7 @@ mod tests {
         let moved = Cue::Move {
             window: wid(W),
             direction: Direction::Right,
+            columns_passed: 1,
         };
         let staging = stage(&moved, &press.strip());
         assert_eq!(staging.accent, None, "refused");
@@ -1882,6 +1892,7 @@ mod tests {
                     &Cue::Move {
                         window: wid(W),
                         direction: Direction::Right,
+                        columns_passed: 1,
                     },
                     &moved.strip(),
                 )
@@ -1965,6 +1976,7 @@ mod tests {
             (side, Cue::Move {
                 window: wid(N),
                 direction: Direction::Left,
+                columns_passed: 0,
             }),
             (stack, Cue::Switch),
             (-stack, Cue::Switch),

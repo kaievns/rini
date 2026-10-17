@@ -5,8 +5,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use rini_core::ids::{WindowId as InternalWindowId, WindowServerId};
 use rini_ipc::RiniMachClient;
 use rini_ipc::protocol::{
-    self as reactor, DisplaySelector, RiniCommand, RiniRequest, RiniResponse, SwitchScope,
-    WorkspaceSelector,
+    self as reactor, DisplaySelector, RiniCommand, RiniRequest, RiniResponse, StripEnd,
+    SwitchScope, WorkspaceSelector,
 };
 
 #[derive(Parser)]
@@ -159,6 +159,12 @@ enum WindowCommands {
     ToggleFullscreenWithinGaps,
     /// Fold the selected window into the column on this side, or back out to where it came from
     ToggleFold { direction: String },
+    /// Move the selected window to the start of its strip: a lone window's column goes first, a
+    /// stacked window leaves its column as the first column
+    MoveToFirst,
+    /// Move the selected window to the end of its strip: a lone window's column goes last, a
+    /// stacked window leaves its column as the last column
+    MoveToLast,
     /// Resize the selected window by a fractional amount.
     /// - Pass a signed floating value: positive to grow, negative to shrink.
     /// - The value is a fraction of the tiling area (e.g. `0.05` = 5%).
@@ -442,6 +448,8 @@ fn map_window_command(cmd: WindowCommands) -> Result<RiniCommand, String> {
         WindowCommands::ToggleFold { direction } => {
             RiniCommand::Layout(LC::ToggleFold(parse_direction(&direction)?))
         }
+        WindowCommands::MoveToFirst => RiniCommand::Layout(LC::MoveNodeToEnd(StripEnd::First)),
+        WindowCommands::MoveToLast => RiniCommand::Layout(LC::MoveNodeToEnd(StripEnd::Last)),
         WindowCommands::ResizeBy { amount, orientation } => {
             RiniCommand::Layout(LC::ResizeWindowBy {
                 amount,
@@ -805,6 +813,8 @@ mod tests {
             ("toggle-fold", WindowCommands::ToggleFold {
                 direction: "left".into(),
             }),
+            ("move-to-first", WindowCommands::MoveToFirst),
+            ("move-to-last", WindowCommands::MoveToLast),
             ("resize-by", WindowCommands::ResizeBy {
                 amount: 0.05,
                 orientation: CliResizeOrientation::Horizontal,
@@ -819,6 +829,30 @@ mod tests {
                 panic!("{label} and {other} both map to {wire}");
             }
             seen.push((label, wire));
+        }
+    }
+
+    /// `window move-to-first` and `move-to-last` take the selected window to the two ends of its
+    /// strip.
+    #[test]
+    fn the_moves_to_an_end_name_their_end() {
+        use rini_ipc::protocol::LayoutCommand as LC;
+        for (name, end) in [
+            ("move-to-first", StripEnd::First),
+            ("move-to-last", StripEnd::Last),
+        ] {
+            let cli = Cli::try_parse_from(["rini-cli", "execute", "window", name])
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let Commands::Execute { command } = cli.command else {
+                panic!("{name} is not an execute subcommand");
+            };
+            assert_eq!(
+                build_execute_request(command).unwrap(),
+                RiniRequest::ExecuteCommand {
+                    command: RiniCommand::Layout(LC::MoveNodeToEnd(end)),
+                },
+                "{name}"
+            );
         }
     }
 

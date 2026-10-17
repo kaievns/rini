@@ -1999,6 +1999,7 @@ mod tests {
                     cue: Cue::Move {
                         window: wid(1),
                         direction: rini_ipc::protocol::Direction::Right,
+                        columns_passed: 1,
                     },
                     area: area(),
                     cause: h.cause(),

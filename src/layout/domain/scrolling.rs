@@ -14,7 +14,7 @@ use crate::layout::domain::edge_drag::{
 use crate::layout::domain::strip::{Reveal, centres};
 use crate::layout::domain::tile;
 use crate::layout::settings::{Gaps, ScrollingLayoutSettings};
-use crate::layout::{Direction, LayoutId};
+use crate::layout::{Direction, LayoutId, StripEnd};
 
 mod pass;
 mod width;
@@ -309,6 +309,16 @@ impl LayoutState {
         Self {
             column_width_ratio,
             ..Self::default()
+        }
+    }
+
+    /// The strip scrolled to show the selection: only as far as it must under `reveals_only`, else
+    /// aligned to it.
+    fn show_selection(&mut self, reveals_only: bool) {
+        if reveals_only {
+            self.reveal_selected_without_direction();
+        } else {
+            self.align_scroll_to_selected();
         }
     }
 
@@ -1055,21 +1065,12 @@ impl ScrollingLayoutSystem {
         // If the current column is stacked, horizontal move should extract the selected
         // window into its own neighbor column. This is a faster way to undo accidental stacks.
         if state.columns[col_idx].windows.len() > 1 {
-            state.columns[col_idx].ensure_height_weights();
-            let wid = state.columns[col_idx].windows.remove(row_idx);
-            let weight = state.columns[col_idx].height_weights.remove(row_idx);
             let insert_at = match dir {
                 Direction::Left => col_idx,
                 Direction::Right => (col_idx + 1).min(state.columns.len()),
                 _ => return false,
             };
-            state.columns.insert(insert_at, Column {
-                windows: vec![wid],
-                width: None,
-                height_weights: vec![weight],
-                height_overridden: false,
-            });
-            state.selected = Some(wid);
+            Self::pull_out_of_stack(state, (col_idx, row_idx), insert_at);
             return true;
         }
 
@@ -1083,6 +1084,49 @@ impl ScrollingLayoutSystem {
         let Some(selected) = state.selected else { return false };
         state.selected = Some(selected);
         true
+    }
+
+    /// Take the selected window to `end` of the strip: a lone window's column moves there, and a
+    /// stacked window leaves its column as a new column there. False with no selection, or with a
+    /// lone window's column already at that end.
+    fn move_selected_window_to_end(state: &mut LayoutState, end: StripEnd) -> bool {
+        let Some((col_idx, row_idx)) = state.selected_location() else {
+            return false;
+        };
+        if state.columns[col_idx].windows.len() > 1 {
+            let insert_at = match end {
+                StripEnd::First => 0,
+                StripEnd::Last => state.columns.len(),
+            };
+            Self::pull_out_of_stack(state, (col_idx, row_idx), insert_at);
+            return true;
+        }
+        let target = match end {
+            StripEnd::First => 0,
+            StripEnd::Last => state.columns.len() - 1,
+        };
+        if col_idx == target {
+            return false;
+        }
+        let column = state.columns.remove(col_idx);
+        state.columns.insert(target, column);
+        true
+    }
+
+    /// The window at `at`, a column and a row of a stacked column, taken out into a column of its
+    /// own inserted at `insert_at`, and selected.
+    fn pull_out_of_stack(state: &mut LayoutState, at: (usize, usize), insert_at: usize) {
+        let (col_idx, row_idx) = at;
+        state.columns[col_idx].ensure_height_weights();
+        let wid = state.columns[col_idx].windows.remove(row_idx);
+        let weight = state.columns[col_idx].height_weights.remove(row_idx);
+        state.columns.insert(insert_at, Column {
+            windows: vec![wid],
+            width: None,
+            height_weights: vec![weight],
+            height_overridden: false,
+        });
+        state.selected = Some(wid);
     }
 
     fn all_windows(state: &LayoutState) -> Vec<WindowId> {
@@ -1597,13 +1641,39 @@ impl ScrollingLayoutSystem {
             }
         };
         if moved {
-            if reveals_only {
-                state.reveal_selected_without_direction();
-            } else {
-                state.align_scroll_to_selected();
-            }
+            state.show_selection(reveals_only);
         }
         moved
+    }
+
+    /// The selected window taken to `end` of the strip as `move_selection` takes it one place: a
+    /// lone window's column, or a stacked window as a new column, the strip scrolled to show it.
+    /// False when nothing moved: no selection, or a lone window already at that end.
+    pub fn move_selection_to_end(&mut self, layout: LayoutId, end: StripEnd) -> bool {
+        let reveals_only = self.settings.reveals_only();
+        let Some(state) = self.layout_state_mut(layout) else {
+            return false;
+        };
+        let moved = Self::move_selected_window_to_end(state, end);
+        if moved {
+            state.show_selection(reveals_only);
+        }
+        moved
+    }
+
+    /// How many columns lie between the selected window's column and `end` of the strip: none with
+    /// no selection.
+    pub fn columns_toward(&self, layout: LayoutId, end: StripEnd) -> usize {
+        let Some(state) = self.layout_state(layout) else {
+            return 0;
+        };
+        let Some((col_idx, _)) = state.selected_location() else {
+            return 0;
+        };
+        match end {
+            StripEnd::First => col_idx,
+            StripEnd::Last => state.columns.len() - 1 - col_idx,
+        }
     }
 
     /// Fold the selection into the column on `side`, or back out of the column it is in.
@@ -1703,11 +1773,7 @@ impl ScrollingLayoutSystem {
             state.split_out(wid, Direction::Right);
         }
         state.selected = Some(selected);
-        if reveals_only {
-            state.reveal_selected_without_direction();
-        } else {
-            state.align_scroll_to_selected();
-        }
+        state.show_selection(reveals_only);
         vec![selected]
     }
 
@@ -1734,7 +1800,9 @@ mod tests {
     use crate::layout::domain::edge_drag::{Drag, End};
     use crate::layout::domain::tile;
     use crate::layout::settings::{CenterFocusedColumn, Gaps, ScrollingLayoutSettings};
-    use crate::layout::{Direction, LayoutId, ResizeOrientation, WindowLayoutConstraints};
+    use crate::layout::{
+        Direction, LayoutId, ResizeOrientation, StripEnd, WindowLayoutConstraints,
+    };
 
     /// `window`'s app resizing it to `frame`, with no border and no drag.
     fn resized(window: WindowId, frame: CGRect) -> ResizeReport {
@@ -2494,6 +2562,91 @@ mod tests {
         assert_eq!(state.columns[0].windows, vec![w2]);
         assert_eq!(state.columns[1].windows, vec![w1]);
         assert_eq!(state.selected, Some(w2));
+    }
+
+    fn order(system: &ScrollingLayoutSystem, layout: LayoutId) -> Vec<Vec<WindowId>> {
+        let state = system.layouts.get(layout).expect("layout state missing");
+        state.columns.iter().map(|column| column.windows.clone()).collect()
+    }
+
+    /// Four lone columns, the third selected: to the start it passes two, to the end the other
+    /// three, the columns between keep their order, and the selection stays on it. Already at an
+    /// end, the move there changes nothing.
+    #[test]
+    fn a_lone_window_moves_to_either_end_of_the_strip_in_one_press() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let [w1, w2, w3, w4] = [1, 2, 3, 4].map(|idx| wid(1, idx));
+        for window in [w1, w2, w3, w4] {
+            system.add_window_after_selection(layout, window);
+        }
+        system.select_window(layout, w3);
+        assert_eq!(system.columns_toward(layout, StripEnd::First), 2);
+        assert_eq!(system.columns_toward(layout, StripEnd::Last), 1);
+
+        assert!(system.move_selection_to_end(layout, StripEnd::First));
+        assert_eq!(order(&system, layout), [[w3], [w1], [w2], [w4]]);
+        assert_eq!(system.selected_window(layout), Some(w3));
+        assert_eq!(system.columns_toward(layout, StripEnd::First), 0);
+        assert!(
+            !system.move_selection_to_end(layout, StripEnd::First),
+            "already first"
+        );
+        assert_eq!(order(&system, layout), [[w3], [w1], [w2], [w4]]);
+
+        assert_eq!(system.columns_toward(layout, StripEnd::Last), 3);
+        assert!(system.move_selection_to_end(layout, StripEnd::Last));
+        assert_eq!(order(&system, layout), [[w1], [w2], [w4], [w3]]);
+        assert_eq!(system.selected_window(layout), Some(w3));
+        assert!(
+            !system.move_selection_to_end(layout, StripEnd::Last),
+            "already last"
+        );
+    }
+
+    /// A stacked window leaves its column as a new column at that end, the first column's own
+    /// included, as a move of one place pulls it out at an edge.
+    #[test]
+    fn a_stacked_window_leaves_as_a_new_column_at_either_end() {
+        for (end, expected) in [(StripEnd::First, [1, 0, 2]), (StripEnd::Last, [0, 2, 1])] {
+            let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+            let layout = system.create_layout();
+            let windows = [1, 2, 3].map(|idx| wid(1, idx));
+            for window in windows {
+                system.add_window_after_selection(layout, window);
+            }
+            system.select_window(layout, windows[1]);
+            system.toggle_fold_of_selection(layout, Direction::Left);
+            assert_eq!(order(&system, layout), [vec![windows[0], windows[1]], vec![
+                windows[2]
+            ]]);
+
+            assert!(system.move_selection_to_end(layout, end), "{end:?}");
+            let columns: Vec<Vec<WindowId>> =
+                expected.iter().map(|&index| vec![windows[index]]).collect();
+            assert_eq!(order(&system, layout), columns, "{end:?}");
+            assert_eq!(system.selected_window(layout), Some(windows[1]), "{end:?}");
+        }
+    }
+
+    /// The strip scrolls to show the window taken to its far end, as after a move of one place.
+    #[test]
+    fn a_move_to_an_end_scrolls_the_strip_to_show_the_window() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let windows = [1, 2, 3, 4, 5].map(|idx| wid(1, idx));
+        for window in windows {
+            system.add_window_after_selection(layout, window);
+        }
+        system.select_window(layout, windows[0]);
+        let display = screen(1000.0, 800.0);
+        let gaps = Gaps::default();
+        let before = frame_for(&render(&mut system, layout, display, &gaps), windows[0]);
+        assert!(before.max().x <= 1000.0, "{before:?}");
+
+        assert!(system.move_selection_to_end(layout, StripEnd::Last));
+        let after = frame_for(&render(&mut system, layout, display, &gaps), windows[0]);
+        assert!(after.origin.x >= 0.0 && after.max().x <= 1000.0, "{after:?}");
     }
 
     #[test]

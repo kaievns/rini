@@ -1,7 +1,7 @@
 //! Linear, a look only the tests build: every container and loose tile goes straight to where its
 //! pass sends it at an even speed over the flight's length, and a pass arriving mid-flight carries
 //! each on from where the score has it at the speed it is moving there, that speed changing evenly
-//! until it arrives over the pass's length; no accent but the push, and a move holds the column it
+//! until it arrives over the pass's length; no accent but the push, and a move holds the columns it
 //! passes. It plans, folds and poses as Slide does and bends through `Merged::bend`, so it keeps
 //! every look's contract on motion of its own.
 
@@ -25,9 +25,9 @@ use crate::animation::domain::motion::score::{
 #[derive(Debug)]
 pub struct Linear;
 
-/// What Linear does with a press on the strip: for a move, the column passed is held at its start
-/// on the strip and the moved one crosses from where it starts, with no accent; a plain press stages
-/// nothing.
+/// What Linear does with a press on the strip: for a move, each column passed is held at its start
+/// on the strip and the moved one crosses from where it starts, with no accent; a plain press
+/// stages nothing.
 pub fn stage(cue: &Cue, strip: &Strip) -> Staging {
     let mut staging = Staging::default();
     if cue.moved().is_none() {

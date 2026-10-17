@@ -11,7 +11,7 @@ use crate::app::reactor;
 use crate::input::domain::binding::{
     Action, MonitorReference, SwitcherFilter, SwitcherScope, WorkspaceReference, switch_scope,
 };
-use crate::layout::{Direction, ResizeOrientation};
+use crate::layout::{Direction, ResizeOrientation, StripEnd};
 use crate::workspaces::LayoutCommand;
 use crate::workspaces::domain::selector::same_workspace_name;
 
@@ -53,6 +53,8 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
         Action::FocusWindowOrMonitorUp => layout(LayoutCommand::MoveFocus(Direction::Up)),
         Action::MoveWindowLeft => layout(LayoutCommand::MoveNode(Direction::Left)),
         Action::MoveWindowRight => layout(LayoutCommand::MoveNode(Direction::Right)),
+        Action::MoveWindowToFirst => layout(LayoutCommand::MoveNodeToEnd(StripEnd::First)),
+        Action::MoveWindowToLast => layout(LayoutCommand::MoveNodeToEnd(StripEnd::Last)),
         Action::MoveWindowDownOrToMonitorDown => layout(LayoutCommand::MoveNode(Direction::Down)),
         Action::MoveWindowUpOrToMonitorUp => layout(LayoutCommand::MoveNode(Direction::Up)),
         Action::ToggleFoldLeft => layout(LayoutCommand::ToggleFold(Direction::Left)),

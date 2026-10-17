@@ -405,6 +405,8 @@ fn action(action: &Action) -> String {
         | Action::FocusWindowOrMonitorUp
         | Action::MoveWindowLeft
         | Action::MoveWindowRight
+        | Action::MoveWindowToFirst
+        | Action::MoveWindowToLast
         | Action::MoveWindowDownOrToMonitorDown
         | Action::MoveWindowUpOrToMonitorUp
         | Action::ToggleFoldLeft
