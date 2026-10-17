@@ -68,7 +68,14 @@ container, which carries on toward the new destination under the same
 animation key (`GROUP_ANIMATION_KEY`, `"rini.group.move"`); see "One flight
 however many presses" below. Members voting
 elsewhere are reparented at the frame they are drawn at, into a group whose
-remaining travel matches theirs, or into a new one. A member the pass sends
+remaining travel matches theirs and whose movement goes as fast as the one they
+leave, within 60pt/s on each axis (half a point over a 120Hz frame), or into a
+new one. Matching the remaining travel alone, a still container's member took a
+group with 151pt left at 2821pt/s and started at that speed, and a member drawn
+where the pass sends it took the still group and stopped from 2211pt/s: 30 of
+1000 seeds of the speed contract failed under Slide, 67 under Zoom (a probe over
+seeds 0-999, the contract's flights each); pinned by
+`a_window_leaving_its_container_lands_only_in_one_going_as_fast`. A member the pass sends
 off the viewport does not vote while its container moves (`rides_out`): it
 has no visible destination, and on a switch the layout pass 16ms later
 parked the departing row's windows, each of which opened a sideways group
@@ -86,8 +93,8 @@ their group all the same. A move under a pan is the one exception: the
 members of a group that does not travel with the pan (the columns the move
 swapped that cross it) vote as in an ordinary pass, wherever their destination is,
 and the rest of each group they sit in holds the place the pan gave it. The
-merge reads two positions of every container (`Presented`), evaluated from the
-flight's score (`Score::presented`): where it is drawn,
+merge reads two positions of every container and how fast its movement goes
+(`Presented`), evaluated from the flight's score (`Score::presented`): where it is drawn,
 any bounce or nudge riding it included, and where its movement has it. A member
 leaving a container for one of its own starts from the first, so it stays where
 it is drawn and still lands on its destination; pinned by
@@ -150,7 +157,9 @@ rest for the same reason: it used to start from its presented
 position, which under a move's nudge is a third of the display out. A container
 a merge opens for a member leaving another carries on the one it left: a spring
 from where the member is drawn, as fast as the old container's leg is going
-(`Leg::toward` given that leg). It used to start the curve from rest, and the column a second
+(`Leg::toward` given that leg), even when it is drawn where the pass sends it: the
+spring overshoots and comes back, where no leg stopped it dead. It used to start the
+curve from rest, and the column a second
 move passes left the strip at 12x the speed it had a frame before, 5,700 to
 53,000pt/s in a full-width burst; pinned by
 `the_column_a_second_move_passes_keeps_its_speed`. The flight's clock covers

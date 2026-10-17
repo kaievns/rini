@@ -20,7 +20,7 @@ use super::{
 };
 use crate::animation::domain::motion::accents::{Accent, push_tracks, step_tracks, steps};
 use crate::animation::domain::motion::easing::MOTION_CURVE;
-use crate::animation::domain::motion::glide::{Leg, spring_omega};
+use crate::animation::domain::motion::glide::{Leg, is_moving, spring_omega};
 use crate::animation::domain::motion::nudge::{NUDGE_SHARE, NUDGE_STRETCH, flight_curve};
 use crate::animation::domain::motion::plan::{
     AnimationTarget, FlightPlan, GroupKey, OwnPath, Presented, ReflowPlan, animation_targets,
@@ -135,6 +135,7 @@ impl Choreography for Slide {
         let presented = Presented {
             drawn: plan.positions.keys().map(|key| (*key, OverlayPoint::origin())).collect(),
             along: plan.positions.clone(),
+            rate: HashMap::new(),
         };
         merge_plans(plan, pass.plan, pass.pan, &presented, pass.focus, pass.viewport).0
     }
@@ -318,7 +319,10 @@ impl Bending for Bent<'_> {
     fn open(&mut self, making: &mut Making, way: ContainerWay, leaving: Option<GroupKey>) {
         let ContainerWay { key, from, to } = way;
         let from = from.rounded();
-        if self.seconds <= 0.0 || from.same_as(to) {
+        let carried = leaving
+            .and(self.carried.get(&key))
+            .filter(|leg| is_moving(leg.velocity_at(self.now)));
+        if self.seconds <= 0.0 || (from.same_as(to) && carried.is_none()) {
             self.legs.remove(&key);
             return;
         }

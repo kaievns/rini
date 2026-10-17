@@ -377,6 +377,16 @@ pub struct Presented {
     /// Where its movement has it, with nothing riding it: what a member leaving it still has to
     /// travel is judged against.
     pub along: HashMap<GroupKey, OverlayPoint>,
+    /// How fast its movement is going, in points a second, still with none: a member leaving it
+    /// lands only in a container going as fast.
+    pub rate: HashMap<GroupKey, OverlayVector>,
+}
+
+impl Presented {
+    /// How fast `key`'s movement is going, still with none recorded.
+    pub fn rate_of(&self, key: GroupKey) -> OverlayVector {
+        self.rate.get(&key).copied().unwrap_or(OverlayVector::zero())
+    }
 }
 
 /// A flight with nothing riding its containers: each is drawn where its leg has it.
@@ -386,6 +396,7 @@ impl From<HashMap<GroupKey, OverlayPoint>> for Presented {
         Presented {
             drawn: positions.clone(),
             along: positions,
+            rate: HashMap::new(),
         }
     }
 }
@@ -518,6 +529,8 @@ impl FlightPlan {
         self.positions.insert(key, destination);
         presented.drawn.insert(key, install);
         presented.along.insert(key, install);
+        let rate = leaving.map_or(OverlayVector::zero(), |left| presented.rate_of(left));
+        presented.rate.insert(key, rate);
         delta.new_groups.push(NewGroup { key, install, leaving });
         key
     }
@@ -2074,6 +2087,7 @@ mod tests {
             let presented = Presented {
                 drawn: [(group, drawn)].into_iter().collect(),
                 along: [(group, along)].into_iter().collect(),
+                rate: HashMap::new(),
             };
             let rel = |plan: &FlightPlan, window| match plan.member(window) {
                 Some(Member::Rigid { rel, .. }) => rel,

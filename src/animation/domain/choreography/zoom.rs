@@ -21,7 +21,7 @@ use crate::animation::domain::motion::accents::{Accent, Swap, push_tracks};
 use crate::animation::domain::motion::easing::{
     BOUNCE_TURN, CubicBezier, EASE_IN_OUT, MOTION_CURVE, nudge_displacement,
 };
-use crate::animation::domain::motion::glide::{Leg, spring_omega};
+use crate::animation::domain::motion::glide::{Leg, is_moving, spring_omega};
 use crate::animation::domain::motion::plan::{
     AnimationTarget, FlightPlan, GroupKey, Member, ReflowPlan, animation_targets, group_relative,
     on_overlay,
@@ -681,14 +681,13 @@ impl Bending for Bent<'_> {
         let ContainerWay { key, from, to } = way;
         let from = from.rounded();
         self.forget(key);
-        if self.seconds <= 0.0 || from.same_as(to) {
+        let carried = leaving.map(|left| self.playing.rate(Node::Container(left), self.now));
+        let moving = carried.is_some_and(|[x, y, ..]| is_moving(OverlayVector::new(x, y)));
+        if self.seconds <= 0.0 || (from.same_as(to) && !moving) {
             return;
         }
-        let track = match leaving {
-            Some(left) => {
-                let velocity = self.playing.rate(Node::Container(left), self.now);
-                self.spring(key, from, to, velocity)
-            }
+        let track = match carried {
+            Some(velocity) => self.spring(key, from, to, velocity),
             None => {
                 let leg = Leg::Curve {
                     from,

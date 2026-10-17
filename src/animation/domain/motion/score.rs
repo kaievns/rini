@@ -463,7 +463,7 @@ impl Score {
         }
     }
 
-    /// Every container at `at`: where it is drawn, and where its movement has it.
+    /// Every container at `at`: where it is drawn, where its movement has it, and how fast that goes.
     pub fn presented(&self, at: f64) -> Presented {
         let mut presented = Presented::default();
         for key in self.containers() {
@@ -471,8 +471,10 @@ impl Score {
             if let (Some(Value::Point(drawn)), Some(Value::Point(along))) =
                 (self.sample(node, at), self.along(node, at))
             {
+                let [x, y, ..] = self.rate(node, at);
                 presented.drawn.insert(key, drawn);
                 presented.along.insert(key, along);
+                presented.rate.insert(key, OverlayVector::new(x, y));
             }
         }
         presented

@@ -12,6 +12,11 @@ const SETTLED_PT: f64 = 0.5;
 /// Points a second. One 120Hz frame at this speed moves a sixth of a point.
 const SETTLED_SPEED: f64 = 20.0;
 
+/// Whether something going at `velocity` is moving: faster than a landed spring on either axis.
+pub fn is_moving(velocity: OverlayVector) -> bool {
+    velocity.x.abs() > SETTLED_SPEED || velocity.y.abs() > SETTLED_SPEED
+}
+
 /// The retargeting spring's natural frequency for a flight of `duration` seconds. Critically damped,
 /// it is 97% of the way from rest at half the duration, where `MOTION_CURVE` is too, so a chained leg
 /// lands like a fresh one: `(1 + wt)e^-wt = 0.03` at `wt = 5.35`.

@@ -340,7 +340,10 @@ destination for a window already moving.
   restarting: it continues from where it is drawn, at the speed it is moving. Its speed MUST NOT jump,
   so a burst of presses reads as one movement that settles after the last. That holds for a window a
   pass takes out of the piece it rode, as a second move of a narrower column does with the column it
-  passes.
+  passes, and whichever piece it then rides: it MUST NOT ride one going another speed, though that
+  piece has as far left to go, and it MUST NOT stop where it is drawn when the pass sends it there.
+  A still window took a piece with 151pt left at 2821pt/s and started at that speed, and a window
+  at 2211pt/s sent where it was drawn stopped dead, under every look.
   Not yet met: a loose tile a pass bends (a resize, an entrance, a floating window) starts
   `MOTION_CURVE` again from where it is drawn, so its speed jumps
   (`src/animation/docs/animation-smoothness.md`).

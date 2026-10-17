@@ -269,7 +269,7 @@ impl<'a> Merge<'a> {
         let from_along = position_in(&self.presented.along, key);
         let member = self.next.take_member(key, window);
         let remaining = p - from_along;
-        let landing = landing_for(&self.next, &self.presented.along, remaining, key, beside);
+        let landing = landing_for(&self.next, &self.presented, remaining, key, beside);
         let to_key = match landing {
             Some(to_key) => {
                 let shift = from_along - position_in(&self.presented.along, to_key);
@@ -393,18 +393,28 @@ fn retarget_loose(list: &mut [OwnPath], index: usize, to: GroupRect, delta: &mut
 }
 
 /// The group of the strip `beside` names whose remaining travel (destination less where its leg
-/// has it, `along`) matches `remaining`, for a member leaving `leaving`.
+/// has it, `along`) matches `remaining`, for a member leaving `leaving`, going as fast as
+/// `leaving` within `RATE_TOLERANCE`: a member landing in one going another speed would jump to it.
 fn landing_for(
     next: &FlightPlan,
-    along: &HashMap<GroupKey, OverlayPoint>,
+    presented: &Presented,
     remaining: OverlayVector,
     leaving: GroupKey,
     beside: Option<usize>,
 ) -> Option<GroupKey> {
-    travelling(next, along, remaining, beside)
-        .find(|g| g.key != leaving)
+    let rate = presented.rate_of(leaving);
+    let alike = |key: GroupKey| {
+        let d = presented.rate_of(key) - rate;
+        d.x.abs() <= RATE_TOLERANCE && d.y.abs() <= RATE_TOLERANCE
+    };
+    travelling(next, &presented.along, remaining, beside)
+        .find(|g| g.key != leaving && alike(g.key))
         .map(|g| g.key)
 }
+
+/// How far apart two containers' speeds may be for a member to leave one for the other, in points a
+/// second: half a point over a 120Hz frame.
+const RATE_TOLERANCE: f64 = 60.0;
 
 /// The groups of the strip `beside` names whose travel from `start` to where the merge sends them
 /// matches `travel`.

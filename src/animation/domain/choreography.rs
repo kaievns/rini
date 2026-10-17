@@ -291,7 +291,8 @@ trait Bending {
     fn retarget(&mut self, making: &mut Making, way: ContainerWay);
 
     /// A container the merge opens, from where it installs; `leaving` is the container its member
-    /// left, none for a newcomer's.
+    /// left, none for a newcomer's. One opened where it lands moves only to carry on `leaving`'s
+    /// speed.
     fn open(&mut self, making: &mut Making, way: ContainerWay, leaving: Option<GroupKey>);
 
     /// A loose tile joining or bent, from where it starts or the score draws it.
@@ -1213,6 +1214,85 @@ mod tests {
         for look in Look::ALL {
             if let Err(broken) = bends_at_the_speed_it_moves(&|| look.choreography()) {
                 panic!("{look:?}: {broken}");
+            }
+        }
+    }
+
+    /// A window a pass sends out of its container lands only in a container going as fast, under
+    /// every look. Seed 975's still window the pass sends 150pt landed in a container with 151pt
+    /// left going 2821pt/s and started at that speed; seed 136's window, drawn where the pass sends
+    /// it, landed in the still container and stopped from 2211pt/s. Each now leaves in a container of
+    /// its own, at the speed it was drawn moving.
+    #[test]
+    fn a_window_leaving_its_container_lands_only_in_one_going_as_fast() {
+        let edges =
+            |frame: OverlayRect| [frame.min().x, frame.min().y, frame.max().x, frame.max().y];
+        let a = rect(4.0, 32.0, 560.0, 900.0);
+        let b = rect(580.0, 32.0, 560.0, 900.0);
+        let c = rect(1150.0, 32.0, 560.0, 900.0);
+        let travel = -449.0;
+        for look in Look::ALL {
+            for still in [true, false] {
+                let requests = if still {
+                    vec![
+                        Resolved::tiled(wid(1), a, shifted(a, travel)),
+                        Resolved::tiled(wid(2), b, b),
+                        Resolved::tiled(wid(3), c, c),
+                    ]
+                } else {
+                    vec![
+                        Resolved::tiled(wid(1), a, shifted(a, travel)),
+                        Resolved::tiled(wid(2), b, shifted(b, travel)),
+                    ]
+                };
+                let mut flight = Flight::posed(look.choreography(), &requests, |_| true);
+                flight.start(&[]);
+                let now = BEGIN + 0.05;
+                let Some(Member::Rigid { key, .. }) = flight.plan.member(wid(1)) else {
+                    panic!("{look:?}: w1 rides a container");
+                };
+                let along = flight.score.presented(now).along[&key];
+                let left = flight.plan.position_of(key).x - along.x;
+                let drawn = |window| screen(laid(&flight.score, window, now).expect("drawn"));
+                let pass = if still {
+                    let sent = shifted(b, left.round());
+                    reflow_plan(
+                        &[
+                            Resolved::tiled(wid(3), c, c),
+                            Resolved::tiled(wid(2), b, sent),
+                        ],
+                        DISPLAY,
+                    )
+                } else {
+                    let here = drawn(wid(2));
+                    let here = rect(here.origin.x.round(), 32.0, 560.0, 900.0);
+                    let sent = shifted(a, travel);
+                    reflow_plan(
+                        &[
+                            Resolved::tiled(wid(1), sent, sent),
+                            Resolved::tiled(wid(2), shifted(b, travel), here),
+                        ],
+                        DISPLAY,
+                    )
+                };
+                let playing = flight.score.clone();
+                let delta = flight.merge(&pass, None, None, now).delta;
+                assert!(
+                    delta.reparented.iter().any(|&(window, ..)| window == wid(2)),
+                    "{look:?} still {still}: w2 leaves its container, {delta:?}"
+                );
+                let at = |k: f64| now + k * SAMPLE_STEP;
+                for edge in 0..4 {
+                    let was = |k: f64| laid(&playing, wid(2), at(k)).map(|f| edges(f)[edge]);
+                    let is = |k: f64| laid(&flight.score, wid(2), at(k)).map(|f| edges(f)[edge]);
+                    let crossed = Crossed::read(was, is, 0.5).expect("drawn before and after");
+                    let Crossed { before, after, allowed } = crossed;
+                    assert!(
+                        !crossed.jumped(),
+                        "{look:?} still {still}: w2's speed jumped from {before:.0} to \
+                         {after:.0}pt/s, allowed {allowed:.0}"
+                    );
+                }
             }
         }
     }
