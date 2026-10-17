@@ -165,11 +165,14 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   frame zero, to what its window wears where the flight ends, and MUST NOT turn with its picture.
   The window gaining focus on its own workspace wears the active ring from the first frame; the
   window losing it wears none. When focus moves to another workspace on the same display, each is
-  its workspace's active window and wears the active ring throughout, as niri's do. When focus moves
-  to another display, each wears its display's ring from the show: the window losing focus the
-  inactive one, the one gaining it the active one. Each tile's border wears its paint where the
-  flight ends from the show too, by its own focus alone. Only each tile's hairline and shadow turn
-  with its own picture, at the time "Focus changing during a flight" in `animation.md` gives it.
+  its workspace's active window and wears the active ring throughout, as niri's do, but for the
+  source's under zoom once a pan merged into the switch draws its strip beside the pan's: it loses
+  the ring in the drain that merges the pan and wears none to the lift, as "The zoom look" in
+  `animation.md` requires. When focus moves to another display, each wears its display's ring from
+  the show: the window losing focus the inactive one, the one gaining it the active one. Each tile's
+  border wears its paint where the flight ends from the show too, by its own focus alone. Only each
+  tile's hairline and shadow turn with its own picture, at the time "Focus changing during a
+  flight" in `animation.md` gives it.
 - A pass merged into a flight that moves focus again MUST turn the ring and the border of every tile
   already flying at once, in the drain that merges it, and a tile it adds MUST be dressed with them:
   the overlay is already up, so that drain is the first frame showing the merged end, as the show

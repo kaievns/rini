@@ -308,7 +308,9 @@ strip zooms out and back in while it moves. Zoom never steps; the step above is 
   urgent, and its hairline and shadow unfocused. The strips a switch travels between MUST be
   dressed as under slide, the source's a strip beside or not: the destination's active window
   wears the active ring and holds focus from the show, and the source's and each passed strip's
-  keep their active ring as they go ("Through a flight" in `decorations.md`).
+  keep their active ring as they go ("Through a flight" in `decorations.md`). A pan merged into a
+  switch draws the source's strip beside its own, so the source's active window MUST lose its ring
+  in the drain that merges the pan and wear none to the lift.
 
 > **Reported 2026-10-17.** "there is bug though during left/right transitions the windows on
 > top/bottom adjacent strips have the orange focus outline". Each workspace's active window wore its
