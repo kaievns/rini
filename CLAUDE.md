@@ -7,8 +7,8 @@ that a change reaches `main` at that bar.
 
 - Read the feature's `src/<feature>/docs/README.md` and the spec in `specs/` that covers the
   behaviour.
-- A behaviour the user reports or asks for becomes a requirement in `specs/` in the same change,
-  with a **Reported** line giving the report and its date (`specs/README.md`).
+- A behaviour the user reports or asks for becomes a requirement in `specs/` in the same change
+  (`specs/README.md`).
 
 ## While changing
 

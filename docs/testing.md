@@ -249,9 +249,8 @@ only while Kai is away. The recordings so far are listed there too.
 
 ## Clippy is a check, at zero warnings
 
-The checks a change passes are `bin/check.sh`: the nightly format check, a build of every target
-with warnings as errors, `cargo clippy --workspace --all-targets -- -D warnings`, and the suite,
-`tests/architecture.rs` with it. A clippy warning fails the check as a compiler warning does.
+`bin/check.sh` runs clippy over every target with warnings as errors, so a clippy warning fails the
+check as a compiler warning does. Its other steps are in `README.md`, "Building and running".
 
 CI checks and releases on Rust 1.98.1, pinned in both workflows, because a new stable can add a lint
 that turns `-D warnings` red with no change to the code. Moving the pin is a change of its own, with

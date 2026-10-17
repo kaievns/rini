@@ -5,22 +5,13 @@ checked by `bin/check.sh`, and a change that breaks one fails there. The rest ar
 
 ## The one check
 
-`bin/check.sh` MUST pass before every commit. CI runs it and nothing else: `bin/check.sh` is the
-one step of `.github/workflows/rust.yml` (`ci_runs_the_check_and_no_cargo_command_of_its_own`).
+`bin/check.sh` MUST pass before every commit. CI runs it and no cargo command of its own
+(`ci_runs_the_check_and_no_cargo_command_of_its_own`). What it runs, where it builds and how to
+format are in `README.md`, "Building and running", and in `bin/check.sh` itself.
 
-| Step | What it runs |
-|---|---|
-| fmt | `rustup run nightly cargo fmt --all --check` with nightly's rustfmt (`rustfmt.toml` sets unstable options) |
-| build | `cargo build --locked --workspace --all-targets`, with `-D warnings` in `RUSTFLAGS` |
-| clippy | `cargo clippy --locked --workspace --all-targets -- -D warnings`, lints from `[workspace.lints]` and `clippy.toml` |
-| test | `cargo test --locked --workspace` on libtest's default threads, the checks in `tests/` included |
-
-Every step runs even after one fails. It builds into `target-dev` unless `CARGO_TARGET_DIR` names
-another directory. Format with:
-
-```sh
-RUSTFMT="$(rustup which --toolchain nightly rustfmt)" rustup run nightly cargo fmt --all
-```
+It agrees with CI only on CI's toolchains: the pinned Rust and a nightly with rustfmt, both named
+under `README.md`, "Requirements". On another stable, clippy can pass here and fail in CI, or the
+reverse (`docs/testing.md`, "Clippy is a check, at zero warnings").
 
 Never build into the main checkout's `target/release`: the service runs that binary (see "Building
 and deploying").
@@ -33,17 +24,19 @@ weaken a check to make a change pass.
 
 | # | Criterion | Held by |
 |---|---|---|
-| A1 | `bin/check.sh` is green locally and in CI | `tests/check.rs`: `the_check_formats_builds_lints_and_tests_into_target_dev_with_warnings_as_errors`, `ci_runs_the_check_and_no_cargo_command_of_its_own` |
+| A1 | `bin/check.sh` is green in CI, and locally on CI's toolchains | `tests/check.rs`: `the_check_formats_builds_lints_and_tests_into_target_dev_with_warnings_as_errors`, `ci_runs_the_check_and_no_cargo_command_of_its_own` |
 | A2 | no non-test function over 100 code lines, no non-test file over 1500, comments and blank lines not counted | `no_function_or_file_grows_past_its_limit`, its `LONG_FNS` and `LONG_FILES` empty |
-| A3 | no rule reads the platform directly; tests state answers through fakes, never overrides | `nothing_outside_platform_touches_macos`, `a_domain_never_reads_its_own_adapters`, `the_window_server_is_reached_only_through_its_port`, `no_test_states_an_answer_through_an_override`, `a_test_build_never_takes_the_live_window_server` |
-| A4 | the suite runs in parallel in seconds | in parallel: `nothing_sets_the_number_of_threads_the_suite_runs_on`; in seconds: no check, `docs/testing.md`, "The suite runs in parallel", measured the lib suite at 8.9s to 9.7s on 12 cores on 2026-10-15 |
+| A3 | a feature touches macOS only in its `platform/`, but for the one file in `MIXED`; tests state answers through fakes, never overrides | `nothing_outside_platform_touches_macos`, with review keeping `MIXED` at one file, `a_domain_never_reads_its_own_adapters`, `the_window_server_is_reached_only_through_its_port`, `no_test_states_an_answer_through_an_override`, `a_test_build_never_takes_the_live_window_server` |
+| A4 | the suite runs in parallel in seconds | in parallel: `nothing_sets_the_number_of_threads_the_suite_runs_on`; in seconds: no check; measured in `docs/testing.md`, "The suite runs in parallel" |
 | A5 | every `unsafe` states its invariant; no `static mut` | `[workspace.lints]` (`undocumented_unsafe_blocks`, `unsafe_op_in_unsafe_fn`, `missing_safety_doc` denied), `the_workspace_denies_undocumented_unsafe_and_no_source_allows_it`, `nothing_in_the_repo_holds_a_static_mut` |
-| A6 | docs and specs match the code; no history narrated in comments; a count is measured and dated or left out | `every_documented_path_resolves`, `every_long_name_a_doc_cites_is_still_defined`, `every_feature_and_crate_documents_itself`, `every_domain_and_reactor_module_is_named_in_its_readme`, `every_spec_is_listed_in_the_index`, `no_comment_in_src_or_crates_narrates_the_code_s_history`; counts by `the_implementation_audit_states_a_test_count_only_as_measured_then` in that doc and by review elsewhere |
+| A6 | docs and specs match the code; no history narrated in comments; a count is measured and dated or left out | `every_documented_path_resolves`, `every_long_name_a_doc_cites_is_still_defined`, `every_name_and_root_file_the_rules_cite_still_exists`, `every_feature_and_crate_documents_itself`, `every_domain_and_reactor_module_is_named_in_its_readme`, `every_spec_is_listed_in_the_index`, `no_comment_in_src_or_crates_narrates_the_code_s_history`; a lowercase name under four words by review; counts by `the_implementation_audit_states_a_test_count_only_as_measured_then` in that doc and by review elsewhere |
 | A7 | types say what values mean: no function with two `bool` parameters, no struct of four `bool` fields, no positional tuple over 3, no long parameter list or tangled type allowed | `fn_params_excessive_bools` (denied, `max-fn-params-bools = 1`), `struct_excessive_bools` (fatal under `-D warnings`), `no_bool_is_taken_by_reference`, `no_production_type_holds_a_positional_tuple_over_three`, `no_long_parameter_list_tangled_type_or_bool_run_is_allowed` |
 | A8 | no panic reachable from real input on a daemon thread | review; `no_panic_is_caught_outside_a_test` keeps every panic an abort (`specs/service.md`, "A panic") |
 
-`tests/architecture.rs` also holds the layering: features never import the application, nothing
-outside `platform/` touches macOS, and each feature reaches the platform only through its port.
+`tests/architecture.rs` also holds the layering (`docs/architecture.md`). A feature never names the
+application (`a_feature_never_names_the_application`). No feature file outside its `platform/`
+touches macOS, except the one file in `MIXED`, `src/displays/screen.rs`. The application layer,
+`src/app/` and `src/main.rs`, wires the features to macOS and is outside that rule.
 
 ## Writing code
 
@@ -57,8 +50,10 @@ outside `platform/` touches macOS, and each feature reaches the platform only th
   named fields. A function MUST NOT take two `bool` parameters. A type MUST NOT hold a positional
   tuple of more than three fields.
 - **Split code when it outgrows the limits.** The limits are 100 code lines for a function and 1500
-  for a file. Split on the code's own seams. The exception lists, `LONG_FNS` and `LONG_FILES` in
-  `tests/architecture.rs`, are empty and MUST stay empty.
+  for a file. Split on the code's own seams.
+- **The exception lists MUST NOT grow.** In `tests/architecture.rs`, `LONG_FNS` and `LONG_FILES`
+  are empty, and `MIXED` holds one file. Review holds all three: fix the code rather than add to a
+  list.
 - **Unsafe.** Each `unsafe` block and `unsafe impl` carries a `// SAFETY:` comment naming the
   invariant that makes it sound, for example the Create/Copy ownership rule, nullability, the thread
   or a lifetime. Each `unsafe fn` has a `# Safety` section. When many call sites share one
@@ -88,10 +83,10 @@ outside `platform/` touches macOS, and each feature reaches the platform only th
   an answer (`every_read_answers_unknown_with_no_setup`,
   `a_test_reactor_reads_unknown_from_everything_it_was_not_told`). A test build cannot take the live
   window server (`a_test_build_never_takes_the_live_window_server`).
-- **Never share a process static between tests.** A static a test would write is injected at its
-  reader, and each test hands its own answer (`docs/testing.md`, "A process static is shared by
-  every test"). A test that reads an animation back off a layer holds `hold_core_animation`, and
-  every read-back helper asserts the hold (`assert_core_animation_held`).
+- **A static whose value a test reads is injected at its reader,** and each test hands its own
+  answer. The table in `docs/testing.md`, "A process static is shared by every test", says what
+  each static needs. A test that reads an animation back off a layer holds `hold_core_animation`,
+  and every read-back helper asserts the hold (`assert_core_animation_held`).
 - **Animation looks.** Every look passes the `every_look_*` contracts in
   `src/animation/domain/choreography.rs`. Slide's and Zoom's seeded output is pinned by
   `SLIDE_SCORES` and `ZOOM_SCORES`. Change a pin only when the look is meant to change, and say why
@@ -111,9 +106,8 @@ documentation lives"):
 
 - **`specs/` is what rini must do.** A reported bug, quirk or request becomes a requirement in the
   same change that acts on it. The requirement is a MUST, MUST NOT or MAY with its reason. One that
-  came from a report carries a **Reported** line: what was observed, when, and what it turned out
-  to be. Behaviour found without a report gets a dated **Found** line marked "not reported".
-  `specs/README.md` has the full rule.
+  came from a report carries a **Reported** line, and one found without a report a **Found** line
+  (`specs/README.md`, "The rule").
 - **`docs/` is how the code came to be that way:** measurements, findings and rejected approaches.
   It is also the home of anything a comment would otherwise narrate.
 - **`src/<feature>/docs/README.md` explains each feature:** what it owns, a reading order, and a
@@ -142,12 +136,11 @@ Keeping the records current:
 ## Building and deploying
 
 - **Build anything but a deploy into another directory,** such as `target-dev` or a worktree's own
-  `CARGO_TARGET_DIR`. `bin/sign-rustc.sh` refuses a compile into the checkout's `target/release` or
-  `target/release/deps` unless `RINI_DEPLOY=1`, which only `bin/build.sh` sets
-  (`tests/deploy_path.rs`).
-- **The service runs exactly one path, `target/release/rini`.** macOS ties Accessibility and Screen
-  Recording to that path as well as the signature (`docs/signing.md`,
+  `CARGO_TARGET_DIR`. A release build in the main checkout is a deploy (`tests/deploy_path.rs`).
+- **The service runs exactly one path, `target/release/rini`.** macOS ties the grants to that path
+  as well as the signature, so a binary at any other path costs a re-grant (`docs/signing.md`,
   `docs/permissions-and-the-launch-agent.md`).
-- **To deploy,** move a signed build into place with a rename, then restart through that binary:
-  `cp <built> target/release/rini.new && mv -f target/release/rini.new target/release/rini`, then
-  `target/release/rini service restart`. Never add `--move`.
+- **To deploy,** follow `README.md`, "A release build in the main checkout is a deploy". It says
+  how the checkout refuses a stray build and how a signed build is moved into place.
+- **Never add `--move` unless Kai has decided to move the service.** A move costs a re-grant
+  (`specs/service.md`).

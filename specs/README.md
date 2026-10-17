@@ -23,6 +23,10 @@ So every requirement that came from a report carries a **Reported** line: what w
 what it turned out to be. That line is the thing a future change has to argue with before it alters
 the behaviour.
 
+A requirement nobody reported, pinned because a change found the behaviour in a review, a sweep or
+a measurement, carries a **Found** line instead: the date, "not reported", what showed it, and what
+it turned out to be. It is argued with the same way.
+
 Rules for keeping this honest:
 
 1. A requirement is stated as an obligation — MUST, MUST NOT, or MAY — not as a description of the
