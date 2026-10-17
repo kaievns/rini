@@ -355,11 +355,13 @@ destination for a window already moving.
   pass takes out of the piece it rode, as a second move of a narrower column does with the column it
   passes, and whichever piece it then rides: it MUST NOT ride one going another speed, though that
   piece has as far left to go, and it MUST NOT stop where it is drawn when the pass sends it there.
-  Not yet met: a loose tile a pass bends (a resize, an entrance, a floating window) starts
-  `MOTION_CURVE` again from where it is drawn, so its speed jumps. Under zoom, a window a pass bends
-  can speed up by up to 12% where the pass lands, 3246 to 3538pt/s in one flight, on 38 of seeds
-  0-999 of the speed contract's flights; Slide and Linear fail none
-  (`src/animation/docs/animation-smoothness.md`).
+  A pass MAY bend a window on a stiffer spring than the one it rode, as zoom does with a press
+  merged mid-arc: 0.35s times 2.2/3, 0.257s, where a plain press takes 0.35s. That spring starts at
+  the speed the window is drawn moving and gathers speed faster over its first frame, up to 12%, 3246
+  to 3538pt/s in one flight; that is allowed, because the speed itself does not jump and the press
+  keeps zoom's pace. A change no spring that stiff makes in one frame is a jump. Not yet met: a loose
+  tile a pass bends (a resize, an entrance, a floating window) starts `MOTION_CURVE` again from where
+  it is drawn, so its speed jumps.
 
 > **Reported 2026-09-29.** "as a general rule animation should not get interrupted mid-filight and
 > restarted a new, the target should fluidly move to the next window and feel like one smooth extended
@@ -371,6 +373,13 @@ destination for a window already moving.
 > Slide, 101 under Linear and 67 under Zoom. A window a pass took out of its piece rode any piece
 > with as far left to go: a still window took one with 151pt left at 2821pt/s and started at that
 > speed, and a window at 2211pt/s sent where it was drawn stopped dead.
+
+> **Reported 2026-10-17.** Asked whether a press merged mid-arc under zoom keeps zoom's 0.257s pace
+> or takes the plain 0.35s, Kai answered "lets do recommended": keep the pace, and allow the
+> spring's first-frame gain. Such a pass brings an arc while another plays, so its own arc is
+> dropped, but its springs still run over 0.257s. The speed check read that gain as a jump on 38 of
+> seeds 0-999 of its flights.
+
 - A window the flight has not seen MUST be able to join it.
 - A merged press MUST NOT show a stale, transparent, stretched or zoomed tile. A picture taken for an
   end its tile no longer has, or of a window more than 20pt from where its tile ends, never reaches a

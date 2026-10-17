@@ -517,6 +517,7 @@ mod tests {
     use crate::animation::domain::motion::accents::Swap;
     use crate::animation::domain::motion::bounce::Bounce;
     use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
+    use crate::animation::domain::motion::glide::{Leg, spring_omega};
     use crate::animation::domain::motion::plan::{
         EDGE_BOUNCE_OVERSHOOT, GROUP_TOLERANCE, GroupKey, GroupMember, Member, Resolved,
         RigidGroup, carries_out_and_back, installed, on_overlay, overlay_of, reflow_plan,
@@ -861,6 +862,8 @@ mod tests {
         now: f64,
         /// Whether the pass is a switch onto a strip beside (`a_switch`) or the pass after one.
         switched: bool,
+        /// Whether the pass brings an arc.
+        arced: bool,
         incoming: &'a ReflowPlan,
         newcomer: WindowId,
         playing: &'a Score,
@@ -915,6 +918,7 @@ mod tests {
                         tag: format!("seed {seed} run {run} step {step}"),
                         now,
                         switched: false,
+                        arced: matches!(accent, Some(Accent::Arc { .. })),
                         incoming: &incoming,
                         newcomer,
                         playing: &playing,
@@ -947,6 +951,7 @@ mod tests {
                             tag: format!("seed {seed} run {run} switch {round}{after}"),
                             now,
                             switched: true,
+                            arced: matches!(accent, Some(Accent::Arc { .. })),
                             incoming: &incoming,
                             newcomer,
                             playing: &playing,
@@ -1093,11 +1098,21 @@ mod tests {
     /// and `is` as it is, each from 2 steps before to 2 after. The speed over the step before the
     /// bend and over the one after, and how far they may differ: as far as the motions themselves
     /// change it there, the motion before over the step before that and the step after, as it would
-    /// have gone on, the one after over its second step, and `slack` over a step.
+    /// have gone on, the one after over its second step or, given a `Spring`, as far as that spring
+    /// let go where the bend draws it, at the speed drawn there, changes it over its first,
+    /// whichever is more, and `slack` over a step. A spring changes speed fastest in its first step,
+    /// so its second understates it.
     struct Crossed {
         before: f64,
         after: f64,
         allowed: f64,
+    }
+
+    /// A spring a bend lets a node go on: toward `to` at `omega`.
+    #[derive(Clone, Copy)]
+    struct Spring {
+        to: f64,
+        omega: f64,
     }
 
     impl Crossed {
@@ -1105,15 +1120,27 @@ mod tests {
             was: impl Fn(f64) -> Option<f64>,
             is: impl Fn(f64) -> Option<f64>,
             slack: f64,
+            spring: Option<Spring>,
         ) -> Option<Crossed> {
             const STEP: f64 = SAMPLE_STEP;
             let (p2, p1, p0, o1) = (was(-2.0)?, was(-1.0)?, was(0.0)?, was(1.0)?);
             let (q0, q1, q2) = (is(0.0)?, is(1.0)?, is(2.0)?);
             let (earlier, before, unbent) = ((p1 - p2) / STEP, (p0 - p1) / STEP, (o1 - p0) / STEP);
             let (after, later) = ((q1 - q0) / STEP, (q2 - q1) / STEP);
+            let first = spring.map_or(0.0, |Spring { to, omega }| {
+                let speed = (o1 - p1) / (2.0 * STEP);
+                let leg = Leg::Spring {
+                    from: OverlayPoint::new(p0, 0.0),
+                    to: OverlayPoint::new(to, 0.0),
+                    velocity: OverlayVector::new(speed, 0.0),
+                    begin: 0.0,
+                    omega,
+                };
+                ((leg.position_at(STEP).x - p0) / STEP - speed).abs()
+            });
             let allowed = (before - earlier).abs()
                 + (unbent - before).abs()
-                + (later - after).abs()
+                + (later - after).abs().max(first)
                 + slack / STEP;
             Some(Crossed { before, after, allowed })
         }
@@ -1139,10 +1166,13 @@ mod tests {
     /// through the strip's zoom, so each is read apart: each edge's speed as the window is laid out
     /// on the strip, and the zoom's scale and shift, each `Crossed` the bend within what the
     /// motions change it, a laid-out edge with the half point a bend may move it as slack, and a
-    /// strip the score holds no zoom for read at rest. Read drawn, a window's speed and the zoom's
-    /// turning opposite ways cancel the allowance though neither jumps. A loose tile is outside it:
-    /// Slide starts each one a pass bends from where it is drawn on `MOTION_CURVE` again, so its
-    /// speed jumps, against "Arriving mid-flight" in `specs/animation.md`.
+    /// strip the score holds no zoom for read at rest. A laid-out edge is also allowed what a
+    /// spring toward where it lands changes its speed by in its first step, as stiff as Zoom bends
+    /// the pass: over the pass's length, stretched by `zoom::ZOOM_STRETCH` when it brings an arc.
+    /// Read drawn, a window's speed and the zoom's turning opposite ways cancel the allowance
+    /// though neither jumps. A loose tile is outside it: Slide starts each one a pass bends from
+    /// where it is drawn on `MOTION_CURVE` again, so its speed jumps, against "Arriving mid-flight"
+    /// in `specs/animation.md`.
     fn bends_at_the_speed_it_moves(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
         bends_at_the_speed_it_moves_over(&BEND_SEEDS, make)
     }
@@ -1162,10 +1192,16 @@ mod tests {
         bent_flights_of(seeds, make, &mut |bend| {
             let now = bend.now;
             let at = |k: f64| now + k * SAMPLE_STEP;
+            let omega = spring_omega(if bend.arced {
+                PLAIN * zoom::ZOOM_STRETCH
+            } else {
+                PLAIN
+            });
+            let end = now + bend.bent.score.remaining(now);
             for part in 0..3 {
                 let was = |k: f64| Some(zoom(bend.playing, at(k))[part]);
                 let is = |k: f64| Some(zoom(&bend.bent.score, at(k))[part]);
-                if let Some(crossed) = Crossed::read(was, is, 1e-6).filter(Crossed::jumped) {
+                if let Some(crossed) = Crossed::read(was, is, 1e-6, None).filter(Crossed::jumped) {
                     let Crossed { before, after, allowed } = crossed;
                     return Err(format!(
                         "{}: the zoom's speed jumped from {before:.3} to {after:.3}/s, allowed \
@@ -1178,10 +1214,12 @@ mod tests {
                 if !matches!(bend.bent.plan.member(window), Some(Member::Rigid { .. })) {
                     continue;
                 }
+                let lands = laid(&bend.bent.score, window, end).map(edges);
                 for edge in 0..4 {
                     let was = |k: f64| laid(bend.playing, window, at(k)).map(|f| edges(f)[edge]);
                     let is = |k: f64| laid(&bend.bent.score, window, at(k)).map(|f| edges(f)[edge]);
-                    let Some(crossed) = Crossed::read(was, is, 0.5) else {
+                    let spring = lands.map(|lands| Spring { to: lands[edge], omega });
+                    let Some(crossed) = Crossed::read(was, is, 0.5, spring) else {
                         continue;
                     };
                     if crossed.jumped() {
@@ -1241,7 +1279,7 @@ mod tests {
     /// --nocapture`.
     #[test]
     #[ignore]
-    fn the_speed_contract_over_a_thousand_seeds_fails_only_under_zoom() {
+    fn every_look_keeps_the_speed_contract_over_a_thousand_seeds() {
         let failing = |look: Look| {
             let broken = (0..1000u64).map(|seed| {
                 bends_at_the_speed_it_moves_over(&[seed], &|| look.choreography()).err()
@@ -1258,7 +1296,7 @@ mod tests {
         let counts: Vec<_> = failing.iter().map(|(look, broken)| (*look, broken.len())).collect();
         assert_eq!(counts, [
             (Look::Slide, 0),
-            (Look::Zoom, 38),
+            (Look::Zoom, 0),
             (Look::Linear, 0),
             (Look::Probe, 0)
         ]);
@@ -1331,7 +1369,8 @@ mod tests {
                 for edge in 0..4 {
                     let was = |k: f64| laid(&playing, wid(2), at(k)).map(|f| edges(f)[edge]);
                     let is = |k: f64| laid(&flight.score, wid(2), at(k)).map(|f| edges(f)[edge]);
-                    let crossed = Crossed::read(was, is, 0.5).expect("drawn before and after");
+                    let crossed =
+                        Crossed::read(was, is, 0.5, None).expect("drawn before and after");
                     let Crossed { before, after, allowed } = crossed;
                     assert!(
                         !crossed.jumped(),
@@ -1361,6 +1400,57 @@ mod tests {
         assert!(started.contains("the zoom's speed jumped"), "{started}");
         bends_without_a_jump(&|| Flawed::boxed(Flaw::StartsTheZoomAtSpeed))
             .expect("drawn where it was");
+    }
+
+    /// Seed 60 run 53's w2 as a Zoom pass bringing an arc lands mid-arc, its left edge laid out on
+    /// the strip: 3246pt/s over the step before, 3538 over the step after, on a spring over the
+    /// pass's 0.35s stretched by `zoom::ZOOM_STRETCH`, let go where the edge is drawn at the speed
+    /// it is drawn moving. Within what a spring that stiff changes over its first step, it is no
+    /// jump; read against the motion's second step alone, or a spring over the plain 0.35s, it is
+    /// one; and a spring twice as stiff, let go at the same place and speed, jumps.
+    #[test]
+    fn a_bend_may_change_speed_as_far_as_a_spring_as_stiff_does_in_its_first_step() {
+        let drawn = [1252.416, 1279.475, 1306.524, 1333.035];
+        let bent = [1306.524, 1336.010, 1366.834];
+        let lands = 1523.0;
+        let was = |k: f64| Some(drawn[(k + 2.0) as usize]);
+        let read = |is: &dyn Fn(f64) -> Option<f64>, omega: Option<f64>| {
+            let spring = omega.map(|omega| Spring { to: lands, omega });
+            Crossed::read(was, is, 0.5, spring).expect("drawn before and after")
+        };
+        let zoomed = spring_omega(PLAIN * zoom::ZOOM_STRETCH);
+        let speed = (drawn[3] - drawn[1]) / (2.0 * SAMPLE_STEP);
+        let spring = |omega: f64| Leg::Spring {
+            from: OverlayPoint::new(drawn[2], 0.0),
+            to: OverlayPoint::new(lands, 0.0),
+            velocity: OverlayVector::new(speed, 0.0),
+            begin: 0.0,
+            omega,
+        };
+        let is = |k: f64| Some(bent[k as usize]);
+        let modelled = (spring(zoomed).position_at(SAMPLE_STEP).x - drawn[2]) / SAMPLE_STEP;
+        let crossed = read(&is, Some(zoomed));
+        assert!(
+            (modelled - crossed.after).abs() < 25.0,
+            "the bend goes on as the spring does: {modelled:.0} against {:.0}pt/s",
+            crossed.after
+        );
+        let Crossed { before, after, allowed } = crossed;
+        assert!(
+            !crossed.jumped(),
+            "{before:.0} to {after:.0}pt/s, allowed {allowed:.0}"
+        );
+        assert!(read(&is, None).jumped(), "the second step alone allows it");
+        assert!(
+            read(&is, Some(spring_omega(PLAIN))).jumped(),
+            "a plain spring allows it"
+        );
+        let stiffer = spring(2.0 * zoomed);
+        let stiffer = |k: f64| Some(stiffer.position_at(k * SAMPLE_STEP).x);
+        assert!(
+            read(&stiffer, Some(zoomed)).jumped(),
+            "a spring twice as stiff passes"
+        );
     }
 
     /// A pass as the reactor builds one for `flight`, from where its last pass sends every window: a
