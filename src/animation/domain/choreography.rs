@@ -94,10 +94,12 @@ impl Look {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cue {
     Plain,
-    /// `window` moved along the strip, `direction` the way it went.
+    /// `window` moved along the strip, `direction` the way it went, past `columns_passed` columns:
+    /// one for a move of one place, none for a push against an end.
     Move {
         window: WindowId,
         direction: Direction,
+        columns_passed: usize,
     },
     /// Focus went along the strip from `from` to `to`; at an end, both are the window it stayed on.
     Focus {
@@ -112,13 +114,13 @@ pub enum Cue {
 impl Cue {
     pub fn moved(&self) -> Option<(WindowId, Direction)> {
         match *self {
-            Cue::Move { window, direction } => Some((window, direction)),
+            Cue::Move { window, direction, .. } => Some((window, direction)),
             Cue::Plain | Cue::Focus { .. } | Cue::Switch => None,
         }
     }
 }
 
-/// Where one window of a moved pair started on the strip, and whether it is of the column passed
+/// Where one window of a move's pair started on the strip, and whether it is of a column passed
 /// rather than the moved one.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PairStart {
@@ -137,9 +139,9 @@ pub struct Area {
     pub viewport: OverlayRect,
 }
 
-/// A strip movement as a look stages it: every tiled window at its new frame, the pair a move
-/// swapped, the screen, the viewport's travel, which is where the camera starts, and how long the
-/// movement runs, plain.
+/// A strip movement as a look stages it: every tiled window at its new frame, a move's pair, its
+/// moved column and every column it passed, the screen, the viewport's travel, which is where the
+/// camera starts, and how long the movement runs, plain.
 #[derive(Clone, Copy, Debug)]
 pub struct Strip<'a> {
     pub windows: &'a [(WindowId, SurfaceRect)],
@@ -2139,6 +2141,7 @@ mod tests {
             (2, Some(window), _) => Cue::Move {
                 window,
                 direction: Direction::Left,
+                columns_passed: 1,
             },
             _ => Cue::Plain,
         }
@@ -2610,6 +2613,7 @@ mod tests {
                     _ => Cue::Move {
                         window: wid(1 + rng.below(count as u64 + 1) as u32),
                         direction: directions[rng.below(4) as usize],
+                        columns_passed: 1,
                     },
                 };
                 let along = OverlayVector::new(rng.pt(-900.0, 900.0), 0.0);

@@ -70,7 +70,7 @@ use crate::windows::domain::request::{AppThreadHandle, Quiet, RaiseSequence, Req
 use crate::windows::domain::transaction::{TransactionId, WindowTxStore};
 use crate::windows::platform::mouse::MouseState;
 use crate::workspaces::domain::display_memory::DisplayMemory;
-use crate::workspaces::{Direction, LayoutEngine, LayoutEvent};
+use crate::workspaces::{LayoutEngine, LayoutEvent};
 
 pub type Sender = channels::Sender<Event>;
 type Receiver = channels::Receiver<Event>;
@@ -486,9 +486,9 @@ pub struct Reactor {
     /// changed (`strip_move::start_where_standing`). Taken and claimed with `last_strip_origin`.
     last_strip_layout:
         HashMap<(SpaceId, crate::workspaces::VirtualWorkspaceId), Vec<(WindowId, CGRect)>>,
-    /// The window the current command moved along its strip, and which way, for the passes that
-    /// command asked for: they draw the two columns crossing. See `animate_layout`.
-    moved_along_strip: Option<(WindowId, Direction)>,
+    /// The window the current command moved along its strip, which way and past how many columns,
+    /// for the passes that command asked for: they draw the columns crossing. See `animate_layout`.
+    moved_along_strip: Option<crate::workspaces::StripMove>,
     /// The window the current command's focus press left along the strip and the one it reached,
     /// for the passes that command asked for: a pass that scrolls the strip is that press.
     stepped_along_strip: Option<(WindowId, WindowId)>,

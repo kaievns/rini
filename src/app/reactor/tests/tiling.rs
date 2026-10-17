@@ -3072,7 +3072,11 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
         let flight = &flights[0];
         assert_eq!(
             flight.cue,
-            crate::animation::domain::choreography::Cue::Move { window: moved, direction },
+            crate::animation::domain::choreography::Cue::Move {
+                window: moved,
+                direction,
+                columns_passed: 1,
+            },
             "the look is told the press"
         );
         assert!(

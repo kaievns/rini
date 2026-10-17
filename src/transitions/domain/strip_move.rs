@@ -1,8 +1,9 @@
-//! A press on the strip, staged: where the two columns a move swaps start (`swap_starts`), the
-//! look's staging of it put on the strip surface (`stage_move`), and where a window that was away
-//! from where the travel draws it starts (`start_where_standing`). Which column is held and whether
-//! the strip steps are the look's (`crate::animation::domain::choreography::Look::stage`). See "The
-//! move flight, staged" in `src/transitions/docs/coordination.md`.
+//! A press on the strip, staged: where a moved column and the columns it passed start
+//! (`move_starts`), the look's staging of it put on the strip surface (`stage_move`), and where a
+//! window that was away from where the travel draws it starts (`start_where_standing`). Which
+//! columns are held and whether the strip steps are the look's
+//! (`crate::animation::domain::choreography::Look::stage`). See "The move flight, staged" in
+//! `src/transitions/docs/coordination.md`.
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayVector, Point, SurfacePoint, SurfaceRect};
@@ -19,51 +20,64 @@ const COLUMN_TOLERANCE: f64 = 0.5;
 /// the layout rounds to whole points, as `travel::changes_visibly` allows.
 const STANDING_TOLERANCE: f64 = 2.0;
 
-/// Where the moved window's column and the column it passed started on the strip.
+/// Where the moved window's column and each column it passed started on the strip.
 ///
-/// `strip` is every tiled window at its new frame. Together the two columns fill the span they fill
-/// now, in the order they had before, so the gap between them is the one they have now. Every window
-/// of a column moves by the same amount. Empty for a vertical move, or one with no column to pass.
-pub fn swap_starts(
+/// `strip` is every tiled window at its new frame, and the columns passed are the `columns_passed`
+/// nearest the moved one on the side it came from. Together they fill the span they fill now, in
+/// the order they had before: each column passed starts back by the moved column's width and the gap
+/// beside it now, and the moved column starts at the far end of the span. Every window of a column
+/// moves by the same amount. Empty for a vertical move, or one with fewer columns to pass.
+pub fn move_starts(
     strip: &[(WindowId, SurfaceRect)],
     moved: WindowId,
     direction: Direction,
+    columns_passed: usize,
 ) -> Vec<PairStart> {
     let Some(&(_, at)) = strip.iter().find(|(window, _)| *window == moved) else {
         return Vec::new();
     };
     let moved_x = at.origin.x;
-    let xs = strip.iter().map(|(_, frame)| frame.origin.x);
-    let passed_x = match direction {
-        Direction::Right => xs.filter(|x| *x < moved_x - COLUMN_TOLERANCE).reduce(f64::max),
-        Direction::Left => xs.filter(|x| *x > moved_x + COLUMN_TOLERANCE).reduce(f64::min),
-        Direction::Up | Direction::Down => None,
-    };
-    let Some(passed_x) = passed_x else {
-        return Vec::new();
+    let behind = |x: f64| match direction {
+        Direction::Right => x < moved_x - COLUMN_TOLERANCE,
+        Direction::Left => x > moved_x + COLUMN_TOLERANCE,
+        Direction::Up | Direction::Down => false,
     };
     let in_column = |frame: &SurfaceRect, x: f64| (frame.origin.x - x).abs() <= COLUMN_TOLERANCE;
-    let Some(passed_width) = strip
-        .iter()
-        .find(|(_, frame)| in_column(frame, passed_x))
-        .map(|(_, f)| f.size.width)
-    else {
+    let mut columns: Vec<SurfaceRect> = Vec::new();
+    for &(_, frame) in strip {
+        if behind(frame.origin.x)
+            && !columns.iter().any(|column| in_column(&frame, column.origin.x))
+        {
+            columns.push(frame);
+        }
+    }
+    columns.sort_by(|a, b| (a.origin.x - moved_x).abs().total_cmp(&(b.origin.x - moved_x).abs()));
+    columns.truncate(columns_passed);
+    let (Some(nearest), Some(farthest)) = (columns.first(), columns.last()) else {
         return Vec::new();
     };
+    if columns.len() < columns_passed {
+        return Vec::new();
+    }
     let moved_width = at.size.width;
-    let (moved_start, passed_start) = match direction {
-        Direction::Right => (passed_x, moved_x + moved_width - passed_width),
-        _ => (passed_x + passed_width - moved_width, moved_x),
+    let (moved_start, shift) = match direction {
+        Direction::Right => (
+            farthest.origin.x,
+            moved_x + moved_width - nearest.origin.x - nearest.size.width,
+        ),
+        _ => (
+            farthest.origin.x + farthest.size.width - moved_width,
+            moved_x - nearest.origin.x,
+        ),
     };
     strip
         .iter()
         .filter_map(|&(window, frame)| {
             let (x, passed) = if in_column(&frame, moved_x) {
                 (moved_start, false)
-            } else if in_column(&frame, passed_x) {
-                (passed_start, true)
             } else {
-                return None;
+                let column = columns.iter().find(|column| in_column(&frame, column.origin.x))?;
+                (column.origin.x + shift, true)
             };
             Some(PairStart {
                 window,
@@ -134,10 +148,14 @@ pub fn stage_move(
         .filter(|w| !w.floating && w.row.is_none())
         .map(|w| (w.window, w.frame))
         .collect();
-    let pair = cue
-        .moved()
-        .map(|(window, direction)| swap_starts(&strip, window, direction))
-        .unwrap_or_default();
+    let pair = match *cue {
+        Cue::Move {
+            window,
+            direction,
+            columns_passed,
+        } => move_starts(&strip, window, direction, columns_passed),
+        Cue::Plain | Cue::Focus { .. } | Cue::Switch => Vec::new(),
+    };
     let staging = look.stage(cue, &Strip {
         windows: &strip,
         pair: &pair,
@@ -188,7 +206,11 @@ pub(crate) mod tests {
         direction: Direction,
         from_offset: SurfacePoint,
     ) -> Option<OverlayVector> {
-        let cue = Cue::Move { window: moved, direction };
+        let cue = Cue::Move {
+            window: moved,
+            direction,
+            columns_passed: 1,
+        };
         let travel = pan_travel(from_offset, SurfacePoint::origin());
         match stage_move(windows, &cue, area(), travel, PLAIN, Look::Slide) {
             Some(Accent::Step { offset, .. }) => Some(offset),
@@ -349,7 +371,7 @@ pub(crate) mod tests {
             (wid(2), column(864.0, 861.0)),
             (wid(3), column(1728.0, 861.0)),
         ];
-        let starts = swap_starts(&strip, wid(3), Direction::Right);
+        let starts = move_starts(&strip, wid(3), Direction::Right, 1);
         assert_eq!(start_of(&starts, wid(3)), Some(864.0));
         assert_eq!(start_of(&starts, wid(2)), Some(1728.0));
         let passed: Vec<(WindowId, bool)> = starts.iter().map(|p| (p.window, p.passed)).collect();
@@ -372,7 +394,7 @@ pub(crate) mod tests {
             (wid(2), column(864.0, 861.0)),
             (wid(3), column(1728.0, 861.0)),
         ];
-        let starts = swap_starts(&strip, wid(1), Direction::Left);
+        let starts = move_starts(&strip, wid(1), Direction::Left, 1);
         assert_eq!(start_of(&starts, wid(1)), Some(864.0));
         assert_eq!(start_of(&starts, wid(2)), Some(0.0));
         assert_eq!(start_of(&starts, wid(3)), None);
@@ -385,12 +407,12 @@ pub(crate) mod tests {
     fn unequal_widths_keep_the_gap_between_the_pair() {
         let (a, b) = (600.0, 1000.0);
         let right = [(wid(2), column(0.0, b)), (wid(1), column(b + GAP, a))];
-        let starts = swap_starts(&right, wid(1), Direction::Right);
+        let starts = move_starts(&right, wid(1), Direction::Right, 1);
         assert_eq!(start_of(&starts, wid(1)), Some(0.0));
         assert_eq!(start_of(&starts, wid(2)), Some(a + GAP));
 
         let left = [(wid(1), column(0.0, a)), (wid(2), column(a + GAP, b))];
-        let starts = swap_starts(&left, wid(1), Direction::Left);
+        let starts = move_starts(&left, wid(1), Direction::Left, 1);
         assert_eq!(start_of(&starts, wid(1)), Some(b + GAP));
         assert_eq!(start_of(&starts, wid(2)), Some(0.0));
     }
@@ -406,7 +428,7 @@ pub(crate) mod tests {
             (wid(3), column(864.0, 861.0)),
             (wid(4), column(1728.0, 861.0)),
         ];
-        let starts = swap_starts(&strip, wid(3), Direction::Right);
+        let starts = move_starts(&strip, wid(3), Direction::Right, 1);
         assert_eq!(starts.len(), 3);
         for (window, row) in [(wid(1), top), (wid(2), bottom)] {
             let start = starts.iter().find(|p| p.window == window).expect("moved");
@@ -421,15 +443,73 @@ pub(crate) mod tests {
     #[test]
     fn nothing_starts_elsewhere_for_a_vertical_move_or_with_no_column_to_pass() {
         let strip = [(wid(1), column(0.0, 861.0)), (wid(2), column(864.0, 861.0))];
-        assert!(swap_starts(&strip, wid(1), Direction::Up).is_empty());
+        assert!(move_starts(&strip, wid(1), Direction::Up, 1).is_empty());
         assert!(
-            swap_starts(&strip, wid(1), Direction::Right).is_empty(),
+            move_starts(&strip, wid(1), Direction::Right, 1).is_empty(),
             "nothing left of it"
         );
         assert!(
-            swap_starts(&strip, wid(9), Direction::Right).is_empty(),
+            move_starts(&strip, wid(9), Direction::Right, 1).is_empty(),
             "not on the strip"
         );
+    }
+
+    /// A B C W D, W just moved to the start past C, B and A: each of the three started one slot
+    /// further on, back by W's width and the gap, and W where its right edge met D's gap, the span
+    /// they fill unchanged. D is where it was.
+    #[test]
+    fn a_move_to_the_start_starts_every_column_it_passed_one_slot_further_on() {
+        let strip = [
+            (wid(4), column(0.0, 600.0)),
+            (wid(1), column(603.0, 861.0)),
+            (wid(2), column(1467.0, 1000.0)),
+            (wid(3), column(2470.0, 500.0)),
+            (wid(5), column(2973.0, 861.0)),
+        ];
+        let starts = move_starts(&strip, wid(4), Direction::Left, 3);
+        assert_eq!(start_of(&starts, wid(4)), Some(2370.0), "beside D's gap");
+        assert_eq!(start_of(&starts, wid(1)), Some(0.0));
+        assert_eq!(start_of(&starts, wid(2)), Some(864.0));
+        assert_eq!(start_of(&starts, wid(3)), Some(1867.0));
+        assert_eq!(start_of(&starts, wid(5)), None, "D was not passed");
+        let passed: Vec<WindowId> = starts.iter().filter(|p| p.passed).map(|p| p.window).collect();
+        assert_eq!(passed, [wid(1), wid(2), wid(3)]);
+    }
+
+    /// P A B W, W just moved to the end past B and A: W started where A is now, A and B one slot
+    /// further on, and P before them is where it was. A column passed with more than one window
+    /// moves as one.
+    #[test]
+    fn a_move_to_the_end_starts_every_column_it_passed_one_slot_further_on() {
+        let top = SurfaceRect::new(Point::new(503.0, 32.0), Size::new(861.0, 539.0));
+        let bottom = SurfaceRect::new(Point::new(503.0, 574.0), Size::new(861.0, 539.0));
+        let strip = [
+            (wid(5), column(0.0, 500.0)),
+            (wid(1), top),
+            (wid(2), bottom),
+            (wid(3), column(1367.0, 1000.0)),
+            (wid(4), column(2370.0, 600.0)),
+        ];
+        let starts = move_starts(&strip, wid(4), Direction::Right, 2);
+        assert_eq!(start_of(&starts, wid(4)), Some(503.0));
+        assert_eq!(start_of(&starts, wid(1)), Some(1106.0));
+        assert_eq!(start_of(&starts, wid(2)), Some(1106.0));
+        assert_eq!(start_of(&starts, wid(3)), Some(1970.0));
+        assert_eq!(start_of(&starts, wid(5)), None);
+    }
+
+    /// A move names how many columns it passed: none, or more than the strip has that way, starts
+    /// nothing elsewhere.
+    #[test]
+    fn nothing_starts_elsewhere_past_no_columns_or_more_than_there_are() {
+        let strip = [
+            (wid(1), column(0.0, 861.0)),
+            (wid(2), column(864.0, 861.0)),
+            (wid(3), column(1728.0, 861.0)),
+        ];
+        assert!(move_starts(&strip, wid(1), Direction::Left, 0).is_empty());
+        assert!(move_starts(&strip, wid(1), Direction::Left, 3).is_empty());
+        assert_eq!(move_starts(&strip, wid(1), Direction::Left, 2).len(), 3);
     }
 
     use rini_core::ids::WindowServerId;
@@ -644,7 +724,7 @@ pub(crate) mod tests {
             assert_eq!(step, Some(OverlayVector::new(away, 0.0)), "{direction:?}");
             let strip: Vec<(WindowId, SurfaceRect)> =
                 before.iter().filter(|w| !w.floating).map(|w| (w.window, w.frame)).collect();
-            let starts = swap_starts(&strip, wid(W), direction);
+            let starts = move_starts(&strip, wid(W), direction, 1);
             let start = |window| starts.iter().find(|p| p.window == window).map(|p| p.start);
             let get = |list: &[SurfaceWindow], window: u32| {
                 *list.iter().find(|s| s.window == wid(window)).unwrap()
@@ -670,7 +750,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// A narrower column is seen moving: both columns cross, per `swap_starts`, and nothing steps.
+    /// A narrower column is seen moving: both columns cross, per `move_starts`, and nothing steps.
     #[test]
     fn a_narrower_move_crosses_both_columns_and_does_not_step() {
         for width in [860.0, 1148.0, 1151.0] {
@@ -681,7 +761,7 @@ pub(crate) mod tests {
                 slid(&mut windows, wid(W), Direction::Right, SurfacePoint::origin()),
                 None
             );
-            let starts = swap_starts(&strip, wid(W), Direction::Right);
+            let starts = move_starts(&strip, wid(W), Direction::Right, 1);
             assert_eq!(starts.len(), 2);
             for window in &windows {
                 let (_, frame) = strip.iter().find(|(w, _)| *w == window.window).unwrap();
@@ -691,6 +771,54 @@ pub(crate) mod tests {
                     starts.iter().find(|p| p.window == window.window).map(|p| p.start),
                     "{width}"
                 );
+            }
+        }
+    }
+
+    /// W just moved to the start past three half-width columns, the camera following it: under
+    /// Slide and Zoom W and every column it passed cross from where they were, nothing steps, and
+    /// the columns passed ride one container apart from W's and the rest of the strip's. Zoom's arc
+    /// swaps W with them, each crossing back by W's slot.
+    #[test]
+    fn a_move_past_several_columns_crosses_every_one() {
+        let (a, b, c, d) = (2, 3, 4, 5);
+        let strip: Vec<(WindowId, SurfaceRect)> = [W, a, b, c, d]
+            .into_iter()
+            .zip(0..)
+            .map(|(window, slot)| (wid(window), column(3.0 + 864.0 * f64::from(slot), 861.0)))
+            .collect();
+        let from_offset = SurfacePoint::new(-2592.0, 0.0);
+        let travel = pan_travel(from_offset, SurfacePoint::origin());
+        let cue = Cue::Move {
+            window: wid(W),
+            direction: Direction::Left,
+            columns_passed: 3,
+        };
+        let starts = move_starts(&strip, wid(W), Direction::Left, 3);
+        assert_eq!(start_of(&starts, wid(W)), Some(2595.0));
+        for look in [Look::Slide, Look::Zoom] {
+            let mut windows: Vec<SurfaceWindow> =
+                strip.iter().map(|&(w, f)| surface_window(w, f, false)).collect();
+            let accent = stage_move(&mut windows, &cue, area(), travel, PLAIN, look);
+            for window in &windows {
+                let start = starts.iter().find(|p| p.window == window.window).map(|p| p.start);
+                assert_eq!(window.from, start, "{look:?} {:?}", window.window);
+            }
+            let plan = surface_plan(&windows, from_offset, SurfacePoint::origin());
+            let key = |window| plan.group_of(wid(window)).unwrap().key;
+            assert_eq!((key(a), key(b)), (key(c), key(c)), "{look:?}: one container");
+            assert_ne!(key(c), key(W), "{look:?}");
+            assert_ne!(key(c), key(d), "{look:?}");
+            assert_ne!(key(W), key(d), "{look:?}");
+            match (look, accent) {
+                (Look::Slide, None) => {}
+                (Look::Zoom, Some(Accent::Arc { swap: Some(swap), .. })) => {
+                    assert_eq!(swap.moved, wid(W));
+                    assert!([a, b, c].map(wid).contains(&swap.passed), "{swap:?}");
+                    assert_eq!(swap.moved_by, OverlayVector::new(-2592.0, 0.0));
+                    assert_eq!(swap.passed_by, OverlayVector::new(864.0, 0.0));
+                }
+                other => panic!("{other:?}"),
             }
         }
     }
@@ -718,10 +846,14 @@ pub(crate) mod tests {
             let mut crossed = 0;
             for ((before, from_offset), direction) in cases.clone() {
                 let travel = travel_from(from_offset);
-                let cue = Cue::Move { window: wid(W), direction };
+                let cue = Cue::Move {
+                    window: wid(W),
+                    direction,
+                    columns_passed: 1,
+                };
                 let strip: Vec<(WindowId, SurfaceRect)> =
                     before.iter().filter(|w| !w.floating).map(|w| (w.window, w.frame)).collect();
-                let pair = swap_starts(&strip, wid(W), direction);
+                let pair = move_starts(&strip, wid(W), direction, 1);
                 let staging = look.stage(&cue, &Strip {
                     windows: &strip,
                     pair: &pair,
@@ -790,10 +922,14 @@ pub(crate) mod tests {
                     .filter(|w| !w.floating && w.window != wid(W))
                     .map(|w| w.window)
                     .collect();
-                for cue in [Cue::Move { window: wid(W), direction }, Cue::Focus {
-                    from: others[0],
-                    to: wid(W),
-                }] {
+                for cue in [
+                    Cue::Move {
+                        window: wid(W),
+                        direction,
+                        columns_passed: 1,
+                    },
+                    Cue::Focus { from: others[0], to: wid(W) },
+                ] {
                     let mut without = alone.clone();
                     let staged = stage_move(&mut without, &cue, area, travel, PLAIN, look);
                     let mut with: Vec<SurfaceWindow> =
@@ -969,7 +1105,11 @@ pub(crate) mod tests {
                     row: None,
                 })
                 .collect();
-            let cue = Cue::Move { window: moved, direction };
+            let cue = Cue::Move {
+                window: moved,
+                direction,
+                columns_passed: 1,
+            };
             let area = Area {
                 frame: VIEWPORT,
                 outer_left: OUTER,

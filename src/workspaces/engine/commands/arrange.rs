@@ -11,7 +11,7 @@ use tracing::debug;
 use super::CommandTarget;
 use crate::layout::domain::boundary::strip_edge;
 use crate::workspaces::domain::command::ArrangeCommand;
-use crate::workspaces::engine::{EventResponse, LayoutEngine, WindowStore};
+use crate::workspaces::engine::{EventResponse, LayoutEngine, StripMove, WindowStore};
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_arrange_command(
@@ -41,7 +41,11 @@ impl LayoutEngine {
                 let selected = tree.selected_window(layout);
                 if self.workspace_tree_mut(workspace_id).move_selection(layout, direction) {
                     return EventResponse {
-                        moved: selected.filter(|_| swapping).map(|window| (window, direction)),
+                        moved: selected.filter(|_| swapping).map(|window| StripMove {
+                            window,
+                            direction,
+                            columns_passed: 1,
+                        }),
                         ..EventResponse::default()
                     };
                 }

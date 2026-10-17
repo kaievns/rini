@@ -594,7 +594,8 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
         vec![
             (OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2, Cue::Move {
                 window: last_column,
-                direction: Direction::Right
+                direction: Direction::Right,
+                columns_passed: 0,
             })
         ],
         "the strip's end: one bounce to the left carrying both columns, the window pushed named"

@@ -2,7 +2,8 @@
 //! the motion curve, or on the ease-in-out while the strip steps; a pass arriving mid-flight bends
 //! each container from where the score draws its movement, as fast as its leg is going. Everything
 //! is placed on whole points, as the window server places the real windows. A move whose column
-//! fills the viewport holds the column it passes and steps the whole strip; any other crosses both.
+//! fills the viewport holds the columns it passes and steps the whole strip; any other crosses them
+//! all.
 //! See "The overlay engine" and "One flight however many presses" in
 //! `src/animation/docs/animation-smoothness.md`, and "The move flight, staged" in
 //! `src/transitions/docs/coordination.md`.
@@ -58,8 +59,8 @@ fn tile_leg(making: &mut Making, way: TileWay, begin: f64, seconds: f64) {
 const FILLS_TOLERANCE: f64 = 1.0;
 
 /// What Slide does with a press on the strip. A move whose column fills the viewport steps the whole
-/// strip away from where the window went, and the column it passed is held at its start on the
-/// strip, riding the strip beneath the moved window; the moved column, and both columns of any other
+/// strip away from where the window went, and each column it passed is held at its start on the
+/// strip, riding the strip beneath the moved window; the moved column, and every column of any other
 /// move, cross from where they start.
 pub fn stage(cue: &Cue, strip: &Strip) -> Staging {
     let Some((moved, direction)) = cue.moved() else {
@@ -100,7 +101,7 @@ fn fills_viewport(width: f64, screen_width: f64, outer_left: f64, outer_right: f
 }
 
 /// The step of a move: a share of the viewport away from where the moved window went, so the side
-/// it opens is the side the column it passed comes from.
+/// it opens is the side the columns it passed come from.
 fn nudge(viewport_width: f64, direction: Direction) -> Option<OverlayVector> {
     let step = viewport_width * NUDGE_SHARE;
     match direction {

@@ -727,29 +727,31 @@ move that does not scroll. For a full-width column even a per-window flight
 shows nothing: the camera follows the moved window, and the column it passes
 is parked off screen at both ends, so `worth_animating` culls it.
 
-**A move is a strip movement with a swap.** `MoveNode` that swaps two columns
-reports `EventResponse::moved` (not a pull out of a stack, which resizes, not a
-vertical move, not a move onto another display). The reactor routes it to
-`start_strip_pan` with the strip movement, zero when the strip did not move on
-screen, and the surface is built exactly as a pan's, every window at its NEW
-frame. The moved column and the column it passed also get a start (`swap_starts` in
-`src/transitions/domain/strip_move.rs`): the two fill the span they fill
-now, in the order they had before. For W of width a and N of width b with gap
-g, moving right, W started at N's new x and N at N's new x + a + g; moving
-left, W at W's new x + b + g and N at W's new x. Every window of a stacked N
-shifts by one amount. What is done with the pair is the look's: the reactor
-names the press (`Cue::Move`; a focus press along the strip is `Cue::Focus`, from
-`EventResponse::stepped`, a move before it), and as the movement reaches the flight engine,
-`stage_move` hands the strip and the pair to the look of the flight it joins,
-else the one it asks for (`Look::stage`, `src/animation/domain/choreography.rs`),
-and puts what it staged on the surface. The strips beside it are no part of the
-strip it stages: a column of one is never the column passed, nor starts
-elsewhere (`a_move_staged_beside_other_strips_passes_a_column_of_its_own`). Slide, the default look
-(`src/animation/domain/choreography/slide.rs`), has W cross from its start, and
-N cross from its own unless the move steps, when it is held; the three rules
-below are Slide's. `surface_plan` groups by travel vector, so the strip is one
-container and each crossing column has its own; the moved window holds focus, so its
-container is drawn first (`band_plan`) and N slides beneath it.
+**A move is a strip movement with a swap.** `MoveNode` that swaps two columns reports
+`EventResponse::moved` with how many columns the window passed (not a pull out of a stack,
+which resizes, not a vertical move, not a move onto another display). The reactor routes
+it to `start_strip_pan` with the strip movement, zero when the strip did not move on screen,
+and the surface is built exactly as a pan's, every window at its NEW frame. The moved column
+and the columns it passed also get a start (`move_starts` in
+`src/transitions/domain/strip_move.rs`): together they fill the span they fill now, in the
+order they had before. For W of width a and N of width b with gap g, moving right, W started
+at N's new x and N at N's new x + a + g; moving left, W at W's new x + b + g and N at W's new
+x. Past several columns, each column passed shifts back by a + g, and W starts at the far
+end of the span. Every window of a stacked column shifts by one amount, and the columns
+passed all shift by the same, so `surface_plan` makes them one container. What is done with
+the pair is the look's: the reactor names the press (`Cue::Move`, with the columns passed; a
+focus press along the strip is `Cue::Focus`, from `EventResponse::stepped`, a move before
+it), and as the movement reaches the flight engine, `stage_move` hands the strip and the pair
+to the look of the flight it joins, else the one it asks for (`Look::stage`,
+`src/animation/domain/choreography.rs`), and puts what it staged on the surface. The strips
+beside it are no part of the strip it stages: a column of one is never a column passed, nor
+starts elsewhere (`a_move_staged_beside_other_strips_passes_a_column_of_its_own`). Slide, the
+default look (`src/animation/domain/choreography/slide.rs`), has W cross from its start, and
+each column passed cross from its own unless the move steps, when it is held; the three rules
+below are Slide's. `surface_plan` groups by travel vector, so the strip is one container and
+the moved column and the columns passed have one each; the moved window holds focus, so its
+container is drawn first (`band_plan`) and the columns passed slide beneath it
+(`a_move_past_several_columns_crosses_every_one`).
 
 **Which moves step.** Only a moved column that fills the viewport steps
 (`fills_viewport`): its width is the tiling area's, the display's usable width
@@ -765,14 +767,14 @@ window went, and back (`nudge`): a move right steps the strip left and opens
 the right side, where N was. It went toward where the window went, opening the
 side N was heading for.
 
-**The column passed is held.** For a move that steps, Slide holds N:
-`stage_move` gives N its old slot as its surface frame and no start of its own,
+**The columns passed are held.** For a move that steps, Slide holds N, and every other
+column passed alike: `stage_move` gives N its old slot as its surface frame and no start of its own,
 so it rides the strip's container: its tile starts where N was on screen and moves only as the strip
 does, W slides over it, and it finishes beneath W, covered. Only the drawing is
 held. N's real window goes to its layout frame, off screen, as for any move:
 `final_frames` are unchanged, the handover compares real windows with them, and
 nothing of it lands on screen to be watched. A
-move that does not step keeps both columns crossing.
+move that does not step keeps every column crossing.
 
 The step starts only on a flight that moves: one still collecting passes
 poses frame zero again with each, which has nothing playing, so a move

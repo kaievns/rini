@@ -556,7 +556,11 @@ fn edge_press(
     use workspaces::Direction::{Down, Left, Right, Up};
     match (edge_hit, pushed, stepped) {
         (Some(Up | Down), _, _) => Cue::Switch,
-        (Some(direction @ (Left | Right)), Some(window), _) => Cue::Move { window, direction },
+        (Some(direction @ (Left | Right)), Some(window), _) => Cue::Move {
+            window,
+            direction,
+            columns_passed: 0,
+        },
         (Some(Left | Right), None, Some((from, to))) => Cue::Focus { from, to },
         _ => Cue::Plain,
     }

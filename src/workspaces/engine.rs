@@ -109,11 +109,11 @@ pub struct EventResponse {
     /// so the stop reads as an edge rather than a dropped keypress.
     #[serde(default)]
     pub edge_hit: Option<Direction>,
-    /// A window moved along its strip, changing places with the column that way. The reactor draws
-    /// the two columns crossing. Not set for a move out of a stacked column, a vertical move, or a
-    /// move onto another display.
+    /// A window's column moved along its strip, past the columns that way. The reactor draws the
+    /// columns crossing. Not set for a move out of a stacked column, a vertical move, or a move onto
+    /// another display.
     #[serde(default)]
-    pub moved: Option<(WindowId, Direction)>,
+    pub moved: Option<StripMove>,
     /// Focus went left or right along the strip: the window it left and the one it reached. At an
     /// end, with `edge_hit`, both are the window it stayed on.
     #[serde(default)]
@@ -121,6 +121,15 @@ pub struct EventResponse {
     /// A move ran into an end of the strip, with `edge_hit` naming it: the window it pushed.
     #[serde(default)]
     pub pushed: Option<WindowId>,
+}
+
+/// A lone window's column moved along its strip: the window, the way it went, and how many columns
+/// it passed, one for a move of one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StripMove {
+    pub window: WindowId,
+    pub direction: Direction,
+    pub columns_passed: usize,
 }
 
 #[must_use]
@@ -1645,7 +1654,14 @@ mod tests {
         let (mut fx, space, first, _) = two_columns();
         let moved = fx.command(space, LayoutCommand::MoveNode(Direction::Right));
         assert_eq!(moved.edge_hit, None);
-        assert_eq!(moved.moved, Some((first, Direction::Right)));
+        assert_eq!(
+            moved.moved,
+            Some(StripMove {
+                window: first,
+                direction: Direction::Right,
+                columns_passed: 1,
+            })
+        );
 
         let stopped = fx.command(space, LayoutCommand::MoveNode(Direction::Right));
         assert_eq!(stopped.edge_hit, Some(Direction::Right));

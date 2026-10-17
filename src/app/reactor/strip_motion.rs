@@ -14,7 +14,7 @@ use super::{Reactor, ScreenInfo};
 use crate::decorations::domain::style::Worn;
 use crate::transitions::domain::request::SurfaceWindow;
 use crate::windows::domain::request::Request;
-use crate::workspaces::Direction;
+use crate::workspaces::{Direction, StripMove};
 
 /// Where the active workspace's strip has each window: every window at its strip frame, a parked
 /// one where the strip has it rather than at its park.
@@ -38,7 +38,7 @@ struct Stack<'a> {
 pub(super) struct StripPan<'a> {
     pub(super) final_frames: Vec<(WindowId, CGRect)>,
     pub(super) delta: CGPoint,
-    pub(super) moved: Option<(WindowId, Direction)>,
+    pub(super) moved: Option<StripMove>,
     pub(super) stepped: Option<(WindowId, WindowId)>,
     pub(super) standing: &'a [crate::transitions::domain::request::AnimationRequest],
     pub(super) laid_out: &'a [(WindowId, CGRect)],
@@ -801,11 +801,8 @@ impl Reactor {
 
     /// The window the current command moved along the strip, if this pass lays it out; taken, so
     /// only one pass draws the move.
-    pub(crate) fn take_move_in(
-        &mut self,
-        layout: &[(WindowId, CGRect)],
-    ) -> Option<(WindowId, Direction)> {
-        let (window, _) = self.moved_along_strip?;
+    pub(crate) fn take_move_in(&mut self, layout: &[(WindowId, CGRect)]) -> Option<StripMove> {
+        let window = self.moved_along_strip?.window;
         if !layout.iter().any(|(wid, _)| *wid == window) {
             return None;
         }
@@ -921,12 +918,16 @@ fn report_target_out_of_view(
 
 /// The press a strip movement names to its look: a move before a focus press, either before none.
 fn pan_cue(
-    moved: Option<(WindowId, Direction)>,
+    moved: Option<StripMove>,
     stepped: Option<(WindowId, WindowId)>,
 ) -> crate::animation::domain::choreography::Cue {
     use crate::animation::domain::choreography::Cue;
     match (moved, stepped) {
-        (Some((window, direction)), _) => Cue::Move { window, direction },
+        (Some(moved), _) => Cue::Move {
+            window: moved.window,
+            direction: moved.direction,
+            columns_passed: moved.columns_passed,
+        },
         (None, Some((from, to))) => Cue::Focus { from, to },
         (None, None) => Cue::Plain,
     }
