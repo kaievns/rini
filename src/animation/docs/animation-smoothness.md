@@ -93,12 +93,21 @@ contract sized its allowance from the new motion's second. Kai kept the pace ("A
 in `specs/animation.md`), so under Zoom, across a pass bringing an arc, the contract also allows a
 laid-out edge the change a spring over the pass's length stretched by `ZOOM_STRETCH` makes over its
 first frame, let go where the edge is drawn at the speed it is drawn moving, and only in the way
-that spring makes it (`stiffer_on_an_arc`). Seed 60's window gained 292pt/s; that spring gains
-304pt/s, one over 0.35s 10pt/s, and the edge's allowance went from 286 to 430pt/s; pinned by
+that spring makes it (`stiffer_on_an_arc`), and only to a window whose container the pass carries on
+that spring, as the contract finds it drawn over its first two steps (`springs`): a container Zoom
+folds into the arc playing goes on `EASE_IN_OUT`, one it opens for a newcomer on `MOTION_CURVE`, and
+one it does not bend keeps what it had; a window riding any of them is allowed none, 2,272 of the
+7,333 windows across Zoom's passes bringing an arc over the bend contracts' seeds (`BEND_SEEDS`).
+Seed 60's window gained 292pt/s; that spring gains 304pt/s, one over 0.35s 10pt/s, and the edge's
+allowance went from 286 to 430pt/s; pinned by
 `a_bend_may_change_speed_as_far_as_a_spring_as_stiff_does_in_its_first_step`, which also reads a
 bend slowing as far as a jump, and by
 `zoom_bends_a_pass_bringing_an_arc_within_its_stretched_spring`. Every other look, every pass
-bringing no arc and the zoom's own read keep the allowance from before. Allowing every look's every
+bringing no arc and the zoom's own read keep the allowance from before. Given to every window across
+such a pass, the allowance passed Zoom with each fold sped nine tenths of the way onto that spring
+on every one of seeds 0-999; held to the windows riding it, it rejects that on 19, seed 82 run 188's
+w1 going from 2322 to 2464pt/s against 137 allowed
+(`the_speed_contract_rejects_a_fold_sped_up_toward_the_stiffer_spring`). Allowing every look's every
 pass a spring over the plain or stretched length grew the allowance of Linear, which bends on no
 spring, 6.9 times on average and 48 times at most over seeds 163 and 2, against 1.04 times for
 Slide. Zoom now fails none; `every_look_keeps_the_speed_contract_over_a_thousand_seeds` counts every
@@ -201,16 +210,17 @@ Every look keeps that speed for a window riding a container
 (`every_look_bends_a_flight_at_the_speed_it_moves`): across a pass, each edge's speed over the
 1/120s step either side, as the window is laid out on the strip, changes by no more than the motions
 themselves change it over the steps around it, the motion after over its second step or, under Zoom
-across a pass bringing an arc, as a spring over the stretched length changes it over its first and
-the same way, whichever is more, and a half point over a step; the strip's zoom, its scale and
-shift, is held to the same rule on its own but for the spring, which it does not ride, a strip the
-score holds no zoom for read at rest, as 429 of Zoom's 995 bends over seeds 163 and 2 find it and 73
-then start it zooming. Drawn as Core Animation's polyline a spring changes its speed at every
-sample, so the bend's own change, up to 4,385pt/s under Slide over seed 163's flights, is held
-against the motion's, at most 0.71 of it over seeds 163 and 2, 0.84 under Zoom; a look restarting
-each container on `MOTION_CURVE` from where it is drawn changes it by up to 9.3 times the motion's,
-and jumps on 11,382 of the 31,272 edges seeds 163 and 2 read, and one sending the zoom home from
-rest where it is drawn, or starting a strip with no zoom zooming at speed, is caught on the zoom
+across a pass bringing an arc on a container riding a spring over the stretched length, as that
+spring changes it over its first and the same way, whichever is more, and a half point over a step;
+the strip's zoom, its scale and shift, is held to the same rule on its own but for the spring, which
+it does not ride, a strip the score holds no zoom for read at rest, as 429 of Zoom's 995 bends over
+seeds 163 and 2 find it and 73 then start it zooming. Drawn as Core Animation's polyline a spring
+changes its speed at every sample, so the bend's own change, up to 4,385pt/s under Slide over seed
+163's flights, is held against the motion's, at most 0.71 of it over seeds 163 and 2, 0.84 under
+Zoom; a look restarting each container on `MOTION_CURVE` from where it is drawn changes it by up to
+9.3 times the motion's, and jumps on 11,382 of the 31,272 edges seeds 163 and 2 read, and one
+sending the zoom home from rest where it is drawn, or starting a strip with no zoom zooming at
+speed, is caught on the zoom
 (`the_speed_contract_rejects_a_look_that_restarts_the_motion_or_the_zoom_at_a_pass`), and Linear,
 before it carried its speed, by up to 79 times. Read drawn, a window through a zoom moves at both
 speeds, and the two turning opposite ways cancel the allowance though neither jumps: under Zoom,

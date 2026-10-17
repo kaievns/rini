@@ -125,10 +125,10 @@ carry rides each container's own track, so a zoom track lerps exactly between it
 (`Zoom::about`), and `Merged::bend` bends that travel with the rest of every container's movement.
 The speed contract reads a window's speed on the strip and the zoom's apart, a strip the score holds
 no zoom for at rest: drawn, the two turning opposite ways cancel its allowance though neither jumps.
-Across a pass bringing an arc, Zoom's alone, a window's edge is also allowed the change a spring
-over the pass's stretched length makes over its first frame, let go where the edge is drawn at the
-speed it is drawn moving, and only the way that spring makes it ("Mid-flight passes" in
-`animation-smoothness.md`).
+Across a pass bringing an arc, Zoom's alone, the edge of a window whose container the pass carries
+on a spring over the pass's stretched length is also allowed the change that spring makes over its
+first frame, let go where the edge is drawn at the speed it is drawn moving, and only the way that
+spring makes it ("Mid-flight passes" in `animation-smoothness.md`).
 
 ## Reading order
 

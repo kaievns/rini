@@ -519,7 +519,7 @@ mod tests {
     use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
     use crate::animation::domain::motion::glide::{Leg, spring_omega};
     use crate::animation::domain::motion::plan::{
-        EDGE_BOUNCE_OVERSHOOT, GROUP_TOLERANCE, GroupKey, GroupMember, Member, Resolved,
+        EDGE_BOUNCE_OVERSHOOT, GROUP_TOLERANCE, GroupKey, GroupMember, Member, NewGroup, Resolved,
         RigidGroup, carries_out_and_back, installed, on_overlay, overlay_of, reflow_plan,
     };
     use crate::animation::domain::motion::score::{Channel, Curve, SAMPLE_STEP, Track, Zoom};
@@ -1176,12 +1176,13 @@ mod tests {
     /// on the strip, and the zoom's scale and shift, each `Crossed` the bend within what the
     /// motions change it, a laid-out edge with the half point a bend may move it as slack, and a
     /// strip the score holds no zoom for read at rest. Under a look bending a pass that brings an
-    /// arc over its length stretched by `arc_stretch`, a laid-out edge across such a pass is also
-    /// allowed the change a spring that stiff toward where the edge lands makes in its first step,
-    /// the way it makes it; `stiffer_on_an_arc` gives each look's. Read drawn, a window's speed and
-    /// the zoom's turning opposite ways cancel the allowance though neither jumps. A loose tile is
-    /// outside it: Slide starts each one a pass bends from where it is drawn on `MOTION_CURVE`
-    /// again, so its speed jumps, against "Arriving mid-flight" in `specs/animation.md`.
+    /// arc over its length stretched by `arc_stretch`, a laid-out edge across such a pass, of a
+    /// window whose container the pass carries on a spring that stiff (`springs`), is also allowed
+    /// the change that spring toward where the edge lands makes in its first step, the way it makes
+    /// it; `stiffer_on_an_arc` gives each look's. Read drawn, a window's speed and the zoom's
+    /// turning opposite ways cancel the allowance though neither jumps. A loose tile is outside it:
+    /// Slide starts each one a pass bends from where it is drawn on `MOTION_CURVE` again, so its
+    /// speed jumps, against "Arriving mid-flight" in `specs/animation.md`.
     fn bends_at_the_speed_it_moves(
         make: &dyn Fn() -> Box<dyn Choreography>,
         arc_stretch: Option<f64>,
@@ -1227,10 +1228,11 @@ mod tests {
                 }
             }
             for window in bend.sent.windows() {
-                if !matches!(bend.bent.plan.member(window), Some(Member::Rigid { .. })) {
+                let Some(Member::Rigid { key, .. }) = bend.bent.plan.member(window) else {
                     continue;
-                }
+                };
                 let lands = laid(&bend.bent.score, window, end).map(edges);
+                let omega = omega.filter(|&omega| springs(bend, key, omega));
                 for edge in 0..4 {
                     let was = |k: f64| laid(bend.playing, window, at(k)).map(|f| edges(f)[edge]);
                     let is = |k: f64| laid(&bend.bent.score, window, at(k)).map(|f| edges(f)[edge]);
@@ -1256,6 +1258,54 @@ mod tests {
             return Err("no window was moving as a pass landed".to_string());
         }
         Ok(())
+    }
+
+    /// Whether `bend` carries the container `key` on a spring at `omega`, over its first two steps
+    /// within `SPRUNG`: one it retargets let go where the score has its movement at the speed it is
+    /// going, or one it opens for a member leaving another let go where it installs at the speed of
+    /// the one left. A container folded into an arc, opened for a newcomer, or left as it was
+    /// rides none.
+    fn springs(bend: &Bend, key: GroupKey, omega: f64) -> bool {
+        const SPRUNG: f64 = 1e-6;
+        let point = |value: Option<Value>| match value {
+            Some(Value::Point(point)) => Some(point),
+            _ => None,
+        };
+        let (now, node) = (bend.now, Node::Container(key));
+        let retargeted = bend.delta.retargeted_groups.iter().find(|(k, _)| *k == key);
+        let opened = bend.delta.new_groups.iter().find(|group| group.key == key);
+        let (from, velocity, to) = match (retargeted, opened) {
+            (Some(&(_, to)), _) => {
+                let Some(from) = point(bend.playing.along(node, now)) else {
+                    return false;
+                };
+                (from, bend.playing.rate(node, now), to)
+            }
+            (
+                None,
+                Some(&NewGroup {
+                    install, leaving: Some(left), ..
+                }),
+            ) => {
+                let velocity = bend.playing.rate(Node::Container(left), now);
+                (install.rounded(), velocity, bend.bent.plan.position_of(key))
+            }
+            _ => return false,
+        };
+        let leg = Leg::Spring {
+            from,
+            to: to.rounded(),
+            velocity: OverlayVector::new(velocity[0], velocity[1]),
+            begin: now,
+            omega,
+        };
+        (1..=2).all(|k| {
+            let at = now + f64::from(k) * SAMPLE_STEP;
+            point(bend.bent.score.along(node, at)).is_some_and(|drawn| {
+                let modelled = leg.position_at(at);
+                (drawn.x - modelled.x).abs() <= SPRUNG && (drawn.y - modelled.y).abs() <= SPRUNG
+            })
+        })
     }
 
     /// `contract` over each look, the looks run side by side, and the first look that breaks it
@@ -1462,6 +1512,26 @@ mod tests {
         assert!(started.contains("the zoom's speed jumped"), "{started}");
         bends_without_a_jump(&|| Flawed::boxed(Flaw::StartsTheZoomAtSpeed))
             .expect("drawn where it was");
+    }
+
+    /// The speed contract under Zoom's stretch rejects Zoom with its folds sped up most of the way
+    /// onto the spring it bends a pass bringing an arc on (`FoldsTowardTheSpring`), which keeps the
+    /// bend contract: such a fold changes speed the way that spring does and less, but only a
+    /// container riding the spring is allowed what the spring changes. Seed 82 run 188's w1 goes
+    /// from 2322 to 2464pt/s, allowed 137; allowed the spring's change on every window across such
+    /// a pass, no seed of 0-999 rejected it.
+    #[test]
+    fn the_speed_contract_rejects_a_fold_sped_up_toward_the_stiffer_spring() {
+        let toward = || -> Box<dyn Choreography> {
+            Box::new(FoldsTowardTheSpring {
+                zoom: Look::Zoom.choreography(),
+            })
+        };
+        let sped = bends_at_the_speed_it_moves_over(&[82], &toward, stiffer_on_an_arc(Look::Zoom))
+            .expect_err("a fold sped up toward the spring");
+        assert!(sped.starts_with("seed 82 run 188 "), "{sped}");
+        assert!(sped.contains("speed jumped"), "{sped}");
+        bends_without_a_jump_over(&[82], &toward).expect("drawn where it was");
     }
 
     /// Seed 60 run 53's w2 as a Zoom pass bringing an arc lands mid-arc, its left edge laid out on
@@ -2400,6 +2470,87 @@ mod tests {
                     .map(|key| Edit::Add(bounce.track(key, now)))
                     .collect(),
             }
+        }
+    }
+
+    /// Zoom but for its folds: every container a pass bringing an arc bends on another motion than
+    /// the spring Zoom bends one on there goes nine tenths of the way onto that spring.
+    #[derive(Debug)]
+    struct FoldsTowardTheSpring {
+        zoom: Box<dyn Choreography>,
+    }
+
+    impl Choreography for FoldsTowardTheSpring {
+        fn plan(&self, pass: ReflowPlan, cue: &Cue) -> FlightPlan { self.zoom.plan(pass, cue) }
+
+        fn fold(&self, plan: &FlightPlan, pass: &Pass) -> FlightPlan { self.zoom.fold(plan, pass) }
+
+        fn pose(&self, stage: &Stage) -> Score { self.zoom.pose(stage) }
+
+        fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
+            self.zoom.compose(playing, stage, begin)
+        }
+
+        fn retarget(
+            &mut self,
+            playing: &Score,
+            plan: &FlightPlan,
+            pass: &Pass,
+            now: f64,
+        ) -> Retarget {
+            let mut bent = self.zoom.retarget(playing, plan, pass, now);
+            if !matches!(pass.accent, Some(Accent::Arc { .. })) {
+                return bent;
+            }
+            let omega = spring_omega(pass.seconds * zoom::ZOOM_STRETCH);
+            for edit in &mut bent.edits {
+                let Edit::Add(track) = edit else { continue };
+                let (Channel::Base, node @ Node::Container(key)) = (track.channel(), track.node())
+                else {
+                    continue;
+                };
+                let (Some(Value::Point(from)), &[.., (_, Value::Point(to))]) =
+                    (playing.along(node, now), track.keys())
+                else {
+                    continue;
+                };
+                let [x, y, ..] = playing.rate(node, now);
+                let spring = Leg::Spring {
+                    from,
+                    to,
+                    velocity: OverlayVector::new(x, y),
+                    begin: now,
+                    omega,
+                };
+                let length = track.ends().max(spring.track(key, SAMPLE_STEP).ends()) - now;
+                let count = (length / SAMPLE_STEP).ceil().max(1.0) as usize;
+                let values = (0..=count).map(|k| {
+                    let at = now + length * k as f64 / count as f64;
+                    let folded = match track.at(at) {
+                        Some(Value::Point(point)) => point,
+                        _ => to,
+                    };
+                    let sprung = spring.position_at(at);
+                    Value::Point(if k == count {
+                        to
+                    } else {
+                        folded + (sprung - folded) * 0.9
+                    })
+                });
+                *edit = Edit::Add(Track::samples(node, Channel::Base, values, now, length));
+            }
+            bent
+        }
+
+        fn push(
+            &mut self,
+            playing: &Score,
+            cue: &Cue,
+            wall: OverlayVector,
+            seconds: f64,
+            now: f64,
+        ) -> Vec<Edit> {
+            self.zoom.push(playing, cue, wall, seconds, now)
         }
     }
 

@@ -359,9 +359,10 @@ destination for a window already moving.
   merged mid-arc: 0.35s times 2.2/3, 0.257s, where a plain press takes 0.35s. That spring starts at
   the speed the window is drawn moving and gathers speed faster over its first frame, up to 12%, 3246
   to 3538pt/s in one flight; that is allowed, because the speed itself does not jump and the press
-  keeps zoom's pace. A change no spring that stiff makes in one frame is a jump. Not yet met: a loose
-  tile a pass bends (a resize, an entrance, a floating window) starts `MOTION_CURVE` again from where
-  it is drawn, so its speed jumps.
+  keeps zoom's pace. A change no spring that stiff makes in one frame is a jump, and so is that
+  change in a window the pass does not put on that spring, as zoom folds one into the arc playing.
+  Not yet met: a loose tile a pass bends (a resize, an entrance, a floating window) starts
+  `MOTION_CURVE` again from where it is drawn, so its speed jumps.
 
 > **Reported 2026-09-29.** "as a general rule animation should not get interrupted mid-filight and
 > restarted a new, the target should fluidly move to the next window and feel like one smooth extended
@@ -379,6 +380,11 @@ destination for a window already moving.
 > spring's first-frame gain. Such a pass brings an arc while another plays, so its own arc is
 > dropped, but its springs still run over 0.257s. The speed check read that gain as a jump on 38 of
 > seeds 0-999 of its flights.
+
+> **Found 2026-10-17, not reported.** Review found the speed check then allowed that gain to every
+> window across such a pass, including one zoom folds into the arc on `EASE_IN_OUT`: zoom with each
+> fold sped nine tenths of the way onto the spring passed all of seeds 0-999. The check now allows
+> the gain only to a window whose piece rides the spring, and rejects that on 19 of them.
 
 - A pass MUST land every window it names where it sends it, however many pieces it sends at once. A
   window it takes out of its piece MUST NOT ride one the same pass sends elsewhere.
