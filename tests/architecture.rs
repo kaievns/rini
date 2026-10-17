@@ -1970,6 +1970,102 @@ fn a_long_snake_name_is_read_whole_from_its_span() {
     ]);
 }
 
+/// The docs that state the rules every change keeps, which name more than the long names the doc
+/// checks read: a type, a constant or a file at the root.
+const RULE_DOCS: [&str; 3] = [
+    "CONTRIBUTING.md",
+    "CLAUDE.md",
+    ".github/pull_request_template.md",
+];
+
+/// Whether `name` stands in `code` as a whole, with no identifier character either side of it.
+fn names_whole(code: &str, name: &str) -> bool {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    code.match_indices(name)
+        .any(|(at, _)| !code[..at].ends_with(ident) && !code[at + name.len()..].starts_with(ident))
+}
+
+/// What a rule doc cites that `code` no longer names and the repo no longer holds: each inline
+/// span that is an identifier or a path of them with a capital in it, such as `FakeAx`,
+/// `SLIDE_SCORES` or `SystemReads::fake`, and each that names a file by its extension. `code` is
+/// the Rust with its comments and literals blanked, so a name only quoted is not one still held,
+/// and `bin/`'s scripts, which name the environment the rules cite.
+fn stale_in_rule_doc(
+    text: &str,
+    code: &str,
+    exists: impl Fn(&str) -> bool,
+) -> Vec<(usize, String)> {
+    let identifier = |part: &str| {
+        part.starts_with(|c: char| c.is_alphabetic() || c == '_')
+            && part.chars().all(|c| c.is_alphanumeric() || c == '_')
+    };
+    let file = |span: &str| {
+        span.rsplit_once('.').is_some_and(|(stem, extension)| {
+            !stem.is_empty()
+                && ["md", "rs", "sh", "toml", "yml", "kdl", "lock"].contains(&extension)
+                && stem.chars().all(|c| c.is_alphanumeric() || "_-./".contains(c))
+        })
+    };
+    let mut stale = Vec::new();
+    for (line, span) in code_spans(text) {
+        let named = span.split("::").all(identifier) && span.contains(|c: char| c.is_uppercase());
+        if (named && !names_whole(code, span)) || (file(span) && !exists(span)) {
+            stale.push((line, span.to_string()));
+        }
+    }
+    stale
+}
+
+#[test]
+fn every_name_and_root_file_the_rules_cite_still_exists() {
+    let mut code = String::new();
+    for path in ["src", "crates", "tests"].iter().flat_map(|dir| rust_files(Path::new(dir))) {
+        code.push_str(&blank_comments(
+            &fs::read_to_string(&path).expect("readable source"),
+            true,
+        ));
+    }
+    for entry in fs::read_dir("bin").expect("readable bin/") {
+        code.push_str(
+            &fs::read_to_string(entry.expect("readable entry").path()).expect("a script"),
+        );
+    }
+    let mut broken = Vec::new();
+    for doc in RULE_DOCS {
+        let text = fs::read_to_string(doc).expect("readable rule doc");
+        for (line, span) in stale_in_rule_doc(&text, &code, |path| Path::new(path).exists()) {
+            broken.push(format!("{doc}:{line}: `{span}`"));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "the rules name a type, a constant or a file the repo no longer has. Name the one that holds \
+         it now:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_rule_doc_citing_a_renamed_type_constant_or_file_is_stale() {
+    let code = "struct FakeAx;\nconst SLIDE_SCORES: u8 = 0;\nSystemReads::fake(x)";
+    let doc = "`FakeAx`, `SLIDE_SCORES`, `SystemReads::fake` and `clippy.toml`\n\
+               `FakeAxis`, `ZOOM_SCORES`, `SystemReads::live`, `.cargo/gone.toml` and `bin/x.sh`\n\
+               `unsafe`, `#[allow]`, `<feature>.md`, `bin/check.sh` passes\n\
+               ```\n`FakeGone`\n```";
+    let exists = |path: &str| ["clippy.toml", "bin/check.sh"].contains(&path);
+    let stale: Vec<String> = stale_in_rule_doc(doc, code, exists)
+        .into_iter()
+        .map(|(line, span)| format!("{line}:{span}"))
+        .collect();
+    assert_eq!(stale, [
+        "2:FakeAxis",
+        "2:ZOOM_SCORES",
+        "2:SystemReads::live",
+        "2:.cargo/gone.toml",
+        "2:bin/x.sh"
+    ]);
+}
+
 /// The fields `pub struct Reactor` declares, by name.
 fn reactor_fields(source: &str) -> Vec<String> {
     let lines = code_lines_in(source);

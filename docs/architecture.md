@@ -295,8 +295,11 @@ longer exists,
 `every_long_name_a_doc_cites_is_still_defined` fails on a backticked snake_case name of four words
 or more, a test's included, in the docs, `CONTRIBUTING.md`, `CLAUDE.md` or `.github/`, that is no
 longer a function or a field (the names quoted
-from other code are `OTHERS_NAMES`, the ones recorded as deleted `GONE_NAMES`), and
-`every_spec_is_listed_in_the_index` stops a spec nothing links to,
+from other code are `OTHERS_NAMES`, the ones recorded as deleted `GONE_NAMES`),
+`every_name_and_root_file_the_rules_cite_still_exists` fails on a backticked name with a capital in
+it, such as a type or a constant, that rini's code and `bin/`'s scripts no longer hold, or a
+backticked file that no longer exists, in `CONTRIBUTING.md`, `CLAUDE.md` or the pull request
+template, and `every_spec_is_listed_in_the_index` stops a spec nothing links to,
 `no_readme_line_runs_past_80_words` holds every README line to 80 words, and
 `the_implementation_audit_states_a_test_count_only_as_measured_then` lets
 `docs/implementation-audit.md` give a test count only in a sentence saying when it was measured.
