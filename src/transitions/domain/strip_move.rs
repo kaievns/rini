@@ -81,7 +81,8 @@ pub fn swap_starts(
 /// starts where the strip had it at the last pass: the columns after a left-edge shrink keep their
 /// place on screen as the ones before it scroll. `standing` is where each window was at the press,
 /// `laid_out` where the strip had it, and `viewport` the display, all on the surface at rest. A
-/// parked window the strip did not have rides the strip.
+/// parked window the strip did not have rides the strip, and a window of a strip beside it stays
+/// where it is.
 pub fn start_where_standing(
     windows: &mut [SurfaceWindow],
     standing: &[(WindowId, SurfaceRect)],
@@ -92,7 +93,10 @@ pub fn start_where_standing(
     let find = |frames: &[(WindowId, SurfaceRect)], window| {
         frames.iter().find(|(w, _)| *w == window).map(|&(_, at)| at)
     };
-    for window in windows.iter_mut().filter(|w| !w.floating && w.from.is_none()) {
+    for window in windows
+        .iter_mut()
+        .filter(|w| !w.floating && w.row.is_none() && w.from.is_none())
+    {
         let drawn = window.frame.origin - from_offset.to_vector();
         let on_screen = find(standing, window.window).filter(|at| {
             !rini_geometry::is_off_screen(viewport, *at)
@@ -112,7 +116,8 @@ pub fn start_where_standing(
 }
 
 /// Puts `cue`'s press on the strip surface, every window of which is at its new frame, as `look`
-/// stages it, and returns the accent the look asks to ride the movement. A window the look starts
+/// stages it, and returns the accent the look asks to ride the movement. The strips drawn beside
+/// it are no part of the press. A window the look starts
 /// elsewhere crosses from there; one it holds is drawn at that frame on the strip, riding the strip,
 /// while its real window still goes to its layout frame. `area` is the screen, `travel` the
 /// viewport's, and `seconds` how long the movement runs, plain.
@@ -124,8 +129,11 @@ pub fn stage_move(
     seconds: f64,
     look: Look,
 ) -> Option<Accent> {
-    let strip: Vec<(WindowId, SurfaceRect)> =
-        windows.iter().filter(|w| !w.floating).map(|w| (w.window, w.frame)).collect();
+    let strip: Vec<(WindowId, SurfaceRect)> = windows
+        .iter()
+        .filter(|w| !w.floating && w.row.is_none())
+        .map(|w| (w.window, w.frame))
+        .collect();
     let pair = cue
         .moved()
         .map(|(window, direction)| swap_starts(&strip, window, direction))
@@ -199,6 +207,7 @@ pub(crate) mod tests {
             pinned: false,
             floating: false,
             from: None,
+            row: None,
         }
     }
 
@@ -460,6 +469,7 @@ pub(crate) mod tests {
             pinned: floating,
             floating,
             from: None,
+            row: None,
         }
     }
 
@@ -750,6 +760,64 @@ pub(crate) mod tests {
         assert!(held > 0, "no look held a column");
     }
 
+    /// A press staged with the strips above and below drawn beside it is staged as it is without
+    /// them, by every look, a move or a focus press: a column of a strip beside, standing where
+    /// the moved one would pass it, is never the column passed nor the pair's span, and stays
+    /// where it is, whatever stands where.
+    #[test]
+    fn a_move_staged_beside_other_strips_passes_a_column_of_its_own() {
+        let area = area();
+        let beside = |id: u32, x: f64, dy: f64, row: usize| SurfaceWindow {
+            row: Some(row),
+            ..surface_window(
+                wid(id),
+                SurfaceRect::new(Point::new(x, 32.0 + dy), Size::new(860.0, HEIGHT)),
+                false,
+            )
+        };
+        let rows = [
+            beside(11, -400.0, -1109.0, 0),
+            beside(12, -5.0, -1109.0, 0),
+            beside(13, 1500.0, 1109.0, 2),
+            beside(14, -1000.0, 1109.0, 2),
+        ];
+        for look in Look::ALL {
+            for direction in [Direction::Right, Direction::Left] {
+                let (alone, from_offset) = full_width_move(direction);
+                let travel = pan_travel(from_offset, SurfacePoint::origin());
+                let others: Vec<WindowId> = alone
+                    .iter()
+                    .filter(|w| !w.floating && w.window != wid(W))
+                    .map(|w| w.window)
+                    .collect();
+                for cue in [Cue::Move { window: wid(W), direction }, Cue::Focus {
+                    from: others[0],
+                    to: wid(W),
+                }] {
+                    let mut without = alone.clone();
+                    let staged = stage_move(&mut without, &cue, area, travel, PLAIN, look);
+                    let mut with: Vec<SurfaceWindow> =
+                        rows.iter().copied().chain(alone.iter().copied()).collect();
+                    let staged_beside = stage_move(&mut with, &cue, area, travel, PLAIN, look);
+                    assert_eq!(staged_beside, staged, "{look:?} {cue:?}");
+                    assert_eq!(&with[rows.len()..], &without[..], "{look:?} {cue:?}");
+                    assert_eq!(&with[..rows.len()], &rows[..], "{look:?} {cue:?}: left alone");
+                }
+            }
+        }
+        let mut windows: Vec<SurfaceWindow> = rows.to_vec();
+        let standing: Vec<(WindowId, SurfaceRect)> =
+            rows.iter().map(|w| (w.window, column(100.0, 860.0))).collect();
+        start_where_standing(
+            &mut windows,
+            &standing,
+            &standing,
+            SurfacePoint::new(-574.0, 0.0),
+            column(0.0, V),
+        );
+        assert_eq!(windows, rows, "a strip beside starts where it is");
+    }
+
     /// The simulated flight, both ways: the side the step opens is covered by N, then by N and C
     /// with only the 3pt gap between them showing, never the desktop. N covers all of it until the
     /// step is nearly out, then goes beneath W, which covers it at the end. F stands where it is.
@@ -898,6 +966,7 @@ pub(crate) mod tests {
                     pinned: false,
                     floating: false,
                     from: None,
+                    row: None,
                 })
                 .collect();
             let cue = Cue::Move { window: moved, direction };

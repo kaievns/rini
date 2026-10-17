@@ -5637,6 +5637,7 @@ mod tests {
             pinned: false,
             floating: false,
             from,
+            row: None,
         };
         let rest = SurfacePoint::origin();
         assert_eq!(

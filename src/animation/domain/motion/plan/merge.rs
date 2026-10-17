@@ -15,6 +15,10 @@ use super::{
 /// A rigid member's say in where its container goes: the container, the member, the place.
 type Vote = (GroupKey, WindowId, OverlayPoint);
 
+/// A rigid member the flight did not have: how far it travels, and the strip beside the one the
+/// flight moves that it is of, if any.
+type Join = (GroupMember, OverlayVector, Option<usize>);
+
 /// Folds a later pass into a flight in progress: containers are retargeted, membership changes
 /// are reparented at the frames they are drawn at, a pan adds its travel to every group and the
 /// columns a move swapped still vote under it, and a window the pass brings rides beside the windows
@@ -39,11 +43,11 @@ pub fn merge_plans(
     let (votes, joins) = merge.vote(incoming, pan, viewport);
     // 3. Per voted group: the largest cluster keeps the container; the rest are reparented.
     merge.settle(votes, pan.is_some(), focus);
-    for (member, vector) in joins {
+    for joining in joins {
         let Merge {
             next, sent, presented, delta, ..
         } = &mut merge;
-        join(next, member, vector, sent, presented, delta);
+        join(next, joining, sent, presented, delta);
     }
     // 4. Loose members of the pass.
     merge.loose_members(incoming);
@@ -90,12 +94,20 @@ impl<'a> Merge<'a> {
         }
     }
 
+    /// A strip beside the one the flight moves goes only as far as the view does up and down.
     fn pan(&mut self, d: OverlayVector) {
         let next = &mut self.next;
         let delta = &mut self.delta;
-        let keys: Vec<GroupKey> =
-            next.groups.iter().filter(|g| !g.members.is_empty()).map(|g| g.key).collect();
-        for key in keys {
+        let keys: Vec<(GroupKey, OverlayVector)> = next
+            .groups
+            .iter()
+            .filter(|g| !g.members.is_empty())
+            .map(|g| match g.beside {
+                Some(_) => (g.key, OverlayVector::new(0.0, d.y)),
+                None => (g.key, d),
+            })
+            .collect();
+        for (key, d) in keys {
             let p = next.position(key) + d;
             next.move_group(key, p, delta);
         }
@@ -121,10 +133,10 @@ impl<'a> Merge<'a> {
         incoming: &ReflowPlan,
         pan: Option<OverlayVector>,
         viewport: OverlayRect,
-    ) -> (Vec<Vote>, Vec<(GroupMember, OverlayVector)>) {
+    ) -> (Vec<Vote>, Vec<Join>) {
         let (next, delta, loose) = (&mut self.next, &mut self.delta, self.loose);
         let mut votes: Vec<Vote> = Vec::new();
-        let mut joins: Vec<(GroupMember, OverlayVector)> = Vec::new();
+        let mut joins: Vec<Join> = Vec::new();
         for group in &incoming.groups {
             // Under a pan, only a group not travelling with it votes: a column a move swapped,
             // heading for a slot of its own. Its destination is a place on the strip, never a
@@ -155,7 +167,7 @@ impl<'a> Merge<'a> {
                     }
                     Located::Absent => {
                         let member = GroupMember { window: m.window, rel: m.rel };
-                        joins.push((member, group.travel));
+                        joins.push((member, group.travel, group.beside));
                     }
                 }
             }
@@ -228,7 +240,8 @@ impl<'a> Merge<'a> {
         let from_along = position_in(&self.presented.along, key);
         let member = self.next.take_member(key, window);
         let remaining = p - from_along;
-        let to_key = match landing_for(&self.next, &self.presented.along, remaining, Some(key)) {
+        let landing = landing_for(&self.next, &self.presented.along, remaining, key);
+        let to_key = match landing {
             Some(to_key) => {
                 let shift = from_along - position_in(&self.presented.along, to_key);
                 let rel = member.rel.translate(shift.respace());
@@ -349,28 +362,31 @@ fn retarget_loose(list: &mut [OwnPath], index: usize, to: GroupRect, delta: &mut
     delta.retargeted_tiles.push((path.window, to));
 }
 
-/// The group whose remaining travel (destination less where its leg has it, `along`) matches
-/// `remaining`, for a member leaving another.
+/// The group of the strip `leaving` holds whose remaining travel (destination less where its leg
+/// has it, `along`) matches `remaining`, for a member leaving `leaving`.
 fn landing_for(
     next: &FlightPlan,
     along: &HashMap<GroupKey, OverlayPoint>,
     remaining: OverlayVector,
-    exclude: Option<GroupKey>,
+    leaving: GroupKey,
 ) -> Option<GroupKey> {
-    travelling(next, along, remaining, exclude).next().map(|g| g.key)
+    let beside = next.beside_of(leaving);
+    travelling(next, along, remaining, beside)
+        .find(|g| g.key != leaving)
+        .map(|g| g.key)
 }
 
-/// The groups other than `exclude` whose travel from `start` to where the merge sends them matches
-/// `travel`.
+/// The groups of the strip `beside` names whose travel from `start` to where the merge sends them
+/// matches `travel`.
 fn travelling<'a>(
     next: &'a FlightPlan,
     start: &'a HashMap<GroupKey, OverlayPoint>,
     travel: OverlayVector,
-    exclude: Option<GroupKey>,
+    beside: Option<usize>,
 ) -> impl Iterator<Item = &'a RigidGroup> {
     next.groups.iter().filter(move |g| {
         let p = start.get(&g.key).copied().unwrap_or(next.position(g.key));
-        Some(g.key) != exclude && same_vector(next.position(g.key) - p, travel)
+        g.beside == beside && same_vector(next.position(g.key) - p, travel)
     })
 }
 
@@ -381,13 +397,12 @@ fn travelling<'a>(
 /// travelling as no group does opens one, from its frame.
 fn join(
     next: &mut FlightPlan,
-    member: GroupMember,
-    vector: OverlayVector,
+    (member, vector, beside): Join,
     sent: &mut HashMap<GroupKey, OverlayPoint>,
     presented: &mut Presented,
     delta: &mut PlanDelta,
 ) {
-    let fitting = travelling(next, sent, vector, None);
+    let fitting = travelling(next, sent, vector, beside);
     let frame = on_overlay(member.rel);
     let apart = |g: &RigidGroup| {
         let at = sent.get(&g.key).copied().unwrap_or(next.position(g.key));
@@ -407,6 +422,7 @@ fn join(
         None => {
             let origin = OverlayPoint::origin();
             let key = next.open_group(origin, vector.to_point(), member, None, presented, delta);
+            next.group_mut(key).beside = beside;
             sent.insert(key, origin);
         }
     }

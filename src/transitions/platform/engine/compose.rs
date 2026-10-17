@@ -393,10 +393,11 @@ impl FlightEngine {
     /// Animates the whole strip surface as one rigid group, one container and one position
     /// animation, with a container of its own for each column a move swapped that crosses it, and a
     /// move's step (`accent`) stepping every strip container. A bounce from rest is one with no
-    /// travel. See "The move flight, staged" in `src/transitions/docs/coordination.md`.
+    /// travel. The strips beside it are drawn only by a look that draws them, each in a container
+    /// of its own. See "The move flight, staged" in `src/transitions/docs/coordination.md`.
     pub(super) fn start_surface(&mut self, flight: SurfaceFlight) {
         let SurfaceFlight {
-            windows,
+            mut windows,
             from_offset,
             to_offset,
             final_frames,
@@ -411,6 +412,9 @@ impl FlightEngine {
             debug!("no display geometry yet; skipping animation");
             return;
         };
+        if look.stack_gap().is_none() {
+            windows.retain(|window| window.row.is_none());
+        }
         let (kind, accent) = motion.kind(&windows, from_offset, to_offset);
         let shape = Shape {
             kind,
@@ -556,6 +560,7 @@ mod tests {
             floating: false,
             from: Some(slot.translate(rini_geometry::space::Vector::new(863.0, 0.0))),
             worn: Default::default(),
+            row: None,
         }
     }
 

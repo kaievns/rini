@@ -77,7 +77,7 @@ pub struct OwnPath {
     pub to: GroupRect,
 }
 
-/// One rigid piece of the strip.
+/// One rigid piece of the strip, or of a strip drawn beside it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RigidGroup {
     pub key: GroupKey,
@@ -85,6 +85,10 @@ pub struct RigidGroup {
     pub travel: OverlayVector,
     /// Members with their frames in it (constant for the flight unless reparented).
     pub members: Vec<GroupMember>,
+    /// The strip beside the one the flight moves that the piece holds, by its index in the stack:
+    /// it shares no container with another strip's windows, and moves only with the view up and
+    /// down. `None` for the strip the flight moves.
+    pub beside: Option<usize>,
 }
 
 impl RigidGroup {
@@ -93,6 +97,7 @@ impl RigidGroup {
             key,
             travel,
             members: Vec::new(),
+            beside: None,
         }
     }
 
@@ -174,7 +179,11 @@ impl ReflowPlan {
     /// when none is within `GROUP_TOLERANCE`.
     fn place(&mut self, window: WindowId, from: GroupRect, vector: OverlayVector) -> GroupKey {
         let member = GroupMember { window, rel: from };
-        if let Some(group) = self.groups.iter_mut().find(|g| same_vector(g.travel, vector)) {
+        if let Some(group) = self
+            .groups
+            .iter_mut()
+            .find(|g| g.beside.is_none() && same_vector(g.travel, vector))
+        {
             group.members.push(member);
             return group.key;
         }
@@ -183,6 +192,27 @@ impl ReflowPlan {
         group.members.push(member);
         self.groups.push(group);
         key
+    }
+
+    /// Puts a rigid member of the strip `beside` the one the movement moves, starting at `from`,
+    /// into the group holding that strip, opening one travelling by `vector` for its first.
+    fn place_beside(
+        &mut self,
+        beside: usize,
+        window: WindowId,
+        from: GroupRect,
+        vector: OverlayVector,
+    ) {
+        let member = GroupMember { window, rel: from };
+        if let Some(group) = self.groups.iter_mut().find(|g| g.beside == Some(beside)) {
+            group.members.push(member);
+            return;
+        }
+        let key = GroupKey::Rigid(self.groups.len() as u16);
+        let mut group = RigidGroup::new(key, vector);
+        group.beside = Some(beside);
+        group.members.push(member);
+        self.groups.push(group);
     }
 
     /// The group `window` rides, if it is a rigid member.
@@ -437,6 +467,11 @@ impl FlightPlan {
     /// Model position of container `key`: where its members' `rel` frames land.
     pub fn position_of(&self, key: GroupKey) -> OverlayPoint { self.position(key) }
 
+    /// The strip beside the one the flight moves that the container `key` holds, if any.
+    fn beside_of(&self, key: GroupKey) -> Option<usize> {
+        self.groups.iter().find(|g| g.key == key).and_then(|g| g.beside)
+    }
+
     fn group_mut(&mut self, key: GroupKey) -> &mut RigidGroup {
         self.groups.iter_mut().find(|g| g.key == key).expect("a key the plan allocated")
     }
@@ -464,7 +499,7 @@ impl FlightPlan {
     }
 
     /// Opens a group installing at `install` and landing at `destination`, with one member, which
-    /// left container `leaving` if it was in one.
+    /// left container `leaving` if it was in one, holding the strip that one holds.
     fn open_group(
         &mut self,
         install: OverlayPoint,
@@ -477,6 +512,7 @@ impl FlightPlan {
         let key = GroupKey::Rigid(self.next_key);
         self.next_key += 1;
         let mut group = RigidGroup::new(key, destination - install);
+        group.beside = leaving.and_then(|left| self.beside_of(left));
         group.members.push(member);
         self.groups.push(group);
         self.positions.insert(key, destination);
@@ -544,7 +580,8 @@ pub fn reflow_plan(requests: &[Resolved], display: ScreenRect) -> ReflowPlan {
 
 /// A strip movement as rigid pieces: the strip is one piece, and each column a move swapped that
 /// crosses it is a piece of its own, grouped by the vector it travels. Pinned windows stand in the
-/// floating container; unpinned floating windows ride it by the strip's travel.
+/// floating container; unpinned floating windows ride it by the strip's travel. Each strip drawn
+/// beside the one the movement moves is a piece of its own, never the strip's, however it travels.
 pub fn surface_plan<W: SurfaceGeometry>(
     windows: &[W],
     from_offset: SurfacePoint,
@@ -552,11 +589,12 @@ pub fn surface_plan<W: SurfaceGeometry>(
 ) -> ReflowPlan {
     let travel = pan_travel(from_offset, to_offset);
     let mut plan = ReflowPlan::empty();
+    let (rows, strip): (Vec<&W>, Vec<&W>) = windows.iter().partition(|w| w.row().is_some());
     // A pan pins its floating windows; a switch pins none. Both in one pass would need the floating
     // container to move some tiles and not others, so that case falls back to per-tile floating moves.
     let mixed =
-        windows.iter().any(|w| w.pinned()) && windows.iter().any(|w| w.floating() && !w.pinned());
-    for window in windows {
+        strip.iter().any(|w| w.pinned()) && strip.iter().any(|w| w.floating() && !w.pinned());
+    for window in strip {
         let (from, to) = window.travel(from_offset, to_offset);
         if window.pinned() {
             plan.floating.push(OwnPath {
@@ -584,6 +622,11 @@ pub fn surface_plan<W: SurfaceGeometry>(
         } else {
             plan.place(window.window(), installed(from), travel);
         }
+    }
+    for window in rows {
+        let (from, to) = window.travel(from_offset, to_offset);
+        let row = window.row().unwrap_or_default();
+        plan.place_beside(row, window.window(), installed(from), to.origin - from.origin);
     }
     plan
 }
@@ -746,6 +789,7 @@ mod tests {
                 window: wid(2),
                 rel: rect(900.0, 20.0, 300.0, 400.0),
             }],
+            beside: None,
         });
         reflow.changing.push(OwnPath {
             window: wid(3),
@@ -1084,6 +1128,174 @@ mod tests {
                     )
                 })
                 .collect()
+        }
+
+        /// A strip pan of `strip`, each window at its frame on the surface, the viewport coming home
+        /// from `from_offset`, with `rows` beside it: each window of one at its frame, the row's
+        /// index with it.
+        fn pan_beside(
+            strip: &[(u32, SurfaceRect)],
+            rows: &[(u32, SurfaceRect, usize)],
+            from_offset: SurfacePoint,
+        ) -> ReflowPlan {
+            use crate::transitions::domain::request::SurfaceWindow;
+            let window = |id: u32, frame, row| SurfaceWindow {
+                window: wid(id),
+                server_id: rini_core::ids::WindowServerId::new(id),
+                frame,
+                pinned: false,
+                floating: false,
+                from: None,
+                worn: Default::default(),
+                row,
+            };
+            let windows: Vec<SurfaceWindow> = strip
+                .iter()
+                .map(|&(id, frame)| window(id, frame, None))
+                .chain(rows.iter().map(|&(id, frame, row)| window(id, frame, Some(row))))
+                .collect();
+            surface_plan(&windows, from_offset, SurfacePoint::origin())
+        }
+
+        /// A pan merged into a flight drawing strips beside it moves the strip alone: every row
+        /// names itself standing still, the pan moves it only up and down, and it is neither
+        /// retargeted nor moved; and a row a pan brings to a flight that drew none joins standing
+        /// where it is, in a container of its own strip's.
+        #[test]
+        fn a_pan_merged_leaves_every_row_where_it_is() {
+            let surface = |frame: ScreenRect| -> SurfaceRect {
+                rect(
+                    frame.origin.x,
+                    frame.origin.y,
+                    frame.size.width,
+                    frame.size.height,
+                )
+            };
+            let (a, b) = (surface(column(0.0)), surface(column(1.0)));
+            let left = |frame: SurfaceRect| {
+                rect(
+                    frame.origin.x - 574.0,
+                    frame.origin.y,
+                    frame.size.width,
+                    frame.size.height,
+                )
+            };
+            let rows = [
+                (5, rect(4.0, 36.0 - 1109.0, 859.0, 1077.0), 0),
+                (6, rect(867.0, 36.0 - 1109.0, 859.0, 1077.0), 0),
+                (7, rect(-500.0, 36.0 + 1109.0, 1720.0, 1077.0), 2),
+            ];
+            let current = FlightPlan::from(pan_beside(
+                &[(1, a), (2, b)],
+                &rows,
+                SurfacePoint::new(-863.0, 0.0),
+            ));
+            let incoming = pan_beside(
+                &[(1, left(a)), (2, left(b))],
+                &rows,
+                SurfacePoint::new(-574.0, 0.0),
+            );
+            let d = OverlayVector::new(-574.0, 0.0);
+            let presented = midway(&current).into();
+            let (merged, delta) =
+                merge_plans(&current, &incoming, Some(d), &presented, None, VIEWPORT);
+            let strip = key_of(&current, wid(1)).unwrap();
+            assert_eq!(
+                merged.position_of(strip),
+                current.position_of(strip) + d,
+                "the strip pans on"
+            );
+            for &(id, frame, _) in &rows {
+                let key = key_of(&current, wid(id)).unwrap();
+                assert_eq!(key_of(&merged, wid(id)), Some(key), "{id}: rides as it did");
+                assert_eq!(merged.position_of(key), current.position_of(key), "{id}");
+                assert!(delta.retargeted_groups.iter().all(|(k, _)| *k != key), "{id}");
+                let at_rest = viewport(SurfacePoint::origin()).transform_rect(&frame);
+                assert_eq!(merged.destination(wid(id)), Some(at_rest), "{id}");
+            }
+            assert!(delta.reparented.is_empty() && delta.new_groups.is_empty());
+
+            let bare = FlightPlan::from(pan_beside(
+                &[(1, a), (2, b)],
+                &[],
+                SurfacePoint::new(-863.0, 0.0),
+            ));
+            let (joined, delta) =
+                merge_plans(&bare, &incoming, Some(d), &midway(&bare).into(), None, VIEWPORT);
+            for &(id, frame, row) in &rows {
+                let at_rest = viewport(SurfacePoint::origin()).transform_rect(&frame);
+                assert_eq!(joined.destination(wid(id)), Some(at_rest), "{id} joins in place");
+                let key = key_of(&joined, wid(id)).unwrap();
+                let group = joined.groups.iter().find(|g| g.key == key).unwrap();
+                assert!(group.is_still(), "{id} rides a still container");
+                assert_eq!(group.beside, Some(row), "{id}: its strip's own");
+                assert!(
+                    group
+                        .members
+                        .iter()
+                        .all(|m| rows.iter().any(|r| r.0 == m.window.idx.get() && r.2 == row))
+                );
+                assert!(
+                    delta.new_groups.iter().any(|g| g.key == key)
+                        || delta.joined_tiles.contains(&(wid(id), key))
+                );
+            }
+        }
+
+        /// A strip beside the one a flight moves holds a container no window of the strip
+        /// shares: a pan that names it nowhere leaves it where it is, a window of the strip
+        /// joining still rides no row's container, and a layout pass moving that window later
+        /// moves no row. Joined to a row's, it dragged the row along.
+        #[test]
+        fn a_row_shares_no_container_with_the_strip_and_moves_only_up_and_down() {
+            let surface = |frame: ScreenRect| -> SurfaceRect {
+                rect(
+                    frame.origin.x,
+                    frame.origin.y,
+                    frame.size.width,
+                    frame.size.height,
+                )
+            };
+            let above = rect(4.0, 36.0 - 1109.0, 859.0, 1077.0);
+            let rows = [(5, above, 0)];
+            let current = FlightPlan::from(pan_beside(&[], &rows, SurfacePoint::new(-863.0, 0.0)));
+            let d = OverlayVector::new(350.0, 0.0);
+            let bare = pan_beside(&[(1, surface(column(0.0)))], &[], SurfacePoint::origin());
+            let presented = at_model(&current).into();
+            let (joined, _) = merge_plans(&current, &bare, Some(d), &presented, None, VIEWPORT);
+            let row = key_of(&joined, wid(5)).unwrap();
+            assert_ne!(
+                key_of(&joined, wid(1)),
+                Some(row),
+                "the strip's window rides apart"
+            );
+            assert_eq!(
+                joined.position_of(row),
+                current.position_of(row),
+                "a pan leaves it"
+            );
+
+            let moved = column(0.0);
+            let layout = reflow_plan(
+                &[Resolved::tiled(
+                    wid(1),
+                    moved,
+                    rect(354.0, 32.0, 859.0, 1081.0),
+                )],
+                DISPLAY,
+            );
+            let (after, _) =
+                merge_plans(&joined, &layout, None, &at_model(&joined).into(), None, VIEWPORT);
+            let at_rest = viewport(SurfacePoint::origin()).transform_rect(&above);
+            assert_eq!(after.destination(wid(5)), Some(at_rest), "the row stays");
+            let lifted = OverlayVector::new(350.0, -1109.0);
+            let (switched, _) =
+                merge_plans(&current, &bare, Some(lifted), &presented, None, VIEWPORT);
+            assert_eq!(
+                switched.position_of(row),
+                current.position_of(row) + OverlayVector::new(0.0, -1109.0),
+                "up and down with the view, never sideways"
+            );
         }
 
         #[test]
@@ -1973,6 +2185,98 @@ mod tests {
             assert!(plan.groups[0].members.is_empty());
             assert!(plan.floating.is_empty() && plan.changing.is_empty());
             assert_eq!(plan.floating_travel, OverlayVector::zero());
+        }
+
+        /// A window of the strip `row` of the stack, drawn beside the one a movement moves.
+        fn beside(
+            idx: u32,
+            frame: SurfaceRect,
+            row: usize,
+        ) -> crate::transitions::domain::request::SurfaceWindow {
+            crate::transitions::domain::request::SurfaceWindow {
+                window: wid(idx),
+                server_id: rini_core::ids::WindowServerId::new(idx),
+                frame,
+                pinned: false,
+                floating: false,
+                from: None,
+                worn: Default::default(),
+                row: Some(row),
+            }
+        }
+
+        fn on_strip(
+            idx: u32,
+            frame: SurfaceRect,
+        ) -> crate::transitions::domain::request::SurfaceWindow {
+            crate::transitions::domain::request::SurfaceWindow {
+                row: None,
+                ..beside(idx, frame, 0)
+            }
+        }
+
+        /// The strips beside the one a movement moves each ride a container of their own: under a
+        /// pan a still one that is not the still group, and under a switch one travelling as the
+        /// strip does, still apart from it, so a pan merged later moves the strip alone. A strip's
+        /// own windows ride one container, as with no strip beside.
+        #[test]
+        fn each_other_strip_rides_a_container_of_its_own_even_travelling_as_the_strip_does() {
+            let above = |i: f64| -> SurfaceRect { shifted(column(i), 0.0, -1109.0) };
+            let below = |i: f64| -> SurfaceRect { shifted(column(i), 0.0, 1109.0) };
+            let windows = [
+                beside(5, above(0.0), 1),
+                on_strip(1, column(0.0)),
+                on_strip(2, column(1.0)),
+                beside(6, above(1.0), 1),
+                beside(7, below(0.0), 3),
+            ];
+            let travels = [
+                (SurfacePoint::new(-574.0, 0.0), SurfacePoint::origin()),
+                (SurfacePoint::origin(), SurfacePoint::new(0.0, 1109.0)),
+                (SurfacePoint::origin(), SurfacePoint::origin()),
+            ];
+            for (from_offset, to_offset) in travels {
+                let plan = surface_plan(&windows, from_offset, to_offset);
+                let strip = plan.group_of(wid(1)).expect("rigid");
+                assert_eq!(members(strip), [wid(1), wid(2)], "{to_offset:?}");
+                assert_eq!(strip.travel, pan_travel(from_offset, to_offset));
+                let (one, three) = (plan.group_of(wid(5)).unwrap(), plan.group_of(wid(7)).unwrap());
+                assert_eq!(members(one), [wid(5), wid(6)], "one container a row");
+                assert_eq!(members(three), [wid(7)]);
+                let keys = [strip.key, one.key, three.key];
+                assert!(keys[1] != keys[0] && keys[2] != keys[0] && keys[1] != keys[2]);
+                assert!(one.key != GroupKey::STILL && three.key != GroupKey::STILL);
+                let vertical = OverlayVector::new(0.0, from_offset.y - to_offset.y);
+                assert_eq!((one.travel, three.travel), (vertical, vertical), "{to_offset:?}");
+            }
+            let alone: Vec<_> = windows.iter().filter(|w| w.row.is_none()).copied().collect();
+            let (from_offset, to_offset) = travels[0];
+            let with_rows = surface_plan(&windows, from_offset, to_offset);
+            let without = surface_plan(&alone, from_offset, to_offset);
+            assert_eq!(
+                with_rows.groups[..2],
+                without.groups[..],
+                "the strip's as without"
+            );
+        }
+
+        /// A strip movement with no strip beside it, a pan or a switch, rides one container, as
+        /// under Slide.
+        #[test]
+        fn a_strip_movement_without_rows_rides_one_container_as_before() {
+            let windows = [
+                on_strip(1, column(0.0)),
+                on_strip(2, column(1.0)),
+                on_strip(3, column(2.0)),
+            ];
+            for to_offset in [
+                SurfacePoint::new(-574.0, 0.0),
+                SurfacePoint::new(0.0, 1085.0),
+            ] {
+                let plan = surface_plan(&windows, SurfacePoint::origin(), to_offset);
+                assert_eq!(plan.groups.len(), 2, "the still group and the strip's");
+                assert_eq!(members(moving(&plan)[0]), [wid(1), wid(2), wid(3)]);
+            }
         }
 
         #[test]

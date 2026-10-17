@@ -55,7 +55,7 @@ Where each conversion between spaces lives:
 | CG into a space and back | `space::FromCg`, `space::ToCg` |
 | A size or a displacement between point spaces | `space::Respace` |
 | `Screen` to `Overlay` and back: less the origin of the display the overlay covers, whose bounds include the menu bar's band | `to_overlay_space`, `from_overlay_space` |
-| `Screen` to `Surface`: a window on a strip, its row stacked a pitch below the first | `transitions::domain::strip_stack::strip_frame` |
+| `Screen` to `Surface`: a window on a strip, its row stacked a pitch below the first, or above it for a strip drawn beside | `transitions::domain::strip_stack::strip_frame` |
 | `Surface` to `Overlay`: what the viewport at an offset shows | `animation::domain::motion::surface::viewport` |
 | `Overlay` to `Group` and back: a frame in a container at a position | `animation::domain::motion::plan::{group_relative, overlay_of}` |
 | `Overlay` to `Group` and back for a fresh plan, whose containers install at the overlay's origin: the same numbers | `animation::domain::motion::plan::{installed, on_overlay}` |

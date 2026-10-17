@@ -254,13 +254,25 @@ The two entry points feed the same `begin_group`:
   pans and moves along the strip; the wire event the reactor builds from the
   stacked-workspace geometry in `src/transitions/domain/strip_stack.rs`, carrying
   `SurfaceWindow`s) start `Immediate`: they arrive once per keystroke and
-  latency is the enemy. `surface_plan` puts every window on the surface in
+  latency is the enemy. `surface_plan` puts every window of the strip in
   ONE group travelling by the viewport's travel (`surface_travel`,
   `pan_travel`): one container, one position animation. The exception is a
   move's swapped columns, which start from their old slots
   (`SurfaceWindow::from`) and group by their own vectors, but for the column
   a stepping move passes, which is held at its old slot on the strip; see
-  "The move flight, staged". A plain pan also starts from where it stands
+  "The move flight, staged". Under a look that draws them (`Look::stack_gap`,
+  the zoom look's), every pan and bounce the reactor sends also carries the
+  strips of the workspaces above and below (`Reactor::strips_beside`): each
+  tiled window of either that the deepest zoom shows, at its own strip's
+  scroll, a usable height and `stack_gap` above or below, named by its
+  workspace's index (`SurfaceWindow::row`). It travels with the view up and
+  down only, in a group of its own per strip (`RigidGroup::beside`), never the
+  strip's even when both travel alike; a pan merged later moves it only up and
+  down, and names it standing where it is, so it votes itself there and stays.
+  It flies on its picture or the stand-in, ends off the display, so nothing
+  watches, holes or asks for it at frame zero, and the quiet warms it with
+  every window the flight drew. The engine drops these windows from a flight
+  whose look draws none. A plain pan also starts from where it stands
   any window on screen at the press more than 2pt from where the travel draws
   it (`start_where_standing`): the window a left-edge drag resized already
   stands where the release's scroll puts it, and drawn back by the scroll it
@@ -669,20 +681,22 @@ left and the next workspace pulls the row up. It was 36pt and was reported as to
 names the press that ran into it, the move by the window it pushed (`EventResponse::pushed`) and the
 focus press by the window focus stayed on (`EventResponse::stepped`), and one at an end of the stack
 names none (`edge_press` in `src/app/reactor/layout_pass.rs`): the look plays the bounce as it plays
-that press. The actor (`start_bounce`) composes a transition of the bounce kind when none is
-running: every tile at rest, nothing written and nothing watched, the bounce played as the motion
-starts, once frame zero is up. On a flight that moves it adds the bounce at once; on one that does
-not move yet it waits for the motion (`RunningAnimation::push`, which keeps it with
-`FlightScore::wait`), the latest push in place of any before it and its press the one frame zero
-shows unless it is plain, and plays as the motion starts. Either way the coordinator's clock runs
-for as long as the score plays: set to end with it as the motion starts (`Event::Fit`), run on for a
-push on a moving flight (`Event::Extend`). Every push that reaches a moving flight shows: each
-container's bounce is a track in the flight's score, and a push while it plays starts that
-container's next from where it is drawn, the clock extended to the new ones' return. Frame zero
-posed again has nothing playing, and the lift drops the score, so the next push starts every bounce
-from rest; an engine's record of the bounce kept past either pushed from where nothing was drawn and
-the surface jumped. Both are pinned by `a_push_starts_each_carrier_from_where_its_bounce_is_drawn`,
-the wait by `an_accent_before_the_motion_waits_for_it` and, where the flight decides it,
+that press. Under a look that draws them, the bounce carries the strips above and below too, as a
+pan does ("Layout changes and strip movements"), and every container gives, theirs included. The
+actor (`start_bounce`) composes a transition of the bounce kind when none is running: every tile at
+rest, nothing written and nothing watched, the bounce played as the motion starts, once frame zero
+is up. On a flight that moves it adds the bounce at once; on one that does not move yet it waits for
+the motion (`RunningAnimation::push`, which keeps it with `FlightScore::wait`), the latest push in
+place of any before it and its press the one frame zero shows unless it is plain, and plays as the
+motion starts. Either way the coordinator's clock runs for as long as the score plays: set to end
+with it as the motion starts (`Event::Fit`), run on for a push on a moving flight (`Event::Extend`).
+Every push that reaches a moving flight shows: each container's bounce is a track in the flight's
+score, and a push while it plays starts that container's next from where it is drawn, the clock
+extended to the new ones' return. Frame zero posed again has nothing playing, and the lift drops the
+score, so the next push starts every bounce from rest; an engine's record of the bounce kept past
+either pushed from where nothing was drawn and the surface jumped. Both are pinned by
+`a_push_starts_each_carrier_from_where_its_bounce_is_drawn`, the wait by
+`an_accent_before_the_motion_waits_for_it` and, where the flight decides it,
 `a_push_before_the_flight_moves_waits_for_it_and_one_after_plays_at_once`. How the bounce is drawn,
 and how a push re-kicks it, is "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
 
@@ -712,7 +726,9 @@ names the press (`Cue::Move`; a focus press along the strip is `Cue::Focus`, fro
 `EventResponse::stepped`, a move before it), and as the movement reaches the flight engine,
 `stage_move` hands the strip and the pair to the look of the flight it joins,
 else the one it asks for (`Look::stage`, `src/animation/domain/choreography.rs`),
-and puts what it staged on the surface. Slide, the default look
+and puts what it staged on the surface. The strips beside it are no part of the
+strip it stages: a column of one is never the column passed, nor starts
+elsewhere (`a_move_staged_beside_other_strips_passes_a_column_of_its_own`). Slide, the default look
 (`src/animation/domain/choreography/slide.rs`), has W cross from its start, and
 N cross from its own unless the move steps, when it is held; the three rules
 below are Slide's. `surface_plan` groups by travel vector, so the strip is one

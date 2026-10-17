@@ -1976,6 +1976,7 @@ mod tests {
                 pinned: false,
                 floating,
                 from: None,
+                row: None,
             }
         }
 

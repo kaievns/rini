@@ -5,7 +5,7 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::{SpaceId, WindowId, WindowServerId};
 use rini_geometry::space::{
-    FromCg, ScreenPoint, ScreenRect, ScreenSize, SurfacePoint, SurfaceRect, ToCg,
+    FromCg, Respace, ScreenPoint, ScreenRect, ScreenSize, SurfacePoint, SurfaceRect, ToCg,
 };
 use rustc_hash::FxHashMap as HashMap;
 use tracing::debug;
@@ -189,6 +189,7 @@ impl Reactor {
     /// per-window path. `standing` is where the pass found each window and `laid_out` where the
     /// strip had it at the last pass: one away from where the shifted viewport draws it starts where
     /// it stands if on screen, else where the strip had it (`strip_move::start_where_standing`).
+    /// The strips above and below ride beside it under a look that draws them (`strips_beside`).
     pub(super) fn start_strip_pan(
         &mut self,
         space: SpaceId,
@@ -251,6 +252,7 @@ impl Reactor {
                 screen.frame,
             );
         }
+        windows.extend(self.strips_beside(space, &screen, display_bounds, &gaps));
         // The plain duration: the look stretches the flight only when it takes the step.
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
@@ -308,7 +310,80 @@ impl Reactor {
                 floating,
                 from: None,
                 worn: self.worn(*wid, &rings),
+                row: None,
             });
+        }
+        windows
+    }
+
+    /// The strips above and below the active one on `space`'s display, as a look that zooms out
+    /// draws them beside it: each tiled window of either that the deepest zoom shows, at its own
+    /// strip's scroll, a usable height and the look's gap (`strip_stack::stack_gap`) above or
+    /// below. None for a look that draws none, or past either end of the stack.
+    fn strips_beside(
+        &mut self,
+        space: SpaceId,
+        screen: &ScreenInfo,
+        display_bounds: CGRect,
+        gaps: &crate::layout::settings::Gaps,
+    ) -> Vec<SurfaceWindow> {
+        use crate::transitions::domain::strip_stack::{
+            beside, in_zoomed_view, stack_gap, strip_frame,
+        };
+        let Some(gap) = self.config.settings.look.stack_gap() else {
+            return Vec::new();
+        };
+        let Some(active) = self.layout_engine.active_workspace(space) else {
+            return Vec::new();
+        };
+        let workspaces = self.layout_engine.virtual_workspace_manager_mut().list_workspaces(space);
+        let Some(index) = workspaces.iter().position(|(id, _)| *id == active) else {
+            return Vec::new();
+        };
+        let display = ScreenRect::from_cg(display_bounds);
+        let gap = stack_gap(
+            gap,
+            ScreenRect::from_cg(screen.frame),
+            display,
+            self.config.settings.top_band(),
+        );
+        let pitch = screen.frame.size.height + gap;
+        let origin = ScreenPoint::from_cg(display_bounds.origin);
+        let viewport = SurfaceRect::new(SurfacePoint::origin(), display.size.respace());
+        let deepest = crate::animation::domain::choreography::zoom::ZOOM_DEEPEST;
+        let rings = self.layout_rings();
+        let mut windows = Vec::new();
+        for (row, side) in beside(index, workspaces.len()) {
+            let layout = self.layout_engine.preview_layout_for_workspace(
+                &self.state.windows,
+                space,
+                workspaces[row].0,
+                screen.frame,
+                gaps,
+            );
+            for (wid, frame) in layout {
+                if self.layout_engine.is_window_floating(wid) {
+                    continue;
+                }
+                let Some(server_id) = self.state.windows.window(wid).and_then(|w| w.info.sys_id)
+                else {
+                    continue;
+                };
+                let frame = strip_frame(ScreenRect::from_cg(frame), origin, side, pitch);
+                if !in_zoomed_view(frame, viewport, deepest) {
+                    continue;
+                }
+                windows.push(SurfaceWindow {
+                    window: wid,
+                    server_id,
+                    frame,
+                    pinned: false,
+                    floating: false,
+                    from: None,
+                    worn: self.worn(wid, &rings),
+                    row: Some(row),
+                });
+            }
         }
         windows
     }
@@ -317,7 +392,8 @@ impl Reactor {
     /// (`Left`/`Right`), or the top or bottom of the workspace stack (`Up`/`Down`). The active
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
     /// the real windows do not move. `press` is the move or focus press that ran into a side of the
-    /// strip, for the look to play it as it plays that press, and plain at the stack's ends. See
+    /// strip, for the look to play it as it plays that press, and plain at the stack's ends. The
+    /// strips above and below ride beside it under a look that draws them (`strips_beside`). See
     /// "Edge bounce" in `src/transitions/docs/coordination.md`.
     pub(super) fn start_edge_bounce(
         &mut self,
@@ -361,10 +437,11 @@ impl Reactor {
         let vertical = matches!(direction, Direction::Up | Direction::Down);
         // A strip bounce leaves floating windows where they are, as a pan does; a stack bounce
         // carries them, as a switch does.
-        let windows = self.strip_windows_at(&layout, display_bounds, !vertical);
+        let mut windows = self.strip_windows_at(&layout, display_bounds, !vertical);
         if windows.is_empty() {
             return;
         }
+        windows.extend(self.strips_beside(space, &screen, display_bounds, &gaps));
         let overshoot = crate::animation::domain::motion::plan::edge_bounce_overshoot(direction);
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
@@ -534,7 +611,7 @@ impl Reactor {
                     frame: crate::transitions::domain::strip_stack::strip_frame(
                         ScreenRect::from_cg(frame),
                         ScreenPoint::from_cg(display_bounds.origin),
-                        row,
+                        row as isize,
                         row_pitch,
                     ),
                     // Never pinned here. A floating window belongs to a workspace, so it leaves with the
@@ -543,6 +620,7 @@ impl Reactor {
                     floating: self.layout_engine.is_window_floating(wid),
                     from: None,
                     worn: self.worn(wid, &rings),
+                    row: None,
                 });
             }
         }

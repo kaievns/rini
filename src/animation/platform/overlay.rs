@@ -4186,6 +4186,89 @@ mod tests {
             plays_exactly(&tree);
         }
 
+        /// A zoom flight with the strips above and below beside the one it moves draws each under
+        /// the strip layer, so the strip's zoom draws it, in a container of its own the arc gives
+        /// no movement, the strip's zoom installed on the strip layer.
+        #[test]
+        fn the_strips_beside_ride_the_strip_layer_under_its_zoom() {
+            use crate::animation::domain::motion::surface::SurfaceGeometry;
+            use crate::transitions::domain::request::SurfaceWindow;
+            let _core_animation = hold_core_animation();
+            let window = |id: u32, x: f64, y: f64, row: Option<usize>| SurfaceWindow {
+                window: wid(id),
+                server_id: rini_core::ids::WindowServerId::new(id),
+                frame: typed(x, y, 859.0, 1077.0),
+                pinned: false,
+                floating: false,
+                from: None,
+                worn: Worn::default(),
+                row,
+            };
+            let windows = [
+                window(1, 4.0, 36.0, None),
+                window(2, 867.0, 36.0, None),
+                window(3, 4.0, 36.0 - 1109.0, Some(0)),
+                window(4, 867.0, 36.0 + 1109.0, Some(2)),
+            ];
+            use rini_geometry::space::SurfacePoint;
+            let (from_offset, to_offset) = (SurfacePoint::new(-863.0, 0.0), SurfacePoint::origin());
+            let plan = FlightPlan::from(plan::surface_plan(&windows, from_offset, to_offset));
+            let tiles: Vec<OverlayTile> = windows
+                .iter()
+                .map(|w| {
+                    let (from, to) = w.travel(from_offset, to_offset);
+                    overlay_tile(w.window, from, to, false)
+                })
+                .collect();
+            let drawn: Vec<WindowId> = windows.iter().map(|w| w.window).collect();
+            let accents = [Accent::Arc {
+                depth: 0.88,
+                share: 0.5,
+                swap: None,
+                seconds: 0.35,
+            }];
+            let stage = Stage {
+                plan: &plan,
+                drawn: &drawn,
+                seconds: 0.35,
+                cue: Cue::Focus { from: wid(1), to: wid(2) },
+                accents: &accents,
+                viewport: VIEWPORT,
+            };
+            let mut choreography = Look::Zoom.choreography();
+            let mut score = choreography.pose(&stage);
+            score.apply(&Edit::Bank(banding(&drawn, &plan)));
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.pose(&score, &tiles);
+            let started = choreography.compose(&score, &stage, 100.0);
+            for edit in &started {
+                score.apply(edit);
+            }
+            tree.play(&started, &tiles);
+            assert_eq!(tree.replica, score);
+            plays_exactly(&tree);
+            assert_eq!(rini_keys(&tree.strip), [STRIP_ZOOM_KEY], "the strip zooms");
+            let key_of = |window| tree.replica.parent(window).expect("drawn");
+            let strip = key_of(wid(1));
+            for row in [wid(3), wid(4)] {
+                let key = key_of(row);
+                assert_ne!(key, strip, "{row:?}: a container of its own");
+                let container = &tree.containers[&key];
+                let hung = container.superlayer().expect("hung");
+                assert!(
+                    std::ptr::eq(&*hung, &*tree.strip),
+                    "{row:?} under the strip layer"
+                );
+                assert!(
+                    rini_keys(container).is_empty(),
+                    "{row:?}: the arc moves it nowhere"
+                );
+                let picture = tree.tile_layers[&row].picture.superlayer().expect("hung");
+                assert!(std::ptr::eq(&*picture, &**container), "{row:?} in its container");
+            }
+            assert!(!rini_keys(&tree.containers[&strip]).is_empty(), "the strip pans");
+        }
+
         /// A zoom posed plays on the strip layer as one played does; a track of no length, a cut of
         /// its channel and a drop each take it off, the drop putting the strip back at rest, a cut of
         /// another channel leaves it playing, and a place draws the strip at its model.

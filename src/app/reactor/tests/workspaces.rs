@@ -2024,6 +2024,182 @@ fn a_restored_layout_s_first_switch_slides_from_the_workspace_it_opened_on() {
     );
 }
 
+/// The strips beside the one a flight moves ("The zoom look" in `specs/animation.md`).
+mod beside {
+    use test_log::test;
+
+    use super::*;
+    use crate::animation::domain::choreography::Look;
+    use crate::animation::domain::choreography::zoom::STACK_GAP;
+    use crate::animation::domain::motion::surface::SurfaceGeometry;
+    use crate::transitions::domain::request::SurfaceWindow;
+    use crate::transitions::platform::engine::Event as Engine;
+
+    type Flights = crate::app::channels::Receiver<Engine>;
+
+    fn display() -> CGRect { CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.)) }
+
+    /// Three workspaces on the laptop's display under `look`: w1 alone on the first, w2 to w4 on
+    /// the second, which it shows, and w5 alone on the third; the flight engine listening from
+    /// here on.
+    fn stacked(look: Look) -> (Apps, Reactor, Flights) {
+        let mut reactor = test_reactor_with_workspace_count(3);
+        reactor.reads_mut().display_bounds = |_| display();
+        let mut apps = Apps::new();
+        reactor.handle_event(space_state_event(vec![display()], vec![Some(SpaceId::new(1))]));
+        apps.make_app_and_settle(&mut reactor, 1, make_windows(5));
+        for (window, workspace) in [(2, 1), (3, 1), (4, 1), (5, 2)] {
+            reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
+                workspace: WorkspaceSelector::Index(workspace),
+                follow: false,
+                window_id: Some(window),
+            });
+            apps.simulate_until_quiet(&mut reactor);
+        }
+        reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(1));
+        apps.simulate_until_quiet(&mut reactor);
+        let mut config = reactor.config().clone();
+        config.settings.look = look;
+        reactor.handle_event(Event::ConfigUpdated(Box::new(config)));
+        apps.simulate_until_quiet(&mut reactor);
+        reactor.settings_mut().animate = true;
+        let rx = reactor.connect_test_transitions();
+        (apps, reactor, rx)
+    }
+
+    /// The windows of every bounce sent since the last look.
+    fn bounces(rx: &mut Flights) -> Vec<Vec<SurfaceWindow>> {
+        let mut out = Vec::new();
+        while let Ok((_, event)) = rx.try_recv() {
+            if let Engine::Bounce { windows, .. } = event {
+                out.push(windows);
+            }
+        }
+        out
+    }
+
+    /// The first strip movement focus pressed along the strip sends that scrolls it.
+    fn scrolled(reactor: &mut Reactor, rx: &mut Flights) -> SurfaceFlight {
+        for direction in [Direction::Left, Direction::Right].repeat(3) {
+            reactor.handle_test_layout_command(LayoutCommand::MoveFocus(direction));
+            let flights = strip_movements(rx);
+            if let Some(flight) =
+                flights.into_iter().find(|flight| flight.from_offset.x.abs() >= 1.0)
+            {
+                return flight;
+            }
+        }
+        panic!("no press scrolled the strip");
+    }
+
+    fn pitch(reactor: &Reactor) -> f64 {
+        reactor.space_state().screens[0].frame.size.height + STACK_GAP
+    }
+
+    fn find(windows: &[SurfaceWindow], idx: u32) -> SurfaceWindow {
+        *windows.iter().find(|w| w.window == WindowId::new(1, idx)).unwrap_or_else(|| {
+            panic!(
+                "w{idx} drawn: {:?}",
+                windows.iter().map(|w| w.window).collect::<Vec<_>>()
+            )
+        })
+    }
+
+    /// The strips above and below `windows`'s, w1's and w5's, `STACK_GAP` further than a usable
+    /// height away, each named by its workspace's index; the strip's own named by none.
+    fn assert_beside(windows: &[SurfaceWindow], pitch: f64) {
+        let w2 = find(windows, 2);
+        for idx in [2, 3, 4] {
+            assert_eq!(find(windows, idx).row, None, "w{idx} is the strip's");
+        }
+        let (w1, w5) = (find(windows, 1), find(windows, 5));
+        assert_eq!((w1.row, w5.row), (Some(0), Some(2)));
+        assert_eq!(w1.frame.origin.y, w2.frame.origin.y - pitch, "above");
+        assert_eq!(w5.frame.origin.y, w2.frame.origin.y + pitch, "below");
+    }
+
+    /// Under zoom a press that scrolls the strip draws the strips above and below beside it, each
+    /// at its own scroll a usable height and the gap away, standing still while the strip pans.
+    #[test]
+    fn under_zoom_a_pan_names_the_rows_beside_it() {
+        let (_apps, mut reactor, mut rx) = stacked(Look::Zoom);
+        let pitch = pitch(&reactor);
+        assert_eq!(pitch, 1141.0, "the usable height and 24pt");
+        let flight = scrolled(&mut reactor, &mut rx);
+        assert_beside(&flight.windows, pitch);
+        for idx in [1, 5] {
+            let (start, end) =
+                find(&flight.windows, idx).travel(flight.from_offset, flight.to_offset);
+            assert_eq!(start, end, "w{idx} stands still while the strip pans");
+        }
+    }
+
+    /// Under zoom a push at a side of the strip draws the strips beside it too.
+    #[test]
+    fn under_zoom_a_bounce_names_the_rows_beside_it() {
+        let (_apps, mut reactor, mut rx) = stacked(Look::Zoom);
+        let pitch = pitch(&reactor);
+        for _ in 0..3 {
+            reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
+        }
+        let pushed = bounces(&mut rx);
+        assert!(!pushed.is_empty(), "the strip's first column pushes");
+        for windows in &pushed {
+            assert_beside(windows, pitch);
+        }
+    }
+
+    /// The top of the stack has no strip above it and the bottom none below, and a strip beside
+    /// draws only the windows the deepest zoom shows.
+    #[test]
+    fn the_ends_of_the_stack_draw_no_strip_beyond() {
+        let (mut apps, mut reactor, mut rx) = stacked(Look::Zoom);
+        let pitch = pitch(&reactor);
+        for (workspace, beside) in [(0, pitch), (2, -pitch)] {
+            reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(workspace));
+            apps.simulate_until_quiet(&mut reactor);
+            strip_movements(&mut rx);
+            reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+            let pushed = bounces(&mut rx);
+            assert_eq!(pushed.len(), 1, "a lone window pushes");
+            let own = pushed[0].iter().find(|w| w.row.is_none()).expect("its own window");
+            let rows: Vec<(Option<usize>, f64)> = pushed[0]
+                .iter()
+                .filter(|w| w.row.is_some())
+                .map(|w| (w.row, w.frame.origin.y - own.frame.origin.y))
+                .collect();
+            assert_eq!(
+                rows.len(),
+                2,
+                "workspace {workspace}: the middle strip beside it"
+            );
+            assert!(
+                pushed[0].iter().all(|w| w.window != WindowId::new(1, 2)),
+                "w2 ends at -691, past what the deepest zoom shows"
+            );
+            assert!(
+                rows.iter().all(|row| *row == (Some(1), beside)),
+                "{workspace}: {rows:?}"
+            );
+        }
+    }
+
+    /// Under slide a pan and a bounce draw the strip alone.
+    #[test]
+    fn under_slide_pans_and_bounces_send_what_they_did() {
+        let (_apps, mut reactor, mut rx) = stacked(Look::Slide);
+        let flight = scrolled(&mut reactor, &mut rx);
+        assert!(flight.windows.iter().all(|w| w.row.is_none()));
+        assert!(flight.windows.iter().all(|w| [2, 3, 4].contains(&w.window.idx.get())));
+        for _ in 0..4 {
+            reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
+        }
+        let pushed = bounces(&mut rx);
+        assert!(!pushed.is_empty());
+        assert!(pushed.iter().flatten().all(|w| w.row.is_none()));
+    }
+}
+
 mod query_view {
     use test_log::test;
 

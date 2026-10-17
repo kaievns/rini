@@ -19,8 +19,10 @@ only the transitions are missing.
 - A window written back to the slot it already had MUST NOT on its own make a pass fly. An app that
   answered rini's write by snapping a few points off its slot, to its own grid, is given the slot again
   by the next pass, and that resizes nothing the layout changed.
-- A window whose whole movement is off screen MUST NOT be drawn. A layer and a capture for something
-  nobody can see is pure cost.
+- A window whose whole movement is off screen MUST NOT be captured for a flight, nor drawn by a
+  layout pass. A layer and a capture for something nobody can see is pure cost. A strip movement
+  draws every window it already holds a picture of, wherever it is, so a zoom finds it drawn, and
+  under zoom the strips above and below the one it moves too ("The zoom look").
 - A column parked off the strip MUST NOT be raised. Nothing of it is visible, each raise is an
   Accessibility round-trip, and a raise issued after the on-screen windows puts a 1pt sliver in front
   of them.
@@ -245,15 +247,44 @@ Zoom never steps; the step above is slide's.
 
 > **Reported 2026-09-30.** "can you try to change the normal navigation as well to zoom out, move,
 > and then zoom back in?" A focus press merged into a flight whose arc had landed panned flat.
-- A zoomed-out strip MUST NOT show the desktop where the strip has a window. Not yet checked on
-  screen: which windows a flight draws is judged against the display at full size, so a window the
-  zoom brings into view may not be drawn.
+- A zoomed-out strip MUST NOT show the desktop where the strip has a window. A strip movement draws
+  every window of the strip it holds a picture of, or that stands in for one parked off the
+  display, wherever it is along the strip. Not yet met: a layout pass merged into a zoomed flight
+  judges which windows it draws against the display at full size, so a window it brings into the
+  zoomed view may not be drawn.
+- Whenever the strip zooms out, the strips of the workspaces above and below it on that display
+  MUST show beside it, each at its own scroll: on the 1728pt laptop under rini's bar, the bottoms
+  of the windows above 38.5pt below the bar at 0.88, the tops of the windows below 42.4pt above the
+  display's bottom, and nothing past either end of the stack, where the desktop shows. Each MUST
+  sit 24pt further from the strip than a usable height, 21pt on screen at 0.88, so the space
+  between its windows and the strip's is their margins and that gap, 28pt on screen; and further
+  where the display leaves a taller band above the strip, a menu bar with rini's bar off, or below
+  it, a Dock, so nothing of either shows at rest. Not yet met: a push reaching a flight a layout
+  pass began zooms out with no strip beside it, as a push brings no windows to a flight that
+  moves.
+- A strip beside MUST zoom with the strip and MUST NOT move while the strip pans, folds or turns;
+  a push at a side of the strip MUST carry the whole zoomed view toward the wall, the strips
+  beside with it. Only the windows the deepest zoom can bring into view MUST be drawn of it, never
+  its floating ones, each on its picture or the stand-in until one is taken, and it MUST NOT hold
+  the flight back or be pictured at its first frame.
+- A vertical workspace switch under zoom MUST play as one arc as well: the strip zooms out, the
+  stack travels with the strips the same gap apart, and the destination zooms back in. Not yet
+  met: the switch slides as under slide, the strips abutting and unzoomed ("The vertical workspace
+  switch").
+
+> **Reported 2026-10-17.** "okay, can you implement the zoomout between workspaces too? basically
+> when zoomout happens i should see the top/bottom strips (at a bit of a padding) and it applies to
+> both horizontal and vertical navigation." Zoomed out, the bands above and below the strip showed
+> the desktop: a flight drew only the workspace it moved. The 24pt gap is a first value for Kai to
+> tune.
 
 ## The vertical workspace switch
 
-- The workspaces MUST scroll as one column, each sitting directly on the one above it. There MUST NOT
-  be a band of empty desktop the size of the bar between one workspace and the next: the only space
-  between two workspaces' windows is their own outer margins, the same gap two tiled windows have.
+- Under slide, the workspaces MUST scroll as one column, each sitting directly on the one above it.
+  There MUST NOT be a band of empty desktop the size of the bar between one workspace and the next:
+  the only space between two workspaces' windows is their own outer margins, the same gap two tiled
+  windows have. Under zoom the strips sit the zoom look's gap apart and the switch plays as an arc
+  ("The zoom look"), not yet met.
 - The animation MUST NOT extend under the bar. Its surface starts at the bar's lower edge, and a
   window scrolling up off the top passes behind the bar rather than into a strip above it.
 
@@ -1014,7 +1045,22 @@ each look draws. Zoom's arc, its depth, its view and its merges are held by the 
 `a_burst_at_an_end_bounces_from_where_it_is_drawn_zoomed_out_at_every_turn` and
 `a_move_lifts_the_window_it_moves_on_the_arc` among them, and the overlay plays its arc in
 `a_zoom_flight_plays_its_arc_exactly` and the moved window's lift in
-`a_lifted_tile_casts_the_lifts_shadow_as_its_score_has_it`. The reactor names each press along the strip to the
+`a_lifted_tile_casts_the_lifts_shadow_as_its_score_has_it`. The strips beside the one a zoom moves
+are placed by `src/transitions/domain/strip_stack.rs` (`rows_beside_a_strip_sit_the_gap_apart`,
+`the_gap_grows_to_the_band_left_above_or_below_the_strip`, `nothing_of_a_row_shows_at_rest`,
+`in_zoomed_view_keeps_what_the_deepest_zoom_shows`), named by the reactor under zoom alone
+(`under_zoom_a_pan_names_the_rows_beside_it`, `under_zoom_a_bounce_names_the_rows_beside_it`,
+`the_ends_of_the_stack_draw_no_strip_beyond`, `under_slide_pans_and_bounces_send_what_they_did`),
+kept in containers of their own that only the view up and down moves
+(`each_other_strip_rides_a_container_of_its_own_even_travelling_as_the_strip_does`,
+`a_pan_merged_leaves_every_row_where_it_is`,
+`a_row_shares_no_container_with_the_strip_and_moves_only_up_and_down`), zoomed and left still by
+the arc and carried by a push (`a_horizontal_arc_zooms_the_rows_and_moves_none`,
+`a_push_at_a_side_carries_the_rows_with_the_strip`), flown by the engine
+(`a_row_flies_on_its_picture_or_the_stand_in_unasked_unwatched_unholed_and_warms_at_the_quiet`,
+`a_flight_whose_look_draws_no_rows_drops_them`) and drawn under the strip layer
+(`the_strips_beside_ride_the_strip_layer_under_its_zoom`); a strip movement draws every window of
+its strip in `a_strip_movement_draws_every_window_of_the_strip`. The reactor names each press along the strip to the
 look: a focus press that scrolls the strip, held by
 `a_focus_press_along_the_strip_names_where_it_went_and_one_at_an_end_where_it_stayed` and
 `a_focus_press_that_scrolls_the_strip_names_itself_and_zooms_under_zoom`, and the move or focus

@@ -1747,6 +1747,7 @@ mod tests {
                     pinned: false,
                     floating: false,
                     from: None,
+                    row: None,
                 };
                 let (_, ends) = window.travel(from_offset, to_offset);
                 Event::AnimateSurface {
@@ -1976,6 +1977,7 @@ mod tests {
                     pinned: false,
                     floating: false,
                     from: None,
+                    row: None,
                 };
                 let windows = vec![at(2, -1719.0), at(1, 4.0)];
                 let (from_offset, to_offset) =
@@ -2128,6 +2130,7 @@ mod tests {
                 pinned: false,
                 floating: false,
                 from: None,
+                row: None,
             };
             let windows = vec![window(1, old), window(2, new)];
             h.engine.pictures.insert(wid(2), test_picture(new.size));
@@ -2213,6 +2216,7 @@ mod tests {
                     pinned: false,
                     floating: false,
                     from: None,
+                    row: None,
                 })
                 .collect();
             let final_frames = windows
@@ -2299,6 +2303,172 @@ mod tests {
                 pictures: vec![(wid(2), test_picture(lands.size), lands)],
             });
             assert_eq!(swapped(&h.step(own), wid(2)), [false], "whole");
+        }
+
+        /// `strip_pan`'s pan under `look` with the strips above and below beside it: `wid(2)` of
+        /// the first workspace a usable height and the gap above, its picture cached, and `wid(3)`
+        /// of the third as far below, parked with none.
+        fn pan_beside(h: &Harness, look: Look) -> Event {
+            use crate::pictures::platform::picture::test_picture;
+            let mut pan = h.pan();
+            let row = |id: u32, y: f64, row: usize| SurfaceWindow {
+                worn: Default::default(),
+                window: wid(id),
+                server_id: WindowServerId::new(id),
+                frame: rect(4.0, y, 859.0, 1081.0),
+                pinned: false,
+                floating: false,
+                from: None,
+                row: Some(row),
+            };
+            h.engine.pictures.insert(wid(2), test_picture(ScreenSize::new(859.0, 1081.0)));
+            park(h, 3);
+            if let Event::AnimateSurface { windows, look: chosen, .. } = &mut pan {
+                windows.push(row(2, -1109.0, 0));
+                windows.push(row(3, 1109.0, 2));
+                *chosen = look;
+            }
+            pan
+        }
+
+        /// A zoom flight draws the strips beside it on their pictures, else the stand-in, each
+        /// riding a still container of its own; frame zero asks for none of them, the overlay is
+        /// holed over none, the landing watches none and none holds the motion; the quiet warms
+        /// them with every other window the flight drew.
+        #[test]
+        fn a_row_flies_on_its_picture_or_the_stand_in_unasked_unwatched_unholed_and_warms_at_the_quiet()
+         {
+            let mut h = Harness::new();
+            let pan = pan_beside(&h, Look::Zoom);
+            let sent = h.step(pan);
+            let asked: Vec<WindowId> = sent
+                .iter()
+                .filter_map(|sent| match sent {
+                    Sent::Asked(Asked::AskOnScreen(ask)) if ask.moment == Moment::FrameZero => {
+                        Some(ask.strip.iter().map(|(target, _)| target.window))
+                    }
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+            assert_eq!(asked, [wid(1)], "frame zero pictures the strip alone");
+            let pictured = handed(&sent, wid(2));
+            assert!(
+                !pictured.is_empty()
+                    && pictured.iter().all(|t| t.snapshot.source != Route::StandIn)
+            );
+            let stood_in = handed(&sent, wid(3));
+            assert!(
+                !stood_in.is_empty()
+                    && stood_in.iter().all(|t| t.snapshot.source == Route::StandIn)
+            );
+            let running = h.engine.running.as_ref().expect("flying");
+            let key = |window| match running.plan.member(window) {
+                Some(crate::animation::domain::motion::plan::Member::Rigid { key, .. }) => key,
+                other => panic!("{window:?} rides {other:?}"),
+            };
+            let (strip, above, below) = (key(wid(1)), key(wid(2)), key(wid(3)));
+            assert!(strip != above && strip != below && above != below);
+            for row in [above, below] {
+                let group = running.plan.groups.iter().find(|g| g.key == row).unwrap();
+                assert!(group.is_still(), "{row:?} stands while the strip pans");
+            }
+
+            h.advance(Duration::from_millis(5));
+            let frame_zero = h.frame_zero();
+            let shown = h.step(frame_zero);
+            assert_eq!(holes(&shown).len(), 1, "holed over the strip's window alone");
+            let watched: Vec<WindowId> = shown
+                .iter()
+                .chain(&h.commit(only_batch(&shown).seq))
+                .filter_map(|sent| match sent {
+                    Sent::Asked(Asked::Watch(
+                        _,
+                        crate::pictures::domain::watch::Watch::Landing { windows, .. },
+                    )) => Some(windows.iter().map(|(target, _)| target.window).collect::<Vec<_>>()),
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+            assert!(
+                watched.contains(&wid(1)),
+                "the strip's window watched: {watched:?}"
+            );
+            assert!(
+                !watched.contains(&wid(2)) && !watched.contains(&wid(3)),
+                "{watched:?}"
+            );
+            assert!(
+                h.engine.running.as_ref().is_some_and(|running| running.flown),
+                "moving, waiting for neither"
+            );
+            h.advance(Duration::from_millis(400));
+            let lift = lift_batch(&h.step(Event::Tick)).expect("lifted").seq;
+            h.commit(lift);
+            let generation = h.engine.flights.coordinator().generation();
+            let warmed: Vec<WindowId> = h
+                .step(Event::Quiet(generation))
+                .iter()
+                .filter_map(|sent| match sent {
+                    Sent::Asked(Asked::Ask(ask)) if ask.priority == Priority::Warm => {
+                        Some(ask.targets.iter().map(|target| target.window))
+                    }
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+            for window in [wid(1), wid(2), wid(3)] {
+                assert!(
+                    warmed.contains(&window),
+                    "{window:?} warmed at the quiet: {warmed:?}"
+                );
+            }
+        }
+
+        /// A strip movement draws every window of the strip it holds a picture of, wherever it is
+        /// along the strip, however far off the display at either end: a zoom that brings one into
+        /// view finds it drawn.
+        #[test]
+        fn a_strip_movement_draws_every_window_of_the_strip() {
+            use crate::pictures::platform::picture::test_picture;
+            let mut h = Harness::new();
+            let far = [(2, -3461.0), (3, -1731.0), (4, 2595.0), (5, 6000.0)];
+            for (id, _) in far {
+                h.engine.pictures.insert(wid(id), test_picture(ScreenSize::new(859.0, 1081.0)));
+            }
+            let frames: Vec<(u32, SurfaceRect)> =
+                std::iter::once((1, rect(867.0, 0.0, 859.0, 1081.0)))
+                    .chain(far.iter().map(|&(id, x)| (id, rect(x, 0.0, 859.0, 1081.0))))
+                    .collect();
+            let pan = strip_over(
+                &h,
+                &frames,
+                SurfacePoint::origin(),
+                SurfacePoint::new(867.0, 0.0),
+            );
+            let sent = h.step(pan);
+            for (id, _) in frames {
+                assert!(!handed(&sent, wid(id)).is_empty(), "w{id} drawn");
+            }
+        }
+
+        /// A flight whose look draws no strips beside drops any a movement brings: a reload to
+        /// slide while the reactor still sent zoom's.
+        #[test]
+        fn a_flight_whose_look_draws_no_rows_drops_them() {
+            for look in [Look::Slide, Look::Zoom] {
+                let mut h = Harness::new();
+                let pan = pan_beside(&h, look);
+                let sent = h.step(pan);
+                let drawn = !handed(&sent, wid(2)).is_empty() && !handed(&sent, wid(3)).is_empty();
+                assert_eq!(drawn, look == Look::Zoom, "{look:?}");
+                let running = h.engine.running.as_ref().expect("flying");
+                assert_eq!(
+                    running.plan.member(wid(2)).is_some(),
+                    look == Look::Zoom,
+                    "{look:?}"
+                );
+            }
         }
 
         /// Frame zero's pictures are clipped or drawn whole by what each one is, not by what its tile

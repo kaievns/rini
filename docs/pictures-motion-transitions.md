@@ -113,7 +113,10 @@ the flight's clock ends with the arc as the motion starts (`Event::Fit`); a merg
 at the plain length (`specs/animation.md`, "The zoom look", not yet met). The window a move moves is
 lifted on the arc's bell (`Node::Lift`), which the overlay draws as a shadow beside the tile's own
 (`src/animation/platform/overlay/lift.rs`); a container scaled on its own, as the parked spike first
-lifted it, is not in the score.
+lifted it, is not in the score. A look that gives a stack gap (`Look::stack_gap`, Zoom's 24pt) has
+the reactor draw the strips of the workspaces above and below beside every pan and bounce it sends,
+each in a container of its own (`RigidGroup::beside`) under the same strip layer, so the zoom draws
+them and nothing else moves them but the view up and down.
 
 ## `transitions`
 

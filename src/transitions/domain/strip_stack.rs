@@ -1,11 +1,15 @@
-//! Pure geometry for the stack of workspace strips a vertical switch scrolls through.
+//! Pure geometry for the stack of workspace strips a vertical switch scrolls through, and the
+//! strips a zoomed-out flight shows beside the one it moves.
 //!
 //! Every workspace is a horizontal strip. The strips are stacked in index order, one usable height
 //! apart so each workspace's tiling area sits directly on the one above it, and a switch moves the
 //! viewport rather than the strips: each strip keeps its own horizontal position and is pinned
-//! vertically to its row.
+//! vertically to its row. A look that zooms out draws the strips above and below a gap further
+//! apart (`stack_gap`).
 
-use rini_geometry::space::{Point, Respace, ScreenPoint, ScreenRect, SurfacePoint, SurfaceRect};
+use rini_geometry::space::{
+    Point, Respace, ScreenPoint, ScreenRect, SurfacePoint, SurfaceRect, Vector,
+};
 
 /// Longest a switch may be stretched for distance, as a multiple of the configured duration.
 const MAX_DURATION_STRETCH: f64 = 2.5;
@@ -13,11 +17,12 @@ const MAX_DURATION_STRETCH: f64 = 2.5;
 /// Where a window sits on the strip surface.
 ///
 /// `row` is the workspace's position in the stack counted from the first one involved, not its absolute
-/// index, so a switch only ever builds the rows between the two ends.
+/// index, so a switch only ever builds the rows between the two ends; a strip drawn beside the one a
+/// flight moves is a row above it, `-1`, or below it, `1`.
 pub fn strip_frame(
     frame: ScreenRect,
     display_origin: ScreenPoint,
-    row: usize,
+    row: isize,
     row_pitch: f64,
 ) -> SurfaceRect {
     SurfaceRect::new(
@@ -27,6 +32,36 @@ pub fn strip_frame(
         ),
         frame.size.respace(),
     )
+}
+
+/// How far apart a look that zooms out draws the strips beside the one a flight moves, beyond the
+/// usable height: `gap`, or the band the display leaves above or below the strip where that is
+/// more, so nothing of a strip beside shows on the overlay at rest. `screen` is the usable frame,
+/// `display` the display's bounds, and `top_band` what the overlay leaves clear at its top.
+pub fn stack_gap(gap: f64, screen: ScreenRect, display: ScreenRect, top_band: f64) -> f64 {
+    let above = screen.min().y - display.min().y - top_band;
+    let below = display.max().y - screen.max().y;
+    gap.max(above).max(below)
+}
+
+/// The strips beside the one at `index` of a stack of `count`: the one above it, row `-1`, and the
+/// one below, row `1`, where there is one. The stack never wraps.
+pub fn beside(index: usize, count: usize) -> Vec<(usize, isize)> {
+    let above = index.checked_sub(1).map(|above| (above, -1));
+    let below = (index + 1 < count).then_some((index + 1, 1));
+    above.into_iter().chain(below).collect()
+}
+
+/// Whether any of `frame` shows on a display `viewport` big, on the surface at rest, with the strip
+/// zoomed out to `scale` about the display's centre.
+pub fn in_zoomed_view(frame: SurfaceRect, viewport: SurfaceRect, scale: f64) -> bool {
+    if !scale.is_finite() || scale <= 0.0 {
+        return false;
+    }
+    let half = Vector::new(viewport.size.width, viewport.size.height) / (2.0 * scale);
+    let centre = viewport.center();
+    let seen = SurfaceRect::new(centre - half, (half * 2.0).to_size());
+    frame.intersects(&seen)
 }
 
 /// Whether a window will be on screen when a switch finishes.
@@ -173,6 +208,108 @@ mod tests {
         let placed = strip_frame(window, ScreenPoint::new(-670.0, -1692.0), 0, PITCH);
         assert_eq!(placed.origin.x, 0.0);
         assert_eq!(placed.origin.y, 32.0);
+    }
+
+    /// Under a look that zooms out, the strips beside sit `STACK_GAP` further apart than the
+    /// usable height: on the laptop, 1109pt, the row above at -1109 and the row below at 1109, so
+    /// between a window of one and of the next lie their margins and the gap, 32pt.
+    #[test]
+    fn rows_beside_a_strip_sit_the_gap_apart() {
+        use crate::animation::domain::choreography::zoom::STACK_GAP;
+        let (display, screen) = (rect(0.0, 0.0, 1728.0, 1117.0), rect(0.0, 32.0, 1728.0, PITCH));
+        let gap = stack_gap(STACK_GAP, screen, display, 32.0);
+        assert_eq!(gap, 24.0);
+        let pitch = PITCH + gap;
+        assert_eq!(pitch, 1109.0);
+        let window = rect(4.0, 36.0, 859.0, 1077.0);
+        let (above, here, below) = (
+            strip_frame(window, origin(), -1, pitch),
+            strip_frame(window, origin(), 0, pitch),
+            strip_frame(window, origin(), 1, pitch),
+        );
+        assert_eq!((above.origin.y, below.origin.y), (36.0 - 1109.0, 36.0 + 1109.0));
+        assert_eq!(here.origin.y - above.max().y, 32.0);
+        assert_eq!(below.origin.y - here.max().y, 32.0);
+        assert_eq!(
+            (above.origin.x, below.origin.x),
+            (4.0, 4.0),
+            "each at its own scroll"
+        );
+    }
+
+    /// With `bar off` the overlay covers the menu bar's band, and with a Dock along the bottom the
+    /// band under the usable frame: the gap grows to whichever is taller, so nothing of a strip
+    /// beside shows at rest.
+    #[test]
+    fn the_gap_grows_to_the_band_left_above_or_below_the_strip() {
+        let display = rect(0.0, 0.0, 1728.0, 1117.0);
+        let menu_bar = rect(0.0, 37.0, 1728.0, 1080.0);
+        assert_eq!(stack_gap(24.0, menu_bar, display, 0.0), 37.0);
+        assert_eq!(
+            stack_gap(24.0, menu_bar, display, 37.0),
+            24.0,
+            "under rini's own bar"
+        );
+        let docked = rect(0.0, 32.0, 1728.0, 1015.0);
+        assert_eq!(stack_gap(24.0, docked, display, 32.0), 70.0);
+        let elsewhere = rect(-1728.0, -1085.0, 1728.0, 1085.0);
+        let bounds = rect(-1728.0, -1117.0, 1728.0, 1117.0);
+        assert_eq!(stack_gap(24.0, elsewhere, bounds, 32.0), 24.0, "made relative");
+    }
+
+    /// At rest the strip above ends behind the bar's band and the strip below starts past the
+    /// display's bottom, with a menu bar or a Dock leaving a band of their own too.
+    #[test]
+    fn nothing_of_a_row_shows_at_rest() {
+        let display = rect(0.0, 0.0, 1728.0, 1117.0);
+        for (screen, top_band) in [
+            (rect(0.0, 32.0, 1728.0, 1085.0), 32.0),
+            (rect(0.0, 37.0, 1728.0, 1080.0), 0.0),
+            (rect(0.0, 32.0, 1728.0, 1015.0), 32.0),
+        ] {
+            let pitch = screen.size.height + stack_gap(24.0, screen, display, top_band);
+            let window = rect(4.0, screen.origin.y, 859.0, screen.size.height);
+            let above = strip_frame(window, origin(), -1, pitch);
+            let below = strip_frame(window, origin(), 1, pitch);
+            assert!(
+                above.max().y <= top_band,
+                "{screen:?}: above ends at {}",
+                above.max().y
+            );
+            assert!(
+                below.min().y >= display.max().y,
+                "{screen:?}: below at {}",
+                below.min().y
+            );
+        }
+    }
+
+    /// The strips beside the one at an index are the one above and the one below it, none past
+    /// either end of the stack.
+    #[test]
+    fn the_top_and_bottom_of_the_stack_have_no_row_beyond() {
+        assert_eq!(beside(0, 4), [(1, 1)]);
+        assert_eq!(beside(2, 4), [(1, -1), (3, 1)]);
+        assert_eq!(beside(3, 4), [(2, -1)]);
+        assert_eq!(beside(0, 1), []);
+    }
+
+    /// What the deepest zoom shows: the display scaled about its centre by 1/0.7, x in [-370, 2098]
+    /// on the laptop, y in [-239, 1356].
+    #[test]
+    fn in_zoomed_view_keeps_what_the_deepest_zoom_shows() {
+        use crate::animation::domain::choreography::zoom::ZOOM_DEEPEST;
+        let viewport = rect(0.0, 0.0, 1728.0, 1117.0);
+        let at = |x: f64, y: f64| in_zoomed_view(rect(x, y, 859.0, 1077.0), viewport, ZOOM_DEEPEST);
+        assert!(at(-1228.0, 36.0), "its right edge just in, at -369");
+        assert!(!at(-1230.0, 36.0), "its right edge at -371");
+        assert!(at(2097.0, 36.0));
+        assert!(!at(2099.0, 36.0));
+        assert!(at(4.0, 36.0 - 1109.0), "the row above, its bottom at 4");
+        assert!(at(4.0, 36.0 + 1109.0), "the row below, its top at 1145");
+        assert!(!at(4.0, 36.0 - 2.0 * 1109.0), "two rows up");
+        assert!(!at(4.0, 36.0 + 2.0 * 1109.0), "two rows down");
+        assert!(!in_zoomed_view(rect(4.0, 36.0, 859.0, 1077.0), viewport, 0.0));
     }
 
     #[test]

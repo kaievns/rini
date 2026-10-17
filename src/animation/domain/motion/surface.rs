@@ -22,14 +22,21 @@ pub trait SurfaceGeometry {
     /// in the slot it held before the move, and a window that was away from where the travel draws
     /// it, where it was.
     fn from(&self) -> Option<SurfaceRect>;
+    /// The strip beside the one the movement moves that the window belongs to, if it does.
+    fn row(&self) -> Option<usize> { None }
 
     /// Where the window's tile starts and ends on screen: `surface_travel` of its frame, starting
-    /// from `from` when it has one.
+    /// from `from` when it has one. A window of a strip beside travels with the view up and down
+    /// only, each strip keeping its own scroll.
     fn travel(
         &self,
         from_offset: SurfacePoint,
         to_offset: SurfacePoint,
     ) -> (OverlayRect, OverlayRect) {
+        if self.row().is_some() {
+            let from_offset = SurfacePoint::new(to_offset.x, from_offset.y);
+            return surface_travel(self.frame(), from_offset, to_offset, false);
+        }
         let (start, end) = surface_travel(self.frame(), from_offset, to_offset, self.pinned());
         match self.from() {
             Some(from) if !self.pinned() => {
@@ -107,6 +114,41 @@ mod tests {
             (at_rest, at_rest),
             "a pinned window stands still"
         );
+    }
+
+    /// A window of a strip beside the one a movement moves stays where it is under a pan and
+    /// travels with the view up and down, as far as the strip does.
+    #[test]
+    fn a_window_of_another_strip_travels_only_with_the_view_up_and_down() {
+        struct Beside(OnSurface);
+        impl SurfaceGeometry for Beside {
+            fn window(&self) -> WindowId { self.0.window }
+
+            fn frame(&self) -> SurfaceRect { self.0.frame }
+
+            fn pinned(&self) -> bool { false }
+
+            fn floating(&self) -> bool { false }
+
+            fn from(&self) -> Option<SurfaceRect> { None }
+
+            fn row(&self) -> Option<usize> { Some(2) }
+        }
+        let frame: SurfaceRect = rect(4.0, 36.0 - 1109.0, 859.0, 1077.0);
+        let beside = Beside(window(frame, None, false));
+        let pan = (SurfacePoint::new(-863.0, 0.0), SurfacePoint::origin());
+        let (start, end) = beside.travel(pan.0, pan.1);
+        let at_rest = viewport(SurfacePoint::origin()).transform_rect(&frame);
+        assert_eq!((start, end), (at_rest, at_rest), "a pan leaves it");
+        let switch = (SurfacePoint::new(-863.0, 1109.0), SurfacePoint::new(0.0, 0.0));
+        let (start, end) = beside.travel(switch.0, switch.1);
+        let (strip_start, strip_end) = window(frame, None, false).travel(switch.0, switch.1);
+        assert_eq!(
+            start.origin.y - end.origin.y,
+            strip_start.origin.y - strip_end.origin.y
+        );
+        assert_eq!(start.origin.x, end.origin.x, "never sideways");
+        assert_eq!(end, strip_end, "lands where the view lands");
     }
 
     /// The rigidity property: every unpinned window

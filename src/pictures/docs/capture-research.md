@@ -1268,8 +1268,10 @@ Options, in order of expected value:
    changed, so it is not one of them.
 3. **Aged-cache sweeps.** A `Picture` is timestamped (`taken`) and a warm
    (`wants_warm`) re-captures anything older than `PICTURE_STALE_AFTER`; the
-   engine warms every window it flew at the quiet after the lift. A sweep of nearby workspaces on a slow idle timer is not
-   done; it would break the "nothing polls" principle deliberately.
+   engine warms every window it flew at the quiet after the lift, which under the zoom look takes in
+   the windows of the workspaces above and below it drew beside the strip. A sweep of nearby
+   workspaces on a slow idle timer is not done; it would break the "nothing polls" principle
+   deliberately.
 4. **Recapture more windows mid-flight.** Done for the windows on screen, through
    SkyLight alone, while the pictures service holds the rest of its work off: the
    landing watch takes each end window as it lands, the change watch the focus

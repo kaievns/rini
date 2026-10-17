@@ -57,6 +57,9 @@ pub struct SurfaceWindow {
     pub from: Option<SurfaceRect>,
     /// What the window wears, carried to its tile unread.
     pub worn: Worn,
+    /// The stack index of the other workspace the window belongs to, for a window of a strip a
+    /// look draws beside the one the flight moves; `None` for the strip the flight moves.
+    pub row: Option<usize>,
 }
 
 impl SurfaceGeometry for SurfaceWindow {
@@ -69,4 +72,6 @@ impl SurfaceGeometry for SurfaceWindow {
     fn floating(&self) -> bool { self.floating }
 
     fn from(&self) -> Option<SurfaceRect> { self.from }
+
+    fn row(&self) -> Option<usize> { self.row }
 }

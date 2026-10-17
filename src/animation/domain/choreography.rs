@@ -62,6 +62,17 @@ impl Look {
         }
     }
 
+    /// How far apart, beyond the usable height, the look draws the strips above and below the one
+    /// a flight moves, in its strip movements; `None` for a look that draws none.
+    pub fn stack_gap(self) -> Option<f64> {
+        match self {
+            Look::Zoom => Some(zoom::STACK_GAP),
+            Look::Slide => None,
+            #[cfg(test)]
+            Look::Linear | Look::Probe => None,
+        }
+    }
+
     /// What the look does with a press on `strip`: which windows start elsewhere, which are held,
     /// and the accent riding the movement.
     pub fn stage(self, cue: &Cue, strip: &Strip) -> Staging {
@@ -503,8 +514,8 @@ mod tests {
     use crate::animation::domain::motion::bounce::Bounce;
     use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
     use crate::animation::domain::motion::plan::{
-        EDGE_BOUNCE_OVERSHOOT, GROUP_TOLERANCE, GroupKey, Member, Resolved, carries_out_and_back,
-        on_overlay, overlay_of, reflow_plan,
+        EDGE_BOUNCE_OVERSHOOT, GROUP_TOLERANCE, GroupKey, GroupMember, Member, Resolved,
+        RigidGroup, carries_out_and_back, installed, on_overlay, overlay_of, reflow_plan,
     };
     use crate::animation::domain::motion::score::{Channel, Curve, SAMPLE_STEP, Track, Zoom};
     use crate::animation::domain::motion::testing::{
@@ -555,12 +566,14 @@ mod tests {
         .fold(0.0f64, |worst, d| worst.max(d.abs()))
     }
 
-    /// One flight of a look, every edit it answers folded into its score.
+    /// One flight of a look, every edit it answers folded into its score, and the strips it
+    /// draws beside the one it moves, each window where it stands.
     struct Flight {
         choreography: Box<dyn Choreography>,
         plan: FlightPlan,
         drawn: Vec<WindowId>,
         score: Score,
+        rows: Vec<Vec<(WindowId, OverlayRect)>>,
     }
 
     impl Flight {
@@ -570,7 +583,20 @@ mod tests {
             requests: &[Resolved],
             drawn: impl Fn(WindowId) -> bool,
         ) -> Flight {
-            let plan = choreography.plan(reflow_plan(requests, DISPLAY), &Cue::Plain);
+            Flight::posed_beside(choreography, requests, Vec::new(), drawn)
+        }
+
+        /// `posed`, with `rows` drawn beside the strip, each a container of its own standing
+        /// still, as `surface_plan` makes one.
+        fn posed_beside(
+            choreography: Box<dyn Choreography>,
+            requests: &[Resolved],
+            rows: Vec<Vec<(WindowId, OverlayRect)>>,
+            drawn: impl Fn(WindowId) -> bool,
+        ) -> Flight {
+            let mut pass = reflow_plan(requests, DISPLAY);
+            stand_beside(&mut pass, &rows);
+            let plan = choreography.plan(pass, &Cue::Plain);
             let drawn: Vec<WindowId> = plan.windows().into_iter().filter(|w| drawn(*w)).collect();
             let score = choreography.pose(&stage(&plan, &drawn, &[]));
             Flight {
@@ -578,7 +604,13 @@ mod tests {
                 plan,
                 drawn,
                 score,
+                rows,
             }
+        }
+
+        /// Whether `window` is of a strip beside the one the flight moves.
+        fn beside(&self, window: WindowId) -> bool {
+            self.rows.iter().flatten().any(|(w, _)| *w == window)
         }
 
         fn fold(&mut self, edits: &[Edit]) {
@@ -626,6 +658,42 @@ mod tests {
         }
     }
 
+    /// `rows` put into `pass`, each a still container of its own, as `surface_plan` puts the
+    /// strips beside the one a movement moves.
+    fn stand_beside(pass: &mut ReflowPlan, rows: &[Vec<(WindowId, OverlayRect)>]) {
+        for (index, row) in rows.iter().enumerate() {
+            let key = GroupKey::Rigid(pass.groups.len() as u16);
+            pass.groups.push(RigidGroup {
+                key,
+                travel: OverlayVector::zero(),
+                members: row
+                    .iter()
+                    .map(|&(window, frame)| GroupMember { window, rel: installed(frame) })
+                    .collect(),
+                beside: Some(index),
+            });
+        }
+    }
+
+    /// One or two strips beside the one a flight moves, above it or below, each of one or two
+    /// windows a usable height and `zoom::STACK_GAP` away, numbered from `first`.
+    fn random_rows(rng: &mut Gen, first: u32) -> Vec<Vec<(WindowId, OverlayRect)>> {
+        let pitch = DISPLAY.size.height - 32.0 + zoom::STACK_GAP;
+        let mut next = first;
+        (0..1 + rng.below(2))
+            .map(|_| {
+                let dy = if rng.coin() { -pitch } else { pitch };
+                (0..1 + rng.below(2))
+                    .map(|_| {
+                        let frame: OverlayRect = rng.on_screen();
+                        next += 1;
+                        (wid(next), frame.translate(OverlayVector::new(0.0, dy)))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
     fn stage<'a>(plan: &'a FlightPlan, drawn: &'a [WindowId], accents: &'a [Accent]) -> Stage<'a> {
         Stage {
             plan,
@@ -634,6 +702,16 @@ mod tests {
             cue: Cue::Plain,
             accents,
             viewport: VIEWPORT,
+        }
+    }
+
+    /// Zoom alone draws the strips above and below the one a flight moves, 24pt beyond a usable
+    /// height apart.
+    #[test]
+    fn only_zoom_draws_the_strips_beside() {
+        for look in Look::ALL {
+            let want = (look == Look::Zoom).then_some(24.0);
+            assert_eq!(look.stack_gap(), want, "{look:?}");
         }
     }
 
@@ -729,7 +807,8 @@ mod tests {
     /// Every pass of the bend contracts' flights of the look `make` gives, as `check` sees it: passes
     /// built as the reactor builds them, from where the last pass sends every window, merged one to
     /// four times 10-400ms apart into a flight playing from its score, 200 flights from each of
-    /// `BEND_SEEDS`. Some flights start on an arc and some passes bring one (`an_arc`).
+    /// `BEND_SEEDS`. Some flights start on an arc and some passes bring one (`an_arc`), and some
+    /// draw strips beside the one they move (`random_rows`), which every pan names standing still.
     fn bent_flights(
         make: &dyn Fn() -> Box<dyn Choreography>,
         check: &mut dyn FnMut(&Bend) -> Result<(), String>,
@@ -737,8 +816,14 @@ mod tests {
         for seed in BEND_SEEDS {
             let mut rng = Gen(seed);
             let mut arcs = Gen(seed + 1000);
+            let mut beside = Gen(seed + 2000);
             for run in 0..RUNS {
-                let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
+                let requests = random_requests(&mut rng);
+                let rows = match beside.coin() {
+                    true => random_rows(&mut beside, 600),
+                    false => Vec::new(),
+                };
+                let mut flight = Flight::posed_beside(make(), &requests, rows, |_| true);
                 let first = arcs.coin().then(|| an_arc(&mut arcs, &flight.drawn));
                 flight.start(&Vec::from_iter(first));
                 let mut now = BEGIN;
@@ -790,9 +875,9 @@ mod tests {
     /// Each edge within the half point placing on whole points allows, and within a point for a
     /// window the pass moves into a container it opens (`OPENED_SLACK`). No rigid member's tile has
     /// a track of its own: `Merged::bend` moves one to another container by riding and placing it
-    /// alone.
+    /// alone. A strip drawn beside the one the flight moves is sent nowhere, by a pan or any pass.
     fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
-        let mut brought = 0;
+        let (mut brought, mut besides) = (0, 0);
         bent_flights(make, &mut |bend| {
             let (tag, now, newcomer, flight) = (&bend.tag, bend.now, bend.newcomer, bend.bent);
             if let Some(Member::Rigid { key, .. }) = flight.plan.member(newcomer)
@@ -853,10 +938,22 @@ mod tests {
                     return Err(format!("{tag}: rigid {window:?} has a track of its own"));
                 }
             }
+            for &(window, stands) in flight.rows.iter().flatten() {
+                let sent = flight.plan.destination(window);
+                if !sent.is_some_and(|sent| edges_apart(sent, stands) <= 0.5) {
+                    return Err(format!(
+                        "{tag}: {window:?} of a strip beside sent to {sent:?}, stands at {stands:?}"
+                    ));
+                }
+                besides += 1;
+            }
             Ok(())
         })?;
         if brought == 0 {
             return Err("no window brought beside the strip".to_string());
+        }
+        if besides == 0 {
+            return Err("no flight drew a strip beside the one it moves".to_string());
         }
         Ok(())
     }
@@ -1020,14 +1117,16 @@ mod tests {
     }
 
     /// A pass as the reactor builds one for `flight`, from where its last pass sends every window: a
-    /// pan of every rigid window, or a layout pass over some of the windows, moving or resizing each;
-    /// either at times bringing `newcomer`, which the flight then draws. The pan, for a pan.
+    /// pan of every rigid window, naming the strips beside it where they stand, or a layout pass
+    /// over some of the strip's windows, moving or resizing each; either at times bringing
+    /// `newcomer`, which the flight then draws. The pan, for a pan.
     fn random_pass(
         rng: &mut Gen,
         flight: &mut Flight,
         newcomer: WindowId,
     ) -> (ReflowPlan, Option<OverlayVector>) {
-        let windows = flight.plan.windows();
+        let windows: Vec<WindowId> =
+            flight.plan.windows().into_iter().filter(|w| !flight.beside(*w)).collect();
         let position = |plan: &FlightPlan, key: GroupKey| plan.position_of(key);
         let mut pan = None;
         let incoming = match rng.below(3) {
@@ -1048,6 +1147,7 @@ mod tests {
                 }
                 let pieces = reflow_plan(&requests, DISPLAY);
                 p.groups = pieces.groups;
+                stand_beside(&mut p, &flight.rows);
                 p
             }
             _ => {
@@ -1168,13 +1268,21 @@ mod tests {
     /// out). A window it moves to another container or kind of path may start anywhere, and the
     /// pass's own start frames bind no start. Frame zero draws every window the flight draws where
     /// the folded plan starts it, within the half point placing on whole points allows, which holds
-    /// the pose to the fold; and the motion lands every window where the folded plan sends it.
+    /// the pose to the fold; and the motion lands every window where the folded plan sends it. Some
+    /// flights draw strips beside the one they move (`random_rows`), which every fold sends
+    /// nowhere.
     fn folds_each_pass_before_the_motion(
         make: &dyn Fn() -> Box<dyn Choreography>,
     ) -> Result<(), String> {
         let mut rng = Gen(167);
+        let mut beside = Gen(1167);
         for run in 0..RUNS {
-            let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
+            let requests = random_requests(&mut rng);
+            let rows = match beside.coin() {
+                true => random_rows(&mut beside, 600),
+                false => Vec::new(),
+            };
+            let mut flight = Flight::posed_beside(make(), &requests, rows, |_| true);
             for step in 0..1 + rng.below(3) {
                 let tag = format!("seed 167 run {run} step {step}");
                 let named = flight.plan.windows();
@@ -1226,6 +1334,14 @@ mod tests {
                     if !honoured {
                         return Err(format!(
                             "{tag}: {window:?} sent to {got:?}, the pass sends it to {want:?}"
+                        ));
+                    }
+                }
+                for &(window, stands) in flight.rows.iter().flatten() {
+                    let sent = folded.destination(window);
+                    if !sent.is_some_and(|sent| edges_apart(sent, stands) <= 0.01) {
+                        return Err(format!(
+                            "{tag}: {window:?} of a strip beside sent to {sent:?}, stands at {stands:?}"
                         ));
                     }
                 }

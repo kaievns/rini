@@ -41,6 +41,10 @@ pub const STRIP_ZOOM: f64 = 0.88;
 /// The deepest an arc goes, however wide the pair.
 pub const ZOOM_DEEPEST: f64 = 0.7;
 
+/// How far apart, beyond the usable height, the strips above and below the one a flight moves are
+/// drawn, in points at rest: 24pt, 21pt on screen at `STRIP_ZOOM`, between their windows' margins.
+pub const STACK_GAP: f64 = 24.0;
+
 /// The share of the pair's narrower column kept in view at the arc's middle.
 const NARROWER_SHOWN: f64 = 2.0 / 3.0;
 
@@ -820,7 +824,7 @@ mod tests {
     use crate::animation::domain::motion::bounce::Bounce;
     use crate::animation::domain::motion::plan::{Resolved, overlay_of, reflow_plan, surface_plan};
     use crate::animation::domain::motion::score::Form;
-    use crate::animation::domain::motion::testing::{DISPLAY, OnSurface, VIEWPORT, rect};
+    use crate::animation::domain::motion::testing::{DISPLAY, VIEWPORT, rect};
 
     const PLAIN: f64 = 0.35;
     const BEGIN: f64 = 10.0;
@@ -881,18 +885,28 @@ mod tests {
 
         /// `cue` staged by Zoom and flown as the reactor and the engine fly it: posed, and the
         /// motion composed at `BEGIN` with the accent it staged waiting.
-        fn flown(&self, cue: Cue) -> Flight {
+        fn flown(&self, cue: Cue) -> Flight { self.flown_beside(cue, &[]) }
+
+        /// `flown`, with the windows of `rows`, each of the strip its index names, drawn beside
+        /// the strip.
+        fn flown_beside(&self, cue: Cue, rows: &[(WindowId, SurfaceRect, usize)]) -> Flight {
+            use crate::transitions::domain::request::SurfaceWindow;
             let staging = stage(&cue, &self.strip());
-            let on_surface: Vec<OnSurface> = self
+            let window = |window, frame, row| SurfaceWindow {
+                window,
+                server_id: rini_core::ids::WindowServerId::new(window.idx.get()),
+                frame,
+                pinned: false,
+                floating: false,
+                from: staging.from.iter().find(|(w, _)| *w == window).map(|&(_, at)| at),
+                worn: Default::default(),
+                row,
+            };
+            let on_surface: Vec<SurfaceWindow> = self
                 .windows
                 .iter()
-                .map(|&(window, frame)| OnSurface {
-                    window,
-                    frame,
-                    pinned: false,
-                    floating: false,
-                    from: staging.from.iter().find(|(w, _)| *w == window).map(|&(_, at)| at),
-                })
+                .map(|&(id, frame)| window(id, frame, None))
+                .chain(rows.iter().map(|&(id, frame, row)| window(id, frame, Some(row))))
                 .collect();
             let from_offset = SurfacePoint::new(self.travel, 0.0);
             let plan =
@@ -1022,6 +1036,124 @@ mod tests {
                 overlay_of(frame, container)
             }
             other => panic!("{other:?}"),
+        }
+    }
+
+    /// Kai, 2026-10-17: "when zoomout happens i should see the top/bottom strips (at a bit of a
+    /// padding)". A move or a focus press arcing along the strip zooms the strips above and below
+    /// with it and moves neither: each stands where it is laid out, a usable height and
+    /// `STACK_GAP` away, and shows through the zoom, the bottom of the one above 38.5pt below the
+    /// bar at 0.88 and 109.7pt at 0.7516, the top of the one below 42.4pt and 117.7pt above the
+    /// display's bottom, a little more as the zoom is about the display's centre.
+    #[test]
+    fn a_horizontal_arc_zooms_the_rows_and_moves_none() {
+        const BAND: f64 = 32.0;
+        let pitch = 1085.0 + STACK_GAP;
+        let above = rect(GAP, 36.0 - pitch, 1722.0, 1077.0);
+        let below = rect(-500.0, 36.0 + pitch, 1722.0, 1077.0);
+        let rows = [(wid(8), above, 0), (wid(9), below, 2)];
+        for (press, cue, depth) in [
+            (
+                pair_move(860.0, 860.0, true),
+                Cue::Move {
+                    window: wid(W),
+                    direction: Direction::Right,
+                },
+                0.88,
+            ),
+            (
+                focus_right(1722.0),
+                Cue::Focus { from: wid(W), to: wid(N) },
+                0.7516,
+            ),
+        ] {
+            let flight = press.flown_beside(cue, &rows);
+            let alone = press.flown(cue);
+            assert_eq!(flight.accent, alone.accent, "{cue:?}: staged as without them");
+            let (got, _, _) = arc_of(flight.accent);
+            close(got, depth, 1e-4, "the arc's depth");
+            let middle = BEGIN + ARC * ARC_MIDDLE;
+            close(
+                scale_at(&flight.score, middle),
+                got,
+                1e-3,
+                "deepest at the middle",
+            );
+            let at_rest = |f: SurfaceRect| -> OverlayRect {
+                rect(f.origin.x, f.origin.y, f.size.width, f.size.height)
+            };
+            for (row, frame, _) in rows {
+                let key = key_of(&flight.plan, row);
+                assert_ne!(
+                    key,
+                    key_of(&flight.plan, wid(W)),
+                    "{row:?}: a container of its own"
+                );
+                assert!(flight.score.track(Node::Container(key), Channel::Base).is_none());
+                for k in 0..=20 {
+                    let at = BEGIN + ARC * k as f64 / 20.0;
+                    assert_eq!(laid(&flight.score, row, at), at_rest(frame), "{row:?} moves");
+                }
+            }
+            let scale = scale_at(&flight.score, middle);
+            let centre = AREA.viewport.center().y;
+            let shown = |window| flight.score.drawn(window, middle).expect("drawn");
+            let above_shows = shown(wid(8)).max().y - BAND;
+            let below_shows = AREA.viewport.max().y - shown(wid(9)).min().y;
+            close(
+                above_shows,
+                centre + (above.max().y - centre) * scale - BAND,
+                1e-6,
+                "zoomed",
+            );
+            close(
+                below_shows,
+                AREA.viewport.max().y - centre - (below.min().y - centre) * scale,
+                1e-6,
+                "zoomed",
+            );
+            let (want_above, want_below) = if depth == 0.88 {
+                (38.5, 42.4)
+            } else {
+                (109.7, 117.7)
+            };
+            close(above_shows, want_above, 0.6, "the strip above shows");
+            close(below_shows, want_below, 0.6, "the strip below shows");
+            for window in [wid(8), wid(9)] {
+                let end = BEGIN + flight.score.remaining(BEGIN);
+                assert_eq!(
+                    flight.score.drawn(window, end),
+                    flight.plan.destination(window),
+                    "home"
+                );
+            }
+        }
+    }
+
+    /// A push at a side of the strip gives the whole zoomed view: the strips beside it are
+    /// carried toward the wall as far as the strip is.
+    #[test]
+    fn a_push_at_a_side_carries_the_rows_with_the_strip() {
+        let rows = [
+            (wid(8), rect(GAP, 36.0 - 1109.0, 1722.0, 1077.0), 0),
+            (wid(9), rect(GAP, 36.0 + 1109.0, 1722.0, 1077.0), 2),
+        ];
+        let cue = Cue::Focus { from: wid(W), to: wid(N) };
+        let mut flight = focus_right(1722.0).flown_beside(cue, &rows);
+        let without = flight.score.clone();
+        let now = BEGIN + 0.05;
+        let wall = OverlayVector::new(-72.0, 0.0);
+        for edit in flight.zoom.push(&flight.score, &cue, wall, PLAIN, now) {
+            flight.score.apply(&edit);
+        }
+        let turn = now + BOUNCE_TURN * PLAIN;
+        let given = |window| {
+            laid(&flight.score, window, turn).origin.x - laid(&without, window, turn).origin.x
+        };
+        let strip = given(wid(N));
+        assert!(strip < -1.0, "the strip gives toward the wall: {strip}");
+        for (row, _, _) in rows {
+            close(given(row), strip, 1e-6, "as far as the strip");
         }
     }
 
