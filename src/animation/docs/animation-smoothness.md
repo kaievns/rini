@@ -204,29 +204,34 @@ of a moving container's by a median 5,111pt/s (measured with a probe not committ
 screen), so the contract holds only windows riding a container.
 
 Zoom bends what the view carries with each container (`src/animation/domain/choreography/zoom.rs`).
-A pan the way the strip is going folds into the arc playing: each container's movement as it plays,
+A pan the way the view is going, along the strip or, a switch, up or down the stack, folds into the
+arc playing: each container's movement as it plays, the floating one's with it under a switch,
 shifted on by the press's travel on `EASE_IN_OUT` over what is left of the arc, so it leaves at the
-speed it had and lands with the zoom. A press back turns on a spring let go at the speed the score
-draws, and carries on 10.7, 16.1, 27.6 and 28.6pt for presses 0.02, 0.04, 0.067 and 0.1s into the
-0.257s arc of a half-width focus press, where folding it in would carry on 590 to 852pt before
-turning (`a_press_back_turns_the_strip_on_a_spring`). The strips Zoom draws above and below the one
-a flight moves ride still containers of their own (`RigidGroup::beside`), so neither the arc nor a
-fold nor a spring moves them: a pan moves them only as far as the view goes up and down, and every
-pan the reactor sends names them standing where they are, so they vote themselves where they are
-and get no track (`a_pan_merged_leaves_every_row_where_it_is`). A window of the strip never joins
-one: the bend contract's flights drew a strip window brought still by a pan into a row's container,
-and a layout pass moving that window later dragged the row sideways 350pt
+speed it had and lands with the zoom. A diagonal pan does not fold. A switch folded into the
+shortest share left, a quarter of a 0.257s arc, carries 1,109pt in 0.064s, as a press along the
+strip folded in there carries its column's width; `FOLDED_PAN_MIN` is the knob for both. A press back turns on a
+spring let go at the speed the score draws, and carries on 10.7, 16.1, 27.6 and 28.6pt for presses
+0.02, 0.04, 0.067 and 0.1s into the 0.257s arc of a half-width focus press, where folding it in
+would carry on 590 to 852pt before turning (`a_press_back_turns_the_strip_on_a_spring`). The strips
+Zoom draws above and below the one a flight moves ride still containers of their own
+(`RigidGroup::beside`), so neither the arc nor a fold nor a spring moves them: a pan moves them only
+as far as the view goes up and down, and every pan the reactor sends names them standing where they
+are, so they vote themselves where they are and get no track
+(`a_pan_merged_leaves_every_row_where_it_is`). A window of the strip never joins one: the bend
+contract's flights drew a strip window brought still by a pan into a row's container, and a layout
+pass moving that window later dragged the row sideways 350pt
 (`a_row_shares_no_container_with_the_strip_and_moves_only_up_and_down`). Half the flights the bend
-and fold contracts draw carry one or two such strips, each sent nowhere by any pass, and after
-their seeded passes, so those streams stay as they were, up to two switches onto one of them
-(`a_switch`), each a pan up or down by the pitch naming that strip the strip's and the strip a
-strip beside, then a pass. A member a pan names of another strip than its container holds votes,
-and the container comes to hold that strip: before, a switch merged into a pan drawing rows left
-the destination where the pan moved its still container, 24pt low by the gap the switch's pitch
-lacked
-(`a_switch_merged_into_a_flight_drawing_rows_lands_the_destination_where_the_switch_sends_it`),
-and a pan after a switch left the destination standing, its windows still in the container of
-the strip beside they had been, which both contracts now catch.
+and fold contracts draw carry one or two such strips, each sent nowhere by any pass, and after their
+seeded passes, so those streams stay as they were, up to two switches onto one of them (`a_switch`),
+each a pan up or down by the pitch naming that strip the strip's and the strip a strip beside, half
+of them bringing a switch's arc, then a pass. Over the bend contract's flights 11 switches folded
+into an arc playing and 9 turned on a spring (measured with a probe not committed). A member a pan
+names of another strip than its container holds votes, and the container comes to hold that strip:
+before, a switch merged into a pan drawing rows left the destination where the pan moved its still
+container, 24pt low by the gap the switch's pitch lacked
+(`a_switch_merged_into_a_flight_drawing_rows_lands_the_destination_where_the_switch_sends_it`), and
+a pan after a switch left the destination standing, its windows still in the container of the strip
+beside they had been, which both contracts now catch.
 
 The look reads every container's two positions once, from the flight's score, for `merge_plans`,
 and turns the delta into the score's edits, which the overlay plays in one transaction: reparents,

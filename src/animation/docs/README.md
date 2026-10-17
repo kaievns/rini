@@ -30,6 +30,7 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/choreography.rs`, continued | a bend's structure, every look's alike (`Merged::bend`): containers opened, members riding a new one, tiles joining, every node placed where it ends, what the flight stops drawing dropped, each edit folded into a copy of the score playing (`Making`); the look gives each node's movement in it (`Bending`) |
 | `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed (`Bent`), everything on whole points; a move whose column fills the viewport held and stepped, any other crossing |
 | `domain/choreography/zoom.rs` | `ZoomArc`, the zoom look: a press along the strip as one arc, the strip zoomed out and back on a sin² bell (`arc_scale`) as deep as the pair needs (`zoom_depth`), the travel every container carries eased to show the pair at the middle (`pair_view`, `camera_share`, `camera_progress`), the swap on `ZOOM_CURVE` on top, the moved window lifted (`lift`); a pan folded into the arc or a spring at the speed the score draws; a push bounced zoomed |
+| `domain/choreography/zoom.rs`, continued | a switch as one arc as deep as the two strips it travels between need (`switch_arc`), and a pan up or down the stack folded into an arc as one along the strip is (`folds`) |
 | `domain/choreography/zoom.rs`, continued | the strips above and below drawn beside the strip, `STACK_GAP` beyond a usable height apart, zoomed with it and left still by the arc |
 | `domain/choreography/linear.rs` | `Linear`, a look only the tests build and `ALL` holds under them: every node straight to where its pass sends it at an even speed, and bent through `Merged::bend` from the speed it is moving at, that speed changing evenly, so the contract and the overlay's playback tests run over motion neither Slide's nor Zoom's |
 | `platform/overlay.rs` | `TileOverlay`, the window the renderer draws on: it poses frame zero and plays a score's edits, every animation installed from a track, and commits nothing itself; each tile wears its picture and `decorations::platform::layers`, which it fills a resize for from the tile's track (`Resize`); its `Tree` (the `CALayer` tree, the desktop behind it included, and the replica it reads only to install) hangs off any root layer, so it is tested without a window |
@@ -91,7 +92,8 @@ A look touches these files, and nothing in `transitions`, which stages every fli
 display the overlay covers (`viewport`), unless it adds an `Accent`, which the tests there match on
 by kind. Nor the reactor, unless it needs a press no `Cue` names yet: a `Cue` is a move or a focus
 press along the strip (`EventResponse::moved`, `stepped` and `pushed` in
-`src/workspaces/engine.rs`), and a bounce at a side of the strip carries the press that ran into it.
+`src/workspaces/engine.rs`, `Cue::along_strip`) or a switch through the stack (`Cue::Switch`), and a
+bounce at a side of the strip carries the press that ran into it.
 A look that gives a `stack_gap` has the reactor draw the strips above and below beside every pan
 and bounce it sends, and stack a switch's strips the same gap apart, every one but the
 destination's named a strip beside; the flight engine drops them from a flight whose look gives

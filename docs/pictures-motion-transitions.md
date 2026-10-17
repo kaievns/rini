@@ -109,7 +109,8 @@ carries the travel a camera would in each container's own track, so `Merged::ben
 rest of every container's movement and the strip's zoom is left playing through a bend; its press
 rides the movement as an `Accent::Arc`. The reactor names every press along the strip it plays, a
 focus press that scrolls as `Cue::Focus` and the press a bounce at a side of the strip ran into, and
-the flight's clock ends with the arc as the motion starts (`Event::Fit`); a merge still restarts it
+every switch as `Cue::Switch`, which Zoom plays on an arc as deep as its two strips need, and the
+flight's clock ends with the arc as the motion starts (`Event::Fit`); a merge still restarts it
 at the plain length (`specs/animation.md`, "The zoom look", not yet met). The window a move moves is
 lifted on the arc's bell (`Node::Lift`), which the overlay draws as a shadow beside the tile's own
 (`src/animation/platform/overlay/lift.rs`); a container scaled on its own, as the parked spike first
@@ -117,7 +118,8 @@ lifted it, is not in the score. A look that gives a stack gap (`Look::stack_gap`
 the reactor draw the strips of the workspaces above and below beside every pan and bounce it sends,
 each in a container of its own (`RigidGroup::beside`) under the same strip layer, so the zoom draws
 them and nothing else moves them but the view up and down; a switch stacks its strips the same gap
-apart and names them as a pan does, so the two merge into one another.
+apart, draws the strip beyond each end of those it travels between, and names them as a pan does,
+so the two merge into one another, a pan along either axis folding into the arc playing.
 
 ## `transitions`
 

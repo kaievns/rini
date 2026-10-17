@@ -3890,6 +3890,72 @@ mod tests {
             }
         }
 
+        /// Kai, 2026-10-17: "it applies to both horizontal and vertical navigation". A switch
+        /// under zoom, from the strip `wid(1)` is on to the one below it a usable height and the
+        /// gap away, plays on an arc that ends with the flight, 2.2/3 of the switch's length, and
+        /// lands at rest with the destination where the switch sends it; under slide it plays
+        /// no zoom and keeps its length ("The zoom look" in `specs/animation.md`).
+        #[test]
+        fn a_zoom_switch_lifts_as_its_arc_lands_on_the_destination_at_rest() {
+            use crate::animation::domain::motion::score::{Value, Zoom};
+            use crate::pictures::platform::picture::test_picture;
+            let pitch =
+                DISPLAY.size.height + crate::animation::domain::choreography::zoom::STACK_GAP;
+            for (look, plays) in [(Look::Zoom, 0.3 * 2.2 / 3.0), (Look::Slide, 0.3)] {
+                let mut h = Harness::new();
+                h.engine.pictures.insert(wid(2), test_picture(ScreenSize::new(1720.0, 1081.0)));
+                let mut switch = h.pan();
+                let lands = rect(4.0, 0.0, 1720.0, 1081.0);
+                if let Event::AnimateSurface {
+                    windows,
+                    to_offset,
+                    final_frames,
+                    look: chosen,
+                    cue,
+                    ..
+                } = &mut switch
+                {
+                    *to_offset = SurfacePoint::new(0.0, pitch);
+                    windows[0].row = Some(0);
+                    windows.push(SurfaceWindow {
+                        window: wid(2),
+                        server_id: WindowServerId::new(2),
+                        frame: rect(4.0, pitch, 1720.0, 1081.0),
+                        ..windows[0]
+                    });
+                    windows[1].row = None;
+                    final_frames.push((wid(2), lands));
+                    *chosen = look;
+                    *cue = Cue::Switch;
+                }
+                h.step(switch);
+                h.advance(Duration::from_millis(5));
+                let frame_zero = h.frame_zero();
+                let shown = only_batch(&h.step(frame_zero)).seq;
+                h.commit(shown);
+                let left = h.engine.flights.coordinator().remaining(h.at()).expect("moving");
+                assert!(
+                    (left.as_secs_f64() - plays).abs() < 1e-3,
+                    "{look:?}: {left:?}, not {plays}s"
+                );
+                let running = h.engine.running.as_ref().expect("flying");
+                let score = running.score.score();
+                let arc = score.tracks(Node::Strip).next().cloned();
+                assert_eq!(arc.is_some(), look == Look::Zoom, "{look:?}");
+                if let Some(arc) = arc {
+                    assert!(
+                        score
+                            .sample(Node::Strip, arc.begin() + arc.seconds() / 2.0)
+                            .is_some_and(|zoom| zoom != Value::Zoom(Zoom::REST)),
+                        "zoomed out at the middle"
+                    );
+                    let end = arc.ends();
+                    assert_eq!(score.sample(Node::Strip, end), Some(Value::Zoom(Zoom::REST)));
+                    assert_eq!(score.drawn(wid(2), end), Some(to_overlay_space(lands, DISPLAY)));
+                }
+            }
+        }
+
         #[test]
         fn the_renderer_replica_and_the_score_agree() {
             let mut h = Harness::new();

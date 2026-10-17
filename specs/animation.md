@@ -153,8 +153,8 @@ holds whatever the look, but for one that names a look, which holds for that loo
 
 ## The zoom look
 
-Under zoom, a press along the strip plays as one arc: the strip zooms out and back in while it moves.
-Zoom never steps; the step above is slide's.
+Under zoom, a press along the strip and a switch through the workspace stack play as one arc: the
+strip zooms out and back in while it moves. Zoom never steps; the step above is slide's.
 
 > **Reported 2026-10-15.** "zoom spike is coming back, i want to support different animations
 > generally". On 2026-10-16: "go for zoom". The spike, parked on 2026-10-01, drew its own motion
@@ -237,13 +237,13 @@ Zoom never steps; the step above is slide's.
 > bouncer would, that'd be fantastic" ("Pushing past an end"). The spike's zoomed bounce waited for
 > 0.3 of its arc; it now plays as its press lands, as every push does.
 
-- A press merged into an arc MUST carry it on as one movement. A press panning the way the strip is
-  going, with a quarter of the arc left, MUST fold into the arc and land with it, adding its travel
-  from rest. A press against it, or with less left, MUST turn the strip on a spring from where it is
-  drawn as fast as it is drawn moving: folded in, the strip would carry on the old way before
-  turning. A move or a focus press that scrolls, merged into a flight with no arc playing, MUST play
-  a shallow arc of its own from rest; any press merged into an arc playing MUST leave the arc as it
-  is.
+- A press merged into an arc MUST carry it on as one movement. A press panning the way the view is
+  going, along the strip or, a switch, along the stack, with a quarter of the arc left, MUST fold
+  into the arc and land with it, adding its travel from rest. A press against it, or with less
+  left, MUST turn the view on a spring from where it is drawn as fast as it is drawn moving: folded
+  in, it would carry on the old way before turning. A move, a focus press that scrolls or a switch,
+  merged into a flight with no arc playing, MUST play a shallow arc of its own from rest; any press
+  merged into an arc playing MUST leave the arc as it is.
 
 > **Reported 2026-09-30.** "can you try to change the normal navigation as well to zoom out, move,
 > and then zoom back in?" A focus press merged into a flight whose arc had landed panned flat.
@@ -268,9 +268,18 @@ Zoom never steps; the step above is slide's.
   its floating ones, each on its picture or the stand-in until one is taken, and it MUST NOT hold
   the flight back or be pictured at its first frame.
 - A vertical workspace switch under zoom MUST play as one arc as well: the strip zooms out, the
-  stack travels with the strips the same gap apart, and the destination zooms back in. The strips
-  travel the gap apart, every one but the destination's a strip beside. Not yet met: the switch
-  does not zoom ("The vertical workspace switch").
+  stack travels with its strips the same gap apart, every one but the destination's a strip beside,
+  and the destination zooms back in, landing where the switch sends it, at rest. The arc MUST go as
+  deep as a move of two columns a usable height tall and the pitch apart, the strip and the one it
+  travels to: 0.738 on the laptop for a switch of one strip and the deepest for two or more, half
+  its travel carried at its middle. There, a switch of one strip shows about two thirds of each,
+  23.6pt apart on screen, and one of two shows the strip it passes whole, 138pt of the source below
+  the bar and 148pt of the destination above the display's bottom. The arc MUST run 2.2/3 of the
+  switch's own length, its stretch for the strips it crosses included: 0.257s for one, 0.363s for
+  two at the default 0.35s. The strip above the first it travels between and the one below the
+  last MUST be drawn beside them as a pan draws them, so a press merged into the switch finds them
+  drawn. Not yet met: a switch's floating windows travel on the arc's timing but unzoomed, so
+  mid-arc they are drawn further out than the strips they belong to.
 - A switch merged into a pan or a bounce drawing the strips beside, and a pan merged into a
   switch, MUST land every window where the later one sends it and MUST NOT move a window to another
   container: a switch merged into a pan drew the destination 24pt below its frames, by the
@@ -281,16 +290,16 @@ Zoom never steps; the step above is slide's.
 > **Reported 2026-10-17.** "okay, can you implement the zoomout between workspaces too? basically
 > when zoomout happens i should see the top/bottom strips (at a bit of a padding) and it applies to
 > both horizontal and vertical navigation." Zoomed out, the bands above and below the strip showed
-> the desktop: a flight drew only the workspace it moved. The 24pt gap is a first value for Kai to
-> tune.
+> the desktop: a flight drew only the workspace it moved, and a switch under zoom slid unzoomed, as
+> under slide. The 24pt gap is a first value for Kai to tune.
 
 ## The vertical workspace switch
 
 - Under slide, the workspaces MUST scroll as one column, each sitting directly on the one above it.
   There MUST NOT be a band of empty desktop the size of the bar between one workspace and the next:
   the only space between two workspaces' windows is their own outer margins, the same gap two tiled
-  windows have. Under zoom the strips scroll the zoom look's gap apart, and the switch is to play as
-  an arc, not yet met ("The zoom look").
+  windows have. Under zoom the strips scroll the zoom look's gap apart, and the switch plays as an
+  arc ("The zoom look").
 - The animation MUST NOT extend under the bar. Its surface starts at the bar's lower edge, and a
   window scrolling up off the top passes behind the bar rather than into a strip above it.
 
@@ -301,9 +310,10 @@ Zoom never steps; the step above is slide's.
 > inside its row, so a bar-sized strip of desktop showed between workspaces as they scrolled. The
 > overlay covered the whole display, including the band the bar sits in.
 
-- The first switch after rini starts MUST slide like every other, whichever workspace a restored
-  layout opens on. A switch slides from the workspace the display last showed, which is known from
-  the first time rini lays the display out, so it MUST NOT wait for an earlier switch to learn it.
+- The first switch after rini starts MUST slide like every other, or arc under zoom, whichever
+  workspace a restored layout opens on. A switch slides from the workspace the display last showed,
+  which is known from the first time rini lays the display out, so it MUST NOT wait for an earlier
+  switch to learn it.
 
 > **Found 2026-10-05, not reported.** The transitions journal showed the first `prev_workspace` press
 > after a restart with no press mark and no flight, and every later switch sliding. The workspace a
@@ -1066,14 +1076,26 @@ kept in containers of their own that only the view up and down moves
 into one another landing each window where the later sends it
 (`a_switch_merged_into_a_flight_drawing_rows_lands_the_destination_where_the_switch_sends_it`,
 `a_pan_merged_after_a_switch_pans_only_the_destination`, and the bend and fold contracts' switches,
-`a_switch`), zoomed and left still by
+`a_switch`, half of them on a switch's arc), zoomed and left still by
 the arc and carried by a push (`a_horizontal_arc_zooms_the_rows_and_moves_none`,
 `a_push_at_a_side_carries_the_rows_with_the_strip`), flown by the engine
 (`a_row_flies_on_its_picture_or_the_stand_in_unasked_unwatched_unholed_and_warms_at_the_quiet`,
 `a_flight_whose_look_draws_no_rows_drops_them`) and drawn under the strip layer
 (`the_strips_beside_ride_the_strip_layer_under_its_zoom`); a strip movement draws every window of
-its strip in `a_strip_movement_draws_every_window_of_the_strip`. The reactor names each press along the strip to the
-look: a focus press that scrolls the strip, held by
+its strip in `a_strip_movement_draws_every_window_of_the_strip`. A switch under zoom arcs
+(`a_switch_arcs_as_deep_as_the_two_strips_need`,
+`a_switch_zooms_out_carries_the_stack_half_way_and_lands_on_the_destination_at_rest`,
+`at_a_switchs_middle_the_strips_it_travels_between_show_the_gap_apart`), merges with a press along
+either axis (`a_horizontal_press_merged_mid_switch_folds_into_the_arc_moving_only_the_destination`,
+`a_switch_merged_with_a_quarter_left_folds_into_the_arc_and_lands_with_it`,
+`a_late_press_or_switch_goes_on_a_spring_and_leaves_the_arc`,
+`a_switch_back_mid_switch_turns_the_stack_on_a_spring`,
+`a_switch_merged_with_no_arc_playing_plays_a_shallow_one`), lifts as its arc lands
+(`a_zoom_switch_lifts_as_its_arc_lands_on_the_destination_at_rest`), and is named and drawn by the
+reactor with the strips beyond both ends
+(`under_zoom_a_switch_arcs_and_draws_the_strips_beyond_both_ends`,
+`under_zoom_the_first_switch_arcs`). The reactor names each press along the strip to the look: a
+focus press that scrolls the strip, held by
 `a_focus_press_along_the_strip_names_where_it_went_and_one_at_an_end_where_it_stayed` and
 `a_focus_press_that_scrolls_the_strip_names_itself_and_zooms_under_zoom`, and the move or focus
 press a bounce at a side of the strip plays, held by

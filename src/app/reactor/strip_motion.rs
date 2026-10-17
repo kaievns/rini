@@ -24,6 +24,15 @@ pub(crate) struct StripLayout {
     pub(crate) now: Vec<(WindowId, CGRect)>,
 }
 
+/// The stack of strips a look that zooms out draws beside the one a flight moves: the screen and
+/// display it is shown on, its gaps, and how far apart its strips are.
+struct Stack<'a> {
+    screen: &'a ScreenInfo,
+    display_bounds: CGRect,
+    gaps: &'a crate::layout::settings::Gaps,
+    pitch: f64,
+}
+
 /// What a pass hands the strip pan, each field as `Reactor::start_strip_pan` reads it.
 pub(super) struct StripPan<'a> {
     pub(super) final_frames: Vec<(WindowId, CGRect)>,
@@ -327,7 +336,6 @@ impl Reactor {
         display_bounds: CGRect,
         gaps: &crate::layout::settings::Gaps,
     ) -> Vec<SurfaceWindow> {
-        use crate::transitions::domain::strip_stack::{beside, in_zoomed_view, strip_frame};
         let Some(gap) = self.stack_gap(screen, display_bounds) else {
             return Vec::new();
         };
@@ -338,18 +346,51 @@ impl Reactor {
         let Some(index) = workspaces.iter().position(|(id, _)| *id == active) else {
             return Vec::new();
         };
+        let rows: Vec<(usize, isize, isize)> =
+            crate::transitions::domain::strip_stack::beside(index, workspaces.len())
+                .into_iter()
+                .map(|(row, side)| (row, side, 0))
+                .collect();
+        let stack = Stack {
+            screen,
+            display_bounds,
+            gaps,
+            pitch: screen.frame.size.height + gap,
+        };
+        self.strips_at(space, &workspaces, &rows, &stack)
+    }
+
+    /// Each tiled window of the strips `rows` name, each by its index in `workspaces`, the side it
+    /// is drawn on of the strip at a row of the surface, and that row, that the deepest zoom shows
+    /// beside that strip, at its own strip's scroll and named by its index.
+    fn strips_at(
+        &mut self,
+        space: SpaceId,
+        workspaces: &[(crate::workspaces::VirtualWorkspaceId, String)],
+        rows: &[(usize, isize, isize)],
+        stack: &Stack,
+    ) -> Vec<SurfaceWindow> {
+        use crate::transitions::domain::strip_stack::{in_zoomed_view, strip_frame};
+        let Stack {
+            screen,
+            display_bounds,
+            gaps,
+            pitch,
+        } = *stack;
         let display = ScreenRect::from_cg(display_bounds);
-        let pitch = screen.frame.size.height + gap;
         let origin = ScreenPoint::from_cg(display_bounds.origin);
         let viewport = SurfaceRect::new(SurfacePoint::origin(), display.size.respace());
         let deepest = crate::animation::domain::choreography::zoom::ZOOM_DEEPEST;
         let rings = self.layout_rings();
         let mut windows = Vec::new();
-        for (row, side) in beside(index, workspaces.len()) {
+        for &(row, side, of) in rows {
+            let Some((workspace, _)) = workspaces.get(row) else {
+                continue;
+            };
             let layout = self.layout_engine.preview_layout_for_workspace(
                 &self.state.windows,
                 space,
-                workspaces[row].0,
+                *workspace,
                 screen.frame,
                 gaps,
             );
@@ -361,14 +402,14 @@ impl Reactor {
                 else {
                     continue;
                 };
-                let frame = strip_frame(ScreenRect::from_cg(frame), origin, side, pitch);
-                if !in_zoomed_view(frame, viewport, deepest) {
+                let frame = ScreenRect::from_cg(frame);
+                if !in_zoomed_view(strip_frame(frame, origin, side, pitch), viewport, deepest) {
                     continue;
                 }
                 windows.push(SurfaceWindow {
                     window: wid,
                     server_id,
-                    frame,
+                    frame: strip_frame(frame, origin, of + side, pitch),
                     pinned: false,
                     floating: false,
                     from: None,
@@ -554,7 +595,7 @@ impl Reactor {
                 key: self.main_window_tracker.key_window(),
                 duration,
                 look: self.config.settings.look,
-                cue: crate::animation::domain::choreography::Cue::Plain,
+                cue: crate::animation::domain::choreography::Cue::Switch,
                 area: strip_area(screen.frame, display_bounds, &gaps),
                 cause: self.cause,
             },
@@ -568,7 +609,9 @@ impl Reactor {
     /// Every workspace from `from_index` to `to_index`, laid out and stacked one usable height
     /// below the one above it, as strip-surface windows; and the destination's own layout. Under a
     /// look that draws the strips beside the one it moves, `gap` further apart, each tiled window
-    /// of a strip other than the destination's named by its workspace's index, as a pan names it.
+    /// of a strip other than the destination's named by its workspace's index, as a pan names it,
+    /// and the strips above the first and below the last drawn beside them as a pan draws them
+    /// (`strips_at`).
     fn switch_rows(
         &mut self,
         space: SpaceId,
@@ -632,6 +675,28 @@ impl Reactor {
                     row: beside.then_some(index),
                 });
             }
+        }
+        if let Some(gap) = gap {
+            use crate::transitions::domain::strip_stack::beside;
+            let count = workspaces.len();
+            let ends: Vec<(usize, isize, isize)> = beside(low, count)
+                .into_iter()
+                .filter(|&(_, side)| side < 0)
+                .map(|(row, side)| (row, side, 0))
+                .chain(
+                    beside(high, count)
+                        .into_iter()
+                        .filter(|&(_, side)| side > 0)
+                        .map(|(row, side)| (row, side, (high - low) as isize)),
+                )
+                .collect();
+            let stack = Stack {
+                screen,
+                display_bounds,
+                gaps,
+                pitch: screen.frame.size.height + gap,
+            };
+            windows.extend(self.strips_at(space, workspaces, &ends, &stack));
         }
 
         (windows, destination_layout)

@@ -2029,8 +2029,9 @@ mod beside {
     use test_log::test;
 
     use super::*;
-    use crate::animation::domain::choreography::Look;
-    use crate::animation::domain::choreography::zoom::STACK_GAP;
+    use crate::animation::domain::choreography::zoom::{ARC_MIDDLE, STACK_GAP, zoom_depth};
+    use crate::animation::domain::choreography::{Cue, Look};
+    use crate::animation::domain::motion::accents::Accent;
     use crate::animation::domain::motion::surface::SurfaceGeometry;
     use crate::transitions::domain::request::SurfaceWindow;
     use crate::transitions::platform::engine::Event as Engine;
@@ -2289,8 +2290,81 @@ mod beside {
         }
     }
 
-    /// Under slide a pan and a bounce draw the strip alone, and a switch names no strip beside and
-    /// stacks its strips a usable height apart.
+    /// The arc a switch `rows` down the stack stages under zoom on `reactor`'s screen: as deep as a
+    /// move of two columns a usable height tall a pitch apart, half its travel carried at the
+    /// middle, at the switch's length.
+    fn switch_arc(reactor: &Reactor, rows: f64, seconds: f64) -> Accent {
+        let usable = reactor.space_state().screens[0].frame.size.height;
+        Accent::Arc {
+            depth: zoom_depth(usable, rows * pitch(reactor) + usable, usable),
+            share: ARC_MIDDLE,
+            swap: None,
+            seconds,
+        }
+    }
+
+    /// Kai, 2026-10-17: "it applies to both horizontal and vertical navigation". Under zoom a
+    /// switch names itself to the look, which stages its arc, and draws beside the strips it
+    /// travels between the one above the first and the one below the last, a pitch beyond each and
+    /// named by its index, none past an end of the stack.
+    #[test]
+    fn under_zoom_a_switch_arcs_and_draws_the_strips_beyond_both_ends() {
+        let (mut apps, mut reactor, mut rx) = stacked(Look::Zoom);
+        let pitch = pitch(&reactor);
+        let plain = reactor.config().settings.animation_duration;
+        let down = switched(&mut apps, &mut reactor, &mut rx, 2);
+        assert_eq!(down.cue, Cue::Switch);
+        assert_eq!(down.accent, Some(switch_arc(&reactor, 1.0, plain)));
+        let (w1, w2, w5) = (
+            find(&down.windows, 1),
+            find(&down.windows, 2),
+            find(&down.windows, 5),
+        );
+        assert_eq!((w1.row, w2.row, w5.row), (Some(0), Some(1), None));
+        assert_eq!(
+            w2.frame.origin.y - w1.frame.origin.y,
+            pitch,
+            "the strip above the source"
+        );
+        assert_eq!(w5.frame.origin.y - w2.frame.origin.y, pitch);
+
+        let jump = switched(&mut apps, &mut reactor, &mut rx, 0);
+        let seconds = jump.duration.as_secs_f64();
+        assert!(
+            (seconds - plain * 2f64.sqrt()).abs() < 1e-6,
+            "two rows, stretched: {seconds}"
+        );
+        assert_eq!(jump.accent, Some(switch_arc(&reactor, 2.0, seconds)));
+        let (w1, w2, w5) = (
+            find(&jump.windows, 1),
+            find(&jump.windows, 2),
+            find(&jump.windows, 5),
+        );
+        assert_eq!((w1.row, w2.row, w5.row), (None, Some(1), Some(2)));
+        assert_eq!(w5.frame.origin.y - w1.frame.origin.y, 2.0 * pitch);
+        assert_eq!(jump.windows.len(), 5, "nothing past either end of the stack");
+    }
+
+    /// The first switch after rini starts arcs under zoom, as it slides under slide.
+    #[test]
+    fn under_zoom_the_first_switch_arcs() {
+        let mut reactor = test_reactor_with_workspace_count(4);
+        reactor.settings_mut().look = Look::Zoom;
+        let (_apps, mut reactor, mut rx) = started(reactor);
+        reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
+        let switches = strip_movements(&mut rx);
+        assert_eq!(switches.len(), 1, "one switch down the stack");
+        assert_eq!(switches[0].cue, Cue::Switch);
+        assert!(
+            matches!(switches[0].accent, Some(Accent::Arc { swap: None, .. })),
+            "{:?}",
+            switches[0].accent
+        );
+    }
+
+    /// Under slide a pan and a bounce draw the strip alone, and a switch, naming itself as under
+    /// zoom, stages nothing, names no strip beside, draws none beyond and stacks its strips a usable
+    /// height apart.
     #[test]
     fn under_slide_pans_bounces_and_switches_send_what_they_did() {
         let (apps, mut reactor, mut rx) = stacked(Look::Slide);
@@ -2308,6 +2382,11 @@ mod beside {
         assert!(
             switch.windows.iter().all(|w| w.row.is_none()),
             "a switch names none"
+        );
+        assert_eq!((switch.cue, switch.accent), (Cue::Switch, None), "slides");
+        assert!(
+            switch.windows.iter().all(|w| w.window != WindowId::new(1, 5)),
+            "nothing beyond"
         );
         let (w1, w2) = (find(&switch.windows, 1), find(&switch.windows, 2));
         let usable = reactor.space_state().screens[0].frame.size.height;

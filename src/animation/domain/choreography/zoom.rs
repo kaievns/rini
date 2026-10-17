@@ -1,12 +1,12 @@
-//! Zoom: a press along the strip plays as one arc. The strip zooms out about the display's centre and
-//! back in on a sin² bell while every container crosses to where its pass sends it, the travel they
-//! all carry eased so the view is where the swap needs it at the arc's middle, and the two columns a
-//! move swapped crossing on a curve of their own. A pan merged mid-arc folds into the containers'
-//! movement and lands with the arc; any other pass bends them on a spring from where the score has
-//! them, as fast as they are drawn moving. A push at an end bounces with the strip zoomed out. It
-//! plans, folds and poses as Slide does, and composes as Slide does without an arc. See "The zoom
-//! look" in `specs/animation.md`, and "The overlay engine" in
-//! `src/animation/docs/animation-smoothness.md`.
+//! Zoom: a press along the strip, and a switch through the workspace stack, plays as one arc. The
+//! strip zooms out about the display's centre and back in on a sin² bell while every container
+//! crosses to where its pass sends it, the travel they all carry eased so the view is where the swap
+//! needs it at the arc's middle, and the two columns a move swapped crossing on a curve of their
+//! own. A pan merged mid-arc, along or across the strip, folds into the containers' movement and
+//! lands with the arc; any other pass bends them on a spring from where the score has them, as fast
+//! as they are drawn moving. A push at an end bounces with the strip zoomed out. It plans, folds and
+//! poses as Slide does, and composes as Slide does without an arc. See "The zoom look" in
+//! `specs/animation.md`, and "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayPoint, OverlayVector, SurfaceRect};
@@ -132,17 +132,17 @@ pub fn camera_progress(share: f64, f: f64) -> f64 {
 /// What Zoom does with a press on the strip. A move crosses both columns of its pair from where they
 /// start, nothing held and no step, on an arc as deep as the pair needs, the travel carried to show
 /// the pair at its middle. A focus press that scrolls the strip between two of its windows pans on
-/// an arc as deep as a move of the same two columns, half of it carried at the middle. Anything else
-/// stages nothing.
+/// an arc as deep as a move of the same two columns, half of it carried at the middle, and a switch
+/// on one as deep as the two strips it travels between need (`switch_arc`). Anything else stages
+/// nothing.
 pub fn stage(cue: &Cue, strip: &Strip) -> Staging {
-    match *cue {
-        Cue::Move { window, .. } => staged_move(window, strip),
-        Cue::Focus { from, to } => Staging {
-            accent: focus_arc(from, to, strip),
-            ..Staging::default()
-        },
-        Cue::Plain => Staging::default(),
-    }
+    let accent = match *cue {
+        Cue::Move { window, .. } => return staged_move(window, strip),
+        Cue::Focus { from, to } => focus_arc(from, to, strip),
+        Cue::Switch => switch_arc(strip),
+        Cue::Plain => None,
+    };
+    Staging { accent, ..Staging::default() }
 }
 
 fn frame_of(strip: &Strip, window: WindowId) -> Option<SurfaceRect> {
@@ -232,6 +232,24 @@ fn focus_arc(from: WindowId, to: WindowId, strip: &Strip) -> Option<Accent> {
     let narrower = a.size.width.min(b.size.width);
     let depth = zoom_depth(strip.area.frame.size.width, right - left, narrower);
     depth.is_finite().then_some(Accent::Arc {
+        depth,
+        share: ARC_MIDDLE,
+        swap: None,
+        seconds: strip.seconds,
+    })
+}
+
+/// A switch's arc: as deep as a move of two columns a usable height tall, the strip and the one it
+/// travels to, a travel apart, so each keeps two thirds of itself in view with the two centred, 0.738
+/// on the laptop for one strip and the deepest for two or more; half the travel carried at the
+/// middle. None for a switch that travels no whole point up or down.
+fn switch_arc(strip: &Strip) -> Option<Accent> {
+    let (travel, row) = (strip.travel, strip.area.frame.size.height);
+    if !travel.x.is_finite() || !travel.y.is_finite() || travel.y.abs() < 1.0 {
+        return None;
+    }
+    let depth = zoom_depth(row, travel.y.abs() + row, row);
+    (depth.is_finite() && strip.seconds.is_finite()).then_some(Accent::Arc {
         depth,
         share: ARC_MIDDLE,
         swap: None,
@@ -411,9 +429,9 @@ fn crossing_of(plan: &FlightPlan, swap: Option<Swap>) -> Vec<(GroupKey, OverlayV
 }
 
 /// The container `key` carried from `from` to `to` over `bell`'s arc from `begin`, `by` of it its
-/// swap: the floating one on `MOTION_CURVE`, any other its travel on `camera_progress` and its swap
-/// on `ZOOM_CURVE`, sampled, ending exactly at `to`. Nothing for no movement. A column the view
-/// follows has no travel and still crosses.
+/// swap: its travel on `camera_progress`, the floating one's with the strip's though it is drawn
+/// unzoomed, and its swap on `ZOOM_CURVE`, sampled, ending exactly at `to`. Nothing for no movement.
+/// A column the view follows has no travel and still crosses.
 fn carry(
     making: &mut Making,
     key: GroupKey,
@@ -423,32 +441,21 @@ fn carry(
     begin: f64,
     bell: Bell,
 ) {
-    if from.same_as(to) && (key == GroupKey::Floating || by == OverlayVector::zero()) {
+    if from.same_as(to) && by == OverlayVector::zero() {
         return;
     }
     let length = bell.length;
-    let track = if key == GroupKey::Floating {
-        let leg = Leg::Curve {
-            from,
-            to,
-            begin,
-            seconds: length,
-            curve: MOTION_CURVE,
-        };
-        leg.track(key, SAMPLE_STEP)
-    } else {
-        let count = sample_count(length);
-        let travel = (to - from) - by;
-        let values = (0..=count).map(|k| {
-            let f = k as f64 / count as f64;
-            Value::Point(if k == count {
-                to
-            } else {
-                from + travel * camera_progress(bell.share, f) + by * ZOOM_CURVE.ease(f)
-            })
-        });
-        Track::samples(Node::Container(key), Channel::Base, values, begin, length)
-    };
+    let count = sample_count(length);
+    let travel = (to - from) - by;
+    let values = (0..=count).map(|k| {
+        let f = k as f64 / count as f64;
+        Value::Point(if k == count {
+            to
+        } else {
+            from + travel * camera_progress(bell.share, f) + by * ZOOM_CURVE.ease(f)
+        })
+    });
+    let track = Track::samples(Node::Container(key), Channel::Base, values, begin, length);
     making.push(Edit::Add(track));
 }
 
@@ -471,10 +478,10 @@ pub struct ZoomArc {
 }
 
 impl ZoomArc {
-    /// The motion from frame zero on an arc, from `begin` over `bell.length`: every strip container
-    /// carried its travel on `camera_progress` and its swap on `ZOOM_CURVE`, sampled; the floating
-    /// one and every loose tile on `MOTION_CURVE`; the strip zoomed out and back, the window a move
-    /// moves lifted on the same bell; and a push that waited, with the strip zoomed.
+    /// The motion from frame zero on an arc, from `begin` over `bell.length`: every container
+    /// carried its travel on `camera_progress` and its swap on `ZOOM_CURVE`, sampled; every loose
+    /// tile on `MOTION_CURVE`; the strip zoomed out and back, the window a move moves lifted on the
+    /// same bell; and a push that waited, with the strip zoomed.
     fn arc(&mut self, playing: &Score, stage: &Stage, begin: f64, bell: Bell) -> Vec<Edit> {
         let pushes: Vec<Accent> = stage
             .accents
@@ -548,16 +555,18 @@ impl ZoomArc {
         making.edits
     }
 
-    /// The pan a pass brings folds into the arc playing on `playing` at `now` when it is sideways,
-    /// at least `FOLDED_PAN_MIN` of the arc is left, and the travel every strip container it bends
-    /// carries, its swap aside, does not go against it: when the arc lands, for the fold to land
-    /// with it.
+    /// The pan a pass brings folds into the arc playing on `playing` at `now` when it is along one
+    /// axis, sideways along the strip or up or down the stack, at least `FOLDED_PAN_MIN` of the arc
+    /// is left, and the travel every strip container it bends carries along that axis, its swap
+    /// aside, does not go against it: when the arc lands, for the fold to land with it.
     fn folds(&self, playing: &Score, merged: &Merged, pass: &Pass, now: f64) -> Option<f64> {
         let strip = playing.track(Node::Strip, Channel::Base).filter(|t| t.at(now).is_some())?;
         let pan = pass.pan?;
-        if pan.y.abs() >= 0.5 || pan.x.abs() < 0.5 {
-            return None;
-        }
+        let (along, across) = match (pan.x.abs() >= 0.5, pan.y.abs() >= 0.5) {
+            (true, false) => (0, pan.x),
+            (false, true) => (1, pan.y),
+            _ => return None,
+        };
         let (end, length) = (strip.ends(), strip.seconds());
         if end - now + 1e-9 < FOLDED_PAN_MIN * length {
             return None;
@@ -569,9 +578,12 @@ impl ZoomArc {
             .iter()
             .filter(|(key, _)| *key != GroupKey::Floating)
             .any(|&(key, _)| {
-                let drawn = playing.rate(Node::Container(key), now)[0];
-                let swap = self.swap.as_ref().map_or(0.0, |crossing| crossing.rate(key, now).x);
-                (swap - drawn) * pan.x.signum() >= still
+                let drawn = playing.rate(Node::Container(key), now)[along];
+                let swap = self.swap.as_ref().map_or(0.0, |crossing| {
+                    let rate = crossing.rate(key, now);
+                    if along == 0 { rate.x } else { rate.y }
+                });
+                (swap - drawn) * across.signum() >= still
             });
         (!turns_back).then_some(end)
     }
@@ -608,12 +620,13 @@ impl Bent<'_> {
     }
 
     /// `key`'s movement as it plays, shifted on to `to` over what is left of the arc, landing at
-    /// `end`, on `EASE_IN_OUT` from zero rate, so it goes on as fast as it was going: none for the
-    /// floating container, or one whose movement outlasts the arc.
+    /// `end`, on `EASE_IN_OUT` from zero rate, so it goes on as fast as it was going: none for one
+    /// whose movement outlasts the arc. Only a switch moves the floating container, which folds
+    /// with the strips it travels with.
     fn folded(&self, key: GroupKey, to: OverlayPoint, end: f64) -> Option<Track> {
         let node = Node::Container(key);
         let old = self.playing.track(node, Channel::Base);
-        if key == GroupKey::Floating || old.is_some_and(|track| track.ends() > end + 1e-9) {
+        if old.is_some_and(|track| track.ends() > end + 1e-9) {
             return None;
         }
         let Some(Value::Point(was)) = self.playing.model(node) else {
@@ -727,7 +740,7 @@ impl Choreography for ZoomArc {
             Accent::Push { wall, seconds } if sideways(wall) => Some((wall, seconds)),
             _ => None,
         });
-        let Some((wall, seconds)) = wall.filter(|_| stage.cue != Cue::Plain) else {
+        let Some((wall, seconds)) = wall.filter(|_| stage.cue.along_strip()) else {
             return Slide::default().compose(playing, stage, begin);
         };
         let others: Vec<Accent> = stage
@@ -752,9 +765,9 @@ impl Choreography for ZoomArc {
     /// stretched by `ZOOM_STRETCH` when it brings an arc: a pan folded into the arc playing
     /// (`folds`), or every container on a spring from where the score has it at the speed it is
     /// drawn moving; a container opened for a member leaving another as fast as that one, and one
-    /// opened for a newcomer on `MOTION_CURVE`; every loose tile on `MOTION_CURVE`. A move or a
-    /// focus press brought with no arc playing plays a shallow one from now, a move lifting the
-    /// window it moves on it; one playing is left as it is.
+    /// opened for a newcomer on `MOTION_CURVE`; every loose tile on `MOTION_CURVE`. A move, a
+    /// focus press or a switch brought with no arc playing plays a shallow one from now, a move
+    /// lifting the window it moves on it; one playing is left as it is.
     fn retarget(&mut self, playing: &Score, plan: &FlightPlan, pass: &Pass, now: f64) -> Retarget {
         self.centre = Some(pass.viewport.center());
         let mut merged = Merged::new(playing, plan, pass, now);
@@ -802,7 +815,7 @@ impl Choreography for ZoomArc {
         now: f64,
     ) -> Vec<Edit> {
         let mut making = Making::from(playing);
-        if let Some(centre) = self.centre.filter(|_| *cue != Cue::Plain && sideways(wall))
+        if let Some(centre) = self.centre.filter(|_| cue.along_strip() && sideways(wall))
             && !deepening(playing, seconds, now)
         {
             push_arc(&mut making, centre, seconds, now);
@@ -824,7 +837,9 @@ mod tests {
     use crate::animation::domain::motion::bounce::Bounce;
     use crate::animation::domain::motion::plan::{Resolved, overlay_of, reflow_plan, surface_plan};
     use crate::animation::domain::motion::score::Form;
+    use crate::animation::domain::motion::surface::pan_travel;
     use crate::animation::domain::motion::testing::{DISPLAY, VIEWPORT, rect};
+    use crate::transitions::domain::request::SurfaceWindow;
 
     const PLAIN: f64 = 0.35;
     const BEGIN: f64 = 10.0;
@@ -890,51 +905,69 @@ mod tests {
         /// `flown`, with the windows of `rows`, each of the strip its index names, drawn beside
         /// the strip.
         fn flown_beside(&self, cue: Cue, rows: &[(WindowId, SurfaceRect, usize)]) -> Flight {
-            use crate::transitions::domain::request::SurfaceWindow;
             let staging = stage(&cue, &self.strip());
-            let window = |window, frame, row| SurfaceWindow {
-                window,
-                server_id: rini_core::ids::WindowServerId::new(window.idx.get()),
-                frame,
-                pinned: false,
-                floating: false,
-                from: staging.from.iter().find(|(w, _)| *w == window).map(|&(_, at)| at),
-                worn: Default::default(),
-                row,
-            };
+            let from = |window| staging.from.iter().find(|(w, _)| *w == window).map(|&(_, at)| at);
             let on_surface: Vec<SurfaceWindow> = self
                 .windows
                 .iter()
-                .map(|&(id, frame)| window(id, frame, None))
-                .chain(rows.iter().map(|&(id, frame, row)| window(id, frame, Some(row))))
+                .map(|&(id, frame)| SurfaceWindow {
+                    from: from(id),
+                    ..on_surface(id, frame, None)
+                })
+                .chain(rows.iter().map(|&(id, frame, row)| on_surface(id, frame, Some(row))))
                 .collect();
-            let from_offset = SurfacePoint::new(self.travel, 0.0);
-            let plan =
-                FlightPlan::from(surface_plan(&on_surface, from_offset, SurfacePoint::origin()));
-            let drawn = plan.windows();
-            let accents: Vec<Accent> = staging.accent.into_iter().collect();
-            let stage = Stage {
-                plan: &plan,
-                drawn: &drawn,
-                seconds: self.seconds,
-                cue,
-                accents: &accents,
-                viewport: self.area.viewport,
-            };
-            let mut zoom = ZoomArc::default();
-            let posed = zoom.pose(&stage);
-            let mut score = posed.clone();
-            for edit in zoom.compose(&posed, &stage, BEGIN) {
-                score.apply(&edit);
-            }
-            Flight {
-                zoom,
-                plan,
-                drawn,
-                score,
-                posed,
-                accent: staging.accent,
-            }
+            let offsets = (SurfacePoint::new(self.travel, 0.0), SurfacePoint::origin());
+            fly(&on_surface, offsets, cue, staging.accent, self.seconds)
+        }
+    }
+
+    /// `window` on the strip surface at `frame`, of the strip beside `row` names, if any.
+    fn on_surface(window: WindowId, frame: SurfaceRect, row: Option<usize>) -> SurfaceWindow {
+        SurfaceWindow {
+            window,
+            server_id: rini_core::ids::WindowServerId::new(window.idx.get()),
+            frame,
+            pinned: false,
+            floating: false,
+            from: None,
+            worn: Default::default(),
+            row,
+        }
+    }
+
+    /// A strip movement of `windows` from `from_offset` to `to_offset` showing `cue`, flown as the
+    /// engine flies it: planned, posed, and the motion composed at `BEGIN` with `accent` waiting.
+    fn fly(
+        windows: &[SurfaceWindow],
+        (from_offset, to_offset): (SurfacePoint, SurfacePoint),
+        cue: Cue,
+        accent: Option<Accent>,
+        seconds: f64,
+    ) -> Flight {
+        let plan = FlightPlan::from(surface_plan(windows, from_offset, to_offset));
+        let drawn = plan.windows();
+        let accents: Vec<Accent> = accent.into_iter().collect();
+        let stage = Stage {
+            plan: &plan,
+            drawn: &drawn,
+            seconds,
+            cue,
+            accents: &accents,
+            viewport: VIEWPORT,
+        };
+        let mut zoom = ZoomArc::default();
+        let posed = zoom.pose(&stage);
+        let mut score = posed.clone();
+        for edit in zoom.compose(&posed, &stage, BEGIN) {
+            score.apply(&edit);
+        }
+        Flight {
+            zoom,
+            plan,
+            drawn,
+            score,
+            posed,
+            accent,
         }
     }
 
@@ -1154,6 +1187,300 @@ mod tests {
         assert!(strip < -1.0, "the strip gives toward the wall: {strip}");
         for (row, _, _) in rows {
             close(given(row), strip, 1e-6, "as far as the strip");
+        }
+    }
+
+    /// The laptop's usable height under rini's bar, and how far apart a switch under zoom stacks
+    /// its strips: that and `STACK_GAP`.
+    const USABLE: f64 = 1085.0;
+    const PITCH: f64 = USABLE + STACK_GAP;
+
+    /// The laptop's screen a switch is staged on: its usable frame below the 32pt bar.
+    fn usable_area() -> Area {
+        Area {
+            frame: rect(0.0, 32.0, WIDTH, USABLE),
+            ..AREA
+        }
+    }
+
+    /// One window of the strip at `row` of a switch's surface, `PITCH` apart, at `x`, `width` wide.
+    fn in_row(row: f64, x: f64, width: f64) -> SurfaceRect {
+        rect(x, 36.0 + row * PITCH, width, 1077.0)
+    }
+
+    /// The source's two halves, its floating window, the destination's one full column, a strip
+    /// between them for each row past one, and the strips above the source and below the
+    /// destination.
+    const S1: u32 = 10;
+    const S2: u32 = 11;
+    const FLOATING: u32 = 12;
+    const D: u32 = 20;
+    const ABOVE: u32 = 30;
+    const BELOW: u32 = 31;
+    const BETWEEN: u32 = 40;
+
+    /// A switch `rows` down the stack under zoom, as the reactor sends one and the engine stages
+    /// it: the source at the second workspace, its halves and its floating window; every strip on
+    /// the way; the destination; and the strips above the source and below the destination, each
+    /// strip but the destination's named by its index, `PITCH` apart, over `seconds`.
+    fn switch_down(rows: usize, seconds: f64) -> Flight {
+        let n = rows as f64;
+        let mut windows = vec![
+            on_surface(wid(S1), in_row(0.0, GAP, 859.0), Some(1)),
+            on_surface(wid(S2), in_row(0.0, GAP + 859.0 + GAP, 859.0), Some(1)),
+            SurfaceWindow {
+                floating: true,
+                ..on_surface(wid(FLOATING), rect(400.0, 300.0, 600.0, 400.0), None)
+            },
+            on_surface(wid(D), in_row(n, GAP, 1722.0), None),
+            on_surface(wid(ABOVE), in_row(-1.0, GAP, 1722.0), Some(0)),
+            on_surface(wid(BELOW), in_row(n + 1.0, -500.0, 1722.0), Some(2 + rows)),
+        ];
+        for k in 1..rows {
+            let between = on_surface(
+                wid(BETWEEN + k as u32),
+                in_row(k as f64, GAP, 1722.0),
+                Some(1 + k),
+            );
+            windows.push(between);
+        }
+        let (from_offset, to_offset) = (SurfacePoint::origin(), SurfacePoint::new(0.0, n * PITCH));
+        let strip: Vec<(WindowId, SurfaceRect)> = windows
+            .iter()
+            .filter(|w| !w.floating && w.row.is_none())
+            .map(|w| (w.window, w.frame))
+            .collect();
+        let staging = stage(&Cue::Switch, &Strip {
+            windows: &strip,
+            pair: &[],
+            area: usable_area(),
+            travel: pan_travel(from_offset, to_offset),
+            seconds,
+        });
+        assert!(staging.from.is_empty() && staging.held.is_empty());
+        fly(
+            &windows,
+            (from_offset, to_offset),
+            Cue::Switch,
+            staging.accent,
+            seconds,
+        )
+    }
+
+    /// Kai, 2026-10-17: "it applies to both horizontal and vertical navigation". A switch stages
+    /// an arc as deep as a move of two columns a usable height tall, the strip and the one it
+    /// travels to, a pitch apart: 0.738 for one strip on the laptop, the deepest for two or more,
+    /// half the travel carried at the middle and nothing swapped. A switch that travels no whole
+    /// point, or not a number, plays none.
+    #[test]
+    fn a_switch_arcs_as_deep_as_the_two_strips_need() {
+        let strip = |dy: f64| Strip {
+            windows: &[],
+            pair: &[],
+            area: usable_area(),
+            travel: OverlayVector::new(0.0, dy),
+            seconds: PLAIN,
+        };
+        for (dy, depth) in [
+            (-PITCH, 0.7378),
+            (PITCH, 0.7378),
+            (-2.0 * PITCH, ZOOM_DEEPEST),
+        ] {
+            let (got, share, swap) = arc_of(stage(&Cue::Switch, &strip(dy)).accent);
+            close(got, depth, 5e-5, &format!("{dy}"));
+            assert_eq!((share, swap), (ARC_MIDDLE, None));
+        }
+        for dy in [0.5, f64::NAN] {
+            assert_eq!(stage(&Cue::Switch, &strip(dy)), Staging::default(), "{dy}");
+        }
+    }
+
+    /// A switch zooms the strip out and back on one arc of 2.2/3 of its own length, its rows'
+    /// stretch and all, while every strip and its floating windows travel on the arc's camera,
+    /// half way at the middle, so the stack stays one column; and it lands every window exactly
+    /// where the switch sends it, the destination at its frames, at rest.
+    #[test]
+    fn a_switch_zooms_out_carries_the_stack_half_way_and_lands_on_the_destination_at_rest() {
+        for (rows, seconds) in [(1, PLAIN), (2, PLAIN * 2f64.sqrt())] {
+            let flight = switch_down(rows, seconds);
+            let tag = format!("{rows} rows");
+            let (depth, _, _) = match flight.accent {
+                Some(Accent::Arc { depth, share, swap, .. }) => (depth, share, swap),
+                other => panic!("{tag}: an arc: {other:?}"),
+            };
+            let arc = flight.score.track(Node::Strip, Channel::Base).expect("an arc").clone();
+            assert_eq!(arc.begin(), BEGIN);
+            close(arc.seconds(), seconds * ZOOM_STRETCH, 1e-9, &tag);
+            let middle = BEGIN + arc.seconds() * ARC_MIDDLE;
+            close(
+                scale_at(&flight.score, middle),
+                depth,
+                1e-3,
+                "deepest at the middle",
+            );
+            let keys: Vec<GroupKey> =
+                [S1, D, ABOVE, BELOW].map(|w| key_of(&flight.plan, wid(w))).into();
+            for (i, key) in keys.iter().enumerate() {
+                assert!(!keys[..i].contains(key), "{tag}: a container each strip");
+            }
+            let end = BEGIN + flight.score.remaining(BEGIN);
+            close(end, arc.ends(), 1e-9, "the flight ends with the arc");
+            assert_eq!(
+                flight.score.sample(Node::Strip, end),
+                Some(Value::Zoom(Zoom::REST))
+            );
+            for &window in &flight.drawn {
+                let start = flight.posed.drawn(window, BEGIN).expect("posed");
+                let sent = flight.plan.destination(window).expect("sent");
+                close(sent.origin.y - start.origin.y, -(rows as f64) * PITCH, 0.5, &tag);
+                let half = laid(&flight.score, window, middle).origin.y - start.origin.y;
+                close(
+                    half,
+                    (sent.origin.y - start.origin.y) / 2.0,
+                    1.0,
+                    &format!("{tag}: {window:?} half way"),
+                );
+                assert_eq!(
+                    flight.score.drawn(window, end),
+                    Some(sent),
+                    "{tag}: {window:?} lands"
+                );
+            }
+            assert_eq!(
+                flight.plan.destination(wid(D)),
+                Some(rect(GAP, 36.0, 1722.0, 1077.0))
+            );
+        }
+    }
+
+    /// Kai, 2026-10-17: "i should see the top/bottom strips (at a bit of a padding)". At a switch's
+    /// middle the strips it travels between are in view with the gap between them zoomed: one row
+    /// down, about two thirds of the source above and of the destination below, 32pt apart at rest
+    /// and 23.6pt on screen; two rows down, the strip passed whole in view, 138pt of the source
+    /// below the bar and 148pt of the destination above the display's bottom.
+    #[test]
+    fn at_a_switchs_middle_the_strips_it_travels_between_show_the_gap_apart() {
+        const BAND: f64 = 32.0;
+        let bottom = AREA.viewport.max().y;
+        let shown =
+            |frame: OverlayRect| (frame.max().y.min(bottom) - frame.min().y.max(BAND)).max(0.0);
+
+        let one = switch_down(1, PLAIN);
+        let middle = BEGIN + ARC * ARC_MIDDLE;
+        let scale = scale_at(&one.score, middle);
+        let (source, destination) = (
+            one.score.drawn(wid(S1), middle).expect("drawn"),
+            one.score.drawn(wid(D), middle).expect("drawn"),
+        );
+        close(
+            destination.min().y - source.max().y,
+            (STACK_GAP + 8.0) * scale,
+            1e-6,
+            "the gap",
+        );
+        close(destination.min().y - source.max().y, 23.6, 0.05, "on screen");
+        for (frame, what) in [(source, "the source"), (destination, "the destination")] {
+            let share = shown(frame) / frame.size.height;
+            assert!((0.6..0.72).contains(&share), "{what}: {share:.3} in view");
+        }
+
+        let two = switch_down(2, PLAIN * 2f64.sqrt());
+        let middle = BEGIN + PLAIN * 2f64.sqrt() * ZOOM_STRETCH * ARC_MIDDLE;
+        let drawn = |w: u32| two.score.drawn(wid(w), middle).expect("drawn");
+        let passed = drawn(BETWEEN + 1);
+        assert_eq!(
+            shown(passed),
+            passed.size.height,
+            "the strip passed in view whole"
+        );
+        close(drawn(S1).max().y - BAND, 138.4, 0.6, "the source");
+        close(bottom - drawn(D).min().y, 148.0, 0.6, "the destination");
+        close(
+            passed.min().y - drawn(S1).max().y,
+            (STACK_GAP + 8.0) * ZOOM_DEEPEST,
+            1e-3,
+            "above",
+        );
+        close(
+            drawn(D).min().y - passed.max().y,
+            (STACK_GAP + 8.0) * ZOOM_DEEPEST,
+            1e-3,
+            "below",
+        );
+    }
+
+    /// The press after `flight`'s switch as the reactor sends it, at the destination: the
+    /// destination's column panned `dx` along its strip and the strips above and below it, the
+    /// source's and the one below, named standing still.
+    fn pan_after_switch(flight: &Flight, dx: f64) -> (ReflowPlan, OverlayVector) {
+        let sent = |w: u32| -> SurfaceRect {
+            let at = flight.plan.destination(wid(w)).expect("sent");
+            rect(at.origin.x, at.origin.y, at.size.width, at.size.height)
+        };
+        let from_offset = SurfacePoint::new(dx, 0.0);
+        let windows = [
+            on_surface(
+                wid(D),
+                sent(D).translate(rini_geometry::space::Vector::new(dx, 0.0)),
+                None,
+            ),
+            on_surface(wid(S1), sent(S1), Some(1)),
+            on_surface(wid(S2), sent(S2), Some(1)),
+            on_surface(wid(BELOW), sent(BELOW), Some(3)),
+        ];
+        let travel = pan_travel(from_offset, SurfacePoint::origin());
+        (
+            surface_plan(&windows, from_offset, SurfacePoint::origin()),
+            travel,
+        )
+    }
+
+    /// Ctrl+J then Ctrl+L: a focus press merged while the switch arcs pans the destination along
+    /// its strip folded into the arc, landing with it where the press sends it, and leaves every
+    /// other strip where the switch sends it, moving none of them sideways. The arc plays on.
+    #[test]
+    fn a_horizontal_press_merged_mid_switch_folds_into_the_arc_moving_only_the_destination() {
+        let mut flight = switch_down(1, PLAIN);
+        let arc = flight.score.track(Node::Strip, Channel::Base).cloned();
+        let now = BEGIN + 0.05;
+        let playing = flight.score.clone();
+        let (incoming, pan) = pan_after_switch(&flight, -862.0);
+        let before: Vec<(WindowId, OverlayRect)> = [S1, S2, BELOW]
+            .map(|w| (wid(w), flight.plan.destination(wid(w)).unwrap()))
+            .into();
+        flight.merge(&incoming, Some(pan), flight.accent, now);
+        assert_eq!(
+            flight.score.track(Node::Strip, Channel::Base).cloned(),
+            arc,
+            "the arc plays on"
+        );
+        for &window in &flight.drawn {
+            let (was, is) = (playing.drawn(window, now), flight.score.drawn(window, now));
+            assert_eq!(was, is, "{window:?} jumped");
+        }
+        let end = BEGIN + ARC;
+        close(
+            now + flight.score.remaining(now),
+            end,
+            1e-9,
+            "lands with the arc",
+        );
+        assert_eq!(
+            flight.score.drawn(wid(D), end),
+            Some(rect(GAP - 862.0, 36.0, 1722.0, 1077.0))
+        );
+        for (window, sent) in before {
+            assert_eq!(flight.plan.destination(window), Some(sent), "{window:?} stays");
+            let x = laid(&playing, window, now).origin.x;
+            for k in 0..=20 {
+                let at = now + (end - now) * k as f64 / 20.0;
+                assert_eq!(
+                    laid(&flight.score, window, at).origin.x,
+                    x,
+                    "{window:?} moves sideways"
+                );
+            }
+            assert_eq!(flight.score.drawn(window, end), Some(sent));
         }
     }
 
@@ -1723,7 +2050,10 @@ mod tests {
 
     /// A pan the same way as the strip's travel at `now`, as the reactor builds the next press: every
     /// window from where the last pass sends it, on by another column.
-    fn pan(flight: &Flight, dx: f64) -> ReflowPlan {
+    fn pan(flight: &Flight, dx: f64) -> ReflowPlan { panned(flight, OverlayVector::new(dx, 0.0)) }
+
+    /// Every window of `flight` from where the last pass sends it, on by `d`.
+    fn panned(flight: &Flight, d: OverlayVector) -> ReflowPlan {
         let requests: Vec<Resolved> = flight
             .drawn
             .iter()
@@ -1731,8 +2061,8 @@ mod tests {
                 let sent = flight.plan.destination(window).expect("sent");
                 let from = rect(sent.origin.x, sent.origin.y, sent.size.width, sent.size.height);
                 let to = rect(
-                    from.origin.x + dx,
-                    from.origin.y,
+                    from.origin.x + d.x,
+                    from.origin.y + d.y,
                     from.size.width,
                     from.size.height,
                 );
@@ -1740,6 +2070,18 @@ mod tests {
             })
             .collect();
         reflow_plan(&requests, DISPLAY)
+    }
+
+    /// The track `edits` give `window`'s container on `flight`.
+    fn container_track(flight: &Flight, edits: &[Edit], window: WindowId) -> Track {
+        let key = key_of(&flight.plan, window);
+        edits
+            .iter()
+            .find_map(|edit| match edit {
+                Edit::Add(track) if track.node() == Node::Container(key) => Some(track.clone()),
+                _ => None,
+            })
+            .expect("bent")
     }
 
     impl Flight {
@@ -1903,50 +2245,186 @@ mod tests {
     /// With less than `FOLDED_PAN_MIN` of the arc left a press the same way goes on a spring, and so
     /// does a switch: neither touches the arc.
     #[test]
-    fn a_late_press_or_a_switch_goes_on_a_spring_and_leaves_the_arc() {
+    fn a_late_press_or_switch_goes_on_a_spring_and_leaves_the_arc() {
         let late = BEGIN + ARC * (1.0 - FOLDED_PAN_MIN) + 0.005;
-        for (now, pan_by) in [
-            (late, OverlayVector::new(-862.5, 0.0)),
-            (BEGIN + 0.05, OverlayVector::new(0.0, -1117.0)),
+        for pan_by in [
+            OverlayVector::new(-862.5, 0.0),
+            OverlayVector::new(0.0, -PITCH),
         ] {
             let mut flight = focus_right(859.5).flown(Cue::Focus { from: wid(W), to: wid(N) });
             let arc = flight.score.track(Node::Strip, Channel::Base).cloned();
-            let requests: Vec<Resolved> = flight
-                .drawn
-                .iter()
-                .map(|&window| {
-                    let sent = flight.plan.destination(window).unwrap();
-                    let from =
-                        rect(sent.origin.x, sent.origin.y, sent.size.width, sent.size.height);
-                    let to = rect(
-                        from.origin.x + pan_by.x,
-                        from.origin.y + pan_by.y,
-                        from.size.width,
-                        from.size.height,
-                    );
-                    Resolved::tiled(window, from, to)
-                })
-                .collect();
-            let key = key_of(&flight.plan, wid(N));
-            let before = flight.score.drawn(wid(N), now).unwrap();
-            let bent = flight.merge(&reflow_plan(&requests, DISPLAY), Some(pan_by), None, now);
-            let track = bent
-                .edits
-                .iter()
-                .find_map(|edit| match edit {
-                    Edit::Add(track) if track.node() == Node::Container(key) => Some(track.clone()),
-                    _ => None,
-                })
-                .expect("bent");
+            let before = flight.score.drawn(wid(N), late).unwrap();
+            let incoming = panned(&flight, pan_by);
+            let bent = flight.merge(&incoming, Some(pan_by), None, late);
+            let track = container_track(&flight, &bent.edits, wid(N));
             assert!(
                 track.ends() > BEGIN + ARC,
                 "{pan_by:?}: a spring, landing after the arc"
             );
             assert_eq!(flight.score.track(Node::Strip, Channel::Base).cloned(), arc);
-            let after = flight.score.drawn(wid(N), now).unwrap();
+            let after = flight.score.drawn(wid(N), late).unwrap();
             close(after.origin.x, before.origin.x, 1e-9, "no jump");
             close(after.origin.y, before.origin.y, 1e-9, "no jump");
         }
+    }
+
+    /// Ctrl+L then Ctrl+Opt+J while the arc pans: a switch merged with a quarter of the arc left
+    /// folds into it along the stack as a press the same way does along the strip, its travel
+    /// added from rest, and lands with the arc where the switch sends it, the arc playing on;
+    /// a switch merged into a switch's arc does too.
+    #[test]
+    fn a_switch_merged_with_a_quarter_left_folds_into_the_arc_and_lands_with_it() {
+        let d = OverlayVector::new(0.0, -PITCH);
+        let switch_arc = stage(&Cue::Switch, &Strip {
+            windows: &[],
+            pair: &[],
+            area: usable_area(),
+            travel: d,
+            seconds: PLAIN,
+        })
+        .accent;
+        for press in [0.02, 0.05, ARC * (1.0 - FOLDED_PAN_MIN)] {
+            for (mut flight, window) in [
+                (
+                    focus_right(859.5).flown(Cue::Focus { from: wid(W), to: wid(N) }),
+                    wid(N),
+                ),
+                (switch_down(1, PLAIN), wid(D)),
+                (switch_down(1, PLAIN), wid(BELOW)),
+            ] {
+                let now = BEGIN + press;
+                let tag = format!("{window:?} at {press}");
+                let (playing, arc) = (
+                    flight.score.clone(),
+                    flight.score.track(Node::Strip, Channel::Base).cloned(),
+                );
+                let incoming = match flight.plan.member(wid(D)) {
+                    Some(_) => switch_on(&flight),
+                    None => panned(&flight, d),
+                };
+                flight.merge(&incoming, Some(d), switch_arc, now);
+                assert_eq!(
+                    flight.score.track(Node::Strip, Channel::Base).cloned(),
+                    arc,
+                    "{tag}"
+                );
+                let (was, is) = (laid(&playing, window, now), laid(&flight.score, window, now));
+                close(is.origin.y, was.origin.y, 1e-9, &format!("{tag}: no jump"));
+                let frame = now + SAMPLE_STEP;
+                let added = laid(&flight.score, window, frame).origin.y
+                    - laid(&playing, window, frame).origin.y;
+                let end = BEGIN + ARC;
+                let even = PITCH * SAMPLE_STEP / (end - now);
+                assert!(
+                    added.abs() < even,
+                    "{tag}: {added:.2}pt in a frame, {even:.2} even"
+                );
+                close(
+                    now + flight.score.remaining(now),
+                    end,
+                    1e-9,
+                    &format!("{tag}: with the arc"),
+                );
+                let mut last = is.origin.y;
+                for k in 1..=200 {
+                    let y =
+                        laid(&flight.score, window, now + (end - now) * k as f64 / 200.0).origin.y;
+                    assert!(y <= last + 1e-9, "{tag}: turned back at {k}");
+                    last = y;
+                }
+                let (lands, sent) = (
+                    flight.score.drawn(window, end).expect("drawn"),
+                    flight.plan.destination(window).expect("sent"),
+                );
+                close(lands.origin.y, sent.origin.y, 0.5, &format!("{tag}: sent"));
+                close(lands.origin.x, sent.origin.x, 0.5, &format!("{tag}: sent"));
+            }
+        }
+    }
+
+    /// The switch on down after `flight`'s, as the reactor sends it: the destination's strip a
+    /// strip beside, the one below it the destination, the source's strip above, and no floating
+    /// window, both of its strips having none, from where `flight` sends each.
+    fn switch_on(flight: &Flight) -> ReflowPlan {
+        let sent = |w: u32| -> SurfaceRect {
+            let at = flight.plan.destination(wid(w)).expect("sent");
+            rect(at.origin.x, at.origin.y, at.size.width, at.size.height)
+        };
+        let windows = [
+            on_surface(wid(D), sent(D), Some(2)),
+            on_surface(wid(BELOW), sent(BELOW), None),
+            on_surface(wid(S1), sent(S1), Some(1)),
+            on_surface(wid(S2), sent(S2), Some(1)),
+        ];
+        surface_plan(&windows, SurfacePoint::origin(), SurfacePoint::new(0.0, PITCH))
+    }
+
+    /// Ctrl+Opt+J then Ctrl+Opt+K while the switch arcs: folded in, the switch back would start
+    /// from rest under a stack still going down, so it turns on a spring let go as fast as the
+    /// stack is drawn moving, and lands where it started.
+    #[test]
+    fn a_switch_back_mid_switch_turns_the_stack_on_a_spring() {
+        let mut flight = switch_down(1, PLAIN);
+        let now = BEGIN + 0.08;
+        let playing = flight.score.clone();
+        let back = OverlayVector::new(0.0, PITCH);
+        let incoming = panned(&flight, back);
+        let bent = flight.merge(&incoming, Some(back), None, now);
+        let track = container_track(&flight, &bent.edits, wid(D));
+        let key = key_of(&flight.plan, wid(D));
+        let velocity = playing.rate(Node::Container(key), now);
+        assert!(velocity[1] < -1000.0, "the stack is going up: {velocity:?}");
+        let Some(Value::Point(from)) = playing.along(Node::Container(key), now) else {
+            panic!()
+        };
+        let Some(Value::Point(to)) = flight.score.model(Node::Container(key)) else {
+            panic!()
+        };
+        let spring = Leg::Spring {
+            from,
+            to,
+            velocity: OverlayVector::new(velocity[0], velocity[1]),
+            begin: now,
+            omega: spring_omega(PLAIN),
+        };
+        assert_eq!(track, spring.track(key, SAMPLE_STEP));
+        let home = flight.score.drawn(wid(D), now + flight.score.remaining(now)).unwrap();
+        close(
+            home.origin.y,
+            flight.posed.drawn(wid(D), BEGIN).unwrap().origin.y,
+            0.5,
+            "home",
+        );
+    }
+
+    /// A switch merged into a flight with no arc playing plays a shallow arc of its own from rest,
+    /// as a move or a focus press does.
+    #[test]
+    fn a_switch_merged_with_no_arc_playing_plays_a_shallow_one() {
+        let mut plain = focus_right(859.5).flown(Cue::Plain);
+        assert!(plain.score.track(Node::Strip, Channel::Base).is_none());
+        let now = BEGIN + 0.1;
+        let d = OverlayVector::new(0.0, -PITCH);
+        let accent = stage(&Cue::Switch, &Strip {
+            windows: &[],
+            pair: &[],
+            area: usable_area(),
+            travel: d,
+            seconds: PLAIN,
+        })
+        .accent;
+        let incoming = panned(&plain, d);
+        plain.merge(&incoming, Some(d), accent, now);
+        let arc = plain.score.track(Node::Strip, Channel::Base).expect("a shallow arc").clone();
+        assert_eq!(arc.begin(), now);
+        close(arc.seconds(), ARC, 1e-9, "its length");
+        assert_eq!(arc.keys()[0].1, Value::Zoom(Zoom::REST), "from rest");
+        close(
+            scale_at(&plain.score, now + ARC / 2.0),
+            STRIP_ZOOM,
+            1e-3,
+            "shallow",
+        );
     }
 
     /// A move or a focus press that scrolls, merged into a flight with no arc playing, plays a

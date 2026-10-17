@@ -274,9 +274,12 @@ The two entry points feed the same `begin_group`:
   every window the flight drew. The engine drops these windows from a flight
   whose look draws none. A switch under such a look stacks its strips the same
   pitch apart and names every tiled window but the destination's by its
-  workspace's index (`Reactor::switch_rows`), so a pan merged into it and a
-  switch merged into a pan agree on where each strip is and which windows are
-  the strip's. A pan's member named of another strip than the container it
+  workspace's index (`Reactor::switch_rows`), with the strip above the first it
+  travels between and the one below the last drawn beside them as a pan draws
+  them (`Reactor::strips_at`), so a pan merged into it and a switch merged into
+  a pan agree on where each strip is and which windows are the strip's. Every
+  switch names itself to the look (`Cue::Switch`), which Zoom plays on an arc
+  and Slide ignores. A pan's member named of another strip than the container it
   rides holds votes, and the container comes to hold the strip it names
   (`Merge::vote`, `Merge::settle_group`): a switch merged into a pan drawing
   the strips beside landed the destination 24pt low, its windows moved by the
@@ -353,20 +356,20 @@ folded by the flight's look (`FlightScore::fold`; Slide's is `merge_plans`, as a
 with every container where frame zero installs it and taken to be where the last pass sends it: the
 reactor builds a pass from the layout where the press before left it, so its frames are places on the
 strip there. A burst of presses then composes as one movement from frame zero, which the look is
-told shows the latest press (its `Cue`: plain, a move or a focus press along the strip). Rebuilt
-from the merged tiles, as it was, each window rode its own path from where frame zero drew it to where
-the last press sends it. On two steps along the strip, the column the second brought started under
-the one the first brought, and the column the second left behind was outrun and covered by its
-neighbour; on two switches the rows did the same, and the floating windows left their container for
-paths of their own (pinned by
+told shows the latest press (its `Cue`: plain, a move or a focus press along the strip, or a
+switch). Rebuilt from the merged tiles, as it was, each window rode its own path from where frame
+zero drew it to where the last press sends it. On two steps along the strip, the column the second
+brought started under the one the first brought, and the column the second left behind was outrun
+and covered by its neighbour; on two switches the rows did the same, and the floating windows left
+their container for paths of their own (pinned by
 `a_second_pan_before_the_flight_moves_keeps_the_strip_one_piece` and
-`a_second_switch_before_the_flight_moves_carries_the_floating_window_with_the_surface`). Behind the frame-zero
-wait, frame zero is asked again for every window the pass brought wholly on screen where its tile
-starts that no ask expected there, under the same generation, and the overlay waits for that ask too,
-never past the 80ms the begin set. The request alone is what the first ask knew: a window rejoining
-the pass, or one a layout pass starts from the window server's frame rather than the request's, would
-otherwise fly the cache's picture to its landing. Reserved entrances still waiting for a picture take
-the pass's slot (`retarget_entrances`).
+`a_second_switch_before_the_flight_moves_carries_the_floating_window_with_the_surface`). Behind the
+frame-zero wait, frame zero is asked again for every window the pass brought wholly on screen where
+its tile starts that no ask expected there, under the same generation, and the overlay waits for
+that ask too, never past the 80ms the begin set. The request alone is what the first ask knew: a
+window rejoining the pass, or one a layout pass starts from the window server's frame rather than
+the request's, would otherwise fly the cache's picture to its landing. Reserved entrances still
+waiting for a picture take the pass's slot (`retarget_entrances`).
 
 **A pass growing a window once the flight moves is held.** Kai's rapid Alt-R presses of 2026-10-10
 (`~/Library/Logs/rini/transitions.jsonl`, g144-157, one column cycled through its widths) mostly

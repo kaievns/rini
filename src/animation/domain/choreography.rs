@@ -104,15 +104,20 @@ pub enum Cue {
         from: WindowId,
         to: WindowId,
     },
+    /// The display switched to another workspace of its stack, the view travelling up or down.
+    Switch,
 }
 
 impl Cue {
     pub fn moved(&self) -> Option<(WindowId, Direction)> {
         match *self {
             Cue::Move { window, direction } => Some((window, direction)),
-            Cue::Plain | Cue::Focus { .. } => None,
+            Cue::Plain | Cue::Focus { .. } | Cue::Switch => None,
         }
     }
+
+    /// Whether the press is a move or a focus press along the strip.
+    pub fn along_strip(&self) -> bool { matches!(self, Cue::Move { .. } | Cue::Focus { .. }) }
 }
 
 /// Where one window of a moved pair started on the strip, and whether it is of the column passed
@@ -870,8 +875,8 @@ mod tests {
     /// four times 10-400ms apart into a flight playing from its score, 200 flights from each of
     /// `BEND_SEEDS`. Some flights start on an arc and some passes bring one (`an_arc`), and some
     /// draw strips beside the one they move (`random_rows`), which every pan names standing still,
-    /// and are then switched onto one of them up to twice (`a_switch`), each switch followed by a
-    /// pass.
+    /// and are then switched onto one of them up to twice (`a_switch`), half the switches bringing
+    /// a switch's arc (`a_switch_arc`), each followed by a pass.
     fn bent_flights(
         make: &dyn Fn() -> Box<dyn Choreography>,
         check: &mut dyn FnMut(&Bend) -> Result<(), String>,
@@ -926,7 +931,9 @@ mod tests {
                         };
                         now += switches.pt(10.0, 400.0) / 1000.0;
                         let (playing, sent) = (flight.score.clone(), flight.plan.clone());
-                        let delta = flight.merge(&incoming, pan, None, now).delta;
+                        let accent =
+                            (switch && switches.coin()).then(|| a_switch_arc(&mut switches));
+                        let delta = flight.merge(&incoming, pan, accent, now).delta;
                         let after = if switch { "" } else { " after" };
                         check(&Bend {
                             tag: format!("seed {seed} run {run} switch {round}{after}"),
@@ -1733,6 +1740,17 @@ mod tests {
         }
     }
 
+    /// A switch's arc as a zoom look stages one, at the plain length: 0.7 to 0.88 deep, half the
+    /// travel carried at its middle, nothing swapped.
+    fn a_switch_arc(rng: &mut Gen) -> Accent {
+        Accent::Arc {
+            depth: 0.7 + rng.below(19) as f64 / 100.0,
+            share: 0.5,
+            swap: None,
+            seconds: PLAIN,
+        }
+    }
+
     /// The press a flight or a push shows: plain, focus along the strip between two of `windows` or
     /// staying on one at an end, or a move of one of them.
     fn a_cue(rng: &mut Gen, windows: &[WindowId]) -> Cue {
@@ -2077,8 +2095,9 @@ mod tests {
         }
     }
 
-    /// Whatever the press and the strip, a look stages no window but those of the pair it is given,
-    /// and each once: every other window stays where the reactor put it, at its new frame.
+    /// Whatever the press and the strip, a switch through the stack among them, a look stages no
+    /// window but those of the pair it is given, and each once: every other window stays where the
+    /// reactor put it, at its new frame.
     #[test]
     fn every_look_stages_only_the_pair_it_is_given() {
         let directions = [
@@ -2133,11 +2152,18 @@ mod tests {
                         direction: directions[rng.below(4) as usize],
                     },
                 };
+                let mut travel = OverlayVector::new(rng.pt(-900.0, 900.0), 0.0);
+                let cue = if focus.below(4) == 0 {
+                    travel = OverlayVector::new(0.0, focus.pt(-3.0, 3.0) * 1109.0);
+                    Cue::Switch
+                } else {
+                    cue
+                };
                 let strip = Strip {
                     windows: &windows,
                     pair: &pair,
                     area,
-                    travel: OverlayVector::new(rng.pt(-900.0, 900.0), 0.0),
+                    travel,
                     seconds: PLAIN,
                 };
                 let staging = look.stage(&cue, &strip);
