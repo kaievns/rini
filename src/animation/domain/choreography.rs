@@ -880,7 +880,16 @@ mod tests {
         make: &dyn Fn() -> Box<dyn Choreography>,
         check: &mut dyn FnMut(&Bend) -> Result<(), String>,
     ) -> Result<(), String> {
-        for seed in BEND_SEEDS {
+        bent_flights_of(&BEND_SEEDS, make, check)
+    }
+
+    /// `bent_flights`, 200 flights from each of `seeds`.
+    fn bent_flights_of(
+        seeds: &[u64],
+        make: &dyn Fn() -> Box<dyn Choreography>,
+        check: &mut dyn FnMut(&Bend) -> Result<(), String>,
+    ) -> Result<(), String> {
+        for &seed in seeds {
             let mut rng = Gen(seed);
             let mut arcs = Gen(seed + 1000);
             let mut beside = Gen(seed + 2000);
@@ -1135,6 +1144,14 @@ mod tests {
     /// Slide starts each one a pass bends from where it is drawn on `MOTION_CURVE` again, so its
     /// speed jumps, against "Arriving mid-flight" in `specs/animation.md`.
     fn bends_at_the_speed_it_moves(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
+        bends_at_the_speed_it_moves_over(&BEND_SEEDS, make)
+    }
+
+    /// `bends_at_the_speed_it_moves`, over the flights of `seeds`.
+    fn bends_at_the_speed_it_moves_over(
+        seeds: &[u64],
+        make: &dyn Fn() -> Box<dyn Choreography>,
+    ) -> Result<(), String> {
         let edges =
             |frame: OverlayRect| [frame.min().x, frame.min().y, frame.max().x, frame.max().y];
         let zoom = |score: &Score, at: f64| match score.sample(Node::Strip, at) {
@@ -1142,7 +1159,7 @@ mod tests {
             _ => Value::Zoom(Zoom::REST).parts(),
         };
         let mut moving = 0;
-        bent_flights(make, &mut |bend| {
+        bent_flights_of(seeds, make, &mut |bend| {
             let now = bend.now;
             let at = |k: f64| now + k * SAMPLE_STEP;
             for part in 0..3 {
@@ -1216,6 +1233,35 @@ mod tests {
                 panic!("{look:?}: {broken}");
             }
         }
+    }
+
+    /// The speed contract over seeds 0-999, the seeds each look fails on counted, as "Mid-flight
+    /// passes" in `src/animation/docs/animation-smoothness.md` gives them. Run with
+    /// `CARGO_TARGET_DIR=target-dev cargo test --release --lib the_speed_contract_over -- --ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn the_speed_contract_over_a_thousand_seeds_fails_only_under_zoom() {
+        let failing = |look: Look| {
+            let broken = (0..1000u64).map(|seed| {
+                bends_at_the_speed_it_moves_over(&[seed], &|| look.choreography()).err()
+            });
+            broken.flatten().collect::<Vec<_>>()
+        };
+        let failing: Vec<_> = Look::ALL.into_iter().map(|look| (look, failing(look))).collect();
+        for (look, broken) in &failing {
+            println!("{look:?}: {} failing", broken.len());
+            for broken in broken {
+                println!("  {broken}");
+            }
+        }
+        let counts: Vec<_> = failing.iter().map(|(look, broken)| (*look, broken.len())).collect();
+        assert_eq!(counts, [
+            (Look::Slide, 0),
+            (Look::Zoom, 38),
+            (Look::Linear, 0),
+            (Look::Probe, 0)
+        ]);
     }
 
     /// A window a pass sends out of its container lands only in a container going as fast, under

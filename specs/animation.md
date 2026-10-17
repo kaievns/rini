@@ -342,10 +342,10 @@ destination for a window already moving.
   pass takes out of the piece it rode, as a second move of a narrower column does with the column it
   passes, and whichever piece it then rides: it MUST NOT ride one going another speed, though that
   piece has as far left to go, and it MUST NOT stop where it is drawn when the pass sends it there.
-  A still window took a piece with 151pt left at 2821pt/s and started at that speed, and a window
-  at 2211pt/s sent where it was drawn stopped dead, under every look.
   Not yet met: a loose tile a pass bends (a resize, an entrance, a floating window) starts
-  `MOTION_CURVE` again from where it is drawn, so its speed jumps
+  `MOTION_CURVE` again from where it is drawn, so its speed jumps. Under zoom, a window a pass bends
+  can speed up by up to 12% where the pass lands, 3246 to 3538pt/s in one flight, on 38 of seeds
+  0-999 of the speed contract's flights; Slide and Linear fail none
   (`src/animation/docs/animation-smoothness.md`).
 
 > **Reported 2026-09-29.** "as a general rule animation should not get interrupted mid-filight and
@@ -353,6 +353,11 @@ destination for a window already moving.
 > flight". Each press restarted the motion curve from wherever the strip was drawn. The curve leaves
 > at 6.25x its average speed, so a strip that had nearly stopped was thrown forward again: about
 > 890pt/s to 15,375pt/s in one frame at a typical interval between presses.
+
+> **Found 2026-10-17, not reported.** The speed contract over seeds 0-999 failed 30 seeds under
+> Slide, 101 under Linear and 67 under Zoom. A window a pass took out of its piece rode any piece
+> with as far left to go: a still window took one with 151pt left at 2821pt/s and started at that
+> speed, and a window at 2211pt/s sent where it was drawn stopped dead.
 - A window the flight has not seen MUST be able to join it.
 - A merged press MUST NOT show a stale, transparent, stretched or zoomed tile. A picture taken for an
   end its tile no longer has, or of a window more than 20pt from where its tile ends, never reaches a

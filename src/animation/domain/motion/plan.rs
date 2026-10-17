@@ -2111,6 +2111,52 @@ mod tests {
             assert_eq!(overlay_of(rel(&merged, wid(2)), install), before, "no jump");
             assert!(merged.destination(wid(2)).unwrap().same_as(on(elsewhere)));
         }
+
+        /// A container a member opens goes as fast as the one it left, so a member of a still
+        /// container leaving with as far to go does not land in it.
+        #[test]
+        fn a_container_a_member_opens_goes_as_fast_as_the_one_it_left() {
+            let at = |x: f64| rect(x, 32.0, 200.0, 900.0);
+            let (fast, slow) = (-300.0, -100.0);
+            let current = flight_of(&[
+                Resolved::tiled(wid(1), at(4.0), at(4.0 + fast)),
+                Resolved::tiled(wid(3), at(208.0), at(208.0 + fast)),
+                Resolved::tiled(wid(5), at(412.0), at(412.0 + fast)),
+                Resolved::tiled(wid(2), at(616.0), at(616.0 + slow)),
+                Resolved::tiled(wid(4), at(820.0), at(820.0 + slow)),
+                Resolved::tiled(wid(6), at(1024.0), at(1024.0 + slow)),
+            ]);
+            let left_fast = key_of(&current, wid(1)).unwrap();
+            let left_still = key_of(&current, wid(2)).unwrap();
+            let fast_along = OverlayPoint::new(fast / 2.0, 0.0);
+            let still_along = OverlayPoint::new(slow / 2.0, 0.0);
+            let presented = Presented {
+                drawn: [(left_fast, fast_along), (left_still, still_along)].into_iter().collect(),
+                along: [(left_fast, fast_along), (left_still, still_along)].into_iter().collect(),
+                rate: [(left_fast, OverlayVector::new(-3000.0, 0.0))].into_iter().collect(),
+            };
+            let remaining = 250.0;
+            let pass = reflow_plan(
+                &[
+                    Resolved::tiled(wid(1), at(4.0), at(4.0 + fast / 2.0 + remaining)),
+                    Resolved::tiled(wid(3), at(208.0), at(208.0 + fast)),
+                    Resolved::tiled(wid(5), at(412.0), at(412.0 + fast)),
+                    Resolved::tiled(wid(2), at(616.0), at(616.0 + slow / 2.0 + remaining)),
+                    Resolved::tiled(wid(4), at(820.0), at(820.0 + slow)),
+                    Resolved::tiled(wid(6), at(1024.0), at(1024.0 + slow)),
+                ],
+                DISPLAY,
+            );
+            let (merged, delta) = merge_plans(&current, &pass, None, &presented, None, VIEWPORT);
+            let opened: Vec<_> = delta.new_groups.iter().map(|g| (g.key, g.leaving)).collect();
+            let w1 = key_of(&merged, wid(1)).unwrap();
+            let w2 = key_of(&merged, wid(2)).unwrap();
+            assert_eq!(
+                opened,
+                [(w1, Some(left_fast)), (w2, Some(left_still))],
+                "{delta:?}"
+            );
+        }
     }
 
     /// A pass as rigid pieces: `reflow_plan`, `surface_plan` and what `animation_targets` names. See "Layout changes and strip movements" in
