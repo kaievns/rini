@@ -327,10 +327,8 @@ impl Reactor {
         display_bounds: CGRect,
         gaps: &crate::layout::settings::Gaps,
     ) -> Vec<SurfaceWindow> {
-        use crate::transitions::domain::strip_stack::{
-            beside, in_zoomed_view, stack_gap, strip_frame,
-        };
-        let Some(gap) = self.config.settings.look.stack_gap() else {
+        use crate::transitions::domain::strip_stack::{beside, in_zoomed_view, strip_frame};
+        let Some(gap) = self.stack_gap(screen, display_bounds) else {
             return Vec::new();
         };
         let Some(active) = self.layout_engine.active_workspace(space) else {
@@ -341,12 +339,6 @@ impl Reactor {
             return Vec::new();
         };
         let display = ScreenRect::from_cg(display_bounds);
-        let gap = stack_gap(
-            gap,
-            ScreenRect::from_cg(screen.frame),
-            display,
-            self.config.settings.top_band(),
-        );
         let pitch = screen.frame.size.height + gap;
         let origin = ScreenPoint::from_cg(display_bounds.origin);
         let viewport = SurfaceRect::new(SurfacePoint::origin(), display.size.respace());
@@ -386,6 +378,18 @@ impl Reactor {
             }
         }
         windows
+    }
+
+    /// How far apart beyond the usable height the look draws the strips of `screen`'s stack
+    /// (`strip_stack::stack_gap`); `None` for a look that draws none beside the one it moves.
+    fn stack_gap(&self, screen: &ScreenInfo, display_bounds: CGRect) -> Option<f64> {
+        let gap = self.config.settings.look.stack_gap()?;
+        Some(crate::transitions::domain::strip_stack::stack_gap(
+            gap,
+            ScreenRect::from_cg(screen.frame),
+            ScreenRect::from_cg(display_bounds),
+            self.config.settings.top_band(),
+        ))
     }
 
     /// Bounces the view against the end a command ran into: the strip's first or last column
@@ -494,12 +498,13 @@ impl Reactor {
         }
 
         let display_bounds = (self.reads.display_bounds)(screen.id);
-        let height = screen.frame.size.height;
+        let gap = self.stack_gap(&screen, display_bounds);
+        let pitch = screen.frame.size.height + gap.unwrap_or(0.0);
         let (windows, destination_layout) = self.switch_rows(
             space,
             &workspaces,
             (from_index, to_index),
-            &screen,
+            (&screen, gap),
             display_bounds,
             &gaps,
         );
@@ -521,14 +526,14 @@ impl Reactor {
             workspaces = workspaces.len(),
             strip_windows = windows.len(),
             final_frames = final_frames.len(),
-            height,
+            pitch,
             "strip switch build"
         );
         if windows.is_empty() {
             return false;
         }
 
-        let travel = crate::transitions::domain::strip_stack::travel(from_index, to_index, height);
+        let travel = crate::transitions::domain::strip_stack::travel(from_index, to_index, pitch);
         let (from_offset, to_offset) = (travel.from, travel.to);
         let duration = std::time::Duration::from_secs_f64(
             (self.config.settings.animation_duration.max(0.0)) * travel.duration_stretch,
@@ -561,13 +566,15 @@ impl Reactor {
     }
 
     /// Every workspace from `from_index` to `to_index`, laid out and stacked one usable height
-    /// below the one above it, as strip-surface windows; and the destination's own layout.
+    /// below the one above it, as strip-surface windows; and the destination's own layout. Under a
+    /// look that draws the strips beside the one it moves, `gap` further apart, each tiled window
+    /// of a strip other than the destination's named by its workspace's index, as a pan names it.
     fn switch_rows(
         &mut self,
         space: SpaceId,
         workspaces: &[(crate::workspaces::VirtualWorkspaceId, String)],
         (from_index, to_index): (usize, usize),
-        screen: &ScreenInfo,
+        (screen, gap): (&ScreenInfo, Option<f64>),
         display_bounds: CGRect,
         gaps: &crate::layout::settings::Gaps,
     ) -> (Vec<SurfaceWindow>, Vec<(WindowId, CGRect)>) {
@@ -579,7 +586,7 @@ impl Reactor {
         //
         // The surface is still expressed in full-display coordinates (the overlay's own), so a
         // window keeps its position below the bar within its row; only the row-to-row step shrinks.
-        let row_pitch = screen.frame.size.height;
+        let row_pitch = screen.frame.size.height + gap.unwrap_or(0.0);
         let mut windows: Vec<SurfaceWindow> = Vec::new();
         let mut destination_layout = Vec::new();
         let rings = self.layout_rings();
@@ -605,6 +612,8 @@ impl Reactor {
                     continue;
                 };
                 let Some(server_id) = window.info.sys_id else { continue };
+                let floating = self.layout_engine.is_window_floating(wid);
+                let beside = gap.is_some() && index != to_index && !floating;
                 windows.push(SurfaceWindow {
                     window: wid,
                     server_id,
@@ -617,10 +626,10 @@ impl Reactor {
                     // Never pinned here. A floating window belongs to a workspace, so it leaves with the
                     // one being left and arrives with the one being entered.
                     pinned: false,
-                    floating: self.layout_engine.is_window_floating(wid),
+                    floating,
                     from: None,
                     worn: self.worn(wid, &rings),
-                    row: None,
+                    row: beside.then_some(index),
                 });
             }
         }

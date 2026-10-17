@@ -217,7 +217,16 @@ and get no track (`a_pan_merged_leaves_every_row_where_it_is`). A window of the 
 one: the bend contract's flights drew a strip window brought still by a pan into a row's container,
 and a layout pass moving that window later dragged the row sideways 350pt
 (`a_row_shares_no_container_with_the_strip_and_moves_only_up_and_down`). Half the flights the bend
-and fold contracts draw carry one or two such strips, each sent nowhere by any pass.
+and fold contracts draw carry one or two such strips, each sent nowhere by any pass, and after
+their seeded passes, so those streams stay as they were, up to two switches onto one of them
+(`a_switch`), each a pan up or down by the pitch naming that strip the strip's and the strip a
+strip beside, then a pass. A member a pan names of another strip than its container holds votes,
+and the container comes to hold that strip: before, a switch merged into a pan drawing rows left
+the destination where the pan moved its still container, 24pt low by the gap the switch's pitch
+lacked
+(`a_switch_merged_into_a_flight_drawing_rows_lands_the_destination_where_the_switch_sends_it`),
+and a pan after a switch left the destination standing, its windows still in the container of
+the strip beside they had been, which both contracts now catch.
 
 The look reads every container's two positions once, from the flight's score, for `merge_plans`,
 and turns the delta into the score's edits, which the overlay plays in one transaction: reparents,

@@ -116,7 +116,8 @@ lifted on the arc's bell (`Node::Lift`), which the overlay draws as a shadow bes
 lifted it, is not in the score. A look that gives a stack gap (`Look::stack_gap`, Zoom's 24pt) has
 the reactor draw the strips of the workspaces above and below beside every pan and bounce it sends,
 each in a container of its own (`RigidGroup::beside`) under the same strip layer, so the zoom draws
-them and nothing else moves them but the view up and down.
+them and nothing else moves them but the view up and down; a switch stacks its strips the same gap
+apart and names them as a pan does, so the two merge into one another.
 
 ## `transitions`
 

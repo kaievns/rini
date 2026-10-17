@@ -21,8 +21,9 @@ type Join = (GroupMember, OverlayVector, Option<usize>);
 
 /// Folds a later pass into a flight in progress: containers are retargeted, membership changes
 /// are reparented at the frames they are drawn at, a pan adds its travel to every group and the
-/// columns a move swapped still vote under it, and a window the pass brings rides beside the windows
-/// it sits beside as the last pass left them. `presented` is where each container is at the merge.
+/// columns a move swapped still vote under it, as do the windows it names of another strip than
+/// the container they ride holds, and a window the pass brings rides beside the windows it sits
+/// beside as the last pass left them. `presented` is where each container is at the merge.
 pub fn merge_plans(
     current: &FlightPlan,
     incoming: &ReflowPlan,
@@ -74,6 +75,9 @@ struct Merge<'a> {
     /// Where the floating container is before this pass's switch moves it. Floating frames stay
     /// container-relative.
     floating_before: OverlayPoint,
+    /// The strip a pan names each rigid member of: a container whose members it names as of
+    /// another strip than the container holds comes to hold that one.
+    named: HashMap<WindowId, Option<usize>>,
 }
 
 impl<'a> Merge<'a> {
@@ -91,6 +95,7 @@ impl<'a> Merge<'a> {
             sent: current.positions.clone(),
             loose: current.position(GroupKey::Loose),
             floating_before: current.position(GroupKey::Floating),
+            named: HashMap::new(),
         }
     }
 
@@ -140,13 +145,22 @@ impl<'a> Merge<'a> {
         for group in &incoming.groups {
             // Under a pan, only a group not travelling with it votes: a column a move swapped,
             // heading for a slot of its own. Its destination is a place on the strip, never a
-            // park, so it votes wherever that is.
+            // park, so it votes wherever that is. So does a window the pan names of another strip
+            // than its container holds: a switch's destination drawn beside a pan, or its source
+            // under a pan after it, which the pan moves as the strip it was.
             let swapped = pan.is_some_and(|d| !same_vector(group.travel, d));
             for m in &group.members {
                 let to = overlay_of(m.rel, group.travel.to_point());
                 match next.locate(m.window) {
                     Located::Group(key, rel) => {
-                        if swapped || (pan.is_none() && !rides_out(next, key, to, viewport)) {
+                        let votes_now = match pan {
+                            Some(_) => {
+                                self.named.insert(m.window, group.beside);
+                                swapped || next.beside_of(key) != group.beside
+                            }
+                            None => !rides_out(next, key, to, viewport),
+                        };
+                        if votes_now {
                             votes.push((
                                 key,
                                 m.window,
@@ -223,24 +237,39 @@ impl<'a> Merge<'a> {
             .expect("a voted group has a cluster");
         let p = clusters[winner].0;
         self.next.move_group(key, p, &mut self.delta);
+        let held = self.next.beside_of(key);
         for (i, (_, losers)) in clusters.iter().enumerate() {
             if i == winner {
                 continue;
             }
             for &(window, p) in losers {
-                self.reparent(key, window, p);
+                let beside = self.named.get(&window).copied().unwrap_or(held);
+                self.reparent(key, window, p, beside);
             }
+        }
+        let mut named = clusters[winner].1.iter().filter_map(|(w, _)| self.named.get(w));
+        if let Some(&first) = named.next()
+            && named.all(|&b| b == first)
+        {
+            self.next.group_mut(key).beside = first;
         }
     }
 
-    /// What the member still has to travel: a group with the same remaining travel carries it
-    /// there. Else it leaves in a container of its own from where it is drawn.
-    fn reparent(&mut self, key: GroupKey, window: WindowId, p: OverlayPoint) {
+    /// What the member still has to travel: a group of the strip `beside` names with the same
+    /// remaining travel carries it there. Else it leaves in a container of its own, of that strip,
+    /// from where it is drawn.
+    fn reparent(
+        &mut self,
+        key: GroupKey,
+        window: WindowId,
+        p: OverlayPoint,
+        beside: Option<usize>,
+    ) {
         let from_drawn = position_in(&self.presented.drawn, key);
         let from_along = position_in(&self.presented.along, key);
         let member = self.next.take_member(key, window);
         let remaining = p - from_along;
-        let landing = landing_for(&self.next, &self.presented.along, remaining, key);
+        let landing = landing_for(&self.next, &self.presented.along, remaining, key, beside);
         let to_key = match landing {
             Some(to_key) => {
                 let shift = from_along - position_in(&self.presented.along, to_key);
@@ -257,6 +286,7 @@ impl<'a> Merge<'a> {
                     &mut self.presented,
                     &mut self.delta,
                 );
+                self.next.group_mut(opened).beside = beside;
                 self.sent.insert(opened, position_in(&self.current.positions, key));
                 opened
             }
@@ -362,15 +392,15 @@ fn retarget_loose(list: &mut [OwnPath], index: usize, to: GroupRect, delta: &mut
     delta.retargeted_tiles.push((path.window, to));
 }
 
-/// The group of the strip `leaving` holds whose remaining travel (destination less where its leg
+/// The group of the strip `beside` names whose remaining travel (destination less where its leg
 /// has it, `along`) matches `remaining`, for a member leaving `leaving`.
 fn landing_for(
     next: &FlightPlan,
     along: &HashMap<GroupKey, OverlayPoint>,
     remaining: OverlayVector,
     leaving: GroupKey,
+    beside: Option<usize>,
 ) -> Option<GroupKey> {
-    let beside = next.beside_of(leaving);
     travelling(next, along, remaining, beside)
         .find(|g| g.key != leaving)
         .map(|g| g.key)

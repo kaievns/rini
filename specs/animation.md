@@ -268,9 +268,15 @@ Zoom never steps; the step above is slide's.
   its floating ones, each on its picture or the stand-in until one is taken, and it MUST NOT hold
   the flight back or be pictured at its first frame.
 - A vertical workspace switch under zoom MUST play as one arc as well: the strip zooms out, the
-  stack travels with the strips the same gap apart, and the destination zooms back in. Not yet
-  met: the switch slides as under slide, the strips abutting and unzoomed ("The vertical workspace
-  switch").
+  stack travels with the strips the same gap apart, and the destination zooms back in. The strips
+  travel the gap apart, every one but the destination's a strip beside. Not yet met: the switch
+  does not zoom ("The vertical workspace switch").
+- A switch merged into a pan or a bounce drawing the strips beside, and a pan merged into a
+  switch, MUST land every window where the later one sends it and MUST NOT move a window to another
+  container: a switch merged into a pan drew the destination 24pt below its frames, by the
+  gap the switch's pitch lacked, and jumped at the lift; a pan merged into a switch that named
+  every window the strip's moved the source's windows into the switch's container and the
+  destination's out of it.
 
 > **Reported 2026-10-17.** "okay, can you implement the zoomout between workspaces too? basically
 > when zoomout happens i should see the top/bottom strips (at a bit of a padding) and it applies to
@@ -283,8 +289,8 @@ Zoom never steps; the step above is slide's.
 - Under slide, the workspaces MUST scroll as one column, each sitting directly on the one above it.
   There MUST NOT be a band of empty desktop the size of the bar between one workspace and the next:
   the only space between two workspaces' windows is their own outer margins, the same gap two tiled
-  windows have. Under zoom the strips sit the zoom look's gap apart and the switch plays as an arc
-  ("The zoom look"), not yet met.
+  windows have. Under zoom the strips scroll the zoom look's gap apart, and the switch is to play as
+  an arc, not yet met ("The zoom look").
 - The animation MUST NOT extend under the bar. Its surface starts at the bar's lower edge, and a
   window scrolling up off the top passes behind the bar rather than into a strip above it.
 
@@ -1050,11 +1056,17 @@ are placed by `src/transitions/domain/strip_stack.rs` (`rows_beside_a_strip_sit_
 `the_gap_grows_to_the_band_left_above_or_below_the_strip`, `nothing_of_a_row_shows_at_rest`,
 `in_zoomed_view_keeps_what_the_deepest_zoom_shows`), named by the reactor under zoom alone
 (`under_zoom_a_pan_names_the_rows_beside_it`, `under_zoom_a_bounce_names_the_rows_beside_it`,
-`the_ends_of_the_stack_draw_no_strip_beyond`, `under_slide_pans_and_bounces_send_what_they_did`),
+`the_ends_of_the_stack_draw_no_strip_beyond`,
+`under_zoom_a_switch_stacks_the_strips_apart_and_names_all_but_the_destination`,
+`under_slide_pans_bounces_and_switches_send_what_they_did`),
 kept in containers of their own that only the view up and down moves
 (`each_other_strip_rides_a_container_of_its_own_even_travelling_as_the_strip_does`,
 `a_pan_merged_leaves_every_row_where_it_is`,
-`a_row_shares_no_container_with_the_strip_and_moves_only_up_and_down`), zoomed and left still by
+`a_row_shares_no_container_with_the_strip_and_moves_only_up_and_down`), merged with a switch
+into one another landing each window where the later sends it
+(`a_switch_merged_into_a_flight_drawing_rows_lands_the_destination_where_the_switch_sends_it`,
+`a_pan_merged_after_a_switch_pans_only_the_destination`, and the bend and fold contracts' switches,
+`a_switch`), zoomed and left still by
 the arc and carried by a push (`a_horizontal_arc_zooms_the_rows_and_moves_none`,
 `a_push_at_a_side_carries_the_rows_with_the_strip`), flown by the engine
 (`a_row_flies_on_its_picture_or_the_stand_in_unasked_unwatched_unholed_and_warms_at_the_quiet`,

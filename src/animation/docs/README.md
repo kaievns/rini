@@ -12,7 +12,7 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 |---|---|
 | `domain/motion.rs` | The root of `motion`: how a transition moves, as pure functions over rects, its modules below |
 | `domain/motion/plan.rs` | `FlightPlan` and where it lands each window (`FlightPlan::destination`), rigid groups and the windows on paths of their own (`OwnPath`), `reflow_plan` over a pass's `Resolved` windows and `surface_plan`, each strip drawn beside the one a movement moves in a group of its own (`RigidGroup::beside`), a frame in its container and back (`group_relative`, `overlay_of`, and `installed` for a fresh plan), the containers an edge bounce or a nudge carries, and an entrance's shape |
-| `domain/motion/plan/merge.rs` | `merge_plans`, a pass arriving mid-flight folded into the plan: a pan carrying every group, a strip beside only as far as the view goes up and down, the members' votes for where their containers go, the largest cluster keeping each and the rest reparented, a newcomer riding beside the windows it sits beside, never in another strip's container, and the loose and floating tiles retargeted |
+| `domain/motion/plan/merge.rs` | `merge_plans`, a pass arriving mid-flight folded into the plan: a pan carrying every group, a strip beside only up and down, the members' votes for where their containers go, one a pan names of another strip than its container's voting too, the largest cluster keeping each and the rest reparented, a newcomer riding beside the windows it sits beside, never in another strip's container, and loose and floating tiles retargeted |
 | `domain/motion/surface.rs` | How a strip movement carries a surface: what the viewport at an offset shows (`viewport`), `surface_travel`, `pan_travel`, and what a window on the surface has to say (`SurfaceGeometry`), a window of a strip beside travelling with the view up and down only |
 | `domain/motion/glide.rs` | `Leg`: a container's movement over time; `Leg::toward`, the spring a merge bends it on, from where the score has its movement (`Score::along`) and as fast as its leg is going |
 | `domain/motion/easing.rs` | `MOTION_CURVE`, and the ease-in-out a stepping move's strip crosses on; a curve cut where its progress reaches a share, its speed unbroken through the cut (`CubicBezier::split`) |
@@ -93,7 +93,9 @@ by kind. Nor the reactor, unless it needs a press no `Cue` names yet: a `Cue` is
 press along the strip (`EventResponse::moved`, `stepped` and `pushed` in
 `src/workspaces/engine.rs`), and a bounce at a side of the strip carries the press that ran into it.
 A look that gives a `stack_gap` has the reactor draw the strips above and below beside every pan
-and bounce it sends, and the flight engine drops them from a flight whose look gives none. The
+and bounce it sends, and stack a switch's strips the same gap apart, every one but the
+destination's named a strip beside; the flight engine drops them from a flight whose look gives
+none. The
 flight's clock ends with the score the motion starts with (`Event::Fit`), so a look shorter than
 its press lifts as it lands; a merge still restarts it at the plain length (`specs/animation.md`,
 "The zoom look", not yet met):

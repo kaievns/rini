@@ -1138,23 +1138,147 @@ mod tests {
             rows: &[(u32, SurfaceRect, usize)],
             from_offset: SurfacePoint,
         ) -> ReflowPlan {
-            use crate::transitions::domain::request::SurfaceWindow;
-            let window = |id: u32, frame, row| SurfaceWindow {
-                window: wid(id),
-                server_id: rini_core::ids::WindowServerId::new(id),
-                frame,
-                pinned: false,
-                floating: false,
-                from: None,
-                worn: Default::default(),
-                row,
-            };
-            let windows: Vec<SurfaceWindow> = strip
+            let windows: Vec<(u32, SurfaceRect, Option<usize>)> = strip
                 .iter()
-                .map(|&(id, frame)| window(id, frame, None))
-                .chain(rows.iter().map(|&(id, frame, row)| window(id, frame, Some(row))))
+                .map(|&(id, frame)| (id, frame, None))
+                .chain(rows.iter().map(|&(id, frame, row)| (id, frame, Some(row))))
                 .collect();
-            surface_plan(&windows, from_offset, SurfacePoint::origin())
+            moving(&windows, from_offset, SurfacePoint::origin())
+        }
+
+        /// A strip movement of `windows`, each at its frame on the surface with the strip it is of
+        /// named, the viewport going from `from_offset` to `to_offset`.
+        fn moving(
+            windows: &[(u32, SurfaceRect, Option<usize>)],
+            from_offset: SurfacePoint,
+            to_offset: SurfacePoint,
+        ) -> ReflowPlan {
+            use crate::transitions::domain::request::SurfaceWindow;
+            let windows: Vec<SurfaceWindow> = windows
+                .iter()
+                .map(|&(id, frame, row)| SurfaceWindow {
+                    window: wid(id),
+                    server_id: rini_core::ids::WindowServerId::new(id),
+                    frame,
+                    pinned: false,
+                    floating: false,
+                    from: None,
+                    worn: Default::default(),
+                    row,
+                })
+                .collect();
+            surface_plan(&windows, from_offset, to_offset)
+        }
+
+        /// A switch merged into a flight drawing the strips beside it lands every window where the
+        /// switch sends it, the destination's too, a pitch the gap wider than the switch's when
+        /// it names every window the strip's, and reparents nothing; the containers swap the
+        /// strips they hold, so a pan after it moves the destination alone.
+        #[test]
+        fn a_switch_merged_into_a_flight_drawing_rows_lands_the_destination_where_the_switch_sends_it()
+         {
+            let (a, b) = (rect(4.0, 32.0, 859.0, 1081.0), rect(867.0, 32.0, 859.0, 1081.0));
+            let landed = rect(-500.0, 36.0, 1720.0, 1077.0);
+            let down = |frame: SurfaceRect, dy: f64| {
+                rect(
+                    frame.origin.x,
+                    frame.origin.y + dy,
+                    frame.size.width,
+                    frame.size.height,
+                )
+            };
+            let rows = [(5, down(a, -1109.0), 0), (7, down(landed, 1109.0), 2)];
+            let current = FlightPlan::from(pan_beside(
+                &[(1, a), (2, b)],
+                &rows,
+                SurfacePoint::new(-863.0, 0.0),
+            ));
+            for (pitch, source) in [(1085.0, None), (1109.0, Some(1))] {
+                let incoming = moving(
+                    &[
+                        (1, a, source),
+                        (2, b, source),
+                        (7, down(landed, pitch), None),
+                    ],
+                    SurfacePoint::origin(),
+                    SurfacePoint::new(0.0, pitch),
+                );
+                let d = OverlayVector::new(0.0, -pitch);
+                let presented = midway(&current).into();
+                let (merged, delta) =
+                    merge_plans(&current, &incoming, Some(d), &presented, None, VIEWPORT);
+                let at =
+                    |frame: SurfaceRect| viewport(SurfacePoint::origin()).transform_rect(&frame);
+                assert_eq!(merged.destination(wid(7)), Some(at(landed)), "{pitch}: lands");
+                assert_eq!(merged.destination(wid(1)), Some(at(down(a, -pitch))), "{pitch}");
+                assert_eq!(merged.destination(wid(2)), Some(at(down(b, -pitch))), "{pitch}");
+                assert!(delta.reparented.is_empty(), "{pitch}: {:?}", delta.reparented);
+                let beside = |window| {
+                    let key = key_of(&merged, window).unwrap();
+                    merged.groups.iter().find(|g| g.key == key).unwrap().beside
+                };
+                assert_eq!(beside(wid(7)), None, "{pitch}: the destination is the strip");
+                assert_eq!(
+                    beside(wid(1)),
+                    source,
+                    "{pitch}: the source as the switch names it"
+                );
+                assert_eq!(beside(wid(5)), Some(0), "{pitch}: unnamed, as it was");
+            }
+        }
+
+        /// A pan merged into a switch that draws the strips apart moves the destination alone: the
+        /// source, outnumbering it, keeps the container it rides where the switch sends it, and
+        /// nothing is reparented. Named the strip's by the switch, the source won the switch's
+        /// container under the pan, and the destination left it.
+        #[test]
+        fn a_pan_merged_after_a_switch_pans_only_the_destination() {
+            let (a, b) = (rect(4.0, 32.0, 859.0, 1081.0), rect(867.0, 32.0, 859.0, 1081.0));
+            let landed = rect(-500.0, 36.0, 1720.0, 1077.0);
+            let down = |frame: SurfaceRect, dy: f64| {
+                rect(
+                    frame.origin.x,
+                    frame.origin.y + dy,
+                    frame.size.width,
+                    frame.size.height,
+                )
+            };
+            let current = FlightPlan::from(moving(
+                &[
+                    (1, a, Some(1)),
+                    (2, b, Some(1)),
+                    (7, down(landed, 1109.0), None),
+                ],
+                SurfacePoint::origin(),
+                SurfacePoint::new(0.0, 1109.0),
+            ));
+            let panned = rect(landed.origin.x - 574.0, 36.0, 1720.0, 1077.0);
+            let incoming = pan_beside(
+                &[(7, panned)],
+                &[(1, down(a, -1109.0), 1), (2, down(b, -1109.0), 1)],
+                SurfacePoint::new(-574.0, 0.0),
+            );
+            let d = OverlayVector::new(-574.0, 0.0);
+            let presented = midway(&current).into();
+            let (merged, delta) =
+                merge_plans(&current, &incoming, Some(d), &presented, None, VIEWPORT);
+            assert!(delta.reparented.is_empty(), "{:?}", delta.reparented);
+            assert!(delta.new_groups.is_empty());
+            let source = key_of(&current, wid(1)).unwrap();
+            assert_eq!(key_of(&merged, wid(2)), Some(source));
+            assert_eq!(merged.position_of(source), current.position_of(source), "stays");
+            let strip = key_of(&current, wid(7)).unwrap();
+            assert_eq!(key_of(&merged, wid(7)), Some(strip));
+            assert_eq!(merged.position_of(strip), current.position_of(strip) + d, "pans");
+            let at = |frame: SurfaceRect| viewport(SurfacePoint::origin()).transform_rect(&frame);
+            assert_eq!(merged.destination(wid(7)), Some(at(panned)));
+            for (id, frame) in [(1, a), (2, b)] {
+                assert_eq!(
+                    merged.destination(wid(id)),
+                    Some(at(down(frame, -1109.0))),
+                    "{id}"
+                );
+            }
         }
 
         /// A pan merged into a flight drawing strips beside it moves the strip alone: every row

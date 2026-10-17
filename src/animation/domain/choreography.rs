@@ -661,7 +661,7 @@ mod tests {
     /// `rows` put into `pass`, each a still container of its own, as `surface_plan` puts the
     /// strips beside the one a movement moves.
     fn stand_beside(pass: &mut ReflowPlan, rows: &[Vec<(WindowId, OverlayRect)>]) {
-        for (index, row) in rows.iter().enumerate() {
+        for (index, row) in rows.iter().enumerate().filter(|(_, row)| !row.is_empty()) {
             let key = GroupKey::Rigid(pass.groups.len() as u16);
             pass.groups.push(RigidGroup {
                 key,
@@ -692,6 +692,65 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    /// A switch onto a strip beside `flight`'s as the reactor sends one under a look drawing them:
+    /// a pan up or down by a pitch onto the only strip on that side, naming its windows the
+    /// strip's and the strip's windows the strip it leaves in the stack, every window travelling
+    /// with the view from where the flight sends it; and `flight.rows` as it leaves them. None
+    /// when neither side holds exactly one strip a pitch away.
+    fn a_switch(rng: &mut Gen, flight: &mut Flight) -> Option<(ReflowPlan, OverlayVector)> {
+        let pitch = DISPLAY.size.height - 32.0 + zoom::STACK_GAP;
+        let side = |row: &Vec<(WindowId, OverlayRect)>| {
+            let (_, frame) = row.first()?;
+            Some(((frame.center().y - DISPLAY.size.height / 2.0) / pitch).round() as i64)
+        };
+        let sides: Vec<Option<i64>> = flight.rows.iter().map(side).collect();
+        let onto: Vec<usize> = (0..sides.len())
+            .filter(|&i| {
+                sides[i].is_some_and(|s| {
+                    s.abs() == 1 && sides.iter().filter(|o| **o == Some(s)).count() == 1
+                })
+            })
+            .collect();
+        if onto.is_empty() {
+            return None;
+        }
+        let row = onto[rng.below(onto.len() as u64) as usize];
+        let d = OverlayVector::new(0.0, -(sides[row]? as f64) * pitch);
+        let strip: Vec<(WindowId, OverlayRect)> = flight
+            .plan
+            .windows()
+            .into_iter()
+            .filter(|w| !flight.beside(*w))
+            .filter_map(|w| Some((w, flight.plan.destination(w)?)))
+            .collect();
+        let arriving = std::mem::replace(&mut flight.rows[row], strip);
+        let members = |windows: &[(WindowId, OverlayRect)]| -> Vec<GroupMember> {
+            windows
+                .iter()
+                .map(|&(window, frame)| GroupMember { window, rel: installed(frame) })
+                .collect()
+        };
+        let mut pass = ReflowPlan::empty();
+        pass.groups.push(RigidGroup {
+            key: GroupKey::Rigid(pass.groups.len() as u16),
+            travel: d,
+            members: members(&arriving),
+            beside: None,
+        });
+        for (index, windows) in flight.rows.iter().enumerate().filter(|(_, w)| !w.is_empty()) {
+            pass.groups.push(RigidGroup {
+                key: GroupKey::Rigid(pass.groups.len() as u16),
+                travel: d,
+                members: members(windows),
+                beside: Some(index),
+            });
+        }
+        for (_, frame) in flight.rows.iter_mut().flatten() {
+            *frame = frame.translate(d);
+        }
+        Some((pass, d))
     }
 
     fn stage<'a>(plan: &'a FlightPlan, drawn: &'a [WindowId], accents: &'a [Accent]) -> Stage<'a> {
@@ -796,6 +855,8 @@ mod tests {
     struct Bend<'a> {
         tag: String,
         now: f64,
+        /// Whether the pass is a switch onto a strip beside (`a_switch`) or the pass after one.
+        switched: bool,
         incoming: &'a ReflowPlan,
         newcomer: WindowId,
         playing: &'a Score,
@@ -808,7 +869,9 @@ mod tests {
     /// built as the reactor builds them, from where the last pass sends every window, merged one to
     /// four times 10-400ms apart into a flight playing from its score, 200 flights from each of
     /// `BEND_SEEDS`. Some flights start on an arc and some passes bring one (`an_arc`), and some
-    /// draw strips beside the one they move (`random_rows`), which every pan names standing still.
+    /// draw strips beside the one they move (`random_rows`), which every pan names standing still,
+    /// and are then switched onto one of them up to twice (`a_switch`), each switch followed by a
+    /// pass.
     fn bent_flights(
         make: &dyn Fn() -> Box<dyn Choreography>,
         check: &mut dyn FnMut(&Bend) -> Result<(), String>,
@@ -817,6 +880,7 @@ mod tests {
             let mut rng = Gen(seed);
             let mut arcs = Gen(seed + 1000);
             let mut beside = Gen(seed + 2000);
+            let mut switches = Gen(seed + 3000);
             for run in 0..RUNS {
                 let requests = random_requests(&mut rng);
                 let rows = match beside.coin() {
@@ -837,6 +901,7 @@ mod tests {
                     check(&Bend {
                         tag: format!("seed {seed} run {run} step {step}"),
                         now,
+                        switched: false,
                         incoming: &incoming,
                         newcomer,
                         playing: &playing,
@@ -844,6 +909,37 @@ mod tests {
                         delta: &delta,
                         bent: &flight,
                     })?;
+                }
+                // After the seeded passes, so their streams stay as they were: a switch changes
+                // which windows the strip has, and so what a pass draws next.
+                for round in 0..switches.below(3) as u32 {
+                    let Some((incoming, d)) = a_switch(&mut switches, &mut flight) else {
+                        break;
+                    };
+                    let newcomer = wid(520 + round);
+                    for (incoming, pan, switch) in
+                        [(Some(incoming), Some(d), true), (None, None, false)]
+                    {
+                        let (incoming, pan) = match incoming {
+                            Some(incoming) => (incoming, pan),
+                            None => random_pass(&mut switches, &mut flight, newcomer),
+                        };
+                        now += switches.pt(10.0, 400.0) / 1000.0;
+                        let (playing, sent) = (flight.score.clone(), flight.plan.clone());
+                        let delta = flight.merge(&incoming, pan, None, now).delta;
+                        let after = if switch { "" } else { " after" };
+                        check(&Bend {
+                            tag: format!("seed {seed} run {run} switch {round}{after}"),
+                            now,
+                            switched: true,
+                            incoming: &incoming,
+                            newcomer,
+                            playing: &playing,
+                            sent: &sent,
+                            delta: &delta,
+                            bent: &flight,
+                        })?;
+                    }
                 }
             }
         }
@@ -875,10 +971,27 @@ mod tests {
     /// Each edge within the half point placing on whole points allows, and within a point for a
     /// window the pass moves into a container it opens (`OPENED_SLACK`). No rigid member's tile has
     /// a track of its own: `Merged::bend` moves one to another container by riding and placing it
-    /// alone. A strip drawn beside the one the flight moves is sent nowhere, by a pan or any pass.
+    /// alone. A strip drawn beside the one the flight moves is sent nowhere, by a pan or any pass;
+    /// a switch onto one of them and the pass after it send every window each sends onto the
+    /// viewport where it sends it, within `GROUP_TOLERANCE`, and no strip beside sideways.
     fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
-        let (mut brought, mut besides) = (0, 0);
+        let (mut brought, mut besides, mut switched) = (0, 0, 0);
         bent_flights(make, &mut |bend| {
+            if bend.switched {
+                for window in bend.incoming.windows() {
+                    let want =
+                        sent_by(bend.incoming, window).filter(|w| !is_off_screen(VIEWPORT, *w));
+                    let Some(want) = want else { continue };
+                    let got = bend.bent.plan.destination(window);
+                    if !got.is_some_and(|got| edges_apart(got, want) <= GROUP_TOLERANCE + 0.01) {
+                        return Err(format!(
+                            "{}: {window:?} sent to {got:?}, the pass sends it to {want:?}",
+                            bend.tag
+                        ));
+                    }
+                }
+                switched += 1;
+            }
             let (tag, now, newcomer, flight) = (&bend.tag, bend.now, bend.newcomer, bend.bent);
             if let Some(Member::Rigid { key, .. }) = flight.plan.member(newcomer)
                 && let Some(start) = bend.sent.positions.get(&key)
@@ -954,6 +1067,9 @@ mod tests {
         }
         if besides == 0 {
             return Err("no flight drew a strip beside the one it moves".to_string());
+        }
+        if switched == 0 {
+            return Err("no flight switched onto a strip beside".to_string());
         }
         Ok(())
     }
@@ -1270,12 +1386,14 @@ mod tests {
     /// the folded plan starts it, within the half point placing on whole points allows, which holds
     /// the pose to the fold; and the motion lands every window where the folded plan sends it. Some
     /// flights draw strips beside the one they move (`random_rows`), which every fold sends
-    /// nowhere.
+    /// nowhere, and are switched onto one of them after a pass (`a_switch`).
     fn folds_each_pass_before_the_motion(
         make: &dyn Fn() -> Box<dyn Choreography>,
     ) -> Result<(), String> {
         let mut rng = Gen(167);
         let mut beside = Gen(1167);
+        let mut switches = Gen(2167);
+        let mut switched = 0;
         for run in 0..RUNS {
             let requests = random_requests(&mut rng);
             let rows = match beside.coin() {
@@ -1285,82 +1403,106 @@ mod tests {
             let mut flight = Flight::posed_beside(make(), &requests, rows, |_| true);
             for step in 0..1 + rng.below(3) {
                 let tag = format!("seed 167 run {run} step {step}");
-                let named = flight.plan.windows();
-                let started: Vec<(WindowId, Member)> =
-                    named.iter().filter_map(|w| Some((*w, flight.plan.member(*w)?))).collect();
                 let (incoming, pan) = random_pass(&mut rng, &mut flight, wid(500 + step as u32));
-                let pass = Pass {
-                    plan: &incoming,
-                    pan,
-                    focus: None,
-                    viewport: VIEWPORT,
-                    drawn: &flight.drawn,
-                    seconds: PLAIN,
-                    cue: Cue::Plain,
-                    accent: None,
+                folds_one(&mut flight, &incoming, pan, &tag)?;
+            }
+            // After the seeded passes, so their streams stay as they were.
+            for round in 0..switches.below(3) as u32 {
+                let Some((incoming, d)) = a_switch(&mut switches, &mut flight) else {
+                    break;
                 };
-                let folded = flight.choreography.fold(&flight.plan, &pass);
-                let mut names = folded.windows();
-                let count = names.len();
-                names.sort();
-                names.dedup();
-                if names.len() != count {
-                    return Err(format!("{tag}: a window named twice in {folded:?}"));
-                }
-                if let Some(lost) = named.iter().find(|w| folded.member(**w).is_none()) {
-                    return Err(format!("{tag}: {lost:?} is no longer named"));
-                }
-                for &(window, was) in &started {
-                    let Some(is) = folded.member(window).filter(|is| rides_alike(was, *is)) else {
-                        continue;
-                    };
-                    let (was, is) = (on_overlay(was.start_frame()), on_overlay(is.start_frame()));
-                    if edges_apart(was, is) > 0.01 {
-                        return Err(format!(
-                            "{tag}: {window:?} keeps where it rides and starts at {is:?}, it started at {was:?}"
-                        ));
-                    }
-                }
-                for window in incoming.windows() {
-                    let Some(want) = sent_by(&incoming, window) else {
-                        continue;
-                    };
-                    if is_off_screen(VIEWPORT, want) {
-                        continue;
-                    }
-                    let got = folded.destination(window);
-                    let honoured =
-                        got.is_some_and(|got| edges_apart(got, want) <= GROUP_TOLERANCE + 0.01);
-                    if !honoured {
-                        return Err(format!(
-                            "{tag}: {window:?} sent to {got:?}, the pass sends it to {want:?}"
-                        ));
-                    }
-                }
-                for &(window, stands) in flight.rows.iter().flatten() {
-                    let sent = folded.destination(window);
-                    if !sent.is_some_and(|sent| edges_apart(sent, stands) <= 0.01) {
-                        return Err(format!(
-                            "{tag}: {window:?} of a strip beside sent to {sent:?}, stands at {stands:?}"
-                        ));
-                    }
-                }
-                flight.plan = folded;
-                flight.score = flight.choreography.pose(&stage(&flight.plan, &flight.drawn, &[]));
-                for &window in &flight.drawn {
-                    let starts = flight.plan.member(window).map(|m| on_overlay(m.start_frame()));
-                    let drawn = flight.score.drawn(window, BEGIN);
-                    let posed =
-                        matches!((drawn, starts), (Some(d), Some(s)) if edges_apart(d, s) <= 0.5);
-                    if !posed {
-                        return Err(format!(
-                            "{tag}: frame zero draws {window:?} at {drawn:?}, it starts at {starts:?}"
-                        ));
-                    }
-                }
+                switched += 1;
+                let tag = format!("seed 167 run {run} switch {round}");
+                folds_one(&mut flight, &incoming, Some(d), &tag)?;
+                let (incoming, pan) = random_pass(&mut switches, &mut flight, wid(520 + round));
+                folds_one(&mut flight, &incoming, pan, &format!("{tag} after"))?;
             }
             flight.start(&[]);
             lands_on_its_plan(&flight, BEGIN, &format!("seed 167 run {run}"))?;
+        }
+        if switched == 0 {
+            return Err("no flight switched onto a strip beside".to_string());
+        }
+        Ok(())
+    }
+
+    /// One pass folded into `flight` before the motion, as `folds_each_pass_before_the_motion`
+    /// holds it, frame zero posed again after it.
+    fn folds_one(
+        flight: &mut Flight,
+        incoming: &ReflowPlan,
+        pan: Option<OverlayVector>,
+        tag: &str,
+    ) -> Result<(), String> {
+        let named = flight.plan.windows();
+        let started: Vec<(WindowId, Member)> =
+            named.iter().filter_map(|w| Some((*w, flight.plan.member(*w)?))).collect();
+        let pass = Pass {
+            plan: incoming,
+            pan,
+            focus: None,
+            viewport: VIEWPORT,
+            drawn: &flight.drawn,
+            seconds: PLAIN,
+            cue: Cue::Plain,
+            accent: None,
+        };
+        let folded = flight.choreography.fold(&flight.plan, &pass);
+        let mut names = folded.windows();
+        let count = names.len();
+        names.sort();
+        names.dedup();
+        if names.len() != count {
+            return Err(format!("{tag}: a window named twice in {folded:?}"));
+        }
+        if let Some(lost) = named.iter().find(|w| folded.member(**w).is_none()) {
+            return Err(format!("{tag}: {lost:?} is no longer named"));
+        }
+        for &(window, was) in &started {
+            let Some(is) = folded.member(window).filter(|is| rides_alike(was, *is)) else {
+                continue;
+            };
+            let (was, is) = (on_overlay(was.start_frame()), on_overlay(is.start_frame()));
+            if edges_apart(was, is) > 0.01 {
+                return Err(format!(
+                    "{tag}: {window:?} keeps where it rides and starts at {is:?}, it started at {was:?}"
+                ));
+            }
+        }
+        for window in incoming.windows() {
+            let Some(want) = sent_by(incoming, window) else {
+                continue;
+            };
+            if is_off_screen(VIEWPORT, want) {
+                continue;
+            }
+            let got = folded.destination(window);
+            let honoured = got.is_some_and(|got| edges_apart(got, want) <= GROUP_TOLERANCE + 0.01);
+            if !honoured {
+                return Err(format!(
+                    "{tag}: {window:?} sent to {got:?}, the pass sends it to {want:?}"
+                ));
+            }
+        }
+        for &(window, stands) in flight.rows.iter().flatten() {
+            let sent = folded.destination(window);
+            if !sent.is_some_and(|sent| edges_apart(sent, stands) <= 0.01) {
+                return Err(format!(
+                    "{tag}: {window:?} of a strip beside sent to {sent:?}, stands at {stands:?}"
+                ));
+            }
+        }
+        flight.plan = folded;
+        flight.score = flight.choreography.pose(&stage(&flight.plan, &flight.drawn, &[]));
+        for &window in &flight.drawn {
+            let starts = flight.plan.member(window).map(|m| on_overlay(m.start_frame()));
+            let drawn = flight.score.drawn(window, BEGIN);
+            let posed = matches!((drawn, starts), (Some(d), Some(s)) if edges_apart(d, s) <= 0.5);
+            if !posed {
+                return Err(format!(
+                    "{tag}: frame zero draws {window:?} at {drawn:?}, it starts at {starts:?}"
+                ));
+            }
         }
         Ok(())
     }

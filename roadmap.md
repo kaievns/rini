@@ -75,9 +75,9 @@ check, then a spec or deletion:
   at a side of the strip on its arc, the strips above and below drawn beside it 24pt apart. Open
   (`specs/animation.md`, "The zoom look"): a press merged into a flight restarts its clock at the
   plain length, past the arc; a layout pass merged into a zoomed flight judges which windows it
-  draws against the display at full size; and a vertical workspace switch slides as under slide,
-  with no arc. Kai has not judged the arc on screen since the spike's 3x speed-up, nor the strips
-  beside it.
+  draws against the display at full size; and a vertical workspace switch slides unzoomed, its
+  strips 24pt apart, with no arc. Kai has not judged the arc on screen since the spike's 3x
+  speed-up, nor the strips beside it.
 - **Unplug and replug verified end to end,** per arrangement and with role pins, by a
   `query diagnostics` capture before and after into `docs/data/`. Nothing there covers displays yet.
 - **Per-display overrides by display name.** `output "UUID"` takes a UUID only, and only `gaps` and

@@ -272,7 +272,17 @@ The two entry points feed the same `begin_group`:
   It flies on its picture or the stand-in, ends off the display, so nothing
   watches, holes or asks for it at frame zero, and the quiet warms it with
   every window the flight drew. The engine drops these windows from a flight
-  whose look draws none. A plain pan also starts from where it stands
+  whose look draws none. A switch under such a look stacks its strips the same
+  pitch apart and names every tiled window but the destination's by its
+  workspace's index (`Reactor::switch_rows`), so a pan merged into it and a
+  switch merged into a pan agree on where each strip is and which windows are
+  the strip's. A pan's member named of another strip than the container it
+  rides holds votes, and the container comes to hold the strip it names
+  (`Merge::vote`, `Merge::settle_group`): a switch merged into a pan drawing
+  the strips beside landed the destination 24pt low, its windows moved by the
+  switch's pitch from the pan's, and a pan merged into a switch that named
+  every window the strip's had the source win the switch's container and the
+  destination leave it. A plain pan also starts from where it stands
   any window on screen at the press more than 2pt from where the travel draws
   it (`start_where_standing`): the window a left-edge drag resized already
   stands where the release's scroll puts it, and drawn back by the scroll it

@@ -2184,10 +2184,116 @@ mod beside {
         }
     }
 
-    /// Under slide a pan and a bounce draw the strip alone.
+    /// The switch from the workspace shown to the one at `index`, its windows placed as the
+    /// flight engine places them.
+    fn switched(
+        apps: &mut Apps,
+        reactor: &mut Reactor,
+        rx: &mut Flights,
+        index: usize,
+    ) -> SurfaceFlight {
+        reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(index));
+        apps.simulate_until_quiet(reactor);
+        let flights = strip_movements(rx);
+        let switch = flights
+            .into_iter()
+            .find(|f| f.from_offset.y != f.to_offset.y)
+            .expect("a switch");
+        let frames = switch
+            .final_frames
+            .iter()
+            .map(|&(window, frame)| (window, rini_geometry::space::ToCg::to_cg(frame)))
+            .collect();
+        reactor.handle_event(Event::ApplyOverlayFrames(frames));
+        apps.simulate_until_quiet(reactor);
+        switch
+    }
+
+    /// Under zoom a switch stacks the strips it scrolls through the gap further than a usable
+    /// height apart, as a pan draws them, and names each window of every strip but the
+    /// destination's by its workspace's index, so a pan merged after it moves the destination
+    /// alone: nothing is reparented, the source stays where the switch sends it and the pan sends
+    /// every window it names where it sends it.
     #[test]
-    fn under_slide_pans_and_bounces_send_what_they_did() {
-        let (_apps, mut reactor, mut rx) = stacked(Look::Slide);
+    fn under_zoom_a_switch_stacks_the_strips_apart_and_names_all_but_the_destination() {
+        use crate::animation::domain::motion::plan::{
+            FlightPlan, GROUP_TOLERANCE, Presented, merge_plans, surface_plan,
+        };
+        use crate::animation::domain::motion::surface::pan_travel;
+        let (mut apps, mut reactor, mut rx) = stacked(Look::Zoom);
+        let pitch = pitch(&reactor);
+        switched(&mut apps, &mut reactor, &mut rx, 0);
+        let switch = switched(&mut apps, &mut reactor, &mut rx, 1);
+        assert_eq!(
+            switch.to_offset.y - switch.from_offset.y,
+            pitch,
+            "one pitch down"
+        );
+        let (w1, w2) = (find(&switch.windows, 1), find(&switch.windows, 2));
+        assert_eq!(w1.row, Some(0), "the source named by its index");
+        for idx in [2, 3, 4] {
+            assert_eq!(
+                find(&switch.windows, idx).row,
+                None,
+                "w{idx} is the destination's"
+            );
+        }
+        assert_eq!(
+            w2.frame.origin.y - w1.frame.origin.y,
+            pitch,
+            "as a pan stacks them"
+        );
+
+        let pan = scrolled(&mut reactor, &mut rx);
+        let current = FlightPlan::from(surface_plan(
+            &switch.windows,
+            switch.from_offset,
+            switch.to_offset,
+        ));
+        let incoming = surface_plan(&pan.windows, pan.from_offset, pan.to_offset);
+        let d = pan_travel(pan.from_offset, pan.to_offset);
+        let viewport = rini_geometry::space::OverlayRect::new(
+            rini_geometry::space::Point::origin(),
+            rini_geometry::space::Size::new(1728.0, 1117.0),
+        );
+        let (merged, delta) = merge_plans(
+            &current,
+            &incoming,
+            Some(d),
+            &Presented::default(),
+            None,
+            viewport,
+        );
+        assert!(delta.reparented.is_empty(), "{:?}", delta.reparented);
+        assert_eq!(
+            merged.destination(w1.window),
+            current.destination(w1.window),
+            "the source stays"
+        );
+        let sent = FlightPlan::from(incoming);
+        for window in &pan.windows {
+            let (got, want) = (
+                merged.destination(window.window),
+                sent.destination(window.window),
+            );
+            let (Some(got), Some(want)) = (got, want) else {
+                panic!("{:?}: {got:?}, {want:?}", window.window)
+            };
+            let apart =
+                (got.origin.x - want.origin.x).abs().max((got.origin.y - want.origin.y).abs());
+            assert!(
+                apart <= GROUP_TOLERANCE && got.size == want.size,
+                "{:?}: {got:?}, the pan sends it to {want:?}",
+                window.window
+            );
+        }
+    }
+
+    /// Under slide a pan and a bounce draw the strip alone, and a switch names no strip beside and
+    /// stacks its strips a usable height apart.
+    #[test]
+    fn under_slide_pans_bounces_and_switches_send_what_they_did() {
+        let (apps, mut reactor, mut rx) = stacked(Look::Slide);
         let flight = scrolled(&mut reactor, &mut rx);
         assert!(flight.windows.iter().all(|w| w.row.is_none()));
         assert!(flight.windows.iter().all(|w| [2, 3, 4].contains(&w.window.idx.get())));
@@ -2197,6 +2303,20 @@ mod beside {
         let pushed = bounces(&mut rx);
         assert!(!pushed.is_empty());
         assert!(pushed.iter().flatten().all(|w| w.row.is_none()));
+        let mut apps = apps;
+        let switch = switched(&mut apps, &mut reactor, &mut rx, 0);
+        assert!(
+            switch.windows.iter().all(|w| w.row.is_none()),
+            "a switch names none"
+        );
+        let (w1, w2) = (find(&switch.windows, 1), find(&switch.windows, 2));
+        let usable = reactor.space_state().screens[0].frame.size.height;
+        assert_eq!(
+            w2.frame.origin.y - w1.frame.origin.y,
+            usable,
+            "a usable height apart"
+        );
+        assert_eq!(switch.from_offset.y - switch.to_offset.y, usable);
     }
 }
 
