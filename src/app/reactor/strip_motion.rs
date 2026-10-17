@@ -181,18 +181,18 @@ impl Reactor {
     }
 
     /// Animates a strip scroll as one horizontal viewport pan, the horizontal twin of a workspace
-    /// switch, and a move along the strip as that pan with a swap. Returns true when the strip
-    /// surface took over.
+    /// switch, and a move along the strip as that pan with the move staged. Returns true when the
+    /// strip surface took over.
     ///
     /// `delta` is how far the strip moved, zero when it did not. The strip surface holds the whole
     /// active workspace at its final positions, and the viewport starts shifted back by `delta` so
     /// the strip appears to arrive from where it was, then settles. A `moved` window is the press's
     /// cue, which the flight engine has a look stage (`strip_move::stage_move`) as the movement
     /// reaches it, the look of the flight it joins, else the config's: Slide starts the moved column
-    /// and the column it passed from the slots they held before the move, so the two are seen
-    /// changing places, unless the moved column fills the viewport, when the whole strip steps and
-    /// the column it passed is held on the strip beneath it. See "The move flight, staged" in
-    /// `src/transitions/docs/coordination.md`.
+    /// and every column it passed from the slots they held before the move
+    /// (`strip_move::move_starts`), so the moved column is seen crossing them, unless it fills the
+    /// viewport, when the whole strip steps and each column it passed is held on the strip beneath
+    /// it. See "The move flight, staged" in `src/transitions/docs/coordination.md`.
     ///
     /// `final_frames` are the pass's windows on this workspace whose frames changed: the real windows
     /// placed once the surface covers them. A window that did not move is not re-placed, as on the
