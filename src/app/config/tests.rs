@@ -1420,6 +1420,21 @@ fn toggle_stack_is_refused_for_explode_column_and_the_left_fold() {
     assert!(help.contains("`toggle-fold-left`"), "{report}");
 }
 
+/// niri's moves of a column to an end are refused for rini's moves of a window to an end ("Moving
+/// along the strip" in `specs/strip.md`).
+#[test]
+fn niris_moves_to_an_end_are_refused_for_rinis() {
+    for (niri, rini) in [
+        ("move-column-to-first", "`move-window-to-first`"),
+        ("move-column-to-last", "`-to-last`"),
+    ] {
+        let report = refused(&format!("binds {{\n    Mod+Shift+U {{ {niri}; }}\n}}\n"));
+        assert!(report.contains("niri's, not rini's"), "{report}");
+        let (_, help) = report.split_once("help:").expect("a help line");
+        assert!(help.contains(rini), "{niri}: {report}");
+    }
+}
+
 /// Every action decodes from its name, with the arguments it needs.
 #[test]
 fn every_action_name_decodes() {

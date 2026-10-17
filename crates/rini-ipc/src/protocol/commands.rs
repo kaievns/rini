@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Direction, DisplaySelector, ResizeOrientation, WindowId, WorkspaceSelector};
+use crate::{Direction, DisplaySelector, ResizeOrientation, StripEnd, WindowId, WorkspaceSelector};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[cfg_attr(test, derive(strum::VariantNames))]
@@ -11,6 +11,9 @@ pub enum LayoutCommand {
     PrevWindow,
     MoveFocus(#[serde(rename = "direction")] Direction),
     MoveNode(Direction),
+    /// Take the selected window to that end of the strip: a lone window's column goes there, and a
+    /// stacked window leaves its column as a new column there.
+    MoveNodeToEnd(StripEnd),
     /// Give every window in the selected window's column a column of its own, in row order.
     ExplodeColumn,
     /// Fold the selected window into the column on this side, or back out of the column it is in.
@@ -177,6 +180,24 @@ mod tests {
     fn no_wire_command_switches_the_native_space() {
         let sent = serde_json::json!({ "switch_space": "left" });
         assert!(serde_json::from_value::<ReactorCommand>(sent).is_err());
+    }
+
+    /// A move to an end names the end, `first` or `last`, and nothing else.
+    #[test]
+    fn a_move_to_an_end_names_the_end() {
+        let first = serde_json::json!({ "move_node_to_end": "first" });
+        assert_eq!(
+            serde_json::from_value::<LayoutCommand>(first).unwrap(),
+            LayoutCommand::MoveNodeToEnd(StripEnd::First)
+        );
+        assert_eq!(
+            serde_json::to_value(LayoutCommand::MoveNodeToEnd(StripEnd::Last)).unwrap(),
+            serde_json::json!({ "move_node_to_end": "last" })
+        );
+        let left = serde_json::json!({ "move_node_to_end": "left" });
+        assert!(serde_json::from_value::<LayoutCommand>(left).is_err());
+        assert_eq!(StripEnd::First.direction(), Direction::Left);
+        assert_eq!(StripEnd::Last.direction(), Direction::Right);
     }
 
     /// The explode is `explode_column`, and `toggle_stack` is no command (`specs/strip.md`).

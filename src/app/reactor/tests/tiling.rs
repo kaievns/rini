@@ -12,6 +12,7 @@ use crate::animation::domain::motion::surface::SurfaceGeometry;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::input::event::LeftPress;
+use crate::layout::StripEnd;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::edge_drag::End;
 use crate::layout::domain::tile::window_in;
@@ -2974,6 +2975,64 @@ fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
         assert!(flight.windows.iter().all(|w| w.from.is_none()));
         assert_eq!(flight.cue.moved(), None);
         assert_eq!(flight.accent, None);
+    }
+}
+
+/// A move to the start of the strip MUST draw the moved window crossing from its old slot and every
+/// column it passed moving on by one slot, under slide as under zoom, whose arc swaps the moved
+/// window with them ("Moving along the strip" in `specs/strip.md`).
+#[test]
+fn a_move_to_the_start_crosses_every_column_it_passes_under_every_look() {
+    use crate::animation::domain::choreography::{Cue, Look};
+    use crate::animation::domain::motion::accents::Accent;
+    for look in [Look::Slide, Look::Zoom] {
+        let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+        let mut config = reactor.config().clone();
+        config.settings.look = look;
+        reactor.handle_event(Event::ConfigUpdated(Box::new(config)));
+        for _ in 0..3 {
+            reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+        }
+        strip_movements(&mut rx);
+        let [w1, w2, w3, w4] = [1, 2, 3, 4].map(|idx| WindowId::new(1, idx));
+
+        reactor.handle_test_layout_command(LayoutCommand::MoveNodeToEnd(StripEnd::First));
+        let flights = strip_movements(&mut rx);
+        assert_eq!(flights.len(), 1, "{look:?}: one strip movement for the press");
+        let flight = &flights[0];
+        assert_eq!(flight.cue, Cue::Move {
+            window: w4,
+            direction: Direction::Left,
+            columns_passed: 3,
+        });
+        let find = |window| *flight.windows.iter().find(|w| w.window == window).unwrap();
+        let (moved, last_passed) = (find(w4), find(w3));
+        assert!(
+            moved.frame.origin.x < find(w1).frame.origin.x,
+            "{look:?}: first now"
+        );
+        assert_eq!(
+            moved.from.map(|from| from.origin.x),
+            Some(last_passed.frame.max().x - moved.frame.size.width),
+            "{look:?}: from its old slot, the far end of the span"
+        );
+        let slot = find(w1).frame.origin.x - moved.frame.origin.x;
+        for passed in [w1, w2, w3] {
+            let window = find(passed);
+            assert_eq!(
+                window.from.map(|from| from.origin.x - window.frame.origin.x),
+                Some(-slot),
+                "{look:?}: {passed:?} from a slot further back"
+            );
+        }
+        match (look, flight.accent) {
+            (Look::Slide, None) => {}
+            (Look::Zoom, Some(Accent::Arc { swap: Some(swap), .. })) => {
+                assert_eq!(swap.moved, w4);
+                assert_eq!(swap.passed_by.x, slot, "{swap:?}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }
 

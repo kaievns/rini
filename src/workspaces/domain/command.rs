@@ -8,7 +8,7 @@ use rini_core::ids::WindowId;
 use rini_ipc::protocol::{LayoutCommand, WorkspaceSelector};
 
 use super::workspace_focus::Cycle;
-use crate::layout::{Direction, ResizeOrientation};
+use crate::layout::{Direction, ResizeOrientation, StripEnd};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineCommand {
@@ -33,6 +33,7 @@ pub enum FocusCommand {
 pub enum ArrangeCommand {
     Swap(WindowId, WindowId),
     MoveNode(Direction),
+    MoveNodeToEnd(StripEnd),
     ToggleFold(Direction),
     ExplodeColumn,
 }
@@ -113,6 +114,7 @@ impl From<LayoutCommand> for EngineCommand {
                 ArrangeCommand::Swap(id(a), id(b)).into()
             }
             L::MoveNode(direction) => ArrangeCommand::MoveNode(direction).into(),
+            L::MoveNodeToEnd(end) => ArrangeCommand::MoveNodeToEnd(end).into(),
             L::ToggleFold(side) => ArrangeCommand::ToggleFold(side).into(),
             L::ExplodeColumn => ArrangeCommand::ExplodeColumn.into(),
             L::ResizeWindowBy { amount, orientation } => {
@@ -191,6 +193,10 @@ mod tests {
             (
                 LayoutCommand::MoveNode(Direction::Left),
                 ArrangeCommand::MoveNode(Direction::Left).into(),
+            ),
+            (
+                LayoutCommand::MoveNodeToEnd(StripEnd::Last),
+                ArrangeCommand::MoveNodeToEnd(StripEnd::Last).into(),
             ),
             (
                 LayoutCommand::ToggleFold(Direction::Right),

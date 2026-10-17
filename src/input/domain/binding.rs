@@ -42,6 +42,10 @@ pub enum Action {
     /// A lone window swaps columns; a stacked one leaves as a new column.
     MoveWindowLeft,
     MoveWindowRight,
+    /// `MoveWindowLeft` taken to the strip's first place: a lone window's column goes first; a
+    /// stacked one leaves as the first column.
+    MoveWindowToFirst,
+    MoveWindowToLast,
     MoveWindowDownOrToMonitorDown,
     MoveWindowUpOrToMonitorUp,
     ToggleFoldLeft,
@@ -305,7 +309,7 @@ mod tests {
 
     #[test]
     fn every_action_name_is_kebab_case_and_counted() {
-        assert_eq!(Action::VARIANTS.len(), 56);
+        assert_eq!(Action::VARIANTS.len(), 58);
         for name in Action::VARIANTS {
             assert!(
                 name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),

@@ -251,14 +251,19 @@ is borrowed.
   consulted the setting, so a window pushed past the last column teleported to the
   other monitor while focus in the same direction stopped.
 - **Moving reports an edge the way navigating does.** `MoveNode` with nowhere to
-  go, and `MoveWindowToWorkspace` with no workspace that way, both set
-  `edge_hit` so the view bounces. Neither did, and a move that changed nothing
+  go, `MoveNodeToEnd` with a lone window already at that end, and
+  `MoveWindowToWorkspace` with no workspace that way all set `edge_hit` so the
+  view bounces. Neither did, and a move that changed nothing
   and said nothing was indistinguishable from a stuck key.
 - **A move that swaps two columns says so.** `MoveNode` left or right that
   swaps the selection's column with its neighbour sets `moved`, the window, the
   way it went and the one column it passed, so the flight can draw the two
   changing places; a move out of a stacked column makes a new column instead and
-  sets nothing. See "The
+  sets nothing. `MoveNodeToEnd` (`move-window-to-first` and `-to-last`) is the
+  same move to an end of the strip: a lone window's column is taken out and put
+  back first or last (`move_selection_to_end`), and `moved` names every column
+  between as passed (`columns_toward`); a stacked window leaves as a new column
+  there by the same `pull_out_of_stack` a move of one place uses. See "The
   move flight, staged" in `src/transitions/docs/coordination.md`.
 - **A press along the strip names itself.** Focus left or right sets `stepped`,
   the window it left and the one it reached, and at an end the window it stayed

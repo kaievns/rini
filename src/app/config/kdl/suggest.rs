@@ -309,6 +309,8 @@ const CROSSING_FOCUS: &str = "rini's `focus-window-or-monitor-down` and `-up` cr
                               display at the column's end; there is no form that stops yet";
 const MOVE_WINDOW: &str = "rini's nearest is `move-window-left` or `-right`: a lone window swaps \
                            columns and a stacked one leaves as a new column";
+const MOVE_TO_END: &str = "rini's nearest is `move-window-to-first` or `-to-last`: a lone window's \
+                           column goes to that end and a stacked one leaves as a new column there";
 const MOVE_VERTICAL: &str = "rini's nearest is `move-window-down-or-to-monitor-down` or \
                              `move-window-up-or-to-monitor-up`, which cross displays at the column's end";
 const FOLD: &str = "rini's nearest is `toggle-fold-left` or `toggle-fold-right`, whose fold-out lands \
@@ -375,8 +377,8 @@ pub const NIRI_ACTIONS: &[(&str, &str)] = &[
     ("focus-window-up-or-bottom", NOT_IN_RINI),
     ("move-column-left", MOVE_WINDOW),
     ("move-column-right", MOVE_WINDOW),
-    ("move-column-to-first", NOT_IN_RINI),
-    ("move-column-to-last", NOT_IN_RINI),
+    ("move-column-to-first", MOVE_TO_END),
+    ("move-column-to-last", MOVE_TO_END),
     ("move-column-left-or-to-monitor-left", MOVE_WINDOW),
     ("move-column-right-or-to-monitor-right", MOVE_WINDOW),
     ("move-column-to-index", NOT_IN_RINI),

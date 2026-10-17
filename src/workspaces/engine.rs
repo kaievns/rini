@@ -965,9 +965,9 @@ mod tests {
     use rustc_hash::FxHashMap as HashMap;
 
     use super::*;
-    use crate::layout::ResizeOrientation;
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::settings::LayoutSettings;
+    use crate::layout::{ResizeOrientation, StripEnd};
     use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RuleMatch, WindowRule};
     use crate::workspaces::settings::VirtualWorkspaceSettings;
 
@@ -1711,6 +1711,51 @@ mod tests {
         let pulled = fx.command(space, LayoutCommand::MoveNode(Direction::Right));
         assert_eq!(pulled.edge_hit, None, "it moved");
         assert_eq!(pulled.moved, None);
+    }
+
+    /// A move to an end names the window, the way it went and every column it passed, so they are
+    /// drawn crossing; at that end already it pushes against the end, as a move of one place does,
+    /// and a window pulled out of a stack to an end names nothing.
+    #[test]
+    fn a_move_to_an_end_names_the_columns_it_passed_and_one_already_there_pushes() {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(533);
+        let [first, second, third] = [1, 2, 3].map(|idx| WindowId::new(76, idx));
+        fx.expose(space, CGSize::new(1000.0, 800.0));
+        let _ = fx.open(space, vec![
+            OnScreenEntry::plain(first),
+            OnScreenEntry::plain(second),
+            OnScreenEntry::plain(third),
+        ]);
+        fx.engine.focused_window = Some(first);
+        let _ = fx.command(space, LayoutCommand::MoveFocus(Direction::Left));
+        let _ = fx.command(space, LayoutCommand::MoveFocus(Direction::Left));
+        let to_end = |end| LayoutCommand::MoveNodeToEnd(end);
+
+        let last = fx.command(space, to_end(StripEnd::Last));
+        assert_eq!(
+            last.moved,
+            Some(StripMove {
+                window: first,
+                direction: Direction::Right,
+                columns_passed: 2,
+            })
+        );
+        assert_eq!((last.edge_hit, last.pushed), (None, None));
+
+        let again = fx.command(space, to_end(StripEnd::Last));
+        assert_eq!(again.moved, None, "at the end nothing changed places");
+        assert_eq!(again.edge_hit, Some(Direction::Right));
+        assert_eq!(again.pushed, Some(first));
+
+        let back = fx.command(space, to_end(StripEnd::First));
+        assert_eq!(back.moved.map(|moved| moved.columns_passed), Some(2));
+        assert_eq!(back.moved.map(|moved| moved.direction), Some(Direction::Left));
+
+        let _ = fx.command(space, LayoutCommand::MoveFocus(Direction::Right));
+        let _ = fx.command(space, LayoutCommand::ToggleFold(Direction::Left));
+        let pulled = fx.command(space, to_end(StripEnd::Last));
+        assert_eq!((pulled.moved, pulled.edge_hit), (None, None), "{pulled:?}");
     }
 
     /// Exploding a column raises the focused window alone, so macOS keys it and focus stays on it.
