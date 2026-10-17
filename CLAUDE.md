@@ -1,14 +1,14 @@
 # Working on rini as an agent
 
-Follow `CONTRIBUTING.md`. Every rule there applies to you. This file adds how an agent works so that a
-change reaches `main` at that bar.
+Follow `CONTRIBUTING.md`. Every rule there applies to you. This file adds how an agent works so
+that a change reaches `main` at that bar.
 
 ## Before a change
 
 - Read the feature's `src/<feature>/docs/README.md` and the spec in `specs/` that covers the
   behaviour.
 - A behaviour the user reports or asks for becomes a requirement in `specs/` in the same change,
-  quoting them with the date.
+  with a **Reported** line giving the report and its date (`specs/README.md`).
 
 ## While changing
 
@@ -39,8 +39,8 @@ change reaches `main` at that bar.
 
 - **Never build into the main checkout's `target/release`,** and never run `rini service` from any
   other binary. The service path rules are in `CONTRIBUTING.md`, "Building and deploying".
-- **No screen tests unless the machine has had at least 300s with no input.** Stop at the first
-  foreign event.
+- **Never drive the screen but through the battery or a recording,** under the idle rule in
+  `tools/focuslab/README.md`.
 - **Never edit the user's config in `~/.config/rini`.** To try a setting live, use
-  `rini-cli execute config set '<kdl>'`. It lasts until the next reload.
+  `rini-cli execute config set '<kdl>'`. It lasts until the next reload (`specs/config.md`).
 - **Never push.**
