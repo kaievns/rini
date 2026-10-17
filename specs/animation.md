@@ -302,6 +302,19 @@ strip zooms out and back in while it moves. Zoom never steps; the step above is 
 > under slide, and a push at an end of the stack bounced flat. The 24pt gap is a first value for Kai
 > to tune.
 
+- Every window of a strip drawn beside a pan's or a push's strip, or beyond either end of a
+  switch, its workspace's active window included, MUST be dressed as a window of a workspace not
+  shown: no focus ring, its border in the inactive paint, or the urgent one while it is drawn
+  urgent, and its hairline and shadow unfocused. The strips a switch travels between MUST be
+  dressed as under slide, the source's a strip beside or not: the destination's active window
+  wears the active ring and holds focus from the show, and the source's and each passed strip's
+  keep their active ring as they go ("Through a flight" in `decorations.md`).
+
+> **Reported 2026-10-17.** "there is bug though during left/right transitions the windows on
+> top/bottom adjacent strips have the orange focus outline". Each workspace's active window wore its
+> ring in the active paint on the display holding focus, as niri paints it, so the active window of
+> each strip beside showed Kai's `#ff7c50` ring through every pan, push and switch under zoom.
+
 ## The vertical workspace switch
 
 - Under slide, the workspaces MUST scroll as one column, each sitting directly on the one above it.
@@ -1086,7 +1099,10 @@ are placed by `src/transitions/domain/strip_stack.rs` (`rows_beside_a_strip_sit_
 (`under_zoom_a_pan_names_the_rows_beside_it`, `under_zoom_a_bounce_names_the_rows_beside_it`,
 `the_ends_of_the_stack_draw_no_strip_beyond`,
 `under_zoom_a_switch_stacks_the_strips_apart_and_names_all_but_the_destination`,
-`under_slide_pans_bounces_and_switches_send_what_they_did`),
+`under_slide_pans_bounces_and_switches_send_what_they_did`), dressed unfocused
+(`under_zoom_the_strips_beside_wear_no_ring`,
+`a_switch_dresses_its_strips_as_under_slide_and_the_strip_beyond_wears_no_ring`,
+`a_strip_beside_wears_no_ring_and_the_inactive_border`),
 kept in containers of their own that only the view up and down moves
 (`each_other_strip_rides_a_container_of_its_own_even_travelling_as_the_strip_does`,
 `a_pan_merged_leaves_every_row_where_it_is`,

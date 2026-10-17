@@ -100,9 +100,12 @@ covers the whole layer" in `src/animation/docs/capture-overlay-research.md`.
 (`Rings`): `urgent` on a window drawn urgent, `active` on every ring on the display holding focus,
 as niri paints every workspace's active window on the focused monitor
 (`niri:src/layout/monitor.rs:1095-1100`), and `inactive` elsewhere (`style::Ring`). So the workspace
-a switch leaves keeps its ring active as it slides away. On a tile it is the `ring` layer, a `Band`,
-the hairline's child after the outline, in front of the picture and riding every move; a tile
-carries it only while its window's decoration has one (`Bands::wear`).
+a switch leaves keeps its ring active as it slides away, under zoom too. A strip the zoom look
+draws beside a pan's or a push's strip, or beyond either end of a switch, wears none, its active
+window included: the reactor dresses its windows `Worn::beside` (`strips_at` in
+`src/app/reactor/strip_motion.rs`), no ring and no focus. On a tile it is the `ring` layer, a
+`Band`, the hairline's child after the outline, in front of the picture and riding every move; a
+tile carries it only while its window's decoration has one (`Bands::wear`).
 
 **Its shape.** A colour is the layer's border, `width` wide; a gradient is the layer's gradient
 masked to a border of the same shape ("Gradients"). It rounds on the continuous curve at the

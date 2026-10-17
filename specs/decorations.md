@@ -13,7 +13,9 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
 - Each workspace's active window MUST wear the ring, on every display, and no other window MUST. A
   workspace's active window is the one focus lands on when the workspace takes it, the window focused
   there last, as niri's is; on the workspace holding the focused window it is that window, a floating
-  one included. niri draws its ring the same way.
+  one included. niri draws its ring the same way. The one exception is a strip the zoom look draws
+  beside a pan's or a push's strip, or beyond either end of a switch: its active window MUST wear no
+  ring there, as "The zoom look" in `animation.md` requires.
 - The ring MUST be drawn in its active paint, `active-color` or `active-gradient`, on the display
   holding focus and in its inactive paint on the others. A display holds focus while a managed
   window on it is focused; with none focused, every ring MUST be the inactive one. A window rini

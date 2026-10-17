@@ -2033,6 +2033,7 @@ mod beside {
     use crate::animation::domain::choreography::{Cue, Look};
     use crate::animation::domain::motion::accents::Accent;
     use crate::animation::domain::motion::surface::SurfaceGeometry;
+    use crate::decorations::domain::style::Ring;
     use crate::transitions::domain::request::SurfaceWindow;
     use crate::transitions::platform::engine::Event as Engine;
 
@@ -2147,6 +2148,78 @@ mod beside {
         assert!(!pushed.is_empty(), "the strip's first column pushes");
         for windows in &pushed {
             assert_beside(windows, pitch);
+        }
+    }
+
+    /// The ring `window` wears where its flight ends, and whether it holds focus there.
+    fn dressed(windows: &[SurfaceWindow], idx: u32) -> (Ring, bool) {
+        let worn = find(windows, idx).worn;
+        (worn.wears_ring, worn.holds_focus)
+    }
+
+    /// Kai, 2026-10-17: "there is bug though during left/right transitions the windows on
+    /// top/bottom adjacent strips have the orange focus outline". Every window of a strip beside,
+    /// its workspace's active window included, wears no ring and holds no focus, as a window of a
+    /// workspace not shown, and none is drawn focused; the strip's focused window wears the active
+    /// ring, by a pan and by a push.
+    #[test]
+    fn under_zoom_the_strips_beside_wear_no_ring() {
+        let (_apps, mut reactor, mut rx) = stacked(Look::Zoom);
+        let ring = Some(reactor.settings().decorations.focus_ring.band);
+        let flight = scrolled(&mut reactor, &mut rx);
+        let focus = flight.focus.expect("the press moves focus");
+        assert_eq!(dressed(&flight.windows, focus.idx.get()), (Ring::Active, true));
+        for _ in 0..3 {
+            reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
+        }
+        let pushed = bounces(&mut rx);
+        assert!(!pushed.is_empty(), "the strip's first column pushes");
+        for windows in std::iter::once(&flight.windows).chain(&pushed) {
+            for idx in [1, 5] {
+                assert_eq!(dressed(windows, idx), (Ring::None, false), "w{idx}");
+                assert_eq!(
+                    find(windows, idx).worn.decoration.ring,
+                    ring,
+                    "w{idx} keeps its band"
+                );
+            }
+        }
+        let beside = [Some(WindowId::new(1, 1)), Some(WindowId::new(1, 5))];
+        assert!(!beside.contains(&flight.focus) && !beside.contains(&flight.focused_before));
+    }
+
+    /// A switch dresses the strips it travels between as under slide, under every look: the
+    /// destination's active window wears the active ring and holds focus, the source's and a passed
+    /// strip's keep their active ring and hold none. Only the strip zoom draws beyond them wears
+    /// none.
+    #[test]
+    fn a_switch_dresses_its_strips_as_under_slide_and_the_strip_beyond_wears_no_ring() {
+        for look in [Look::Slide, Look::Zoom] {
+            let (mut apps, mut reactor, mut rx) = stacked(look);
+            let source = reactor.layout().focused_window().expect("w2 to w4 shown");
+            let down = switched(&mut apps, &mut reactor, &mut rx, 2);
+            assert_eq!(
+                dressed(&down.windows, source.idx.get()),
+                (Ring::Active, false),
+                "{look:?}: the source's"
+            );
+            assert_eq!(
+                dressed(&down.windows, 5),
+                (Ring::Active, true),
+                "{look:?}: the destination's"
+            );
+            let beyond = down.windows.iter().find(|w| w.window == WindowId::new(1, 1));
+            match look {
+                Look::Zoom => assert_eq!(dressed(&down.windows, 1), (Ring::None, false)),
+                _ => assert!(beyond.is_none(), "slide draws nothing beyond"),
+            }
+            let jump = switched(&mut apps, &mut reactor, &mut rx, 0);
+            assert_eq!(
+                dressed(&jump.windows, source.idx.get()),
+                (Ring::Active, false),
+                "{look:?}: the strip passed"
+            );
+            assert_eq!(dressed(&jump.windows, 1), (Ring::Active, true), "{look:?}");
         }
     }
 

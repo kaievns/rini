@@ -130,6 +130,16 @@ pub struct Worn {
 }
 
 impl Worn {
+    /// What a window of a strip drawn beside the one a flight moves wears, `decoration` on: no
+    /// ring and no focus, as a window of a workspace not shown, its active window included.
+    pub fn beside(decoration: Decoration) -> Worn {
+        Worn {
+            decoration,
+            wears_ring: Ring::None,
+            holds_focus: false,
+        }
+    }
+
     /// How a tile wearing this is painted, drawn `focused` or not: its white line and shadow as
     /// drawn, which turn with its picture, and its ring and border as where the pass ends, from the
     /// flight's show to its lift.
@@ -476,6 +486,26 @@ mod tests {
             Style::of(true, Ring::None, &Decoration::default()),
             "bands off"
         );
+    }
+
+    /// A window of a strip beside wears no ring and its border's inactive paint, drawn unfocused,
+    /// as a window of a workspace not shown; urgent, its border wears the urgent paint.
+    #[test]
+    fn a_strip_beside_wears_no_ring_and_the_inactive_border() {
+        let bordered = Decoration {
+            border: Some(BORDER),
+            ..ringed()
+        };
+        let style = Worn::beside(bordered).style(false);
+        assert_eq!(
+            (style.ring, style.border, style.shadow),
+            (None, Some(BORDER.inactive), UNFOCUSED_SHADOW)
+        );
+        let urgent = Decoration {
+            urgency: Urgency::Urgent,
+            ..bordered
+        };
+        assert_eq!(Worn::beside(urgent).style(false).border, Some(BORDER.urgent));
     }
 
     #[test]

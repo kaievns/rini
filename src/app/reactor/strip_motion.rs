@@ -11,6 +11,7 @@ use rustc_hash::FxHashMap as HashMap;
 use tracing::debug;
 
 use super::{Reactor, ScreenInfo};
+use crate::decorations::domain::style::Worn;
 use crate::transitions::domain::request::SurfaceWindow;
 use crate::windows::domain::request::Request;
 use crate::workspaces::Direction;
@@ -363,8 +364,8 @@ impl Reactor {
 
     /// Each tiled window of the strips `rows` name, each by its index in `workspaces`, the side it
     /// is drawn on of the strip at a row of the surface, and that row, that the deepest zoom shows
-    /// beside that strip, pushed as a bounce carries it, at its own strip's scroll and named by its
-    /// index.
+    /// beside that strip, pushed as a bounce carries it, at its own strip's scroll, named by its
+    /// index and wearing no ring and no focus (`Worn::beside`).
     fn strips_at(
         &mut self,
         space: SpaceId,
@@ -417,7 +418,7 @@ impl Reactor {
                     pinned: false,
                     floating: false,
                     from: None,
-                    worn: self.worn(wid, &rings),
+                    worn: Worn::beside(self.decoration_of(wid, &rings)),
                     row: Some(row),
                 });
             }
