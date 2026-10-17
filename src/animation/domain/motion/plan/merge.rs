@@ -212,12 +212,19 @@ impl<'a> Merge<'a> {
                 votes.extend(holders.into_iter().map(|window| (key, window, hold)));
             }
         }
-        for key in keys {
-            self.settle_group(key, &votes, focus);
+        for (i, &key) in keys.iter().enumerate() {
+            self.settle_group(key, &votes, focus, &keys[i + 1..]);
         }
     }
 
-    fn settle_group(&mut self, key: GroupKey, votes: &[Vote], focus: Option<WindowId>) {
+    /// `unsent` are the groups still to be settled, whose destinations are not yet this pass's.
+    fn settle_group(
+        &mut self,
+        key: GroupKey,
+        votes: &[Vote],
+        focus: Option<WindowId>,
+        unsent: &[GroupKey],
+    ) {
         let mut clusters: Vec<(OverlayPoint, Vec<(WindowId, OverlayPoint)>)> = Vec::new();
         for (k, window, p) in votes.iter().copied().filter(|(k, _, _)| *k == key) {
             debug_assert_eq!(k, key);
@@ -244,7 +251,7 @@ impl<'a> Merge<'a> {
             }
             for &(window, p) in losers {
                 let beside = self.named.get(&window).copied().unwrap_or(held);
-                self.reparent(key, window, p, beside);
+                self.reparent(key, window, p, beside, unsent);
             }
         }
         let mut named = clusters[winner].1.iter().filter_map(|(w, _)| self.named.get(w));
@@ -256,20 +263,22 @@ impl<'a> Merge<'a> {
     }
 
     /// What the member still has to travel: a group of the strip `beside` names with the same
-    /// remaining travel carries it there. Else it leaves in a container of its own, of that strip,
-    /// from where it is drawn.
+    /// remaining travel carries it there, unless it is one of the `unsent`, which a vote still to
+    /// be settled may send elsewhere. Else it leaves in a container of its own, of that strip, from
+    /// where it is drawn.
     fn reparent(
         &mut self,
         key: GroupKey,
         window: WindowId,
         p: OverlayPoint,
         beside: Option<usize>,
+        unsent: &[GroupKey],
     ) {
         let from_drawn = position_in(&self.presented.drawn, key);
         let from_along = position_in(&self.presented.along, key);
         let member = self.next.take_member(key, window);
         let remaining = p - from_along;
-        let landing = landing_for(&self.next, &self.presented, remaining, key, beside);
+        let landing = landing_for(&self.next, &self.presented, remaining, key, beside, unsent);
         let to_key = match landing {
             Some(to_key) => {
                 let shift = from_along - position_in(&self.presented.along, to_key);
@@ -395,12 +404,14 @@ fn retarget_loose(list: &mut [OwnPath], index: usize, to: GroupRect, delta: &mut
 /// The group of the strip `beside` names whose remaining travel (destination less where its leg
 /// has it, `along`) matches `remaining`, for a member leaving `leaving`, going as fast as
 /// `leaving` within `RATE_TOLERANCE`: a member landing in one going another speed would jump to it.
+/// None of the `unsent`: a vote settled after may send one elsewhere, carrying the member with it.
 fn landing_for(
     next: &FlightPlan,
     presented: &Presented,
     remaining: OverlayVector,
     leaving: GroupKey,
     beside: Option<usize>,
+    unsent: &[GroupKey],
 ) -> Option<GroupKey> {
     let rate = presented.rate_of(leaving);
     let alike = |key: GroupKey| {
@@ -408,7 +419,7 @@ fn landing_for(
         d.x.abs() <= RATE_TOLERANCE && d.y.abs() <= RATE_TOLERANCE
     };
     travelling(next, &presented.along, remaining, beside)
-        .find(|g| g.key != leaving && alike(g.key))
+        .find(|g| g.key != leaving && !unsent.contains(&g.key) && alike(g.key))
         .map(|g| g.key)
 }
 

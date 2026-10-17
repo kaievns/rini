@@ -380,6 +380,15 @@ destination for a window already moving.
 > dropped, but its springs still run over 0.257s. The speed check read that gain as a jump on 38 of
 > seeds 0-999 of its flights.
 
+- A pass MUST land every window it names where it sends it, however many pieces it sends at once. A
+  window it takes out of its piece MUST NOT ride one the same pass sends elsewhere.
+
+> **Found 2026-10-17, not reported.** The bend contract over seeds 0-999 failed 4 seeds under Slide,
+> Zoom and Probe and 3 under Linear, each at the pass after a second switch onto a strip beside. The
+> pass kept a window where the switch sent it, and the window took a piece with as far left to go at
+> the same speed. On seed 91 the pass then sent that piece 150pt left and 100pt down, and the window
+> landed 150pt left of and 100pt below where the pass sent it.
+
 - A window the flight has not seen MUST be able to join it.
 - A merged press MUST NOT show a stale, transparent, stretched or zoomed tile. A picture taken for an
   end its tile no longer has, or of a window more than 20pt from where its tile ends, never reaches a
@@ -1092,7 +1101,10 @@ passes is the tests there: `every_look_poses_each_drawn_window_where_it_starts`,
 `every_look_lands_each_node_on_its_plan`, `every_look_folds_each_pass_before_the_motion`,
 `every_look_bends_a_flight_without_a_jump`, `every_look_bends_a_flight_at_the_speed_it_moves`,
 `every_look_pushes_out_and_home_without_a_jump` and `every_look_stages_only_the_pair_it_is_given`,
-and the `the_*_contract_rejects_*` tests beside them show each contract fails a flawed look.
+and the `the_*_contract_rejects_*` tests beside them show each contract fails a flawed look. A
+pass lands every window where it sends it, however many pieces it sends, in
+`a_member_kept_where_it_was_sent_lands_in_no_container_a_later_vote_moves`, and over a thousand
+seeds of the bend contract in `every_look_keeps_the_bend_contract_over_a_thousand_seeds`.
 `slide_draws_every_seeded_flight_as_it_did` and `zoom_draws_every_seeded_flight_as_it_did` pin what
 each look draws. Zoom's arc, its depth, its view and its merges are held by the tests in its file,
 `a_wide_pair_is_centred_at_the_middle_clipped_alike_on_both_sides` and

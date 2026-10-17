@@ -2157,6 +2157,69 @@ mod tests {
                 "{delta:?}"
             );
         }
+
+        /// A member a pass keeps where it was sent, outvoted in its container, lands only in a
+        /// container going where the pass sends it: seed 91 run 6 of the bend contract's flights
+        /// put w3 in a container with as far left to go at the same speed, which the pass then
+        /// voted 150pt left and 100pt down, carrying w3 with it.
+        #[test]
+        fn a_member_kept_where_it_was_sent_lands_in_no_container_a_later_vote_moves() {
+            let at = |x: f64| rect(x, 32.0, 200.0, 900.0);
+            let (outvoted, unsent) = (-300.0, -100.0);
+            let current = flight_of(&[
+                Resolved::tiled(wid(1), at(404.0), at(404.0 + outvoted)),
+                Resolved::tiled(wid(2), at(608.0), at(608.0 + outvoted)),
+                Resolved::tiled(wid(3), at(812.0), at(812.0 + outvoted)),
+                Resolved::tiled(wid(4), at(1016.0), at(1016.0 + unsent)),
+            ]);
+            let (a, b) = (
+                key_of(&current, wid(1)).unwrap(),
+                key_of(&current, wid(4)).unwrap(),
+            );
+            let along = |travel: f64| OverlayPoint::new(travel + 100.0, 0.0);
+            let rate = OverlayVector::new(-1000.0, 0.0);
+            let presented = Presented {
+                drawn: [(a, along(outvoted)), (b, along(unsent))].into_iter().collect(),
+                along: [(a, along(outvoted)), (b, along(unsent))].into_iter().collect(),
+                rate: [(a, rate), (b, rate)].into_iter().collect(),
+            };
+            let v = ScreenVector::new(-150.0, 100.0);
+            let sent = |x: f64, travel: f64| at(x + travel);
+            let kept = sent(404.0, outvoted);
+            let moved = |window, x, travel| {
+                let from = sent(x, travel);
+                Resolved::tiled(window, from, shifted(from, v))
+            };
+            let pass = reflow_plan(
+                &[
+                    Resolved::tiled(wid(1), kept, kept),
+                    moved(wid(2), 608.0, outvoted),
+                    moved(wid(3), 812.0, outvoted),
+                    moved(wid(4), 1016.0, unsent),
+                ],
+                DISPLAY,
+            );
+            let (merged, delta) = merge_plans(&current, &pass, None, &presented, None, VIEWPORT);
+            let landed = key_of(&merged, wid(1)).unwrap();
+            assert_ne!(landed, b, "{delta:?}");
+            assert!(
+                merged.destination(wid(1)).unwrap().same_as(on(kept)),
+                "{:?}, the pass keeps it at {kept:?}",
+                merged.destination(wid(1))
+            );
+            for (window, x, travel) in [
+                (wid(2), 608.0, outvoted),
+                (wid(3), 812.0, outvoted),
+                (wid(4), 1016.0, unsent),
+            ] {
+                let to = merged.destination(window).unwrap();
+                assert_eq!(key_of(&merged, window), key_of(&current, window), "{window:?}");
+                assert!(
+                    to.same_as(on(shifted(sent(x, travel), v))),
+                    "{window:?} at {to:?}"
+                );
+            }
+        }
     }
 
     /// A pass as rigid pieces: `reflow_plan`, `surface_plan` and what `animation_targets` names. See "Layout changes and strip movements" in

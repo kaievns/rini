@@ -875,19 +875,11 @@ mod tests {
     /// Every pass of the bend contracts' flights of the look `make` gives, as `check` sees it: passes
     /// built as the reactor builds them, from where the last pass sends every window, merged one to
     /// four times 10-400ms apart into a flight playing from its score, 200 flights from each of
-    /// `BEND_SEEDS`. Some flights start on an arc and some passes bring one (`an_arc`), and some
-    /// draw strips beside the one they move (`random_rows`), which every pan names standing still,
-    /// and are then switched onto one of them up to twice (`a_switch`), half the switches bringing
-    /// a switch's arc (`a_switch_arc`), each followed by a pass.
+    /// `seeds`, the contracts' `BEND_SEEDS`. Some flights start on an arc and some passes bring one
+    /// (`an_arc`), and some draw strips beside the one they move (`random_rows`), which every pan
+    /// names standing still, and are then switched onto one of them up to twice (`a_switch`), half
+    /// the switches bringing a switch's arc (`a_switch_arc`), each followed by a pass.
     fn bent_flights(
-        make: &dyn Fn() -> Box<dyn Choreography>,
-        check: &mut dyn FnMut(&Bend) -> Result<(), String>,
-    ) -> Result<(), String> {
-        bent_flights_of(&BEND_SEEDS, make, check)
-    }
-
-    /// `bent_flights`, 200 flights from each of `seeds`.
-    fn bent_flights_of(
         seeds: &[u64],
         make: &dyn Fn() -> Box<dyn Choreography>,
         check: &mut dyn FnMut(&Bend) -> Result<(), String>,
@@ -966,10 +958,14 @@ mod tests {
         Ok(())
     }
 
-    /// The seeds of the bend contracts' flights: 163, and 2, which moves members of two containers
+    /// The seeds of the bend contracts' flights: 163; 2, which moves members of two containers
     /// into one a pass opens, a member from the other drawn 0.82pt from where it was under Slide,
-    /// which starts the container's movement at the whole point nearest where it installs.
-    const BEND_SEEDS: [u64; 2] = [163, 2];
+    /// which starts the container's movement at the whole point nearest where it installs; 136 and
+    /// 975, whose windows leaving their containers landed in one going another speed
+    /// (`a_window_leaving_its_container_lands_only_in_one_going_as_fast`); and 91 and 378, whose
+    /// pass after a switch put a window it kept in a container a vote settled later moved
+    /// (`a_member_kept_where_it_was_sent_lands_in_no_container_a_later_vote_moves`).
+    const BEND_SEEDS: [u64; 6] = [163, 2, 136, 975, 91, 378];
 
     /// How far a window a pass moves into a container it opens may be drawn from where it was: Slide
     /// starts the container's movement on a whole point where its first member's container is drawn,
@@ -995,8 +991,16 @@ mod tests {
     /// a switch onto one of them and the pass after it send every window each sends onto the
     /// viewport where it sends it, within `GROUP_TOLERANCE`, and no strip beside sideways.
     fn bends_without_a_jump(make: &dyn Fn() -> Box<dyn Choreography>) -> Result<(), String> {
+        bends_without_a_jump_over(&BEND_SEEDS, make)
+    }
+
+    /// `bends_without_a_jump`, over the flights of `seeds`.
+    fn bends_without_a_jump_over(
+        seeds: &[u64],
+        make: &dyn Fn() -> Box<dyn Choreography>,
+    ) -> Result<(), String> {
         let (mut brought, mut besides, mut switched) = (0, 0, 0);
-        bent_flights(make, &mut |bend| {
+        bent_flights(seeds, make, &mut |bend| {
             if bend.switched {
                 for window in bend.incoming.windows() {
                     let want =
@@ -1204,7 +1208,7 @@ mod tests {
             _ => Value::Zoom(Zoom::REST).parts(),
         };
         let mut moving = 0;
-        bent_flights_of(seeds, make, &mut |bend| {
+        bent_flights(seeds, make, &mut |bend| {
             let now = bend.now;
             let at = |k: f64| now + k * SAMPLE_STEP;
             let omega =
@@ -1254,13 +1258,27 @@ mod tests {
         Ok(())
     }
 
+    /// `contract` over each look, the looks run side by side, and the first look that breaks it
+    /// with what broke.
+    fn on_every_look(contract: fn(Look) -> Result<(), String>) -> Result<(), String> {
+        std::thread::scope(|scope| {
+            let runs: Vec<_> = Look::ALL
+                .into_iter()
+                .map(|look| (look, scope.spawn(move || contract(look))))
+                .collect();
+            runs.into_iter().try_for_each(|(look, run)| {
+                run.join()
+                    .expect("the contract runs")
+                    .map_err(|broken| format!("{look:?}: {broken}"))
+            })
+        })
+    }
+
     /// Every look keeps the bend contract.
     #[test]
     fn every_look_bends_a_flight_without_a_jump() {
-        for look in Look::ALL {
-            if let Err(broken) = bends_without_a_jump(&|| look.choreography()) {
-                panic!("{look:?}: {broken}");
-            }
+        if let Err(broken) = on_every_look(|look| bends_without_a_jump(&|| look.choreography())) {
+            panic!("{broken}");
         }
     }
 
@@ -1279,13 +1297,40 @@ mod tests {
     /// Every look keeps the speed contract.
     #[test]
     fn every_look_bends_a_flight_at_the_speed_it_moves() {
-        for look in Look::ALL {
-            if let Err(broken) =
-                bends_at_the_speed_it_moves(&|| look.choreography(), stiffer_on_an_arc(look))
-            {
-                panic!("{look:?}: {broken}");
+        let contract = |look: Look| {
+            bends_at_the_speed_it_moves(&|| look.choreography(), stiffer_on_an_arc(look))
+        };
+        if let Err(broken) = on_every_look(contract) {
+            panic!("{broken}");
+        }
+    }
+
+    /// The bend contract over seeds 0-999, the seeds each look fails on counted, as "Mid-flight
+    /// passes" in `src/animation/docs/animation-smoothness.md` gives them. Run with
+    /// `CARGO_TARGET_DIR=target-dev cargo test --release --lib the_bend_contract_over -- --ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn every_look_keeps_the_bend_contract_over_a_thousand_seeds() {
+        let failing = |look: Look| {
+            let broken = (0..1000u64)
+                .map(|seed| bends_without_a_jump_over(&[seed], &|| look.choreography()).err());
+            broken.flatten().collect::<Vec<_>>()
+        };
+        let failing: Vec<_> = Look::ALL.into_iter().map(|look| (look, failing(look))).collect();
+        for (look, broken) in &failing {
+            println!("{look:?}: {} failing", broken.len());
+            for broken in broken {
+                println!("  {broken}");
             }
         }
+        let counts: Vec<_> = failing.iter().map(|(look, broken)| (*look, broken.len())).collect();
+        assert_eq!(counts, [
+            (Look::Slide, 0),
+            (Look::Zoom, 0),
+            (Look::Linear, 0),
+            (Look::Probe, 0)
+        ]);
     }
 
     /// The speed contract over seeds 0-999, the seeds each look fails on counted, as "Mid-flight

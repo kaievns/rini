@@ -67,11 +67,22 @@ largest cluster keeps the container, which carries on toward the new destination
 animation key (`GROUP_ANIMATION_KEY`, `"rini.group.move"`); see "One flight however many presses"
 below. Members voting elsewhere are reparented at the frame they are drawn at, into a group whose
 remaining travel matches theirs and whose movement goes as fast as the one they leave, within 60pt/s
-on each axis (half a point over a 120Hz frame), or into a new one. Matching the remaining travel
-alone, a still container's member took a group with 151pt left at 2821pt/s and started at that
-speed, and a member drawn where the pass sends it took the still group and stopped from 2211pt/s;
-pinned by `a_window_leaving_its_container_lands_only_in_one_going_as_fast`, and a group a member
-opens takes the speed of the one it left, pinned by
+on each axis (half a point over a 120Hz frame), or into a new one. The votes settle one group at a
+time, so a member lands only in a group already settled or one no vote of the pass names: a group
+settled later may be sent elsewhere and carry the member with it. Seed 91's pass after a switch kept
+a window where it was sent and put it in a group with as far left at the same speed, which the pass
+then sent 150pt left and 100pt down; pinned by
+`a_member_kept_where_it_was_sent_lands_in_no_container_a_later_vote_moves`. Over seeds 0-999 of the
+bend contract's flights that failed seeds 91, 378, 615 and 953 under Slide, Zoom and Probe and the
+first three under Linear, each at the pass after a second switch, and fails none now
+(`every_look_keeps_the_bend_contract_over_a_thousand_seeds`, 57s in release). Settling every group
+before any member leaves would also let a member land in a group settled after its own, where it
+opens one now, but changes Slide's output (`SLIDE_SCORES`): 9 members of seed 163's Slide flights
+would land so. Matching the remaining travel alone, a still container's member took a group with
+151pt left at 2821pt/s and started at that speed, and a member drawn where the pass sends it took
+the still group and stopped from 2211pt/s; pinned by
+`a_window_leaving_its_container_lands_only_in_one_going_as_fast`, and a group a member opens takes
+the speed of the one it left, pinned by
 `a_container_a_member_opens_goes_as_fast_as_the_one_it_left`. Over seeds 0-999 of the speed
 contract's flights, the seeds failing went from 30 to 0 under Slide, 101 to 0 under Linear and 67 to
 38 under Zoom. Each of Zoom's 38 was a window speeding up by 5-12% where a pass bringing an arc
@@ -89,54 +100,54 @@ bend slowing as far as a jump, and by
 `zoom_bends_a_pass_bringing_an_arc_within_its_stretched_spring`. Every other look, every pass
 bringing no arc and the zoom's own read keep the allowance from before. Allowing every look's every
 pass a spring over the plain or stretched length grew the allowance of Linear, which bends on no
-spring, 6.9 times on average and 48 times at most over the contract's two seeds, against 1.04 times
-for Slide. Zoom now fails none; `every_look_keeps_the_speed_contract_over_a_thousand_seeds` counts
-every look's, ignored because it runs 141s in release. A member the pass sends off the viewport
-does not vote while its container moves (`rides_out`): it has no visible destination, and on a
-switch the layout pass 16ms later parked the departing row's windows, each of which opened a
-sideways group and swept to the park's edge while the row travelled vertically (the zig-zag; log
-1:07:36, "member reparented" to (1727,1065) and (-1719,1076)). A member of a still container has no
-motion to ride and leaves on its own vector. A rigid member the pass now resizes goes loose
-(`GroupKey::Loose`) at its presented frame. A newcomer joins a group travelling as it does in this
-pass or opens one; joins are resolved after the votes, because the votes change how far each group
-travels. A pan adds its travel to every group and every loose strip tile and changes no membership;
-members the pan does not compose (no usable picture) ride their group all the same. A move under a
-pan is the one exception: the members of a group that does not travel with the pan (the columns the
-move swapped that cross it) vote as in an ordinary pass, wherever their destination is, and the rest
-of each group they sit in holds the place the pan gave it. The merge reads two positions of every
-container and how fast its movement goes (`Presented`), evaluated from the flight's score
-(`Score::presented`): where it is drawn, any bounce or nudge riding it included, and where its
-movement has it. A member leaving a container for one of its own starts from the first, so it stays
-where it is drawn and still lands on its destination; pinned by
-`a_member_leaving_a_nudged_container_leaves_from_where_it_is_drawn`. Remaining travel of a member
-leaving its container is judged against the second. A newcomer is judged against neither, but
-against where the last pass sent each container (the plan's model positions): every frame a pass
-carries is a place on the strip as the last pass left it, which the reactor builds from where that
-pass sends every window. A newcomer rides a group whose travel from there matches its own, placed in
-it where that pass left it, so it starts beside the windows it sits beside wherever they are drawn,
-and an accent riding the group carries it too; of several such groups it takes the one holding the
-window nearest it. Judged against where the leg has it, a column a second pan brought mid-leg
-matched no group's remaining travel, opened its own and started where the first pan sends the strip,
-short of the strip by the travel left: of two 863pt pans, the second merged 7ms into the first
-started its column 759pt short, 20ms in 591pt (measured with the test that pins it against that
-rule; not seen on screen); pinned by `a_column_a_pan_brings_in_mid_flight_starts_beside_the_strip`
-and, for every look, by `every_look_bends_a_flight_without_a_jump`. A floating window a switch
-brings is placed in the floating container where the last pass left it, the same way. A move's step
-rides every strip container, so a still window joining mid-step takes the still piece and steps with
-the strip; pinned by `a_still_window_joining_mid_step_steps_with_the_strip`. Before the flight
-moves, a pass is folded in by the same function, every container drawn where frame zero installs it
-and its leg taken to be where the last pass sends it: nothing has moved, and the pass's frames are
-places on the strip there. That is the look's rule too (`Slide::fold`), and frame zero is posed
-again from the folded plan. Every look's fold sends each window to the frame the pass sends it to,
-size as well as place, and starts each window it leaves in its container, or on its kind of path of
-its own, where it started; frame zero draws each window where the folded plan starts it, so those
-windows hold still. A window the fold moves to another container or kind of path may start
-elsewhere: over the contract's 200 runs, 8 of 258 such windows moved at frame zero under Slide, the
-farthest 1199pt, and none of 2552 that kept theirs (measured with a probe over the contract's seed;
-not checked on screen). The pass's own start frames bind no start: they are places on the strip as
-the last pass left it. Pinned by `every_look_folds_each_pass_before_the_motion`. What the flight
-does about a merge, the clock, the frames already sent and the entrances still reserved, is
-"Mid-flight passes" in `src/transitions/docs/coordination.md`.
+spring, 6.9 times on average and 48 times at most over seeds 163 and 2, against 1.04 times for
+Slide. Zoom now fails none; `every_look_keeps_the_speed_contract_over_a_thousand_seeds` counts every
+look's, ignored because it runs 141s in release. A member the pass sends off the viewport does not
+vote while its container moves (`rides_out`): it has no visible destination, and on a switch the
+layout pass 16ms later parked the departing row's windows, each of which opened a sideways group and
+swept to the park's edge while the row travelled vertically (the zig-zag; log 1:07:36, "member
+reparented" to (1727,1065) and (-1719,1076)). A member of a still container has no motion to ride
+and leaves on its own vector. A rigid member the pass now resizes goes loose (`GroupKey::Loose`) at
+its presented frame. A newcomer joins a group travelling as it does in this pass or opens one; joins
+are resolved after the votes, because the votes change how far each group travels. A pan adds its
+travel to every group and every loose strip tile and changes no membership; members the pan does not
+compose (no usable picture) ride their group all the same. A move under a pan is the one exception:
+the members of a group that does not travel with the pan (the columns the move swapped that cross
+it) vote as in an ordinary pass, wherever their destination is, and the rest of each group they sit
+in holds the place the pan gave it. The merge reads two positions of every container and how fast
+its movement goes (`Presented`), evaluated from the flight's score (`Score::presented`): where it is
+drawn, any bounce or nudge riding it included, and where its movement has it. A member leaving a
+container for one of its own starts from the first, so it stays where it is drawn and still lands on
+its destination; pinned by `a_member_leaving_a_nudged_container_leaves_from_where_it_is_drawn`.
+Remaining travel of a member leaving its container is judged against the second. A newcomer is
+judged against neither, but against where the last pass sent each container (the plan's model
+positions): every frame a pass carries is a place on the strip as the last pass left it, which the
+reactor builds from where that pass sends every window. A newcomer rides a group whose travel from
+there matches its own, placed in it where that pass left it, so it starts beside the windows it sits
+beside wherever they are drawn, and an accent riding the group carries it too; of several such
+groups it takes the one holding the window nearest it. Judged against where the leg has it, a column
+a second pan brought mid-leg matched no group's remaining travel, opened its own and started where
+the first pan sends the strip, short of the strip by the travel left: of two 863pt pans, the second
+merged 7ms into the first started its column 759pt short, 20ms in 591pt (measured with the test that
+pins it against that rule; not seen on screen); pinned by
+`a_column_a_pan_brings_in_mid_flight_starts_beside_the_strip` and, for every look, by
+`every_look_bends_a_flight_without_a_jump`. A floating window a switch brings is placed in the
+floating container where the last pass left it, the same way. A move's step rides every strip
+container, so a still window joining mid-step takes the still piece and steps with the strip; pinned
+by `a_still_window_joining_mid_step_steps_with_the_strip`. Before the flight moves, a pass is folded
+in by the same function, every container drawn where frame zero installs it and its leg taken to be
+where the last pass sends it: nothing has moved, and the pass's frames are places on the strip
+there. That is the look's rule too (`Slide::fold`), and frame zero is posed again from the folded
+plan. Every look's fold sends each window to the frame the pass sends it to, size as well as place,
+and starts each window it leaves in its container, or on its kind of path of its own, where it
+started; frame zero draws each window where the folded plan starts it, so those windows hold still.
+A window the fold moves to another container or kind of path may start elsewhere: over the
+contract's 200 runs, 8 of 258 such windows moved at frame zero under Slide, the farthest 1199pt, and
+none of 2552 that kept theirs (measured with a probe over the contract's seed; not checked on
+screen). The pass's own start frames bind no start: they are places on the strip as the last pass
+left it. Pinned by `every_look_folds_each_pass_before_the_motion`. What the flight does about a
+merge, the clock, the frames already sent and the entrances still reserved, is "Mid-flight passes"
+in `src/transitions/docs/coordination.md`.
 
 **One flight however many presses.** A retargeted container used to restart `MOTION_CURVE` from its
 presented position. That curve leaves at 6.25x its average speed and is 97% home by half time, so
@@ -397,12 +408,12 @@ Mechanics worth remembering:
   a half for its own frame: past a half point on 6 of seeds 1-40 and 163 of the bend contract's
   generator, the farthest 0.82pt on seed 2 (measured with a probe not committed; not seen on
   screen). The test-only Linear look starts it where it installs and stays within a half point
-  there. The contract runs seeds 163 and 2 and allows such a window a point (`OPENED_SLACK`,
-  `every_look_bends_a_flight_without_a_jump`). Starting Slide's there too keeps every window
-  within a half point, moves the start of such a container's spring by under a half point per
-  axis and leaves tile frames, and so where every window lands, as they are, within 0.88pt of
-  its plan over those 41 seeds, but changes Slide's output (`SLIDE_SCORES`), so Slide keeps the
-  whole point.
+  there. The contract runs seeds 163 and 2 among its `BEND_SEEDS` and allows such a window a
+  point (`OPENED_SLACK`, `every_look_bends_a_flight_without_a_jump`). Starting Slide's there too
+  keeps every window within a half point, moves the start of such a container's spring by under a
+  half point per axis and leaves tile frames, and so where every window lands, as they are, within
+  0.88pt of its plan over those 41 seeds, but changes Slide's output (`SLIDE_SCORES`), so Slide
+  keeps the whole point.
 
 Found on the first live run of the per-tile strip path: **floating tiles
 were drawn behind the desktop backdrop.** The band behind the strip sits
