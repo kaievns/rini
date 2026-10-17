@@ -71,13 +71,14 @@ check, then a spec or deletion:
 - **One picture per window.** Each window keeps a focused face beside its picture
   (`specs/animation.md`, "Focus changing during a flight"). Dropping it saves memory. I parked it
   on 2026-10-06, to come back to.
-- **The zoom look's open ends.** `look "zoom"` plays a move, a focus press that scrolls, a bounce
-  at a side of the strip and a vertical workspace switch on its arc, the strips above and below
-  drawn beside it 24pt apart. Open (`specs/animation.md`, "The zoom look"): a press merged into a
-  flight restarts its clock at the plain length, past the arc; a layout pass merged into a zoomed
-  flight judges which windows it draws against the display at full size; and a switch's floating
-  windows travel unzoomed. Kai has not judged the arc on screen since the spike's 3x speed-up, nor
-  the strips beside it, nor the switch's arc.
+- **The zoom look's open ends.** `look "zoom"` plays a move, a focus press that scrolls, a bounce at
+  a side of the strip or an end of the stack and a vertical workspace switch on its arc, the strips
+  above and below drawn beside it 24pt apart. Open (`specs/animation.md`, "The zoom look"): a press
+  merged into a flight restarts its clock at the plain length, past the arc; a layout pass merged
+  into a zoomed flight judges which windows it draws against the display at full size; and the
+  floating windows a switch or a bounce at an end of the stack carries are drawn unzoomed. Kai has
+  not judged the arc on screen since the spike's 3x speed-up, nor the strips beside it, nor the
+  switch's arc, nor the bounce at an end of the stack.
 - **Unplug and replug verified end to end,** per arrangement and with role pins, by a
   `query diagnostics` capture before and after into `docs/data/`. Nothing there covers displays yet.
 - **Per-display overrides by display name.** `output "UUID"` takes a UUID only, and only `gaps` and

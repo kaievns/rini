@@ -439,8 +439,9 @@ while a bounce plays draws none of it, opened with no tracks, and the next push 
 way out while the strip's goes on from where it is drawn on a shortened one: the two stay apart by
 at most the offset the strip drew, until both are home. Handed the record's bounce, it used to jump
 by up to 72pt into phase with the strip. Both are pinned by
-`a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. Every look's push keeps both: no window
-jumps as a push reaches it, a push against each of the four walls draws some window toward it, and
+`a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. Every look's push keeps both, half the
+pushes against the top or bottom bringing a switch at an end of the stack: no window jumps as a
+push reaches it, a push against each of the four walls draws some window toward it, and
 every window comes home where its plan sends it, no later than one bounce after the last push or the
 motion's own end, which Slide meets exactly over the contract's seed
 (`every_look_pushes_out_and_home_without_a_jump`). A

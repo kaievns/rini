@@ -357,6 +357,16 @@ fn lift(making: &mut Making, window: WindowId, begin: f64, length: f64) {
 /// Whether a push against `wall` is against a side of the strip.
 fn sideways(wall: OverlayVector) -> bool { wall.y == 0.0 && wall.x != 0.0 }
 
+/// Whether a push against `wall` with `cue` plays zoomed out: a press along the strip against a
+/// side of it, or a switch against an end of the stack.
+fn zooms_push(cue: &Cue, wall: OverlayVector) -> bool {
+    match cue {
+        Cue::Move { .. } | Cue::Focus { .. } => sideways(wall),
+        Cue::Switch => wall.x == 0.0 && wall.y != 0.0,
+        Cue::Plain => false,
+    }
+}
+
 /// A push's arc at `now` from where the strip is drawn (`push_scale`), over the push's `seconds`
 /// stretched by `ZOOM_STRETCH`, or over `seconds` for a stretch past one.
 fn push_arc(making: &mut Making, centre: OverlayPoint, seconds: f64, now: f64) {
@@ -737,10 +747,10 @@ impl Choreography for ZoomArc {
             return self.arc(playing, stage, begin, bell);
         }
         let wall = stage.accents.iter().find_map(|accent| match *accent {
-            Accent::Push { wall, seconds } if sideways(wall) => Some((wall, seconds)),
+            Accent::Push { wall, seconds } if zooms_push(&stage.cue, wall) => Some((wall, seconds)),
             _ => None,
         });
-        let Some((wall, seconds)) = wall.filter(|_| stage.cue.along_strip()) else {
+        let Some((wall, seconds)) = wall else {
             return Slide::default().compose(playing, stage, begin);
         };
         let others: Vec<Accent> = stage
@@ -815,7 +825,7 @@ impl Choreography for ZoomArc {
         now: f64,
     ) -> Vec<Edit> {
         let mut making = Making::from(playing);
-        if let Some(centre) = self.centre.filter(|_| cue.along_strip() && sideways(wall))
+        if let Some(centre) = self.centre.filter(|_| zooms_push(cue, wall))
             && !deepening(playing, seconds, now)
         {
             push_arc(&mut making, centre, seconds, now);
@@ -1163,30 +1173,42 @@ mod tests {
         }
     }
 
-    /// A push at a side of the strip gives the whole zoomed view: the strips beside it are
-    /// carried toward the wall as far as the strip is.
+    /// A push at a side of the strip or at an end of the stack gives the whole zoomed view: the
+    /// strips beside it are carried toward the wall as far as the strip is.
     #[test]
-    fn a_push_at_a_side_carries_the_rows_with_the_strip() {
+    fn a_push_at_a_side_or_an_end_of_the_stack_carries_the_rows_with_the_strip() {
         let rows = [
             (wid(8), rect(GAP, 36.0 - 1109.0, 1722.0, 1077.0), 0),
             (wid(9), rect(GAP, 36.0 + 1109.0, 1722.0, 1077.0), 2),
         ];
-        let cue = Cue::Focus { from: wid(W), to: wid(N) };
-        let mut flight = focus_right(1722.0).flown_beside(cue, &rows);
-        let without = flight.score.clone();
-        let now = BEGIN + 0.05;
-        let wall = OverlayVector::new(-72.0, 0.0);
-        for edit in flight.zoom.push(&flight.score, &cue, wall, PLAIN, now) {
-            flight.score.apply(&edit);
-        }
-        let turn = now + BOUNCE_TURN * PLAIN;
-        let given = |window| {
-            laid(&flight.score, window, turn).origin.x - laid(&without, window, turn).origin.x
-        };
-        let strip = given(wid(N));
-        assert!(strip < -1.0, "the strip gives toward the wall: {strip}");
-        for (row, _, _) in rows {
-            close(given(row), strip, 1e-6, "as far as the strip");
+        let press = Cue::Focus { from: wid(W), to: wid(N) };
+        let pushes = [
+            (OverlayVector::new(-72.0, 0.0), press),
+            (OverlayVector::new(0.0, 72.0), Cue::Switch),
+        ];
+        for (wall, cue) in pushes {
+            let mut flight = focus_right(1722.0).flown_beside(press, &rows);
+            let without = flight.score.clone();
+            let now = BEGIN + 0.05;
+            for edit in flight.zoom.push(&flight.score, &cue, wall, PLAIN, now) {
+                flight.score.apply(&edit);
+            }
+            let turn = now + BOUNCE_TURN * PLAIN;
+            let toward = wall / 72.0;
+            let given = |window| {
+                (laid(&flight.score, window, turn).origin - laid(&without, window, turn).origin)
+                    .dot(toward)
+            };
+            let strip = given(wid(N));
+            assert!(strip > 1.0, "{wall:?}: the strip gives toward the wall: {strip}");
+            for (row, _, _) in rows {
+                close(
+                    given(row),
+                    strip,
+                    1e-6,
+                    &format!("{wall:?}: as far as the strip"),
+                );
+            }
         }
     }
 
@@ -1926,27 +1948,39 @@ mod tests {
     }
 
     /// Kai, 2026-09-30 10:10: "the little bounce at the ends of the strip, can you make it work in
-    /// the zoomed out state, please?" A push at an end with a press along the strip plays over a
-    /// shallow arc ending by the time the bounce does, nothing else moving, and reaches the edge
-    /// bounce's 72pt on screen where it turns. A plain push, or one against the top or bottom, plays
-    /// no arc.
+    /// the zoomed out state, please?", and 2026-10-17: "it applies to both horizontal and vertical
+    /// navigation". A push at a side with a press along the strip, or at an end of the stack with a
+    /// switch, plays over a shallow arc ending by the time the bounce does, nothing else moving,
+    /// and reaches the edge bounce's 72pt on screen where it turns. A plain push, a press along the
+    /// strip against the top or bottom, or a switch against a side plays no arc.
     #[test]
     fn a_push_at_an_end_bounces_zoomed_out_as_far_as_at_rest() {
-        let wall = OverlayVector::new(-72.0, 0.0);
-        let cues = [Cue::Focus { from: wid(N), to: wid(N) }, Cue::Move {
-            window: wid(N),
-            direction: Direction::Left,
-        }];
-        for cue in cues {
+        let side = OverlayVector::new(-72.0, 0.0);
+        let stack = OverlayVector::new(0.0, 72.0);
+        let along = Cue::Focus { from: wid(N), to: wid(N) };
+        let zoomed = [
+            (side, along),
+            (side, Cue::Move {
+                window: wid(N),
+                direction: Direction::Left,
+            }),
+            (stack, Cue::Switch),
+            (-stack, Cue::Switch),
+        ];
+        let centre = VIEWPORT.center();
+        for (wall, cue) in zoomed {
+            let tag = format!("{wall:?} {cue:?}");
+            let toward = wall / 72.0;
+            let along_wall = |p: OverlayPoint| (p - centre).dot(toward);
             let flight = bounce(wall, cue);
             let strip = flight.score.track(Node::Strip, Channel::Base).expect("an arc");
-            close(strip.seconds(), ARC, 1e-9, "its length");
-            assert!(strip.ends() <= BEGIN + PLAIN, "no longer than the bounce");
+            close(strip.seconds(), ARC, 1e-9, &tag);
+            assert!(strip.ends() <= BEGIN + PLAIN, "{tag}: no longer than the bounce");
             close(
                 scale_at(&flight.score, BEGIN + BOUNCE_TURN * PLAIN),
                 STRIP_ZOOM,
                 1e-3,
-                "shallow, deepest where it turns",
+                &format!("{tag}: shallow, deepest where it turns"),
             );
             let key = key_of(&flight.plan, wid(N));
             assert!(flight.score.track(Node::Container(key), Channel::Base).is_none());
@@ -1957,16 +1991,25 @@ mod tests {
             );
             let at_rest = laid(&flight.posed, wid(N), turn);
             let scale = scale_at(&flight.score, turn);
-            let drawn_rest = CENTRE + scale * (at_rest.origin.x - CENTRE);
-            close(is.expect("drawn").origin.x - drawn_rest, -72.0, 0.5, "on screen");
             close(
-                was.origin.x - at_rest.origin.x,
-                -72.0 / scale,
+                along_wall(is.expect("drawn").origin) - scale * along_wall(at_rest.origin),
+                72.0,
+                0.5,
+                &format!("{tag}: on screen"),
+            );
+            close(
+                along_wall(was.origin) - along_wall(at_rest.origin),
+                72.0 / scale,
                 1e-6,
-                "in the strip",
+                &format!("{tag}: in the strip"),
             );
         }
-        for (wall, cue) in [(wall, Cue::Plain), (OverlayVector::new(0.0, 72.0), cues[0])] {
+        for (wall, cue) in [
+            (side, Cue::Plain),
+            (stack, Cue::Plain),
+            (stack, along),
+            (side, Cue::Switch),
+        ] {
             let flight = bounce(wall, cue);
             assert!(
                 flight.score.track(Node::Strip, Channel::Base).is_none(),
@@ -1979,18 +2022,24 @@ mod tests {
     /// bouncer would, that'd be fantastic". A burst at the end re-kicks each bounce from where it is
     /// drawn, at once, with the strip zoomed where it turns. A press while the arc zooms out starts
     /// no second one; one while it zooms back in, or after it lands, zooms the strip out again from
-    /// where it is drawn, and the strip is home an arc after the last. A plain burst zooms once.
+    /// where it is drawn, and the strip is home an arc after the last. A plain burst zooms once. A
+    /// burst of switches at an end of the stack plays as a burst at a side does.
     #[test]
     fn a_burst_at_an_end_bounces_from_where_it_is_drawn_zoomed_out_at_every_turn() {
-        let wall = OverlayVector::new(-72.0, 0.0);
+        let side = OverlayVector::new(-72.0, 0.0);
         let at_end = Cue::Focus { from: wid(N), to: wid(N) };
-        for cue in [at_end, Cue::Plain] {
-            let mut flight = bounce(wall, at_end);
+        let bursts = [
+            (side, at_end, at_end),
+            (side, at_end, Cue::Plain),
+            (OverlayVector::new(0.0, 72.0), Cue::Switch, Cue::Switch),
+        ];
+        for (wall, first, cue) in bursts {
+            let mut flight = bounce(wall, first);
             let first = flight.score.track(Node::Strip, Channel::Base).cloned();
             let key = key_of(&flight.plan, wid(N));
             let burst = [0.05, 0.09, 0.2, 0.3, 0.5].map(|t| BEGIN + t);
             for now in burst {
-                let tag = format!("{cue:?} at {:.2}", now - BEGIN);
+                let tag = format!("{wall:?} {cue:?} at {:.2}", now - BEGIN);
                 let before = flight.score.drawn(wid(N), now).expect("drawn");
                 let (playing, scale_before) = (
                     flight.score.track(Node::Strip, Channel::Base).cloned(),
@@ -2010,6 +2059,7 @@ mod tests {
                 }
                 let after = flight.score.drawn(wid(N), now).expect("drawn");
                 close(after.origin.x, before.origin.x, 1e-9, &format!("{tag}: no jump"));
+                close(after.origin.y, before.origin.y, 1e-9, &format!("{tag}: no jump"));
                 close(scale_at(&flight.score, now), scale_before, 1e-9, &tag);
                 let bounce =
                     flight.score.track(Node::Container(key), Channel::Bounce).expect("kicked");

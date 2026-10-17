@@ -227,8 +227,8 @@ strip zooms out and back in while it moves. Zoom never steps; the step above is 
   reach its 72pt on screen. Every press of a burst MUST bounce zoomed out: a push reaching an arc
   drawn deeper where its bounce turns than where it lands MUST bounce at the strip's zoom and start
   no second arc, and any other MUST zoom the strip out again from where it is drawn. A push joining
-  a flight before it moves MUST bring its press with it. A push at an end of the workspace stack is
-  no press along the strip and bounces at rest.
+  a flight before it moves MUST bring its press with it. A push at an end of the workspace stack
+  bounces zoomed out as a switch (below).
 
 > **Reported 2026-09-30.** "also the little bounce at the ends of the strip, can you make it work in
 > the zoomed out state, please?"
@@ -262,11 +262,11 @@ strip zooms out and back in while it moves. Zoom never steps; the step above is 
   it, a Dock, so nothing of either shows at rest. Not yet met: a push reaching a flight a layout
   pass began zooms out with no strip beside it, as a push brings no windows to a flight that
   moves.
-- A strip beside MUST zoom with the strip and MUST NOT move while the strip pans, folds or turns;
-  a push at a side of the strip MUST carry the whole zoomed view toward the wall, the strips
-  beside with it. Only the windows the deepest zoom can bring into view MUST be drawn of it, never
-  its floating ones, each on its picture or the stand-in until one is taken, and it MUST NOT hold
-  the flight back or be pictured at its first frame.
+- A strip beside MUST zoom with the strip and MUST NOT move while the strip pans, folds or turns; a
+  push at a side of the strip or at an end of the stack MUST carry the whole zoomed view toward the
+  wall, the strips beside with it. Only the windows the deepest zoom can bring into view MUST be
+  drawn of it, never its floating ones, each on its picture or the stand-in until one is taken, and
+  it MUST NOT hold the flight back or be pictured at its first frame.
 - A vertical workspace switch under zoom MUST play as one arc as well: the strip zooms out, the
   stack travels with its strips the same gap apart, every one but the destination's a strip beside,
   and the destination zooms back in, landing where the switch sends it, at rest. The arc MUST go as
@@ -280,6 +280,11 @@ strip zooms out and back in while it moves. Zoom never steps; the step above is 
   last MUST be drawn beside them as a pan draws them, so a press merged into the switch finds them
   drawn. Not yet met: a switch's floating windows travel on the arc's timing but unzoomed, so
   mid-arc they are drawn further out than the strips they belong to.
+- A push at an end of the workspace stack, by a switch or a move to the next or previous workspace
+  with none beyond, MUST bounce zoomed out as a push at a side of the strip does: 0.88 where the
+  bounce turns, 72pt on screen, every press of a burst zoomed out, the strip beside it carried with
+  it. Not yet met: the floating windows it carries are drawn unzoomed, as a switch's are, at full
+  size where the bounce turns while the strip around them is at 0.88.
 - A switch merged into a pan or a bounce drawing the strips beside, and a pan merged into a
   switch, MUST land every window where the later one sends it and MUST NOT move a window to another
   container: a switch merged into a pan drew the destination 24pt below its frames, by the
@@ -293,15 +298,16 @@ strip zooms out and back in while it moves. Zoom never steps; the step above is 
 > when zoomout happens i should see the top/bottom strips (at a bit of a padding) and it applies to
 > both horizontal and vertical navigation." Zoomed out, the bands above and below the strip showed
 > the desktop: a flight drew only the workspace it moved, and a switch under zoom slid unzoomed, as
-> under slide. The 24pt gap is a first value for Kai to tune.
+> under slide, and a push at an end of the stack bounced flat. The 24pt gap is a first value for Kai
+> to tune.
 
 ## The vertical workspace switch
 
 - Under slide, the workspaces MUST scroll as one column, each sitting directly on the one above it.
   There MUST NOT be a band of empty desktop the size of the bar between one workspace and the next:
   the only space between two workspaces' windows is their own outer margins, the same gap two tiled
-  windows have. Under zoom the strips scroll the zoom look's gap apart, and the switch plays as an
-  arc ("The zoom look").
+  windows have. Under zoom the strips scroll the zoom look's gap apart, the switch plays as an arc,
+  and a push at an end of the stack bounces zoomed out ("The zoom look").
 - The animation MUST NOT extend under the bar. Its surface starts at the bar's lower edge, and a
   window scrolling up off the top passes behind the bar rather than into a strip above it.
 
@@ -1080,7 +1086,7 @@ into one another landing each window where the later sends it
 `a_pan_merged_after_a_switch_pans_only_the_destination`, and the bend and fold contracts' switches,
 `a_switch`, half of them on a switch's arc), zoomed and left still by
 the arc and carried by a push (`a_horizontal_arc_zooms_the_rows_and_moves_none`,
-`a_push_at_a_side_carries_the_rows_with_the_strip`), flown by the engine
+`a_push_at_a_side_or_an_end_of_the_stack_carries_the_rows_with_the_strip`), flown by the engine
 (`a_row_flies_on_its_picture_or_the_stand_in_unasked_unwatched_unholed_and_warms_at_the_quiet`,
 `a_flight_whose_look_draws_no_rows_drops_them`) and drawn under the strip layer
 (`the_strips_beside_ride_the_strip_layer_under_its_zoom`); a strip movement draws every window of
@@ -1097,12 +1103,16 @@ either axis (`a_horizontal_press_merged_mid_switch_folds_into_the_arc_moving_onl
 reactor with the strips beyond both ends
 (`under_zoom_a_switch_arcs_and_draws_the_strips_beyond_both_ends`,
 `under_zoom_the_first_switch_arcs`), and a switch reaching a flight whose look draws no strips
-beside keeps its strips (`a_switch_naming_rows_merged_into_a_slide_flight_keeps_its_strips`). The
-reactor names each press along the strip to the look: a focus press that scrolls the strip, held by
+beside keeps its strips (`a_switch_naming_rows_merged_into_a_slide_flight_keeps_its_strips`). A
+push at an end of the stack bounces zoomed out as one at a side does
+(`a_push_at_an_end_bounces_zoomed_out_as_far_as_at_rest`,
+`a_burst_at_an_end_bounces_from_where_it_is_drawn_zoomed_out_at_every_turn`, and the push
+contract's switches, `every_look_pushes_out_and_home_without_a_jump`). The reactor names each press
+along the strip to the look: a focus press that scrolls the strip, held by
 `a_focus_press_along_the_strip_names_where_it_went_and_one_at_an_end_where_it_stayed` and
 `a_focus_press_that_scrolls_the_strip_names_itself_and_zooms_under_zoom`, and the move or focus
-press a bounce at a side of the strip plays, held by
-`pushing_past_an_end_bounces_the_strip_and_keeps_focus` and
+press a bounce at a side of the strip plays and the switch one at an end of the stack plays, held
+by `pushing_past_an_end_bounces_the_strip_and_keeps_focus` and
 `moving_a_window_past_an_end_bounces_the_view_too`. The flight's clock ends with the score the
 motion starts with, held by `the_clock_fits_the_score_the_motion_starts_with` and
 `the_clock_ends_with_the_motion_the_look_composes`. The config's `animations › look` is decoded in

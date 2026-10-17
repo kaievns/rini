@@ -546,18 +546,18 @@ impl Pass {
 const WINDOW_HIDDEN_THRESHOLD: f64 = 1.0;
 
 /// The press a bounce at `edge_hit` plays: a move into a side of the strip by the window it pushed,
-/// a focus press there by the window focus stayed on, and anything else, an end of the workspace
-/// stack among them, plain.
+/// a focus press there by the window focus stayed on, a switch or a move to another workspace at an
+/// end of the workspace stack a switch, and anything else plain.
 fn edge_press(
     pushed: Option<WindowId>,
     stepped: Option<(WindowId, WindowId)>,
     edge_hit: Option<workspaces::Direction>,
 ) -> Cue {
-    let along = edge_hit
-        .filter(|d| matches!(d, workspaces::Direction::Left | workspaces::Direction::Right));
-    match (along, pushed, stepped) {
-        (Some(direction), Some(window), _) => Cue::Move { window, direction },
-        (Some(_), None, Some((from, to))) => Cue::Focus { from, to },
+    use workspaces::Direction::{Down, Left, Right, Up};
+    match (edge_hit, pushed, stepped) {
+        (Some(Up | Down), _, _) => Cue::Switch,
+        (Some(direction @ (Left | Right)), Some(window), _) => Cue::Move { window, direction },
+        (Some(Left | Right), None, Some((from, to))) => Cue::Focus { from, to },
         _ => Cue::Plain,
     }
 }

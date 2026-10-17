@@ -104,7 +104,8 @@ pub enum Cue {
         from: WindowId,
         to: WindowId,
     },
-    /// The display switched to another workspace of its stack, the view travelling up or down.
+    /// The display switched to another workspace of its stack, the view travelling up or down; or,
+    /// with a push, a switch at an end of the stack.
     Switch,
 }
 
@@ -1524,12 +1525,12 @@ mod tests {
 
     /// The push contract, over flights of the look `make` gives: one to three pushes against an end
     /// reaching a flight that moves, each 10-300ms after the one before, each with a press of its
-    /// own (`a_cue`), the flight at times started on an arc or by a push of its own. No window the
-    /// flight draws jumps as a push reaches it, within the half point placing on whole points
-    /// allows; against each of the four walls, some push draws a window more than a point further
-    /// toward it than the flight without it draws it; and every window is home where its plan sends
-    /// it once every track has ended, which is no later than one bounce after the last push or the
-    /// end of the motion.
+    /// own (`a_cue`), half of those against the top or bottom a switch at an end of the stack, the
+    /// flight at times started on an arc or by a push of its own. No window the flight draws jumps
+    /// as a push reaches it, within the half point placing on whole points allows; against each of
+    /// the four walls, some push draws a window more than a point further toward it than the flight
+    /// without it draws it; and every window is home where its plan sends it once every track has
+    /// ended, which is no later than one bounce after the last push or the end of the motion.
     fn pushes_out_and_home_without_a_jump(
         make: &dyn Fn() -> Box<dyn Choreography>,
     ) -> Result<(), String> {
@@ -1541,6 +1542,7 @@ mod tests {
         ];
         let mut rng = Gen(173);
         let mut presses = Gen(174);
+        let mut switches = Gen(175);
         let mut toward = [0usize; 4];
         for run in 0..RUNS {
             let mut flight = Flight::posed(make(), &random_requests(&mut rng), |_| true);
@@ -1563,6 +1565,11 @@ mod tests {
                 let wall = walls[side];
                 let without = flight.score.clone();
                 let cue = a_cue(&mut presses, &flight.drawn);
+                let cue = if side >= 2 && switches.coin() {
+                    Cue::Switch
+                } else {
+                    cue
+                };
                 let edits = flight.choreography.push(&flight.score, &cue, wall, PLAIN, now);
                 flight.fold(&edits);
                 for &window in &flight.drawn {
