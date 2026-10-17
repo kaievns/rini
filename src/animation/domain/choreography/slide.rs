@@ -60,8 +60,8 @@ const FILLS_TOLERANCE: f64 = 1.0;
 
 /// What Slide does with a press on the strip. A move whose column fills the viewport steps the whole
 /// strip away from where the window went, and each column it passed is held at its start on the
-/// strip, riding the strip beneath the moved window; the moved column, and every column of any other
-/// move, cross from where they start.
+/// strip, riding the strip beneath the moved window; the moved column, and every column of any
+/// other move, cross from where they start.
 pub fn stage(cue: &Cue, strip: &Strip) -> Staging {
     let Some((moved, direction)) = cue.moved() else {
         return Staging::default();

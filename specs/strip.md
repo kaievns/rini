@@ -347,8 +347,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   end does (`animation.md`, "Pushing past an end"). The default binds are `Mod+Shift+U` and
   `Mod+Shift+O`.
 - The move MUST be seen as a move of one place is: the moved window crossing from where it was,
-  and every column it passes moving on by one place (`animation.md`, "Moving a window along the
-  strip").
+  and every column it passes crossing on by one place, or held in its place where Slide steps a
+  moved column that fills the viewport (`animation.md`, "Moving a window along the strip").
 
 > **Reported 2026-10-18.** "i want you to make alt-shift-u/o to move current window to the
 > beginning/end of its strip. with animation". Kai's `Mod` is Alt. niri's `move-column-to-first`

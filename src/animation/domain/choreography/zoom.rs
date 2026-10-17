@@ -2,11 +2,12 @@
 //! strip zooms out about the display's centre and back in on a sin² bell while every container
 //! crosses to where its pass sends it, the travel they all carry eased so the view is where the swap
 //! needs it at the arc's middle, and a move's column and the columns it passed crossing on a curve
-//! of their own. A pan merged mid-arc, along or across the strip, folds into the containers' movement and
-//! lands with the arc; any other pass bends them on a spring from where the score has them, as fast
-//! as they are drawn moving. A push at an end bounces with the strip zoomed out. It plans, folds and
-//! poses as Slide does, and composes as Slide does without an arc. See "The zoom look" in
-//! `specs/animation.md`, and "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
+//! of their own. A pan merged mid-arc, along or across the strip, folds into the containers'
+//! movement and lands with the arc; any other pass bends them on a spring from where the score has
+//! them, as fast as they are drawn moving. A push at an end bounces with the strip zoomed out. It
+//! plans, folds and poses as Slide does, and composes as Slide does without an arc. See "The zoom
+//! look" in `specs/animation.md`, and "The overlay engine" in
+//! `src/animation/docs/animation-smoothness.md`.
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayPoint, OverlayVector, SurfaceRect};
@@ -131,10 +132,10 @@ pub fn camera_progress(share: f64, f: f64) -> f64 {
 
 /// What Zoom does with a press on the strip. A move crosses every column of its pair, the moved one
 /// and each it passed, from where they start, nothing held and no step, on an arc as deep as the
-/// pair needs, the travel carried to show the pair at its middle. A focus press that scrolls the strip between two of its windows pans on
-/// an arc as deep as a move of the same two columns, half of it carried at the middle, and a switch
-/// on one as deep as the two strips it travels between need (`switch_arc`). Anything else stages
-/// nothing.
+/// pair needs, the travel carried to show the pair at its middle. A focus press that scrolls the
+/// strip between two of its windows pans on an arc as deep as a move of the same two columns, half
+/// of it carried at the middle, and a switch on one as deep as the two strips it travels between
+/// need (`switch_arc`). Anything else stages nothing.
 pub fn stage(cue: &Cue, strip: &Strip) -> Staging {
     let accent = match *cue {
         Cue::Move { window, .. } => return staged_move(window, strip),

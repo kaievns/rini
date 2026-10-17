@@ -104,9 +104,10 @@ holds whatever the look, but for one that names a look, which holds for that loo
   not the strip scrolls. Both start from the places they held. A moved column narrower than the
   viewport and the column it passes cross, and the rest of the strip moves only as the view does.
   Drawing the finished layout and scrolling the view to it shows the swap only where nothing
-  scrolls. A move to an end of the strip passes every column between: the moved window MUST cross
-  them all from where it was, and each of them MUST move on by one place from where it was, under
-  every look (`strip.md`, "Moving along the strip").
+  scrolls. A move to an end of the strip passes every column between, and under every look MUST
+  pass each as a move of one place passes its column: the moved window MUST cross them all from
+  where it was, and each of them MUST cross on by one place from where it was, or be held there
+  where Slide steps a moved column that fills the viewport (`strip.md`, "Moving along the strip").
 - Every window MUST start from where it was on screen. The view moves wherever the strip moves on
   screen, not only when it scrolls: a centred column that loses its centring as it moves shifts the
   whole strip with the scroll offset unchanged.
@@ -123,7 +124,8 @@ holds whatever the look, but for one that names a look, which holds for that loo
 - The columns passed MUST be seen going beneath the moved window from the side the step opens, and
   that side MUST NOT show the desktop, except past the strip's end: the columns passed fill it,
   then the strip beyond them. Each column passed is drawn in its place on the strip, riding the
-  strip beneath the moved window, which covers it at the end.
+  strip beneath the moved window: one whose place the moved window now holds ends covered by it,
+  and any other ends past it, off screen.
 - A move arriving while a flight still gathers its passes MUST step once that flight moves.
 - A flight MUST run longer to carry the step only when it steps.
 - The step MUST leave and come back at rest. On the bounce's shape a third of a 1720pt display,

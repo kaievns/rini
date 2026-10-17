@@ -772,7 +772,9 @@ side N was heading for.
 **The columns passed are held.** For a move that steps, Slide holds N, and every other
 column passed alike: `stage_move` gives N its old slot as its surface frame and no start of its own,
 so it rides the strip's container: its tile starts where N was on screen and moves only as the strip
-does, W slides over it, and it finishes beneath W, covered. Only the drawing is
+does, W slides over it, and it finishes at its old slot. N's slot and any other W now holds finish
+beneath W, covered; a column further out, which only a move to an end passes, finishes past W, off
+screen (`a_full_width_move_past_several_columns_steps_and_holds_every_one`). Only the drawing is
 held. N's real window goes to its layout frame, off screen, as for any move:
 `final_frames` are unchanged, the handover compares real windows with them, and
 nothing of it lands on screen to be watched. A

@@ -24,9 +24,9 @@ const STANDING_TOLERANCE: f64 = 2.0;
 ///
 /// `strip` is every tiled window at its new frame, and the columns passed are the `columns_passed`
 /// nearest the moved one on the side it came from. Together they fill the span they fill now, in
-/// the order they had before: each column passed starts back by the moved column's width and the gap
-/// beside it now, and the moved column starts at the far end of the span. Every window of a column
-/// moves by the same amount. Empty for a vertical move, or one with fewer columns to pass.
+/// the order they had before: each column passed starts back by the moved column's width and the
+/// gap beside it now, and the moved column starts at the far end of the span. Every window of a
+/// column moves by the same amount. Empty for a vertical move, or one with fewer columns to pass.
 pub fn move_starts(
     strip: &[(WindowId, SurfaceRect)],
     moved: WindowId,
@@ -787,7 +787,7 @@ pub(crate) mod tests {
             .zip(0..)
             .map(|(window, slot)| (wid(window), column(3.0 + 864.0 * f64::from(slot), 861.0)))
             .collect();
-        let from_offset = SurfacePoint::new(-2592.0, 0.0);
+        let from_offset = SurfacePoint::new(2592.0, 0.0);
         let travel = pan_travel(from_offset, SurfacePoint::origin());
         let cue = Cue::Move {
             window: wid(W),
@@ -821,6 +821,57 @@ pub(crate) mod tests {
                 other => panic!("{other:?}"),
             }
         }
+    }
+
+    /// Full-width W just moved to the start past A, B and C, the camera following it: Slide steps
+    /// the strip and holds all three at their old slots, W crossing from the far end of the span.
+    /// A and B finish beneath W, whose slot they shared, and C past it, off screen.
+    #[test]
+    fn a_full_width_move_past_several_columns_steps_and_holds_every_one() {
+        let (a, b, c, d) = (2, 3, 4, 5);
+        let strip = [
+            (wid(W), column(3.0, 1722.0)),
+            (wid(a), column(1728.0, 860.0)),
+            (wid(b), column(2591.0, 859.0)),
+            (wid(c), column(3453.0, 860.0)),
+            (wid(d), column(4316.0, 860.0)),
+        ];
+        let from_offset = SurfacePoint::new(2588.0, 0.0);
+        let cue = Cue::Move {
+            window: wid(W),
+            direction: Direction::Left,
+            columns_passed: 3,
+        };
+        let mut windows: Vec<SurfaceWindow> =
+            strip.iter().map(|&(w, f)| surface_window(w, f, false)).collect();
+        let travel = pan_travel(from_offset, SurfacePoint::origin());
+        let step = match stage_move(&mut windows, &cue, area(), travel, PLAIN, Look::Slide) {
+            Some(Accent::Step { offset, .. }) => offset,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(step, OverlayVector::new(V / 3.0, 0.0));
+        let get = |window: u32| *windows.iter().find(|s| s.window == wid(window)).unwrap();
+        for (window, old) in [(a, 3.0), (b, 866.0), (c, 1728.0)] {
+            assert_eq!(get(window).frame.origin.x, old, "{window} held at its old slot");
+            assert_eq!(get(window).from, None, "{window}");
+        }
+        assert_eq!(get(W).from.map(|from| from.origin.x), Some(2591.0));
+        assert_eq!((get(d).frame, get(d).from), (strip[4].1, None));
+
+        let flight = Flight::fly(&windows, from_offset, step, flight_curve(true), move |_, key| {
+            carries_out_and_back(key, step)
+        });
+        assert_eq!(flight.span(W, 0.0), (3.0, 1725.0), "W starts where it was");
+        let w = flight.span(W, 1.0);
+        for window in [a, b] {
+            let (lo, hi) = flight.span(window, 1.0);
+            assert!(w.0 <= lo + 1.0 && hi <= w.1 + 1.0, "{window} beneath W {w:?}");
+        }
+        assert!(
+            flight.span(c, 1.0).0 >= V,
+            "C off screen: {:?}",
+            flight.span(c, 1.0)
+        );
     }
 
     /// What the look staged is what lands on the surface: a window it starts elsewhere crosses from

@@ -110,8 +110,8 @@ pub struct EventResponse {
     #[serde(default)]
     pub edge_hit: Option<Direction>,
     /// A window's column moved along its strip, past the columns that way. The reactor draws the
-    /// columns crossing. Not set for a move out of a stacked column, a vertical move, or a move onto
-    /// another display.
+    /// columns crossing. Not set for a move out of a stacked column, a vertical move, or a move
+    /// onto another display.
     #[serde(default)]
     pub moved: Option<StripMove>,
     /// Focus went left or right along the strip: the window it left and the one it reached. At an
