@@ -130,16 +130,24 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 ## How it moves
 
-- It MUST zoom out from the screen as it is, on the first half of the zoom look's arc, under every
-  look: frame zero draws every window where it is on screen. Every open MUST draw afresh, after one
-  the renderer had no overlay for as well: thumbs kept from that one would carry its pictures and
-  its widened bands, a 1pt ring drawn near 4.5pt wide.
+- It MUST zoom out from the screen as it is, under every look: frame zero draws every window where
+  it is on screen. Every open MUST draw afresh, after one the renderer had no overlay for as well:
+  thumbs kept from that one would carry its pictures and its widened bands, a 1pt ring drawn near
+  4.5pt wide.
 
 > **Found 2026-10-18, not reported.** Review of the lifecycle showed an overview the renderer could
 > not draw dropped its phase without letting go of its thumbs, which only its lift did.
-- On close it MUST zoom back in, on the arc's second half, onto the real layout, the selected window
-  focused on its workspace, and hand over to the real windows as a flight does: lifted only once
-  the windows it lands on are where it draws them, or its patience has run out.
+- On close it MUST zoom back in onto the real layout, the selected window focused on its workspace,
+  and hand over to the real windows as a flight does: lifted only once the windows it lands on are
+  where it draws them, or its patience has run out.
+- The zoom out, the zoom back in and every press inside it MUST run at the pace a focus press pans
+  the strip: on the same curve, over the same length, 0.35s at slowdown 1. Kai asked them to match
+  the navigation transitions; on half the zoom look's arc the zoom out started at rest and was 97%
+  of the way there only at 0.229s, where a pan is at 0.175s.
+
+> **Reported 2026-10-19.** "speed up the animation to match tha navigation transitions". The zoom
+> ran half the zoom look's arc over 0.257s; it now runs as a pan does
+> (`src/transitions/docs/coordination.md`, "The overview").
 - A release while it zooms out MUST turn it back from where it is drawn, without a jump, each
   thing it draws as fast as it was going. Opened again while it zooms back in, it MUST zoom out
   again from where it is drawn: a quick let-go and press again would otherwise lift it and open it

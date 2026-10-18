@@ -1106,6 +1106,13 @@ work it owed the service is asked then, since the overview's hold would otherwis
 by that quiet. A flight beginning in the overview's own quiet takes the service and the report from
 it.
 
+Its zoom out, its zoom back in and every press inside it run over `animation_duration` on
+`MOTION_CURVE`, the length and curve a focus press pans the strip on under Slide: 0.35s at slowdown
+1, 97% of the way there at 0.175s. The zoom first ran half the zoom look's arc, `sin²(πt/2)` over
+0.35s × `ZOOM_STRETCH`, 0.257s: at rest as it starts, half way at 0.128s and 97% at 0.229s, so it
+read slower than a press although it ended sooner. Kai asked for the navigation's pace on
+2026-10-19. The zoom back in ends 0.093s later than it did, and the lift with it.
+
 From the end of its zoom out to the start of its zoom in, its thumbs' rings and borders are dressed
 again as wide on screen as at rest (`Render::Rewear`), and through the zoom at their own width,
 which the zoom thins. So they visibly thicken as the zoom out lands and thin as the zoom in begins:

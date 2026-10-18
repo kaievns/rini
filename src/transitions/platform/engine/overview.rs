@@ -45,9 +45,8 @@ use crate::transitions::domain::timing::FRAME_INTERVAL;
 pub(super) struct Shown {
     /// The latest view the reactor laid out.
     view: Option<OverviewView>,
-    /// How long its zoom out and in run, and a press inside it.
-    arc: Duration,
-    press: Duration,
+    /// How long its zoom out and in run, and each press inside it: a focus press's pan.
+    length: Duration,
     /// Its score as the renderer was handed it.
     score: Score,
     tiles: Vec<OverlayTile>,
@@ -67,20 +66,14 @@ pub(super) struct Shown {
 }
 
 impl FlightEngine {
-    /// The overview opened, its zoom out over `arc` and each press inside it over `press`: opened
+    /// The overview opened, its zoom out and each press inside it over `length`: opened
     /// under a generation of its own, but for one waiting on a flight to lift, which takes one then,
     /// and one opened again as it closes, which keeps its own. A coordinator in its quiet settles
     /// first: the overview holds the service from here.
-    pub(super) fn open_overview(
-        &mut self,
-        view: OverviewView,
-        (arc, press): (Duration, Duration),
-        cause: Cause,
-    ) {
+    pub(super) fn open_overview(&mut self, view: OverviewView, length: Duration, cause: Cause) {
         self.take_request(cause);
         self.shown_overview.view = Some(view);
-        self.shown_overview.arc = arc;
-        self.shown_overview.press = press;
+        self.shown_overview.length = length;
         let flying = self.flights.coordinator().is_flying();
         let generation = if flying || self.flights.overview().is_landing() {
             self.flights.overview().generation()
@@ -90,7 +83,12 @@ impl FlightEngine {
             self.flights.reserve()
         };
         let rests = self.rests;
-        self.drive_overview(Step::Open { generation, arc, flying, rests });
+        self.drive_overview(Step::Open {
+            generation,
+            length,
+            flying,
+            rests,
+        });
     }
 
     /// The scene laid out again, and what the presses that changed it named.
@@ -202,18 +200,15 @@ impl FlightEngine {
             Command::Release => self.pictures.hold(Hold::Released),
             Command::Play => {
                 let presses = std::mem::take(&mut self.shown_overview.presses);
-                let press = self.shown_overview.press;
-                self.move_overview(Target::Held, slide(press), (&presses, press), now);
+                self.move_overview(Target::Held, &presses, now);
             }
             Command::Exit => {
                 self.hole_overview();
-                let arc = self.shown_overview.arc;
-                self.move_overview(Target::AtRest, arc_motion(arc), (&[], arc), now);
+                self.move_overview(Target::AtRest, &[], now);
             }
             Command::Turn => {
                 self.render(Render::Holes(Vec::new()));
-                let arc = self.shown_overview.arc;
-                self.move_overview(Target::Held, arc_motion(arc), (&[], arc), now);
+                self.move_overview(Target::Held, &[], now);
             }
             Command::PlaceRest => {
                 self.render(Render::PlaceRest { through: self.took });
@@ -327,19 +322,13 @@ impl FlightEngine {
         });
         self.outline_overview(&rest);
         self.shown = self.render(Render::Show);
-        let arc = self.shown_overview.arc;
-        self.move_overview(Target::Held, arc_motion(arc), (&[], arc), now);
+        self.move_overview(Target::Held, &[], now);
     }
 
-    /// Every node from where it is drawn to where `target` has it, as `motion` moves it, the pushes
-    /// among `presses` bounced over `pushing`, each thumb wearing what it wears there.
-    fn move_overview(
-        &mut self,
-        target: Target,
-        motion: Motion,
-        (presses, pushing): (&[Press], Duration),
-        now: Instant,
-    ) {
+    /// Every node from where it is drawn to where `target` has it at a press's pace, the pushes
+    /// among `presses` bounced over a press's length, each thumb wearing what it wears there.
+    fn move_overview(&mut self, target: Target, presses: &[Press], now: Instant) {
+        let length = self.shown_overview.length;
         let Some(places) = self.overview_places(target) else {
             return;
         };
@@ -366,8 +355,8 @@ impl FlightEngine {
         self.wear_overview(&places);
         let at = self.media.at(now);
         let shown = &mut self.shown_overview;
-        let mut edits = toward(&shown.score, &places, at, motion);
-        edits.extend(pushes(&shown.score, &scene, presses, pushing.as_secs_f64(), at));
+        let mut edits = toward(&shown.score, &places, at, motion(length));
+        edits.extend(pushes(&shown.score, &scene, presses, length.as_secs_f64(), at));
         for edit in &edits {
             shown.score.apply(edit);
         }
@@ -649,21 +638,12 @@ enum Target {
     AtRest,
 }
 
-/// The zoom out or in over `arc`, a cut with none.
-fn arc_motion(arc: Duration) -> Motion {
-    if arc.is_zero() {
+/// Slide's curve over `length`, a cut with none.
+fn motion(length: Duration) -> Motion {
+    if length.is_zero() {
         Motion::Cut
     } else {
-        Motion::Arc { seconds: arc.as_secs_f64() }
-    }
-}
-
-/// A press over `press`, a cut with none.
-fn slide(press: Duration) -> Motion {
-    if press.is_zero() {
-        Motion::Cut
-    } else {
-        Motion::Slide { seconds: press.as_secs_f64() }
+        Motion::Slide { seconds: length.as_secs_f64() }
     }
 }
 

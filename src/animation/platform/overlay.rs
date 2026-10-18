@@ -4307,7 +4307,7 @@ mod tests {
                 plays_exactly(&tree);
             };
             let held_open = held(&opened);
-            let edits = toward(&score, &held_open, 100.0, Motion::Arc { seconds: 0.257 });
+            let edits = toward(&score, &held_open, 100.0, Motion::Slide { seconds: 0.35 });
             play(&mut score, edits, wear(&held_open));
 
             let (stepped, _) = scene(4, false);
@@ -4335,7 +4335,7 @@ mod tests {
             play(&mut score, edits, wear(&places));
 
             let places = at_rest(&moved, &landing);
-            let edits = toward(&score, &places, 103.0, Motion::Arc { seconds: 0.257 });
+            let edits = toward(&score, &places, 103.0, Motion::Slide { seconds: 0.35 });
             play(&mut score, edits, wear(&places));
         }
 

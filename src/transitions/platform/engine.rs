@@ -164,14 +164,13 @@ pub enum Event {
     Journal(JournalSettings),
     /// What the renderer made of the batches it drew last. Posted by its report.
     Rendered(crate::animation::event::Event),
-    /// The overview opened on the display the overlay flies on: zoomed out from the screen as it is
-    /// over `arc`, each press inside it played over `press`, both none with animation off. Every
-    /// flight asked for and every move of the overlay waits from here to its lift. See
+    /// The overview opened on the display the overlay flies on: zoomed out from the screen as it is,
+    /// and each press inside it played, over `length`, a focus press's, none with animation off.
+    /// Every flight asked for and every move of the overlay waits from here to its lift. See
     /// `specs/overview.md`.
     OverviewOpen {
         view: OverviewView,
-        arc: Duration,
-        press: Duration,
+        length: Duration,
         /// The event that opened it, where its journal starts.
         cause: Cause,
     },
@@ -474,9 +473,7 @@ impl FlightEngine {
                 turn.outside,
                 &turn.changes,
             ),
-            Event::OverviewOpen { view, arc, press, cause } => {
-                self.open_overview(view, (arc, press), cause)
-            }
+            Event::OverviewOpen { view, length, cause } => self.open_overview(view, length, cause),
             Event::OverviewScene { view, presses } => self.overview_scene(view, presses),
             Event::OverviewClose { view } => self.close_overview(view),
         }
@@ -4416,14 +4413,15 @@ mod tests {
 
             use super::*;
             use crate::animation::domain::choreography::overview::{at_rest, held};
+            use crate::animation::domain::motion::easing::MOTION_CURVE;
+            use crate::animation::domain::motion::score::Curve;
             use crate::overview::domain::fixture::{Col, overview, row, strip, w};
             use crate::overview::domain::scene::lay_out;
             use crate::pictures::domain::route::Route;
             use crate::transitions::domain::lifecycle::overview::Overview;
             use crate::transitions::domain::request::{OverviewView, OverviewWindow};
 
-            const ARC: Duration = Duration::from_millis(257);
-            const PRESS: Duration = Duration::from_millis(350);
+            const LENGTH: Duration = Duration::from_millis(350);
 
             fn view(current: u32) -> OverviewView {
                 let first = [Col { width: 840.0, windows: &[1] }, Col {
@@ -4523,8 +4521,7 @@ mod tests {
             fn open(h: &Harness) -> Event {
                 Event::OverviewOpen {
                     view: view(1),
-                    arc: ARC,
-                    press: PRESS,
+                    length: LENGTH,
                     cause: h.cause(),
                 }
             }
@@ -4556,7 +4553,7 @@ mod tests {
                 let frame_zero = frame_zero(h);
                 let shown = only_batch(&h.step(frame_zero)).seq;
                 h.commit(shown);
-                h.advance(ARC);
+                h.advance(LENGTH);
                 h.step(Event::Tick)
             }
 
@@ -4605,9 +4602,22 @@ mod tests {
                         "{window:?} where the screen has it"
                     );
                 }
+                let zoom = super::super::overview::played(&batch.commands)
+                    .into_iter()
+                    .find_map(|edit| match edit {
+                        Edit::Add(track) if track.node() == Node::Strip => Some(track),
+                        _ => None,
+                    })
+                    .expect("the strip zooms out");
+                assert_eq!(
+                    zoom.curves(),
+                    [Curve::Bezier(MOTION_CURVE)],
+                    "on the curve a focus press pans on"
+                );
+                assert!((zoom.seconds() - LENGTH.as_secs_f64()).abs() < 1e-9);
                 h.commit(batch.seq);
                 let mut swept = h.engine.overview_score().clone();
-                h.advance(ARC);
+                h.advance(LENGTH);
                 let held_at = h.media.at(h.at() + FRAME_INTERVAL);
                 for tile in view(1).scene.rows.iter().flat_map(|row| &row.tiles) {
                     let drawn = swept.drawn(tile.window, held_at).unwrap();
@@ -4693,7 +4703,7 @@ mod tests {
                         _ => None,
                     })
                     .expect("the row pans");
-                assert!((pan.seconds() - PRESS.as_secs_f64()).abs() < 1e-9);
+                assert!((pan.seconds() - LENGTH.as_secs_f64()).abs() < 1e-9);
                 let to = held(&view(2).scene).drawn(w(2)).unwrap();
                 let end = pan.ends() + 0.01;
                 assert!(h.engine.overview_score().drawn(w(2), end).unwrap().is_within(1e-6, to));
@@ -4723,7 +4733,7 @@ mod tests {
                     &view(1).shown.iter().map(|(w, f)| (*w, on(*f))).collect::<Vec<_>>(),
                 );
                 h.place(1, rect(0.0, 0.0, 10.0, 10.0));
-                h.advance(ARC + Duration::from_millis(1));
+                h.advance(LENGTH + Duration::from_millis(1));
                 let ended = h.media.at(h.at());
                 for (window, frame) in view(1).shown {
                     let drawn = h.engine.overview_score().drawn(window, ended).unwrap();
@@ -4791,13 +4801,13 @@ mod tests {
                     if landing {
                         h.place(1, view(1).shown[0].1);
                         h.place(2, view(1).shown[1].1);
-                        h.advance(ARC + Duration::from_millis(1));
+                        h.advance(LENGTH + Duration::from_millis(1));
                         let sent = h.step(Event::Tick);
                         let place = only_batch(&sent);
                         assert_eq!(kinds(place), vec!["place_rest"]);
                         h.commit(place.seq);
                     } else {
-                        h.advance(ARC / 2);
+                        h.advance(LENGTH / 2);
                     }
                     let opened = open(&h);
                     let sent = h.step(opened);
@@ -4823,7 +4833,7 @@ mod tests {
                 let generation = lifecycle(&h).generation();
                 let sent = h.step(Event::OverviewClose { view: view(1) });
                 h.commit(only_batch(&sent).seq);
-                h.advance(ARC / 2);
+                h.advance(LENGTH / 2);
                 let elsewhere = Event::SetDisplay {
                     id: 2,
                     frame: DISPLAY,
@@ -4845,7 +4855,7 @@ mod tests {
 
                 h.place(1, view(1).shown[0].1);
                 h.place(2, view(1).shown[1].1);
-                h.advance(ARC);
+                h.advance(LENGTH);
                 let place = only_batch(&h.step(Event::Tick)).seq;
                 h.commit(place);
                 let sent = h.step(Event::Tick);

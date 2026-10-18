@@ -1,8 +1,8 @@
 //! How the overview moves on the overlay: every row of its scene one strip container, its edge
 //! stacks and its floating windows a container each, all under the strip's zoom; the zoom out from
-//! the screen as it is and back in onto the real layout on the zoom look's arc, each half of it on
-//! its own; every press inside it played Slide's way, each node from where it is drawn to where the
-//! new scene has it; and the push at an end bounced on screen as far as a flight's.
+//! the screen as it is and back in onto the real layout, and every press inside it, played Slide's
+//! way at a press's pace, each node from where it is drawn to where the new scene has it; and the
+//! push at an end bounced on screen as far as a flight's.
 //!
 //! Not a `Look`, nor in `Look::ALL`: the overview is a view the presses inside it change, and its
 //! moves are the same under every look (`specs/overview.md`, "How it moves").
@@ -17,7 +17,7 @@ use rini_geometry::space::{
 
 use super::Cue;
 use crate::animation::domain::motion::bounce::Bounce;
-use crate::animation::domain::motion::easing::{MOTION_CURVE, nudge_displacement};
+use crate::animation::domain::motion::easing::MOTION_CURVE;
 use crate::animation::domain::motion::glide::{spring_axis, spring_omega};
 use crate::animation::domain::motion::plan::{Banding, GroupKey, group_relative};
 use crate::animation::domain::motion::score::{
@@ -310,10 +310,8 @@ fn placed(places: &Places) -> Vec<Edit> {
 pub enum Motion {
     /// Straight to where it ends: animation off, or Low Power Mode.
     Cut,
-    /// The zoom out as it opens or in as it closes: one half of the zoom look's arc, over
-    /// `seconds`.
-    Arc { seconds: f64 },
-    /// A press: Slide's curve, over `seconds`.
+    /// Slide's curve over `seconds`, as a press pans the strip: the zoom out as it opens, the zoom
+    /// in as it closes, and every press inside it.
     Slide { seconds: f64 },
 }
 
@@ -321,7 +319,7 @@ impl Motion {
     fn seconds(self) -> f64 {
         match self {
             Motion::Cut => 0.0,
-            Motion::Arc { seconds } | Motion::Slide { seconds } => seconds.max(0.0),
+            Motion::Slide { seconds } => seconds.max(0.0),
         }
     }
 }
@@ -338,11 +336,7 @@ pub fn toward(playing: &Score, places: &Places, at: f64, motion: Motion) -> Vec<
     } else if playing_anything(playing, at) {
         Shape::Spring { omega: spring_omega(seconds) }
     } else {
-        match motion {
-            Motion::Arc { seconds } => Shape::Arc { seconds },
-            Motion::Slide { seconds } => Shape::Slide { seconds },
-            Motion::Cut => Shape::Cut,
-        }
+        Shape::Slide { seconds }
     };
     let mut edits = Vec::new();
     let gone: Vec<WindowId> = playing
@@ -389,7 +383,6 @@ pub fn toward(playing: &Score, places: &Places, at: f64, motion: Motion) -> Vec<
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Shape {
     Cut,
-    Arc { seconds: f64 },
     Slide { seconds: f64 },
     Spring { omega: f64 },
 }
@@ -477,14 +470,6 @@ fn leg(
             seconds,
             Curve::Bezier(MOTION_CURVE),
         ),
-        Shape::Arc { seconds } => {
-            let frames = (seconds / SAMPLE_STEP).ceil().max(1.0) as usize;
-            let values = (0..=frames).map(|k| {
-                let share = nudge_displacement(k as f64 / frames as f64 / 2.0);
-                lerp(start, to, share)
-            });
-            Track::samples(node, Channel::Base, values, at, seconds)
-        }
         Shape::Spring { omega } => spring(node, (start, velocity), to, omega, at),
     };
     vec![Edit::Place(node, to), Edit::Add(track)]
@@ -495,11 +480,6 @@ fn leg(
 fn same(a: Value, b: Value) -> bool {
     let (a, b) = (a.parts(), b.parts());
     (0..4).all(|i| (a[i] - b[i]).abs() < 1e-6)
-}
-
-fn lerp(from: Value, to: Value, share: f64) -> Value {
-    let (a, b) = (from.parts(), to.parts());
-    from.with_parts(std::array::from_fn(|i| a[i] + (b[i] - a[i]) * share))
 }
 
 /// A critically damped spring on every part of `node` from `start` going at `velocity` to `to`,
@@ -577,7 +557,6 @@ mod tests {
     use rini_geometry::{IsWithin, to_overlay_space};
 
     use super::*;
-    use crate::animation::domain::choreography::zoom::{ZOOM_STRETCH, arc_scale};
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
     use crate::animation::domain::motion::score::Form;
     use crate::overview::domain::fixture::{Col, display, overview, rect, row, strip, w};
@@ -585,7 +564,6 @@ mod tests {
     use crate::overview::domain::stacks::Side;
 
     const PRESS: f64 = 0.35;
-    const ARC: f64 = PRESS * ZOOM_STRETCH;
     const WIDE: f64 = 1400.0;
     const NARROW: f64 = 800.0;
 
@@ -694,29 +672,29 @@ mod tests {
         }
     }
 
-    /// The zoom out plays the first half of the zoom look's arc over its stretched length, from the
-    /// screen as it is to every thumb where the scene draws it.
+    /// The zoom out runs as a focus press pans the strip, on Slide's curve over a press's length,
+    /// from the screen as it is to every thumb where the scene draws it.
     #[test]
-    fn the_entry_ends_with_every_tile_at_its_scene_place() {
+    fn the_entry_runs_at_a_press_s_pace_to_every_tile_s_scene_place() {
         let scene = scene(&STRIP, 3);
         let shown = shown(&STRIP, 3);
         let rest = pose(&at_rest(&scene, &shown));
-        let edits = toward(&rest, &held(&scene), 0.0, Motion::Arc { seconds: ARC });
+        let edits = toward(&rest, &held(&scene), 0.0, Motion::Slide { seconds: PRESS });
+        let zoom = tracks(&edits)
+            .into_iter()
+            .find(|track| track.node() == Node::Strip)
+            .expect("the strip zooms");
+        assert_eq!(zoom.form(), Form::Between);
+        assert_eq!(zoom.curves(), [Curve::Bezier(MOTION_CURVE)]);
+        assert!((zoom.seconds() - PRESS).abs() < 1e-9);
         let score = played(&rest, &edits);
         for (window, frame) in &shown {
             let Some(at) = score.drawn(*window, 0.0) else { continue };
             assert!(at.is_within(1e-6, *frame), "no jump as it starts: {window:?}");
         }
-        let Some(Value::Zoom(quarter)) = score.sample(Node::Strip, ARC / 4.0) else {
-            panic!("the strip zooms")
-        };
-        assert!(
-            (quarter.scale - arc_scale(scene.scale, 0.125)).abs() < 0.01,
-            "{quarter:?}"
-        );
         for scene_row in &scene.rows {
             for tile in scene_row.tiles.iter().filter(|tile| tile.drawn()) {
-                let at = score.drawn(tile.window, ARC + 0.01).unwrap();
+                let at = score.drawn(tile.window, PRESS + 0.01).unwrap();
                 assert!(at.is_within(1e-6, tile.frame), "{tile:?}: {at:?}");
             }
         }
@@ -801,16 +779,19 @@ mod tests {
         assert!(within[&w(3)] < within[&w(2)], "the moved window in front");
     }
 
-    /// Closing zooms back in on the arc's second half onto the real layout: the workspace shown
-    /// then, each of its windows landing on its real frame, the selected one as it was scrolled to.
+    /// Closing zooms back in at a press's pace onto the real layout: the workspace shown then, each
+    /// of its windows landing on its real frame, the selected one as it was scrolled to.
     #[test]
     fn the_exit_lands_every_tile_on_its_real_frame() {
         let scene = scene(&STRIP, 8);
         let landing = shown(&STRIP, 8);
         let score = pose(&held(&scene));
-        let edits = toward(&score, &at_rest(&scene, &landing), 0.0, Motion::Arc {
-            seconds: ARC,
+        let edits = toward(&score, &at_rest(&scene, &landing), 0.0, Motion::Slide {
+            seconds: PRESS,
         });
+        let zoom = tracks(&edits).into_iter().find(|track| track.node() == Node::Strip).unwrap();
+        assert_eq!(zoom.curves(), [Curve::Bezier(MOTION_CURVE)]);
+        assert!((zoom.seconds() - PRESS).abs() < 1e-9);
         let score = played(&score, &edits);
         for scene_row in &scene.rows {
             for tile in scene_row.tiles.iter().filter(|tile| tile.drawn()) {
@@ -819,7 +800,7 @@ mod tests {
             }
         }
         for (window, frame) in &landing {
-            let Some(at) = score.drawn(*window, ARC + 0.01) else {
+            let Some(at) = score.drawn(*window, PRESS + 0.01) else {
                 continue;
             };
             assert!(
@@ -827,7 +808,7 @@ mod tests {
                 "{window:?}: {at:?} against {frame:?}"
             );
         }
-        let Some(Value::Zoom(zoom)) = score.sample(Node::Strip, ARC + 0.01) else {
+        let Some(Value::Zoom(zoom)) = score.sample(Node::Strip, PRESS + 0.01) else {
             panic!("the strip is zoomed")
         };
         assert!((zoom.scale - 1.0).abs() < 1e-9);
@@ -843,10 +824,10 @@ mod tests {
         let start = pose(&rest);
         let entering = played(
             &start,
-            &toward(&start, &held(&scene), 0.0, Motion::Arc { seconds: ARC }),
+            &toward(&start, &held(&scene), 0.0, Motion::Slide { seconds: PRESS }),
         );
-        let turn = ARC * 0.4;
-        let edits = toward(&entering, &rest, turn, Motion::Arc { seconds: ARC });
+        let turn = PRESS * 0.2;
+        let edits = toward(&entering, &rest, turn, Motion::Slide { seconds: PRESS });
         assert!(
             tracks(&edits)
                 .iter()

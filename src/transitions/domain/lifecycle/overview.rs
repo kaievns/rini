@@ -13,12 +13,12 @@ use super::{FRAME_ZERO_PATIENCE, Generation, LANDING_PATIENCE};
 /// What the overview's lifecycle hears.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
-    /// Asked to open under `generation`, zooming out and in over `arc`; `flying` while a flight is
+    /// Asked to open under `generation`, zooming out and in over `length`; `flying` while a flight is
     /// up, which it waits to see lift, and opens under the generation it hears then; `rests` when
     /// anything is drawn at rest on its display.
     Open {
         generation: Generation,
-        arc: Duration,
+        length: Duration,
         flying: bool,
         rests: bool,
     },
@@ -104,7 +104,7 @@ enum Phase {
 pub struct Overview {
     phase: Option<Phase>,
     generation: Generation,
-    arc: Duration,
+    length: Duration,
     rests: bool,
 }
 
@@ -142,9 +142,17 @@ impl Overview {
     pub fn on(&mut self, event: Event, now: Instant) -> Vec<Command> {
         let mut out = Vec::new();
         match (self.phase, event) {
-            (None | Some(Phase::Settling), Event::Open { generation, arc, flying, rests }) => {
+            (
+                None | Some(Phase::Settling),
+                Event::Open {
+                    generation,
+                    length,
+                    flying,
+                    rests,
+                },
+            ) => {
                 self.generation = generation;
-                self.arc = arc;
+                self.length = length;
                 self.rests = rests;
                 if flying {
                     self.phase = Some(Phase::Waiting);
@@ -196,7 +204,7 @@ impl Overview {
                     Command::Exit,
                     Command::Clock(true),
                 ]);
-                self.phase = Some(Phase::Exiting { until: now + self.arc });
+                self.phase = Some(Phase::Exiting { until: now + self.length });
             }
             (Some(Phase::Exiting { until }), Event::Tick { settled, landed }) if now >= until => {
                 self.phase = Some(Phase::Landing {
@@ -233,12 +241,12 @@ impl Overview {
         });
     }
 
-    /// Zooming out until its arc ends, held at once with no arc to play.
+    /// Zooming out until its length runs out, held at once with none.
     fn enter(&mut self, now: Instant, out: &mut Vec<Command>) {
-        if self.arc.is_zero() {
+        if self.length.is_zero() {
             self.hold(out);
         } else {
-            self.phase = Some(Phase::Entering { until: now + self.arc });
+            self.phase = Some(Phase::Entering { until: now + self.length });
         }
     }
 
@@ -283,7 +291,7 @@ impl Overview {
 mod tests {
     use super::*;
 
-    const ARC: Duration = Duration::from_millis(257);
+    const LENGTH: Duration = Duration::from_millis(350);
     const TICK: Duration = Duration::from_micros(16_667);
 
     fn opened(flying: bool, at: Instant) -> (Overview, Vec<Command>) {
@@ -291,7 +299,7 @@ mod tests {
         let out = overview.on(
             Event::Open {
                 generation: Generation(4),
-                arc: ARC,
+                length: LENGTH,
                 flying,
                 rests: true,
             },
@@ -304,7 +312,7 @@ mod tests {
     fn held(at: Instant) -> Overview {
         let (mut overview, _) = opened(false, at);
         overview.on(Event::FrameZero(Generation(4)), at);
-        overview.on(Event::Tick { settled: true, landed: true }, at + ARC);
+        overview.on(Event::Tick { settled: true, landed: true }, at + LENGTH);
         assert!(overview.is_shown() && !overview.is_landing());
         overview
     }
@@ -330,8 +338,11 @@ mod tests {
         assert_eq!(overview.on(Event::FrameZero(Generation(4)), t0), vec![
             Command::Show
         ]);
-        assert!(tick(&mut overview, t0 + ARC / 2).is_empty(), "still zooming out");
-        assert_eq!(tick(&mut overview, t0 + ARC), vec![
+        assert!(
+            tick(&mut overview, t0 + LENGTH / 2).is_empty(),
+            "still zooming out"
+        );
+        assert_eq!(tick(&mut overview, t0 + LENGTH), vec![
             Command::Widen(true),
             Command::Release,
             Command::Clock(false)
@@ -365,9 +376,9 @@ mod tests {
         let t0 = Instant::now();
         let (mut overview, _) = opened(false, t0);
         overview.on(Event::FrameZero(Generation(4)), t0);
-        assert_eq!(overview.on(Event::Scene, t0 + ARC / 3), vec![Command::Play]);
-        tick(&mut overview, t0 + ARC);
-        assert_eq!(overview.on(Event::Scene, t0 + ARC * 2), vec![Command::Play]);
+        assert_eq!(overview.on(Event::Scene, t0 + LENGTH / 3), vec![Command::Play]);
+        tick(&mut overview, t0 + LENGTH);
+        assert_eq!(overview.on(Event::Scene, t0 + LENGTH * 2), vec![Command::Play]);
         assert!(overview.is_shown() && !overview.is_landing());
     }
 
@@ -386,11 +397,11 @@ mod tests {
             Command::Clock(true)
         ]);
         assert!(overview.is_landing());
-        assert!(tick(&mut overview, closed + ARC / 2).is_empty());
+        assert!(tick(&mut overview, closed + LENGTH / 2).is_empty());
         let unlanded = Event::Tick { settled: true, landed: false };
-        assert!(overview.on(unlanded, closed + ARC).is_empty(), "not landed");
-        assert!(overview.on(unlanded, closed + ARC + TICK).is_empty());
-        let landed = closed + ARC + 2 * TICK;
+        assert!(overview.on(unlanded, closed + LENGTH).is_empty(), "not landed");
+        assert!(overview.on(unlanded, closed + LENGTH + TICK).is_empty());
+        let landed = closed + LENGTH + 2 * TICK;
         assert_eq!(tick(&mut overview, landed), vec![Command::PlaceRest]);
         assert_eq!(tick(&mut overview, landed + TICK), vec![
             Command::Lift(Generation(4)),
@@ -414,11 +425,11 @@ mod tests {
         let mut overview = held(t0);
         overview.on(Event::Close, t0);
         let unlanded = Event::Tick { settled: true, landed: false };
-        overview.on(unlanded, t0 + ARC);
-        let out = overview.on(unlanded, t0 + ARC + LANDING_PATIENCE);
+        overview.on(unlanded, t0 + LENGTH);
+        let out = overview.on(unlanded, t0 + LENGTH + LANDING_PATIENCE);
         assert_eq!(out, vec![Command::PlaceRest]);
         assert_eq!(
-            overview.on(unlanded, t0 + ARC + LANDING_PATIENCE + TICK)[0],
+            overview.on(unlanded, t0 + LENGTH + LANDING_PATIENCE + TICK)[0],
             Command::Lift(Generation(4))
         );
     }
@@ -429,7 +440,7 @@ mod tests {
         let t0 = Instant::now();
         let (mut overview, _) = opened(false, t0);
         overview.on(Event::FrameZero(Generation(4)), t0);
-        let out = overview.on(Event::Close, t0 + ARC / 3);
+        let out = overview.on(Event::Close, t0 + LENGTH / 3);
         assert_eq!(out, vec![
             Command::Hold,
             Command::Widen(false),
@@ -437,10 +448,12 @@ mod tests {
             Command::Clock(true)
         ]);
         assert!(
-            tick(&mut overview, t0 + ARC).is_empty(),
-            "the exit's arc runs from the release"
+            tick(&mut overview, t0 + LENGTH).is_empty(),
+            "the zoom in runs from the release"
         );
-        assert_eq!(tick(&mut overview, t0 + ARC / 3 + ARC), vec![Command::PlaceRest]);
+        assert_eq!(tick(&mut overview, t0 + LENGTH / 3 + LENGTH), vec![
+            Command::PlaceRest
+        ]);
     }
 
     /// Opened again while it zooms back in, it zooms out again from there, and holds once that
@@ -452,17 +465,17 @@ mod tests {
         overview.on(Event::Close, t0);
         let again = Event::Open {
             generation: Generation(5),
-            arc: ARC,
+            length: LENGTH,
             flying: false,
             rests: true,
         };
-        assert_eq!(overview.on(again, t0 + ARC / 2), vec![Command::Turn]);
+        assert_eq!(overview.on(again, t0 + LENGTH / 2), vec![Command::Turn]);
         assert_eq!(
             overview.generation(),
             Generation(4),
             "the same overlay, the same generation"
         );
-        assert_eq!(tick(&mut overview, t0 + ARC / 2 + ARC), vec![
+        assert_eq!(tick(&mut overview, t0 + LENGTH / 2 + LENGTH), vec![
             Command::Widen(true),
             Command::Release,
             Command::Clock(false)
@@ -516,7 +529,7 @@ mod tests {
         assert_eq!(overview.on(Event::Unavailable, t0)[0], Command::Forget);
         assert!(!overview.holds_overlay());
         let mut overview = held(t0);
-        assert_eq!(overview.on(Event::Unavailable, t0 + ARC), vec![
+        assert_eq!(overview.on(Event::Unavailable, t0 + LENGTH), vec![
             Command::Forget,
             Command::Clock(false),
             Command::Release,
@@ -526,16 +539,16 @@ mod tests {
         assert!(!overview.holds_overlay());
     }
 
-    /// With no arc to play, animation off or Low Power Mode, it is held as it shows and lifts as
+    /// With no length to play over, animation off or Low Power Mode, it is held as it shows and lifts as
     /// soon as its windows have landed: cuts both ways.
     #[test]
-    fn with_no_arc_it_opens_and_closes_as_cuts() {
+    fn with_no_length_it_opens_and_closes_as_cuts() {
         let t0 = Instant::now();
         let mut overview = Overview::default();
         overview.on(
             Event::Open {
                 generation: Generation(1),
-                arc: Duration::ZERO,
+                length: Duration::ZERO,
                 flying: false,
                 rests: false,
             },
@@ -557,9 +570,9 @@ mod tests {
         let t0 = Instant::now();
         let mut overview = held(t0);
         overview.on(Event::Close, t0);
-        overview.on(Event::Tick { settled: true, landed: true }, t0 + ARC);
-        overview.on(Event::Tick { settled: true, landed: true }, t0 + ARC + TICK);
-        overview.on(Event::Overtaken, t0 + ARC + TICK);
-        assert!(overview.on(Event::Quiet(Generation(4)), t0 + ARC * 3).is_empty());
+        overview.on(Event::Tick { settled: true, landed: true }, t0 + LENGTH);
+        overview.on(Event::Tick { settled: true, landed: true }, t0 + LENGTH + TICK);
+        overview.on(Event::Overtaken, t0 + LENGTH + TICK);
+        assert!(overview.on(Event::Quiet(Generation(4)), t0 + LENGTH * 3).is_empty());
     }
 }
