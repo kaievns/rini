@@ -3,14 +3,15 @@
 //! and the pointer until it closes, and nothing held once it has.
 
 use objc2_core_foundation::{CGPoint, CGSize};
+use rini_geometry::shows_on;
 use rini_geometry::space::{OverlayVector, ToCg};
 use rini_ipc::protocol::{ReactorCommand, WorkspaceSelector};
 use test_log::test;
 
 use crate::animation::domain::choreography::Cue;
+use crate::animation::domain::choreography::overview::Press;
 use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
 use crate::app::channels;
-use crate::app::reactor::overview::Press;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::tests::fixtures::strip_movements;
 use crate::app::reactor::*;
@@ -20,6 +21,7 @@ use crate::input::domain::switch_session::{
     KeyEventKind, Opens, OverviewSignal, SessionId, Signal, SwitchKeys,
 };
 use crate::input::platform::input_tap::Request as Tap;
+use crate::overview::domain::scene::Scene;
 use crate::transitions::platform::engine::Event as Engine;
 use crate::windows::domain::request::Request;
 use crate::workspaces::{Direction, LayoutCommand};
@@ -874,4 +876,116 @@ fn nothing_is_held_once_the_overview_closes() {
     let under = reactor.test_window_server_id(w(3));
     batch(&mut apps, &mut reactor, vec![Event::MouseMoved(under)]);
     assert_eq!(reactor.layout().focused_window(), Some(w(3)));
+}
+
+/// Everything the engine was sent since the last look.
+fn sent(rx: &mut Flights) -> Vec<Engine> {
+    let mut sent = Vec::new();
+    while let Ok((_, event)) = rx.try_recv() {
+        sent.push(event);
+    }
+    sent
+}
+
+/// Opening hands the flight engine the scene to draw over the display it opens on, told first
+/// which display that is: every window's thumb, and the shown workspace's windows where the display
+/// has them, which it zooms out from on the zoom look's stretch of a press's length.
+#[test]
+fn opening_hands_the_engine_its_scene_and_the_screen_it_zooms_out_from() {
+    let (mut apps, mut reactor) = desk();
+    reactor.settings_mut().animate = true;
+    let mut rx = reactor.connect_test_transitions();
+    sent(&mut rx);
+    open(&mut apps, &mut reactor);
+    let sent = sent(&mut rx);
+    let opened = sent.iter().position(|event| matches!(event, Engine::OverviewOpen { .. }));
+    let opened = opened.expect("the engine is told");
+    assert!(
+        sent[..opened].iter().any(|event| matches!(event, Engine::SetDisplay { .. })),
+        "its display first"
+    );
+    let Engine::OverviewOpen { view, arc, press, .. } = &sent[opened] else {
+        unreachable!()
+    };
+    assert_eq!(Some(&view.scene), reactor.overview_scene());
+    let duration = reactor.settings().animation_duration;
+    assert!((press.as_secs_f64() - duration).abs() < 1e-9);
+    let stretch = crate::animation::domain::choreography::zoom::ZOOM_STRETCH;
+    assert!((arc.as_secs_f64() - duration * stretch).abs() < 1e-9);
+    let mut thumbs: Vec<WindowId> = view.windows.iter().map(|window| window.window).collect();
+    thumbs.sort();
+    assert_eq!(thumbs, (1..=6).map(w).collect::<Vec<_>>());
+    let mut shown: Vec<WindowId> = view.shown.iter().map(|(window, _)| *window).collect();
+    shown.sort();
+    assert_eq!(shown, vec![w(3), w(4), w(5)]);
+    let on_screen = |frame: &ScreenRect| shows_on(*frame, ScreenRect::from_cg(display()));
+    for (window, frame) in view.shown.iter().filter(|(_, frame)| on_screen(frame)) {
+        assert_eq!(
+            frame.to_cg(),
+            reactor.test_frame(*window),
+            "{window:?} where it is"
+        );
+    }
+    assert!(view.shown.iter().any(|(window, frame)| *window == w(3) && on_screen(frame)));
+}
+
+/// With animation off the overview still opens, its zoom and its presses none long: cuts.
+#[test]
+fn with_animation_off_the_overview_opens_as_cuts() {
+    let (mut apps, mut reactor) = desk();
+    reactor.settings_mut().animate = false;
+    let mut rx = reactor.connect_test_transitions();
+    open(&mut apps, &mut reactor);
+    let opened = sent(&mut rx).into_iter().find_map(|event| match event {
+        Engine::OverviewOpen { arc, press, .. } => Some((arc, press)),
+        _ => None,
+    });
+    assert_eq!(opened, Some(Default::default()));
+}
+
+/// Each batch that changes the scene hands the engine the scene with the presses that changed it;
+/// the close hands it the layout it lands on, the workspace the last press showed, a press in the
+/// close's own batch included.
+#[test]
+fn every_scene_and_the_close_are_handed_to_the_engine() {
+    let (mut apps, mut reactor) = desk();
+    reactor.settings_mut().animate = true;
+    let mut rx = reactor.connect_test_transitions();
+    open(&mut apps, &mut reactor);
+    sent(&mut rx);
+    press(
+        &mut apps,
+        &mut reactor,
+        LayoutCommand::MoveFocus(Direction::Right),
+    );
+    let scenes: Vec<(Scene, Vec<Press>)> = sent(&mut rx)
+        .into_iter()
+        .filter_map(|event| match event {
+            Engine::OverviewScene { view, presses } => Some((view.scene, presses)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(scenes.len(), 1, "one scene a batch");
+    assert_eq!(scenes[0].0.selected.window, Some(w(4)));
+    assert_eq!(scenes[0].1, vec![Press::Moved(Cue::Focus {
+        from: w(3),
+        to: w(4)
+    })]);
+
+    press(&mut apps, &mut reactor, LayoutCommand::NextWorkspace(None));
+    sent(&mut rx);
+    batch(&mut apps, &mut reactor, vec![
+        layout(LayoutCommand::NextWorkspace(None)),
+        overview(OverviewSignal::Close),
+    ]);
+    let closed = sent(&mut rx).into_iter().find_map(|event| match event {
+        Engine::OverviewClose { view } => Some(view),
+        _ => None,
+    });
+    let view = closed.expect("the close is handed on");
+    assert_eq!(view.scene.selected.row, 3);
+    assert_eq!(view.shown, vec![(
+        w(6),
+        ScreenRect::from_cg(reactor.test_frame(w(6)))
+    )]);
 }

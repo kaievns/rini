@@ -14,10 +14,11 @@ use rini_geometry::space::{OverlayRect, ScreenRect};
 use rini_runloop::channel::Receiver;
 use tracing::warn;
 
+use crate::animation::domain::choreography::overview::Outline;
 use crate::animation::domain::motion::score::{Edit, MediaClock, Score};
 use crate::animation::event::{Crops, Event, OverlayTurn, Played, RestPlacement};
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
-use crate::decorations::domain::style::Worn;
+use crate::decorations::domain::style::{Band, Worn};
 use crate::decorations::platform::rest::Handover;
 use crate::pictures::platform::picture::Picture;
 
@@ -58,6 +59,9 @@ pub enum Render {
     Focus { window: WindowId, focused: bool },
     /// `window`'s tile wearing its ring and border as `worn` has them where the flight now ends.
     Wear { window: WindowId, worn: Worn },
+    /// `window`'s tile dressed again in `worn`'s decoration as well, each band laid at its width:
+    /// the overview's thumbs, whose bands are drawn at their width on screen while it is held.
+    Rewear { window: WindowId, worn: Worn },
     /// The overlay holed over each window ending at one of these, and over the band of the outset
     /// given that it wears at rest, the holes before replaced.
     Holes(Vec<(OverlayRect, f64)>),
@@ -69,6 +73,12 @@ pub enum Render {
     /// The overlay down, its holes filled, and its tiles and the desktop behind them let go, given
     /// `through` the latest press the engine had taken.
     Lift { through: Option<Instant> },
+    /// The overview's outlines of its empty workspaces, ringed as `ring` is, in place of those
+    /// before.
+    Outlines {
+        outlines: Vec<Outline>,
+        ring: Option<Band>,
+    },
     /// Where each container is presented, logged; sent only while `TRACE_TARGET` is on at trace level.
     Trace,
 }
@@ -364,7 +374,9 @@ impl Renderer {
             Render::Swap { window, picture, clipped } => overlay.swap(window, &picture, clipped),
             Render::Focus { window, focused } => overlay.set_tile_focused(window, focused),
             Render::Wear { window, worn } => overlay.set_tile_worn(window, worn),
+            Render::Rewear { window, worn } => overlay.rewear_tile(window, worn),
             Render::Holes(ends) => overlay.set_holes(&ends),
+            Render::Outlines { outlines, ring } => overlay.set_outlines(&outlines, ring),
             // Its alpha goes up after the flush; the rest windows are placed before the transaction.
             Render::Show | Render::PlaceRest { .. } => {}
             Render::Lift { .. } => {

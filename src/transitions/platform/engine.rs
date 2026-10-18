@@ -9,10 +9,11 @@
 //! the journal to its writer (`crate::transitions::platform::journal`). When anything happens is the
 //! coordinator's, but for the hide of a lift held, while the handover is measured, for the overlay's
 //! own picture, which the journal decides (`crate::transitions::domain::journal::Journalled::heard`).
-//! Runs on the `transitions` thread, made there from `Parts`, and touches no Core Animation and no
-//! AppKit: the renderer, on the main thread, it reaches only through `Draw` and hears only as
-//! `Event::Rendered`; every instant it reads is its `Clock`'s, and every begin time its
-//! `MediaClock`'s.
+//! It draws the overview too, on the overview's own lifecycle beside the coordinator's
+//! (`overview`). Runs on the `transitions` thread, made there from `Parts`, and touches no Core
+//! Animation and no AppKit: the renderer, on the main thread, it reaches only through `Draw` and
+//! hears only as `Event::Rendered`; every instant it reads is its `Clock`'s, and every begin time
+//! its `MediaClock`'s.
 //!
 //! Design in `src/transitions/docs/coordination.md`; how a flight moves in
 //! `src/animation/docs/animation-smoothness.md`; measurements in `src/pictures/docs/capture-research.md` and
@@ -31,6 +32,7 @@ use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
 
+use crate::animation::domain::choreography::overview::Press;
 use crate::animation::domain::choreography::{Area, Cue, Look, Pass};
 use crate::animation::domain::motion::score::{Edit, MediaClock};
 use crate::animation::domain::motion::surface::pan_travel;
@@ -53,7 +55,7 @@ use crate::transitions::domain::journal::{
 use crate::transitions::domain::lifecycle::{
     self, Command, Generation, StageSummary, TileSummary, losing_focus,
 };
-use crate::transitions::domain::request::{AnimationRequest, Cause, SurfaceWindow};
+use crate::transitions::domain::request::{AnimationRequest, Cause, OverviewView, SurfaceWindow};
 use crate::transitions::domain::running::{
     Composed, RunningAnimation, Shape, StageFocus, Took, WornPicture, restack, summary,
 };
@@ -66,6 +68,7 @@ use crate::windows::platform::window_server::WindowServer;
 mod asks;
 mod compose;
 mod logged;
+mod overview;
 mod tiles;
 
 use asks::{EndWatches, on_screen, sized_targets};
@@ -161,6 +164,24 @@ pub enum Event {
     Journal(JournalSettings),
     /// What the renderer made of the batches it drew last. Posted by its report.
     Rendered(crate::animation::event::Event),
+    /// The overview opened on the display the overlay flies on: zoomed out from the screen as it is
+    /// over `arc`, each press inside it played over `press`, both none with animation off. Every
+    /// flight asked for and every move of the overlay waits from here to its lift. See
+    /// `specs/overview.md`.
+    OverviewOpen {
+        view: OverviewView,
+        arc: Duration,
+        press: Duration,
+        /// The event that opened it, where its journal starts.
+        cause: Cause,
+    },
+    /// The overview laid out again after a batch, and what each press of it named, in order.
+    OverviewScene {
+        view: OverviewView,
+        presses: Vec<Press>,
+    },
+    /// The overview closed, zooming back in onto the real layout `view` shows.
+    OverviewClose { view: OverviewView },
     /// A turn of the main thread over a frame, for the journal. Sent by its run loop's observer.
     MainTurn(rini_runloop::turns::MainTurn),
 }
@@ -287,6 +308,8 @@ pub struct FlightEngine {
     clock: Clock,
     window_server: Arc<dyn WindowServer>,
     capture: Capture,
+    /// What the overview draws, from its open to its lift.
+    shown_overview: overview::Shown,
 }
 
 impl FlightEngine {
@@ -336,6 +359,7 @@ impl FlightEngine {
             clock,
             window_server,
             capture,
+            shown_overview: overview::Shown::default(),
         }
     }
 
@@ -346,10 +370,23 @@ impl FlightEngine {
         }
     }
 
-    /// One event. A request first hides a lift waiting for the overlay's picture, and gives the
-    /// journal its press, for the request's first drive to mark. What the event draws goes to the
-    /// renderer as one batch at its end, and what that waits for is carried out as its commit is heard.
+    /// One event. A flight asked for, or a move of the overlay, while the overview holds the
+    /// overlay waits for its lift (`wait_for_overview`), and an overview waiting on a flight opens
+    /// once that flight has lifted. A request first hides a lift waiting for the overlay's picture,
+    /// and gives the journal its press, for the request's first drive to mark. What the event draws
+    /// goes to the renderer as one batch at its end, and what that waits for is carried out as its
+    /// commit is heard.
     fn handle(&mut self, event: Event) {
+        if let Some(event) = self.wait_for_overview(event) {
+            self.take(event);
+        }
+        self.open_overview_waiting();
+        self.keep_held();
+        self.send_batch();
+        self.flights.answered();
+    }
+
+    fn take(&mut self, event: Event) {
         match event {
             Event::SetDisplay {
                 id,
@@ -424,12 +461,7 @@ impl FlightEngine {
                 self.start_bounce(windows, overshoot, final_frames, focus, duration, (look, cue))
             }
             Event::Tick => self.tick(),
-            Event::Quiet(generation) => {
-                if self.quiet.as_ref().is_some_and(|(armed, _)| *armed == generation) {
-                    self.quiet = None;
-                }
-                self.drive(lifecycle::Event::Quiet(generation));
-            }
+            Event::Quiet(generation) => self.quiet_ran_out(generation),
             Event::LiftPatience => self.lift_heard(Heard::Patience),
             Event::Pictures(landed) => self.pictures_landed(landed),
             Event::FacesTurned(windows) => self.drive(lifecycle::Event::FacesTurned(windows)),
@@ -442,13 +474,25 @@ impl FlightEngine {
                 turn.outside,
                 &turn.changes,
             ),
+            Event::OverviewOpen { view, arc, press, cause } => {
+                self.open_overview(view, (arc, press), cause)
+            }
+            Event::OverviewScene { view, presses } => self.overview_scene(view, presses),
+            Event::OverviewClose { view } => self.close_overview(view),
         }
-        self.keep_held();
-        self.send_batch();
-        self.flights.answered();
     }
 
     fn now(&self) -> Instant { (self.clock)() }
+
+    /// The quiet after `generation`'s lift ran out: told to the flights' lifecycle and the
+    /// overview's, whichever lifted under it.
+    fn quiet_ran_out(&mut self, generation: Generation) {
+        if self.quiet.as_ref().is_some_and(|(armed, _)| *armed == generation) {
+            self.quiet = None;
+        }
+        self.drive(lifecycle::Event::Quiet(generation));
+        self.drive_overview(lifecycle::overview::Event::Quiet(generation));
+    }
 
     /// A request: a press never waits on a measurement.
     fn take_request(&mut self, cause: Cause) {
@@ -658,6 +702,8 @@ impl FlightEngine {
                 if flying {
                     self.shown = self.shown.min(seq);
                     self.abandon();
+                } else if self.flights.overview().holds_overlay() {
+                    self.drive_overview(lifecycle::overview::Event::Unavailable);
                 }
             }
         }
@@ -665,12 +711,13 @@ impl FlightEngine {
 
     /// What the pictures service landed: the deliveries, the lost landings and the lost turns under
     /// this engine's tag go to the coordinator, each delivery journalled as it came and frame zero's
-    /// onto their tiles first. The overlay's picture for a handover check is what a lift waiting for it hears, and the
-    /// check's measure is journalled for a lift that hid on that picture. Any other capture is the
-    /// cache's alone.
+    /// onto their tiles first, the overview's frame zero to the overview. The overlay's picture for a
+    /// handover check is what a lift waiting for it hears, and the check's measure is journalled for
+    /// a lift that hid on that picture. Every other capture the cache took goes onto its window's
+    /// thumb while the overview is up, and is the cache's alone otherwise.
     fn pictures_landed(&mut self, landed: crate::pictures::event::Event) {
         match landed {
-            crate::pictures::event::Event::Taken { .. } => {}
+            crate::pictures::event::Event::Taken { window } => self.overview_picture_taken(window),
             crate::pictures::event::Event::Delivered { tag, why, sent, pictures } => {
                 let Some(generation) = Generation::for_client(tag, self.client) else {
                     return;
@@ -679,6 +726,9 @@ impl FlightEngine {
                     .iter()
                     .map(|(window, picture, frame)| (*window, *frame, picture.taken));
                 self.flights.delivery(self.now(), generation, why, sent, taken);
+                if why == Why::FrameZero && self.overview_frame_zero(generation, &pictures) {
+                    return;
+                }
                 if why == Why::FrameZero {
                     self.frame_zero(generation, pictures);
                     return;
@@ -1255,7 +1305,9 @@ impl FlightEngine {
     /// they end only once every batch is committed, the place's among them. It draws
     /// only the trace of where each container is presented, and that only while its target is on.
     fn tick(&mut self) {
-        if self.flights.coordinator().is_flying() {
+        if !self.flights.coordinator().is_flying() && self.flights.overview().holds_overlay() {
+            self.overview_tick();
+        } else if self.flights.coordinator().is_flying() {
             let now = self.now();
             let (settled, landed) = if self.flights.coordinator().wants_landing(now) {
                 let at = self.media.at(now);
@@ -1874,10 +1926,12 @@ mod tests {
                 Render::Swap { .. } => "swap",
                 Render::Focus { .. } => "focus",
                 Render::Wear { .. } => "wear",
+                Render::Rewear { .. } => "rewear",
                 Render::Holes(_) => "holes",
                 Render::Show => "show",
                 Render::PlaceRest { .. } => "place_rest",
                 Render::Lift { .. } => "lift",
+                Render::Outlines { .. } => "outlines",
                 Render::Trace => "trace",
             }
         }
@@ -4354,6 +4408,373 @@ mod tests {
                 matches!(bursts.try_recv(), Err(TryRecvError::Disconnected)),
                 "the writer let go, nothing sent"
             );
+        }
+        /// The overview the harness's display shows: w1 and w2 side by side on the shown workspace,
+        /// w1 selected, and w3 alone on the one below, which no picture is held of.
+        mod overview {
+            use rini_geometry::IsWithin;
+
+            use super::*;
+            use crate::animation::domain::choreography::overview::{at_rest, held};
+            use crate::overview::domain::fixture::{Col, overview, row, strip, w};
+            use crate::overview::domain::scene::lay_out;
+            use crate::pictures::domain::route::Route;
+            use crate::transitions::domain::lifecycle::overview::Overview;
+            use crate::transitions::domain::request::{OverviewView, OverviewWindow};
+
+            const ARC: Duration = Duration::from_millis(257);
+            const PRESS: Duration = Duration::from_millis(350);
+
+            fn view(current: u32) -> OverviewView {
+                let first = [Col { width: 840.0, windows: &[1] }, Col {
+                    width: 840.0,
+                    windows: &[2],
+                }];
+                let second = [Col { width: 1000.0, windows: &[3] }];
+                let input = overview(
+                    vec![
+                        row(
+                            strip(&first, if current == 2 { 856.0 } else { 0.0 }),
+                            Some(current),
+                        ),
+                        row(strip(&second, 0.0), Some(3)),
+                    ],
+                    0,
+                );
+                let shown = input.rows[0]
+                    .columns
+                    .iter()
+                    .flat_map(|column| &column.windows)
+                    .map(|laid| (laid.window, laid.frame))
+                    .collect();
+                OverviewView {
+                    scene: lay_out(&input),
+                    windows: (1..=3)
+                        .map(|idx| OverviewWindow {
+                            window: w(idx),
+                            server_id: WindowServerId::new(idx),
+                            decoration: ringed(),
+                            floating: false,
+                        })
+                        .collect(),
+                    shown,
+                    outline: None,
+                }
+            }
+
+            /// A focus ring 1pt wide, as Kai wears it.
+            fn ringed() -> crate::decorations::domain::style::Decoration {
+                use crate::decorations::domain::paint::{Colour, Paint};
+                let paint = Paint::Solid(Colour::rgb(0xff7c50));
+                crate::decorations::domain::style::Decoration {
+                    ring: Some(crate::decorations::domain::style::Band {
+                        width: 1.0,
+                        active: paint,
+                        inactive: paint,
+                        urgent: paint,
+                    }),
+                    ..Default::default()
+                }
+            }
+
+            /// The ring width each thumb is dressed again with among `sent`.
+            fn rewidths(sent: &[Sent]) -> Vec<(WindowId, f64)> {
+                batches(sent)
+                    .into_iter()
+                    .flat_map(|batch| &batch.commands)
+                    .filter_map(|command| match command {
+                        Render::Rewear { window, worn } => {
+                            Some((*window, worn.decoration.ring.unwrap().width))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            }
+
+            /// Held, every thumb's ring is dressed again as wide on screen under the zoom as it is
+            /// at rest, and narrowed back as the zoom in begins, so the zoom thins it at neither end
+            /// and the selection reads while held.
+            #[test]
+            fn the_thumbs_rings_are_as_wide_on_screen_as_at_rest_while_held() {
+                let mut h = harness();
+                let held = held_open(&mut h);
+                let scale = view(1).scene.scale;
+                let widened = rewidths(&held);
+                assert_eq!(widened.len(), 3, "{widened:?}");
+                assert!(widened.iter().all(|(_, width)| (width * scale - 1.0).abs() < 1e-9));
+                let sent = h.step(Event::OverviewScene {
+                    view: view(2),
+                    presses: Vec::new(),
+                });
+                assert!(rewidths(&sent).is_empty(), "the ring moves at the width it has");
+                let sent = h.step(Event::OverviewClose { view: view(1) });
+                let narrowed = rewidths(&sent);
+                assert_eq!(narrowed.len(), 3);
+                assert!(narrowed.iter().all(|(_, width)| *width == 1.0));
+            }
+
+            fn harness() -> Harness {
+                let h = Harness::new();
+                for idx in [1, 2] {
+                    h.engine.pictures.insert(w(idx), test_picture(ScreenSize::new(840.0, 1037.0)));
+                }
+                h
+            }
+
+            fn open(h: &Harness) -> Event {
+                Event::OverviewOpen {
+                    view: view(1),
+                    arc: ARC,
+                    press: PRESS,
+                    cause: h.cause(),
+                }
+            }
+
+            fn lifecycle(h: &Harness) -> &Overview { h.engine.flights.overview() }
+
+            /// Frame zero of the shown workspace, for the overview.
+            fn frame_zero(h: &Harness) -> Event {
+                Event::Pictures(crate::pictures::event::Event::Delivered {
+                    tag: Tag {
+                        client: CLIENT,
+                        generation: lifecycle(h).generation().0,
+                    },
+                    why: Why::FrameZero,
+                    sent: h.at(),
+                    pictures: view(1)
+                        .shown
+                        .iter()
+                        .map(|(window, frame)| (*window, test_picture(frame.size), *frame))
+                        .collect(),
+                })
+            }
+
+            /// Opened, shown on frame zero and committed, then held at the end of its zoom out:
+            /// what that tick sent.
+            fn held_open(h: &mut Harness) -> Vec<Sent> {
+                let opened = open(h);
+                h.step(opened);
+                let frame_zero = frame_zero(h);
+                let shown = only_batch(&h.step(frame_zero)).seq;
+                h.commit(shown);
+                h.advance(ARC);
+                h.step(Event::Tick)
+            }
+
+            fn asked_frame_zero(sent: &[Sent]) -> Vec<WindowId> {
+                sent.iter()
+                    .filter_map(|sent| match sent {
+                        Sent::Asked(Asked::AskOnScreen(ask)) if ask.moment == Moment::FrameZero => {
+                            Some(
+                                ask.strip
+                                    .iter()
+                                    .map(|(target, _)| target.window)
+                                    .collect::<Vec<_>>(),
+                            )
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect()
+            }
+
+            /// Opened, the overview holds the service and asks frame zero of the shown workspace's
+            /// windows; frame zero in, it dresses the overlay, poses the screen as it is, shows it
+            /// and zooms out in one batch; held once its zoom out has played, it lets the service
+            /// go and stops its clock, and nothing it hears after lifts it.
+            #[test]
+            fn the_overview_zooms_out_from_frame_zero_and_holds_without_lifting() {
+                let mut h = harness();
+                let opened = open(&h);
+                let sent = h.step(opened);
+                assert_eq!(holds(&sent), vec![Hold::Transition]);
+                assert_eq!(asked_frame_zero(&sent), vec![w(1), w(2)]);
+                assert!(sent.iter().any(|sent| matches!(sent, Sent::Flying(true))));
+
+                let frame_zero = frame_zero(&h);
+                let sent = h.step(frame_zero);
+                let batch = only_batch(&sent);
+                assert_eq!(kinds(batch), vec!["dress", "stage", "show", "play"]);
+                let Render::Stage { score, .. } = &batch.commands[1] else {
+                    unreachable!()
+                };
+                let at = h.media.at(h.at());
+                for (window, frame) in view(1).shown {
+                    let drawn = score.drawn(window, at).unwrap();
+                    assert!(
+                        drawn.is_within(1e-6, on(frame)),
+                        "{window:?} where the screen has it"
+                    );
+                }
+                h.commit(batch.seq);
+                let mut swept = h.engine.overview_score().clone();
+                h.advance(ARC);
+                let held_at = h.media.at(h.at() + FRAME_INTERVAL);
+                for tile in view(1).scene.rows.iter().flat_map(|row| &row.tiles) {
+                    let drawn = swept.drawn(tile.window, held_at).unwrap();
+                    assert!(drawn.is_within(1e-6, tile.frame), "{tile:?} zoomed out");
+                }
+                let sent = h.step(Event::Tick);
+                assert_eq!(holds(&sent), vec![Hold::Released]);
+                assert!(h.engine.frame_clock.is_none(), "no clock while held");
+                for _ in 0..20 {
+                    h.advance(Duration::from_millis(500));
+                    let sent = h.step(Event::Tick);
+                    assert!(batches(&sent).is_empty() && holds(&sent).is_empty());
+                }
+                swept = h.engine.overview_score().clone();
+                assert!(lifecycle(&h).is_shown(), "{swept:?}");
+            }
+
+            /// A picture the cache takes of a window drawn as the stand-in while the overview is
+            /// held is swapped onto its thumb there and then.
+            #[test]
+            fn pictures_landing_while_held_reach_their_tiles() {
+                let mut h = harness();
+                held_open(&mut h);
+                let tile = |h: &Harness| {
+                    h.engine
+                        .overview_tiles()
+                        .iter()
+                        .find(|tile| tile.window == w(3))
+                        .unwrap()
+                        .snapshot
+                        .source
+                };
+                assert_eq!(tile(&h), Route::StandIn, "no picture of w3 as it opened");
+                h.engine.pictures.insert(w(3), test_picture(ScreenSize::new(1000.0, 1037.0)));
+                let sent = h.step(Event::Pictures(crate::pictures::event::Event::Taken {
+                    window: w(3),
+                }));
+                let batch = only_batch(&sent);
+                assert!(
+                    matches!(batch.commands[..], [Render::Swap { window, .. }] if window == w(3)),
+                    "{:?}",
+                    kinds(batch)
+                );
+                assert_ne!(tile(&h), Route::StandIn);
+            }
+
+            /// A scene while held plays every thumb from where it is drawn: a step right pans the
+            /// row on Slide's curve, and the ring moves to the newly selected window in the same
+            /// drain.
+            #[test]
+            fn a_scene_while_held_pans_its_row_and_moves_the_ring() {
+                let mut h = harness();
+                held_open(&mut h);
+                let sent = h.step(Event::OverviewScene {
+                    view: view(2),
+                    presses: vec![Press::Moved(Cue::Focus { from: w(1), to: w(2) })],
+                });
+                let batch = only_batch(&sent);
+                assert_eq!(kinds(batch)[0], "play");
+                let worn: Vec<(WindowId, Ring)> = batch
+                    .commands
+                    .iter()
+                    .filter_map(|command| match command {
+                        Render::Wear { window, worn } => Some((*window, worn.wears_ring)),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(
+                    worn.contains(&(w(2), Ring::Active)) && worn.contains(&(w(1), Ring::None)),
+                    "{worn:?}"
+                );
+                let pan = crate::transitions::platform::engine::overview::played(&batch.commands)
+                    .into_iter()
+                    .find_map(|edit| match edit {
+                        Edit::Add(track)
+                            if track.node()
+                                == Node::Container(
+                                    crate::animation::domain::choreography::overview::strip_of(0),
+                                ) =>
+                        {
+                            Some(track.clone())
+                        }
+                        _ => None,
+                    })
+                    .expect("the row pans");
+                assert!((pan.seconds() - PRESS.as_secs_f64()).abs() < 1e-9);
+                let to = held(&view(2).scene).drawn(w(2)).unwrap();
+                let end = pan.ends() + 0.01;
+                assert!(h.engine.overview_score().drawn(w(2), end).unwrap().is_within(1e-6, to));
+            }
+
+            /// Closed, it holds the service and zooms back in; it lifts only once that has played
+            /// and the windows it lands on read where their thumbs end, what rests placed a tick
+            /// ahead, and a flight asked for while it was up waits for that lift and goes on after.
+            #[test]
+            fn close_plays_the_exit_and_lifts_once_frames_read_landed() {
+                let mut h = harness();
+                held_open(&mut h);
+                let pan = h.pan();
+                let sent = h.step(pan);
+                assert!(
+                    batches(&sent).is_empty() && holds(&sent).is_empty(),
+                    "the flight waits"
+                );
+
+                let sent = h.step(Event::OverviewClose { view: view(1) });
+                assert_eq!(holds(&sent), vec![Hold::Transition]);
+                let batch = only_batch(&sent);
+                assert_eq!(kinds(batch), vec!["rewear", "rewear", "rewear", "holes", "play"]);
+                h.commit(batch.seq);
+                let landing = at_rest(
+                    &view(1).scene,
+                    &view(1).shown.iter().map(|(w, f)| (*w, on(*f))).collect::<Vec<_>>(),
+                );
+                h.place(1, rect(0.0, 0.0, 10.0, 10.0));
+                h.advance(ARC + Duration::from_millis(1));
+                let ended = h.media.at(h.at());
+                for (window, frame) in view(1).shown {
+                    let drawn = h.engine.overview_score().drawn(window, ended).unwrap();
+                    assert!(drawn.is_within(1e-6, on(frame)), "{window:?} back on its frame");
+                    assert!(landing.drawn(window).unwrap().is_within(1e-6, on(frame)));
+                }
+                let sent = h.step(Event::Tick);
+                assert!(batches(&sent).is_empty(), "w1 is not where it lands yet");
+                h.place(1, view(1).shown[0].1);
+                h.advance(FRAME_INTERVAL);
+                let sent = h.step(Event::Tick);
+                let place = only_batch(&sent);
+                assert_eq!(kinds(place), vec!["place_rest"]);
+                let place = place.seq;
+                h.advance(FRAME_INTERVAL);
+                let sent = h.step(Event::Tick);
+                assert!(batches(&sent).is_empty(), "the place is drawn first");
+                h.commit(place);
+                let sent = h.step(Event::Tick);
+                assert_eq!(kinds(only_batch(&sent)), vec!["lift"]);
+                assert!(!lifecycle(&h).holds_overlay());
+                let (_, replayed) = h.engine.rx.try_recv().expect("the pan goes on");
+                assert!(matches!(replayed, Event::AnimateSurface { .. }));
+            }
+
+            /// Asked to open while a flight flies, the overview waits for it to lift, then opens in
+            /// that same turn, the flight's quiet settled first so nothing it owes lets the service
+            /// go under the overview.
+            #[test]
+            fn an_overview_opened_while_a_flight_flies_opens_as_it_lifts() {
+                let mut h = harness();
+                let (_, shown) = h.shown();
+                h.commit(shown);
+                let opened = open(&h);
+                let sent = h.step(opened);
+                assert!(holds(&sent).is_empty() && asked_frame_zero(&sent).is_empty());
+                assert!(lifecycle(&h).is_waiting());
+
+                h.advance(Duration::from_millis(400));
+                let sent = h.step(Event::Tick);
+                assert!(lift_batch(&sent).is_some(), "the flight lifts");
+                assert_eq!(holds(&sent), vec![Hold::Released, Hold::Transition]);
+                assert_eq!(asked_frame_zero(&sent), vec![w(1), w(2)]);
+                let lift = lift_batch(&sent).unwrap().seq;
+                let sent = h.commit(lift);
+                assert!(
+                    holds(&sent).is_empty(),
+                    "the lift's settle and quiet are dropped"
+                );
+            }
         }
     }
 }

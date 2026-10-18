@@ -9,7 +9,8 @@ use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{ScreenRect, SurfaceRect};
 
 use crate::animation::domain::motion::surface::SurfaceGeometry;
-use crate::decorations::domain::style::Worn;
+use crate::decorations::domain::style::{Band, Decoration, Worn};
+use crate::overview::domain::scene::Scene;
 
 /// When the reactor took the event a request answers, and what it was: where the request's journal
 /// starts.
@@ -74,4 +75,28 @@ impl SurfaceGeometry for SurfaceWindow {
     fn from(&self) -> Option<SurfaceRect> { self.from }
 
     fn row(&self) -> Option<usize> { self.row }
+}
+
+/// The overview as the reactor laid it out: the scene, what each of its thumbs is drawn from, and
+/// where the display has the windows of the workspace it shows (`specs/overview.md`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverviewView {
+    pub scene: Scene,
+    pub windows: Vec<OverviewWindow>,
+    /// The shown workspace's windows where its layout has them on the display, one it parks off
+    /// the display at its place on the strip: what it zooms out from as it opens, and back into as
+    /// it closes.
+    pub shown: Vec<(WindowId, ScreenRect)>,
+    /// What an empty workspace's outline is painted with: the focus ring's band, if one is drawn.
+    pub outline: Option<Band>,
+}
+
+/// A window of the overview: what its thumb is drawn from beside its picture.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OverviewWindow {
+    pub window: WindowId,
+    pub server_id: WindowServerId,
+    /// What it wears; the ring only the selected window's thumb wears.
+    pub decoration: Decoration,
+    pub floating: bool,
 }

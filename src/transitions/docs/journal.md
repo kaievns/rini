@@ -8,7 +8,7 @@ moving around can be read back afterwards. Kai's ask, and what rini must do abou
 
 ## Where a mark comes from
 
-`Journalled` holds the coordinator and its journal as one pure unit, and the engine meets it at six
+`Journalled` holds the coordinator and its journal as one pure unit, and the engine meets it at seven
 seams. Its one call into the lifecycle, `FlightEngine::drive`, goes through `Journalled::drive`: it
 reads the event's own marks, the coordinator takes the event, and then those marks and one for each
 command it gave are pushed, every one stamped with the drive's `now` and the generation the drive
@@ -37,10 +37,15 @@ coordinator is in, so a turn is written with the burst it falls in, and one at r
 Where a turn is timed is "Timing the main thread's turns" in
 `crates/rini-runloop/docs/run-loop-executor.md`. No mark call sits anywhere else, and the engine never reads the journal back: of
 what a drive returns, it carries out the commands and sends the writer the burst, if one is due, and
-of `heard` it reads whether the held lift hides now.
+of `heard` it reads whether the held lift hides now. The overview's lifecycle, which `Journalled` holds
+beside the coordinator, is driven the same way through `Journalled::drive_overview`
+(`FlightEngine::drive_overview`): the press of the request that opened it, an `overview` mark for its
+open, each scene and its close, and one for each command it gave, stamped with the drive's `now` and
+the overview's own generation, the burst given once it reports settled.
 
 Both matches, over `Event` and over `Command`, have no `_` arm, so a new variant does not compile
-until it has a mark.
+until it has a mark; nor does the match over the overview's commands (`overview_mark`), which gives
+its clock and its bands' widening no mark.
 
 | Source | Mark | Fields |
 |---|---|---|
@@ -70,6 +75,9 @@ until it has a mark.
 | a lift held for the overlay's picture coming down | `hide` | `measured` (it hid on that picture), `waited_us` after the lift |
 | the renderer's answer that a drain of render commands is committed | `drawn` | `seq` (the highest batch in it), `shown` (`true` it put the overlay up, `false` down, `null` neither), `places` (it placed what is drawn at rest: with `shown` `null`, the place a tick ahead of the lift, not a drain in flight), `crops` (times it filled a crop grid, a tile dressed on it, swapped onto it or cut onto a repaint at a corner, one tile counting once a fill), `ground_us` (reading their pictures' grounds), `queued_us`, `applied_us`, `flushed_before_us` |
 | `ReportUp` / `ReportSettled` | `report_up` / `report_settled` | |
+| the overview's open, a scene laid out after a batch, its close | `overview` | `step`: `open`, `scene`, `close` |
+| the overview's `AskFrameZero`, `Play`, `Exit`, `Turn` and `Replay` | `overview` | `step`: `ask_frame_zero`, `played`, `exit` (the zoom back in begun), `turn` (the zoom out again, opened as it closed), `replay` (the flights held while it was up let go) |
+| the overview's `Hold`, `Release`, `Show`, `PlaceRest`, `Lift`, `Settle`, `ReportUp`, `ReportSettled`, and the `Quiet` it settles at | the flights' mark for each | as the flights' |
 | a handover check's measure under the engine's tag, for a lift that hid on its overlay's picture | `handover`, one for each window | `of`, `window`, `interior`, `interior_over`, `edge_in`, `edge_out`, and `band` for a window wearing a band at rest (levels, and a share for `interior_over`) |
 | a turn of the main thread's run loop over 8ms, stamped when it began | `main_turn` | `busy_us` (waking to going back to sleep), `outside_us` (the busy time no actor's poll covers: AppKit, Core Animation's commit, the event dispatch), `actors`, `changes` (counts of the marks after it) |
 | each actor polled in it, after its `main_turn` | `turn_actor` | `actor` (the name `src/main.rs` supervises it under), `us` (its polls in the turn, summed) |

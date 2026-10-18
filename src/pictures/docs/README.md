@@ -63,7 +63,7 @@ the flight engine's spawn capture of a new window (both Known debt). It is start
 | watches | `watch` windows landing, changing or live, `retarget` a watch, `stop` it; `hint` that a window was focused |
 | keeps | `keep_focused` the picture delivered under a tag as the window's focused face |
 | measures | `check_handover` a lift: the overlay alone as the next SkyLight call, `OverlayTaken` told, the screen `AFTER_LIFT` later, and `Handover`, each window compared on a thread of the check's own |
-| holds | `hold` at a transition's begin, before anything is composed, `Settling` at its lift, `Released` at its quiet |
+| holds | `hold` at a transition's begin, before anything is composed, `Settling` at its lift, `Released` at its quiet; the overview `Released` as its zoom out ends, while it is held, and `hold` again as it zooms back in |
 | reads | `usable`, `usable_many`, `focused`, `knowledge`, `windows`, `stand_in`, `dressing`, from any thread under one lock |
 | hands over | `insert`, for the flight engine's one capture of its own, of a window that has just opened |
 

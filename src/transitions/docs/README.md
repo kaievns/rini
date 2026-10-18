@@ -11,7 +11,7 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 
 | | |
 |---|---|
-| **The port** | `domain/request.rs` — `AnimationRequest`, one window of a layout pass, `SurfaceWindow`, one window of a strip movement, and `Cause`, the press a request answers; what the reactor builds and the engine carries out |
+| **The port** | `domain/request.rs` — `AnimationRequest`, one window of a layout pass, `SurfaceWindow`, one window of a strip movement, `OverviewView`, the overview's scene with what each thumb is drawn from and where its shown windows are, and `Cause`, the press a request answers; what the reactor builds and the engine carries out |
 | **A layout pass, sorted** | `domain/pass.rs` — `plan`: which windows move, which stay and are still drawn, which are warmed; `place_on_strip`: each tiled window's place on the strip before and after the pass |
 | **Where a tile starts and ends** | `domain/travel.rs` — the window server's frame against the request's, a park's way in and out along its own place on the strip, what is worth flying |
 | **A move along the strip, staged** | `domain/strip_move.rs` — where the moved column and the columns it passed start (`move_starts`), and the look's staging of the press put on the strip surface (`stage_move`); which columns are held and whether the strip steps are the look's |
@@ -25,12 +25,14 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **When** | `domain/timing.rs` — the tick, the coalesce window, the hold for a grow's repaint and for a window with no picture of its own, with its bound over a burst of passes merged before the motion, and how long a repaint watch waits for its window to arrive, the lift's grace and the quiet after it |
 | **The writes** | `domain/frame_writes.rs` — which final frames go out to the apps, and in what order |
 | **The lifecycle** | `domain/lifecycle.rs` — `Coordinator`: the lifecycle every kind runs through, as a pure state machine. `on(event, now)` returns the commands the engine carries out; generations tag every picture it asks for; a flight keeps one `Awaited` record per window it watches until it repaints |
+| **The overview's lifecycle** | `domain/lifecycle/overview.rs` — `Overview`: the overview's own lifecycle beside the flights', pure as theirs is: waiting for a flight to lift, frame zero, the zoom out, held with no clock end and the pictures service let go, every scene played as it comes, the zoom back in, its windows read landed, the lift and the quiet; its thumbs' bands widened while held (`Command::Widen`); it writes no frame |
 | **What waits for the screen** | `domain/drawn.rs` — `Drawn`: the batches of render commands handed to the renderer by number, the last it committed, and what waits for one (`Owed`): the real frames for the `Show`'s, the bar's picture and the quiet for the `Lift`'s, by the flight that owes it; a new flight's hold drops the last lift's, an undrawn batch releases what waited for it, and an abandoned flight's own are dropped |
 | **The journal** | `domain/journal.rs` — `Journalled`: the coordinator with its journal, and the burst due once a transition settles. A mark in a ring of 8192 for each of: the press each request answers, every command it gives, every event it takes but a picture and frame zero, a tick only by the first `at_rest` and `landed` it reads in a generation |
 | **The journal's other marks** | `domain/journal.rs` — every delivery of pictures to it, every drain the renderer commits, each picture a tile takes, each held lift's hide and handover, and each turn of the main thread over a frame |
 | **The journal, written** | `domain/journal.rs` — the JSON lines a burst is written as; and which lifts are held for the overlay's own picture (`measures`) and when one hides (`Journalled::heard`) |
 | **The engine** | `platform/engine.rs` — `FlightEngine`, the actor on the `transitions` thread, made there from `Parts`: it holds the coordinator with its journal (`Journalled`), stages each request and merges each pass, and carries out what the coordinator says on the renderer, each event's render commands one batch sent through `Draw` and its commit heard as `Event::Rendered`, and on the pictures service, placing the real windows through the reactor once the overlay covering them is drawn |
 | **The engine's clocks** | `platform/engine.rs` — every instant it reads is its clock's, and every track begins on the renderer's media clock; while the handover is measured, it holds each lift's hide for the overlay's own picture until the journal says it hides, and the bar's picture and the quiet with it |
+| **The overview, drawn** | `platform/engine/overview.rs` — the overview's lifecycle carried out: every flight and move of the overlay asked for while it holds the overlay held to its lift (`wait_for_overview`), its thumbs made on frame zero's pictures, the cache's or the stand-in and swapped as the cache takes more, each scene played through `animation`'s overview choreography, the ring on the selected thumb alone, empty workspaces outlined, and the windows it lands on read before its lift |
 | **A request, composed** | `platform/engine/compose.rs` — `FlightEngine::start`, a layout pass composed request by request, each window's tile on the picture it has or the stand-in (`compose_tile`) and, with neither, its entrance from where it opened or its reservation (`compose_entrance`); `FlightEngine::start_surface`, a strip movement, each window on its picture or the stand-in (`surface_tiles`) |
 | **A tile, read** | `platform/engine/tiles.rs` — `Stacking`: every window's depth and corner radius read in one query a pass; where the window server has each window (`frames_of`), and a real frame only (`live_frame`); `TilePicture` for `Picture` |
 | **What it asks for** | `platform/engine/asks.rs` — the windows on screen at a moment of a flight, under the engine's tag and each where it is expected (`on_screen`), each window at the size it is asked at (`sized_targets`), and `EndWatches`: the end state's watches, one slot a kind, retargeted from one generation to the next |
@@ -94,21 +96,26 @@ screen is held, up to 60ms, for the overlay's own picture, and `Journalled::hear
 hides: on that picture, a request, the overlay about to move, or the patience. What each mark says
 and when it is written: [`journal.md`](journal.md).
 
-**One lifecycle for every kind.** `domain/lifecycle.rs` is the lifecycle as a state machine: a kind
+**One lifecycle for every kind, and the overview's beside it.** `domain/lifecycle.rs` is the lifecycle as a state machine: a kind
 says what it stages, which pictures frame zero needs, whether it writes frames and what the lift must
 match; the coordinator sees a `StageSummary` and decides only when. Every event carries its instant, so
 a lifecycle is a test of events in and commands out. The engine tells it each request before
 composing it, so frame zero's pictures are asked for first, and each pass after; its frame clock ticks
-from the begin to the lift.
+from the begin to the lift. The overview is a view rather than a movement, held until it is closed, so
+it runs a lifecycle of its own (`domain/lifecycle/overview.rs`), under a generation the coordinator
+reserves for it, and holds the overlay from its open to its lift: a flight asked for meanwhile waits
+and goes on at its lift, and one flying as it opens is waited for. Its journal marks are the
+flights' where they say the same (`journal.md`).
 
 ## Reading order
 
 `domain/request.rs` → `domain/pass.rs` → `domain/travel.rs` → `domain/admission.rs` →
 `domain/flight.rs` → `domain/flight_score.rs` → `domain/running.rs` → `domain/timing.rs` →
-`domain/lifecycle.rs` (`Kind`, then `StageSummary`, then `Coordinator::on`) → `domain/journal.rs`
-(`Journalled::drive`) → `domain/drawn.rs` → `platform/engine.rs`, the actor →
-`platform/engine/compose.rs` (`start`, `start_surface`) → `platform/engine/tiles.rs` →
-`platform/engine/asks.rs` → `platform/engine/logged.rs` → `platform/journal.rs`.
+`domain/lifecycle.rs` (`Kind`, then `StageSummary`, then `Coordinator::on`) →
+`domain/lifecycle/overview.rs` → `domain/journal.rs` (`Journalled::drive`) → `domain/drawn.rs` →
+`platform/engine.rs`, the actor → `platform/engine/compose.rs` (`start`, `start_surface`) →
+`platform/engine/overview.rs` → `platform/engine/tiles.rs` → `platform/engine/asks.rs` →
+`platform/engine/logged.rs` → `platform/journal.rs`.
 
 ## Detail
 

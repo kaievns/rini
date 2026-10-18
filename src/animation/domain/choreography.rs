@@ -12,6 +12,7 @@
 
 #[cfg(test)]
 pub mod linear;
+pub mod overview;
 pub mod slide;
 pub mod zoom;
 

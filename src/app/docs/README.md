@@ -22,7 +22,7 @@ knows the features and converts what they emit.
 | `reactor/app_rules.rs` | The app rules carried out: windows assigned by their rules as they appear, as their space activates and as a title changes, and the placements and resizes a rule asks for |
 | `reactor/drag_swap.rs` | A window being dragged: the drag session, and the swap with the window it is dragged over |
 | `reactor/switcher.rs` | The window switcher's session: the list snapshotted at open, the cursor over it, the popup, and the commit that focuses the chosen window wherever it is |
-| `reactor/overview.rs` | The overview's session, opened and closed by the tap's hold: its scene laid out from the layout after every batch, each flight a press inside it asks for held with its frames placed at once (`hold_for_overview`, from `send_flight`), a flight already on its way kept from putting back what a press placed, the warps held for its close, the pointer ignored, and its close when focus leaves the display; nothing is drawn yet |
+| `reactor/overview.rs` | The overview's session, opened and closed by the tap's hold: its scene laid out after every batch and handed to the flight engine to draw (`OverviewOpen`, `OverviewScene`, `OverviewClose`), each flight a press inside it asks for held, its frames placed at once (`hold_for_overview`), a flight already on its way kept from putting back what a press placed, the warps held for its close, the pointer ignored, and its close when focus leaves the display |
 | `reactor/command_space.rs` | Which space and screen a command acts on: the command space, the active display's space, the focused or main window's, and the screen a display selector names |
 | `reactor/autosave.rs` | The layout file written: debounced after a layout change, at once before exit |
 | `reactor/state.rs` | `RiniState` |
@@ -138,7 +138,7 @@ file you open to change one is the size of that subject rather than of the react
 | `fullscreen.rs` | full width and height on the strip, and macOS taking a window fullscreen off it |
 | `spaces.rs` | which space is current, what happens while that is unknown, space membership |
 | `lifecycle.rs` | windows and apps appearing, disappearing, dying, and surviving a restart |
-| `overview.rs` | the overview's scene laid out from the layout, presses inside it run on that layout with nothing flying, the mouse and warps held until it closes |
+| `overview.rs` | the overview's scene laid out from the layout and handed to the engine with each press, presses inside it run on that layout with nothing flying, the mouse and warps held until it closes |
 | `windows.rs` | which windows rini takes on and which it refuses |
 | `bar.rs` | what each display's bar is sent after a batch, and what a click on it does |
 | `reads.rs` | what the reactor asks of the machine: only its `SystemReads`, every read unknown in a test until stated |

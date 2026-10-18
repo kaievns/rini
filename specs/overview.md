@@ -14,16 +14,12 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > animate like normal slides (not zoom) navigation animation with the whole strip moving left right
 > (overflows stack up/out as needed)"
 
-Not yet met: nothing draws the overview. The tap opens and holds it, and the scene is laid out
-from the real layout as it opens and after every batch of events while it is open, but nothing
-reads the scene. Each requirement below says what it still waits for.
-
 ## Opening and closing
 
 - `toggle-overview` MUST open the overview, and it MUST stay open while the bind's modifiers are
   held: Kai asked for it "active while im holding". niri's toggles; a niri config's bind still
   opens it. Every `toggle-overview` bind MUST open it, held by that bind's modifiers: a bind the
-  config accepts MUST NOT do nothing. Not yet met: held open by the tap, not drawn.
+  config accepts MUST NOT do nothing.
 - A `toggle-overview` bind with no modifier MUST be refused with the reason: nothing could close
   it.
 - Releasing the modifier MUST close it, and the release MUST be passed through, or every
@@ -63,32 +59,37 @@ reads the scene. Each requirement below says what it still waits for.
 
 - Every workspace of the display MUST be a row, in the stack's order, top to bottom, an empty one
   included: up and down step through every workspace, and the selection needs somewhere to land.
-  Not yet met: laid out, not drawn.
 - Each row's current window, the one a switch to that workspace focuses, MUST sit on one vertical
   axis at the tiling area's centre: Kai asked them aligned by that window, and the centre keeps the
   selection still while a row pans under it. A row whose current window floats, or that has none,
-  MUST keep its strip where it shows, since no tiled window is the one to align. Not yet met: laid
-  out, not drawn.
+  MUST keep its strip where it shows, since no tiled window is the one to align.
 - Every row MUST fit the area below the bar at a depth between 0.2 and 0.5, 24pt between rows and
   at the edges; with more rows than fit at 0.2, the stack MUST scroll the least that keeps the
-  selected row in view. First values for Kai to tune. Not yet met: laid out, not drawn.
+  selected row in view. First values for Kai to tune.
 - Columns past either edge MUST collapse into a stack at that edge: the nearest one on top, its
   outer edge 16pt in, each card behind 8pt further out and 12pt shorter at top and bottom, three
   cards at most, as the switcher stacks an application's windows, on their side. A column the top
   card overlaps MUST join the stack as its top card. The current column MUST NOT stack, and the top
   card MUST NOT cover it: it MUST stay the row's gap clear of the current column, partly past the
-  edge where its 16pt inset would bring it nearer. A card not drawn MUST NOT hold a picture. Not
-  yet met: laid out, not drawn.
-- An empty row MUST be drawn as its tiling area's outline in the inactive paint, and in the active
-  paint while selected. Not yet met: laid out, not drawn.
+  edge where its 16pt inset would bring it nearer. A card not drawn MUST NOT hold a picture.
+- An empty row MUST be drawn as its tiling area's outline in the focus ring's inactive paint, and in
+  its active paint while selected.
 - Floating windows MUST be drawn on their row at their place on the display, over its tiles, never
-  stacked, and MUST NOT move while the row pans. Not yet met: laid out, not drawn.
+  stacked, and MUST NOT move while the row pans.
 - Thumbs MUST be the windows' pictures; one with none MUST be the stand-in until one lands, and
-  MUST NOT hold the overview back. Pictures MUST keep being taken while it is open. Not yet met:
-  every workspace of the display is asked to be pictured as it opens, and nothing draws a thumb.
+  MUST NOT hold the overview back. Pictures MUST keep being taken while it is open: every workspace
+  of the display is asked to be pictured as it opens, nothing holds the pictures service once it
+  has zoomed out, and each picture taken goes onto its thumb at once.
 - Only the selected window MUST wear the active ring; every other window MUST be dressed as on a
-  workspace not shown, as Kai reported of the strips beside on 2026-10-17. Not yet met: the
-  selection is laid out, and no ring is drawn.
+  workspace not shown, as Kai reported of the strips beside on 2026-10-17.
+- Every thumb's ring and border MUST be drawn as wide on screen as at rest: drawn at its width
+  under the zoom, a 1pt ring is 0.22pt on screen at depth 0.22, and the ring Kai asked to see move
+  does not read. Not yet met: while it zooms out and back in they are drawn at their own width,
+  which the zoom thins; from the end of the zoom out to the start of the zoom in they are as wide
+  as at rest.
+
+> **Found 2026-10-18, not reported.** Drawing the overview showed Kai's 1pt focus ring under a
+> fifth of a point at the depth four workspaces take on the laptop.
 
 ## Keys inside it
 
@@ -123,29 +124,40 @@ reads the scene. Each requirement below says what it still waits for.
 ## How it moves
 
 - It MUST zoom out from the screen as it is, on the first half of the zoom look's arc, under every
-  look: frame zero draws every window where it is on screen. Not yet met.
+  look: frame zero draws every window where it is on screen.
 - On close it MUST zoom back in, on the arc's second half, onto the real layout, the selected window
-  focused on its workspace, and hand over to the real windows as a flight does. Not yet met.
-- A release while it zooms out MUST turn it back from where it is drawn, without a jump. Not yet
-  met.
+  focused on its workspace, and hand over to the real windows as a flight does: lifted only once
+  the windows it lands on are where it draws them, or its patience has run out.
+- A release while it zooms out MUST turn it back from where it is drawn, without a jump, each
+  thing it draws as fast as it was going. Opened again while it zooms back in, it MUST zoom out
+  again from where it is drawn: a quick let-go and press again would otherwise lift it and open it
+  afresh.
 - A press along a row MUST pan the whole row Slide's way under every look, the newly selected
   window arriving on the axis, columns going into and coming out of the edge stacks as they cross
   the edges. A move along the row MUST keep the moved window on the axis, the columns it passes
-  crossing beneath it. Not yet met: each row's pan and each column's change of stack are found, and
-  nothing plays them.
+  crossing beneath it. A press while one plays MUST bend it from where everything is drawn, at the
+  speed it is going, as a press merged into a flight does.
 - A press up or down the stack MUST move the ring to that row's current window, the stack panning
-  Slide's way when it scrolls. Not yet met: the selection's move and the scroll are found, and
-  nothing plays them.
-- A press at an end of a row or of the stack MUST bounce it, 72pt on screen. Not yet met: the push
-  is kept for the overview, the way it gives with it, and nothing plays it.
-- With animation off or in Low Power Mode it MUST open, change and close as cuts. Not yet met.
-- Not yet met: an overview opened while a flight runs waits for it to land.
+  Slide's way when it scrolls.
+- A press at an end of a row or of the stack MUST bounce it, 72pt on screen.
+- With animation off or in Low Power Mode it MUST open, change and close as cuts.
+- An overview opened while a flight runs MUST wait for that flight to lift, then zoom out from the
+  screen it left. Not yet met: taking the flight's tiles from where they are drawn instead.
+- A flight asked for while it holds the overlay, from its open to its lift, MUST wait for its lift
+  and then fly as asked, and so MUST a move of the overlay to another display: the one overlay is
+  the overview's until then.
+
+> **Found 2026-10-18, not reported.** Wiring the drawing showed that a press right after the release
+> would fly its flight on the overlay the zoom back in is still drawn on.
 
 ## Where it lives
 
 `src/overview/domain/` is the scene: `scene.rs` lays it out, `depth.rs` sets its depth and its
 rows' tops, `stacks.rs` its edge stacks, and `changes.rs` finds what changed between two scenes.
 `src/input/domain/switch_session.rs` is the tap's side, the hold that opens and closes it, and
-`src/app/reactor/overview.rs` the reactor's: the scene's input read off the layout, the flights held
-and their frames placed, the warps held, and the close. `src/overview/docs/README.md` explains the
-feature.
+`src/app/reactor/overview.rs` the reactor's: the scene's input read off the layout and handed to the
+flight engine, the flights held and their frames placed, the warps held, and the close. How it moves
+is `src/animation/domain/choreography/overview.rs`, an empty workspace's outline
+`src/animation/platform/overlay/outline.rs`, its lifecycle on the overlay
+`src/transitions/domain/lifecycle/overview.rs`, and the engine's side of it
+`src/transitions/platform/engine/overview.rs`. `src/overview/docs/README.md` explains the feature.

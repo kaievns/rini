@@ -19,6 +19,7 @@ use rini_geometry::space::{OverlayRect, Rect, ScreenRect};
 use serde::{Serialize, Serializer};
 use serde_with::{SerializeAs, serde_as};
 
+use super::lifecycle::overview::{self, Overview};
 use super::lifecycle::{Arrived, Command, Coordinator, Event, Generation, Kind, Start};
 use super::request::Cause;
 #[cfg(test)]
@@ -237,6 +238,11 @@ pub enum Mark {
     },
     ReportUp,
     ReportSettled,
+    /// A step of the overview's own lifecycle (`lifecycle::overview`): its open, each scene, its
+    /// close, and what each gave that no flight's mark says.
+    Overview {
+        step: OverviewStep,
+    },
     /// A turn of the main thread's run loop over a frame at 120Hz, stamped when it began: how long it
     /// ran, the time no actor's poll covers, and how many `turn_actor` and `turn_change` marks follow.
     MainTurn {
@@ -256,6 +262,27 @@ pub enum Mark {
         what: &'static str,
         before_us: i32,
     },
+}
+
+/// A step of the overview's lifecycle an `overview` mark records.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverviewStep {
+    /// Opened, or opened again as it closed.
+    Open,
+    /// A scene laid out after a batch reached it.
+    Scene,
+    Close,
+    /// Frame zero asked of the windows the display shows.
+    AskFrameZero,
+    /// A scene played from where everything is drawn.
+    Played,
+    /// The zoom back in begun.
+    Exit,
+    /// The zoom out again begun, opened as it closed.
+    Turn,
+    /// The flights held while it was up let go.
+    Replay,
 }
 
 /// When a tile took the picture a `wears` mark records.
@@ -677,6 +704,7 @@ impl Journal {
 #[derive(Default)]
 pub struct Journalled {
     coordinator: Coordinator,
+    overview: Overview,
     journal: Journal,
     writing: bool,
     /// Between a `ReportUp` and its `ReportSettled`, when nothing is written.
@@ -691,6 +719,57 @@ pub struct Journalled {
 
 impl Journalled {
     pub fn coordinator(&self) -> &Coordinator { &self.coordinator }
+
+    pub fn overview(&self) -> &Overview { &self.overview }
+
+    /// A generation of the overview's own, taken while no flight flies (`Coordinator::reserve`).
+    pub fn reserve(&mut self) -> Generation { self.coordinator.reserve() }
+
+    /// Tells the overview's lifecycle `event`, as `drive` tells the coordinator one: the press the
+    /// request carried, the event and each command marked, under the overview's generation, and the
+    /// burst to write when it settles.
+    pub fn drive_overview(
+        &mut self,
+        event: overview::Event,
+        now: Instant,
+    ) -> (Vec<overview::Command>, Option<Burst>) {
+        let read = match event {
+            overview::Event::Tick { settled, landed } => Arrived { settled, landed },
+            _ => Arrived::default(),
+        };
+        let commands = self.overview.on(event, now);
+        let generation = self.overview.generation();
+        if let Some(cause) = self.pressed.take() {
+            self.journal.press(cause, generation);
+        }
+        let step = match event {
+            overview::Event::Open { .. } => Some(OverviewStep::Open),
+            overview::Event::Scene => Some(OverviewStep::Scene),
+            overview::Event::Close => Some(OverviewStep::Close),
+            _ => None,
+        };
+        if let Some(step) = step {
+            self.journal.push(now, generation, Mark::Overview { step });
+        }
+        if let overview::Event::Quiet(of) = event
+            && !commands.is_empty()
+        {
+            self.journal.push(now, generation, Mark::Quiet { of });
+        }
+        for command in &commands {
+            if let Some(mark) = overview_mark(*command, read) {
+                self.journal.push(now, generation, mark);
+            }
+        }
+        let settled = commands.contains(&overview::Command::ReportSettled);
+        self.up = (self.up || commands.contains(&overview::Command::ReportUp)) && !settled;
+        let burst = if self.writing && settled {
+            self.journal.unwritten()
+        } else {
+            None
+        };
+        (commands, burst)
+    }
 
     /// Tells the coordinator `event`: the commands to carry out, in order, and the burst to write
     /// when one is due.
@@ -869,6 +948,32 @@ impl Journalled {
         } else {
             self.journal.unwritten()
         }
+    }
+}
+
+/// The mark an overview's command leaves, a flight's where a flight gives the same; none for its
+/// clock. `read`: what the tick that gave it read, which a lift carries.
+fn overview_mark(command: overview::Command, read: Arrived) -> Option<Mark> {
+    use overview::Command as Overview;
+    let step = |step| Some(Mark::Overview { step });
+    match command {
+        Overview::Hold => Some(Mark::Hold),
+        Overview::AskFrameZero(_) => step(OverviewStep::AskFrameZero),
+        Overview::Show => Some(Mark::Show),
+        Overview::Release => Some(Mark::Release),
+        Overview::Play => step(OverviewStep::Played),
+        Overview::Exit => step(OverviewStep::Exit),
+        Overview::Turn => step(OverviewStep::Turn),
+        Overview::PlaceRest => Some(Mark::PlaceRest),
+        Overview::Lift(_) => Some(Mark::Lift {
+            at_rest: read.settled,
+            landed: read.landed,
+        }),
+        Overview::Settle => Some(Mark::Settle),
+        Overview::ReportUp => Some(Mark::ReportUp),
+        Overview::ReportSettled => Some(Mark::ReportSettled),
+        Overview::Clock(_) | Overview::Widen(_) => None,
+        Overview::Replay => step(OverviewStep::Replay),
     }
 }
 
@@ -1776,6 +1881,86 @@ mod tests {
             names(&marks[..5]),
             ["press", "begin", "hold", "ask_frame_zero", "report_up"],
             "the press, the event, then its commands"
+        );
+    }
+
+    /// The overview's lifecycle is journalled as a flight's is, under a generation of its own: the
+    /// press that opened it, its open, each command it gives that a flight's mark names, its own
+    /// steps, the lift with what the tick that lifted it read, and the burst once it settles.
+    #[test]
+    fn the_overview_journals_each_step_under_its_own_generation() {
+        use super::overview::{Command as Gave, Event as Step};
+        let named = |marks: &[Stamped]| -> Vec<String> {
+            marks
+                .iter()
+                .map(|stamped| {
+                    let value = serde_json::to_value(stamped.mark).unwrap();
+                    match value.get("step") {
+                        Some(step) => format!("overview:{}", step.as_str().unwrap()),
+                        None => name(&stamped.mark),
+                    }
+                })
+                .collect()
+        };
+        let now = Instant::now();
+        let arc = Duration::from_millis(257);
+        let mut flights = Journalled::default();
+        flights.set_writing(true);
+        let generation = flights.reserve();
+        flights.pressed(pressed(now, Duration::from_millis(1)));
+        let (gave, _) = flights.drive_overview(
+            Step::Open {
+                generation,
+                arc,
+                flying: false,
+                rests: true,
+            },
+            now,
+        );
+        assert!(gave.contains(&Gave::Clock(true)));
+        flights.drive_overview(Step::FrameZero(generation), now);
+        flights.drive_overview(Step::Scene, now);
+        flights.drive_overview(Step::Tick { settled: false, landed: false }, now + arc);
+        flights.drive_overview(Step::Close, now + arc);
+        let landed = Step::Tick { settled: true, landed: true };
+        flights.drive_overview(landed, now + arc * 2);
+        flights.drive_overview(landed, now + arc * 3);
+        let (_, burst) = flights.drive_overview(Step::Quiet(generation), now + arc * 4);
+        let marks = held(&flights);
+        assert_eq!(named(&marks), [
+            "press",
+            "overview:open",
+            "hold",
+            "overview:ask_frame_zero",
+            "report_up",
+            "show",
+            "overview:scene",
+            "overview:played",
+            "release",
+            "overview:close",
+            "hold",
+            "overview:exit",
+            "place_rest",
+            "lift",
+            "settle",
+            "overview:replay",
+            "quiet",
+            "release",
+            "report_settled",
+        ]);
+        assert!(marks.iter().all(|stamped| stamped.generation == generation));
+        assert!(matches!(
+            marks
+                .iter()
+                .find(|stamped| matches!(stamped.mark, Mark::Lift { .. }))
+                .unwrap()
+                .mark,
+            Mark::Lift { at_rest: true, landed: true }
+        ));
+        assert_eq!(
+            burst.map(|burst| burst.marks.len()),
+            Some(marks.len()),
+            "written once settled"
         );
     }
 

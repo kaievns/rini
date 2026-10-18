@@ -30,6 +30,7 @@ use rini_geometry::space::{
 };
 use rini_runloop::turns;
 
+use crate::animation::domain::choreography::overview::Outline;
 use crate::animation::domain::motion::easing::CubicBezier;
 use crate::animation::domain::motion::holes::{band_hole_in, hole_in};
 use crate::animation::domain::motion::plan::GroupKey;
@@ -39,7 +40,7 @@ use crate::animation::domain::motion::score::{
 use crate::animation::domain::motion::tile::{self, Anchors, ContentMode, content_mode, crop};
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::animation::event::Crops;
-use crate::decorations::domain::style::Worn;
+use crate::decorations::domain::style::{Band as DecorationBand, Worn};
 use crate::decorations::platform::layers::{
     DecorationLayers, Resize, add_under, remove_under, round_continuous,
 };
@@ -52,6 +53,7 @@ use crate::pictures::platform::layer::{
 use crate::pictures::platform::picture::Picture;
 
 mod lift;
+mod outline;
 
 use lift::Lift;
 
@@ -706,6 +708,8 @@ struct Tree {
     replica: Score,
     /// What the drain playing has spent on crop-drawn tiles, taken when it is answered.
     crops: Crops,
+    /// The overview's outlines of its empty workspaces.
+    outlines: outline::Outlines,
 }
 
 pub struct TileOverlay {
@@ -971,6 +975,16 @@ impl TileOverlay {
     /// the bands it was dressed with. For a merge moving focus mid-flight.
     pub fn set_tile_worn(&mut self, window: WindowId, worn: Worn) { self.tree.wear(window, worn); }
 
+    /// `window`'s tile dressed again in `worn`'s decoration, its bands laid at their widths.
+    pub fn rewear_tile(&mut self, window: WindowId, worn: Worn) { self.tree.rewear(window, worn); }
+
+    /// The overview's outlines of its empty workspaces, ringed as `ring` is, in place of those
+    /// before.
+    pub fn set_outlines(&mut self, outlines: &[Outline], ring: Option<DecorationBand>) {
+        let tree = &mut self.tree;
+        tree.outlines.draw(outlines, ring, &tree.containers, tree.scale);
+    }
+
     /// Logs where each container is presented beside where the replica draws it, and the gap
     /// between them, under `TRACE_TARGET` at trace level: the measurement behind "One
     /// flight however many presses" in `src/animation/docs/animation-smoothness.md`. Asked for only
@@ -1110,6 +1124,7 @@ impl Tree {
             tile_layers: HashMap::new(),
             replica: Score::default(),
             crops: Crops::default(),
+            outlines: outline::Outlines::default(),
         }
     }
 
@@ -1471,6 +1486,22 @@ impl Tree {
         }
     }
 
+    /// `window`'s tile wearing `worn` with its decoration too, unlike `wear`: each band it wears
+    /// made or taken off, and every one laid again around the tile's model at its width.
+    fn rewear(&mut self, window: WindowId, worn: Worn) {
+        let scale = self.scale;
+        let model = self.replica.model(Node::Tile(window)).map(as_frame);
+        let Some(entry) = self.tile_layers.get_mut(&window) else {
+            return;
+        };
+        entry.worn = worn;
+        entry.decorations.wear(&worn.decoration, scale);
+        if let Some(model) = model {
+            entry.decorations.place(model.size.respace());
+        }
+        entry.decorations.show(worn.style(entry.focused));
+    }
+
     /// `picture` onto `window`'s tile, `clipped` or whole, re-keyed along the tile's own track while
     /// it plays at `at`.
     fn swap(&mut self, window: WindowId, picture: &Picture, clipped: bool, at: f64) {
@@ -1510,6 +1541,7 @@ impl Tree {
 
     /// Every tile, container and the desktop let go of, and the replica with them.
     fn release(&mut self) {
+        self.outlines.clear();
         clear_contents(&self.backdrop);
         self.backdrop.setHidden(true);
         for (_, entry) in self.tile_layers.drain() {
@@ -4078,6 +4110,233 @@ mod tests {
                 "{look:?}: the twin goes with the floating container"
             );
             plays_exactly(&tree);
+        }
+
+        /// Dressed again, a tile's bands are made at their new width and laid again around its
+        /// frame at it; a band its new decoration lacks is taken off.
+        #[test]
+        fn a_rewear_lays_the_bands_again_at_their_new_width() {
+            use crate::decorations::domain::paint::{Colour, Paint};
+            use crate::decorations::domain::style::{Band, Decoration, Ring};
+            let _core_animation = hold_core_animation();
+            let window = wid(1);
+            let drawn = typed(4.0, 32.0, 859.0, 1081.0);
+            let at: GroupRect = typed(4.0, 32.0, 859.0, 1081.0);
+            let paint = Paint::Solid(Colour::rgb(0xff7c50));
+            let worn = |width: Option<f64>| Worn {
+                decoration: Decoration {
+                    ring: width.map(|width| Band {
+                        width,
+                        active: paint,
+                        inactive: paint,
+                        urgent: paint,
+                    }),
+                    ..Decoration::default()
+                },
+                wears_ring: Ring::Active,
+                holds_focus: true,
+            };
+            let mut tile = overlay_tile(window, drawn, drawn, false);
+            tile.worn = worn(Some(1.0));
+            let tiles = [tile];
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.play(
+                &[
+                    Edit::Place(
+                        Node::Container(GroupKey::STILL),
+                        Value::Point(OverlayPoint::origin()),
+                    ),
+                    Edit::Ride(window, GroupKey::STILL),
+                    Edit::Place(Node::Tile(window), Value::Rect(at)),
+                ],
+                &tiles,
+            );
+            let ring = |tree: &Tree| {
+                let bands = &tree.tile_layers[&window].decorations.bands;
+                bands.ring.as_ref().map(|band| band.layer.frame())
+            };
+            assert_eq!(ring(&tree), Some(rect(-1.0, -1.0, 861.0, 1083.0)));
+            tree.wear(window, worn(Some(4.5)));
+            assert_eq!(
+                ring(&tree),
+                Some(rect(-1.0, -1.0, 861.0, 1083.0)),
+                "a wear keeps it"
+            );
+            tree.rewear(window, worn(Some(4.5)));
+            assert_eq!(ring(&tree), Some(rect(-4.5, -4.5, 868.0, 1090.0)));
+            tree.rewear(window, worn(None));
+            assert_eq!(ring(&tree), None);
+        }
+
+        /// The overview's outline of an empty workspace hangs in its row's container over its
+        /// tiling area, ringed in the active paint while its row is selected and in the inactive
+        /// one otherwise; drawn again, the ones before go, and with no ring nothing is drawn.
+        #[test]
+        fn an_empty_workspace_is_outlined_in_its_rows_container() {
+            use crate::animation::domain::choreography::overview::Outline;
+            use crate::decorations::domain::paint::{Colour, Paint};
+            use crate::decorations::domain::style::Band;
+            let _core_animation = hold_core_animation();
+            let (active, inactive) = (Colour::rgb(0xffa500), Colour::rgb(0x505050));
+            let band = Band {
+                width: 4.0,
+                active: Paint::Solid(active),
+                inactive: Paint::Solid(inactive),
+                urgent: Paint::Solid(inactive),
+            };
+            let key = GroupKey::Rigid(5);
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.play(
+                &[Edit::Place(
+                    Node::Container(key),
+                    Value::Point(OverlayPoint::new(0.0, 2400.0)),
+                )],
+                &[],
+            );
+            let frame: GroupRect = typed(16.0, 48.0, 1696.0, 1053.0);
+            let outline = |selected| Outline { key, frame, selected };
+            let painted = |ring: &objc2_quartz_core::CAGradientLayer, c: Colour| {
+                let colour = objc2_core_graphics::CGColor::new_srgb(
+                    c.r.into(),
+                    c.g.into(),
+                    c.b.into(),
+                    c.a.into(),
+                );
+                objc2_core_graphics::CGColor::equal_to_color(
+                    ring.borderColor().as_deref(),
+                    Some(&colour),
+                )
+            };
+            for (selected, paint) in [(true, active), (false, inactive)] {
+                let containers = tree.containers.clone();
+                tree.outlines.draw(&[outline(selected)], Some(band), &containers, 2.0);
+                let drawn = tree.outlines.drawn();
+                assert_eq!(drawn.len(), 1, "the one before goes");
+                let (holder, ring) = &drawn[0];
+                assert_eq!(holder.frame(), frame.to_cg());
+                let parent = holder.superlayer().expect("hung");
+                assert!(
+                    std::ptr::eq(&*parent, &*tree.containers[&key]),
+                    "in its row's container"
+                );
+                let ring = ring.as_ref().expect("ringed");
+                assert!(!ring.isHidden() && painted(ring, paint), "selected: {selected}");
+                assert_eq!(ring.frame(), rect(-4.0, -4.0, 1704.0, 1061.0), "around it");
+            }
+            let containers = tree.containers.clone();
+            tree.outlines.draw(&[outline(true)], None, &containers, 2.0);
+            assert!(tree.outlines.drawn().is_empty());
+        }
+
+        /// The overview's session on the tree: frame zero, the zoom out, a press bending it, a
+        /// step that sends a column into an edge stack and brings one out, a push against the
+        /// strip's end, a window moving to the row below and the zoom back in. The tree plays
+        /// exactly its replica, which is the score, after each.
+        #[test]
+        fn the_overview_plays_exactly_its_score() {
+            use crate::animation::domain::choreography::overview::{
+                Motion, Press, at_rest, held, pose, pushes, toward,
+            };
+            use crate::animation::domain::motion::plan::{EDGE_BOUNCE_OVERSHOOT, on_overlay};
+            use crate::overview::domain::fixture::{Col, overview, row, strip, w};
+            use crate::overview::domain::scene::{Scene, lay_out};
+
+            let _core_animation = hold_core_animation();
+            static IDS: [u32; 9] = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+            let scene = |current: u32, below: bool| -> (Scene, Vec<(WindowId, OverlayRect)>) {
+                let ids: Vec<u32> = (1..=8).filter(|id| !below || *id != current).collect();
+                let columns: Vec<Col> = ids
+                    .iter()
+                    .map(|&id| Col {
+                        width: if id % 2 == 0 { 1400.0 } else { 800.0 },
+                        windows: std::slice::from_ref(&IDS[id as usize]),
+                    })
+                    .collect();
+                let mut second: Vec<Col> = vec![Col { width: 1400.0, windows: &[11] }];
+                if below {
+                    second.push(Col {
+                        width: 800.0,
+                        windows: std::slice::from_ref(&IDS[current as usize]),
+                    });
+                }
+                let first_current = if below { ids[0] } else { current };
+                let mut input = overview(
+                    vec![
+                        row(strip(&columns, 0.0), Some(first_current)),
+                        row(strip(&second, 0.0), Some(if below { current } else { 11 })),
+                    ],
+                    usize::from(below),
+                );
+                input.rows[0].floating.push(crate::overview::domain::scene::Laid {
+                    window: w(20),
+                    frame: typed(300.0, 200.0, 600.0, 400.0),
+                });
+                let shown = input.rows[input.active]
+                    .columns
+                    .iter()
+                    .flat_map(|column| &column.windows)
+                    .chain(&input.rows[input.active].floating)
+                    .map(|laid| (laid.window, to_overlay_space(laid.frame, DISPLAY)))
+                    .collect();
+                (lay_out(&input), shown)
+            };
+            let mut tiles: Vec<OverlayTile> = Vec::new();
+            let mut wear = |places: &crate::animation::domain::choreography::overview::Places| {
+                for (window, _, frame) in &places.tiles {
+                    if !tiles.iter().any(|tile| tile.window == *window) {
+                        let rect = on_overlay(*frame);
+                        tiles.push(overlay_tile(*window, rect, rect, false));
+                    }
+                }
+                tiles.clone()
+            };
+            let (opened, shown) = scene(3, false);
+            let rest = at_rest(&opened, &shown);
+            let mut score = pose(&rest);
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.pose(&score, &wear(&rest));
+            assert_eq!(tree.replica, score);
+            plays_exactly(&tree);
+
+            let mut play = |score: &mut Score, edits: Vec<Edit>, tiles: Vec<OverlayTile>| {
+                for edit in &edits {
+                    score.apply(edit);
+                }
+                tree.play(&edits, &tiles);
+                assert_eq!(tree.replica, *score);
+                plays_exactly(&tree);
+            };
+            let held_open = held(&opened);
+            let edits = toward(&score, &held_open, 100.0, Motion::Arc { seconds: 0.257 });
+            play(&mut score, edits, wear(&held_open));
+
+            let (stepped, _) = scene(4, false);
+            let places = held(&stepped);
+            let edits = toward(&score, &places, 100.1, Motion::Slide { seconds: 0.35 });
+            play(&mut score, edits, wear(&places));
+
+            let (far, _) = scene(6, false);
+            let places = held(&far);
+            let mut edits = toward(&score, &places, 101.0, Motion::Slide { seconds: 0.35 });
+            let push = Press::Pushed {
+                press: Cue::Plain,
+                overshoot: OverlayVector::new(EDGE_BOUNCE_OVERSHOOT, 0.0),
+            };
+            edits.extend(pushes(&score, &far, &[push], 0.35, 101.0));
+            play(&mut score, edits, wear(&places));
+
+            let (moved, landing) = scene(6, true);
+            let places = held(&moved);
+            let edits = toward(&score, &places, 102.0, Motion::Slide { seconds: 0.35 });
+            assert!(edits.contains(&Edit::Ride(
+                w(6),
+                crate::animation::domain::choreography::overview::strip_of(1)
+            )));
+            play(&mut score, edits, wear(&places));
+
+            let places = at_rest(&moved, &landing);
+            let edits = toward(&score, &places, 103.0, Motion::Arc { seconds: 0.257 });
+            play(&mut score, edits, wear(&places));
         }
 
         /// A zoom look's flight on its own arc, two columns swapped and a push waiting, then a pan

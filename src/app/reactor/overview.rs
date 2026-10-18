@@ -1,20 +1,24 @@
 //! The overview's session on the reactor's side: opened and closed by the tap's hold
 //! (`input::domain::switch_session`), its scene laid out from the real layout as it opens and after
-//! every batch while it is open, every flight a press inside it asks for held back with its frames
-//! placed at once, and the mouse kept from moving focus or the pointer until it closes. Nothing
-//! draws the scene yet (`specs/overview.md`).
+//! every batch while it is open and handed to the flight engine, which draws it, every flight a
+//! press inside it asks for held back with its frames placed at once and its press handed on with
+//! the scene, and the mouse kept from moving focus or the pointer until it closes
+//! (`specs/overview.md`).
 
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::{SpaceId, WindowId};
-use rini_geometry::space::{FromCg, OverlayVector, ScreenRect, ToCg};
+use rini_geometry::space::{FromCg, ScreenRect, ToCg};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use tracing::{debug, info};
 
 use super::events::EventOutcome;
 use super::{Reactor, ScreenInfo};
 use crate::animation::domain::choreography::Cue;
+use crate::animation::domain::choreography::overview::Press;
+use crate::animation::domain::choreography::zoom::ZOOM_STRETCH;
 use crate::input::domain::switch_session::{OverviewSignal, SessionId};
-use crate::overview::domain::scene::{ColumnInput, Laid, OverviewInput, RowInput, Scene, lay_out};
+use crate::overview::domain::scene::{ColumnInput, Holder, Laid, OverviewInput, RowInput, lay_out};
+use crate::transitions::domain::request::{OverviewView, OverviewWindow};
 use crate::transitions::platform::engine::Event as Flight;
 use crate::workspaces::VirtualWorkspaceId;
 
@@ -34,8 +38,8 @@ pub(super) struct LiveOverview {
     session: SessionId,
     /// The space of the display it shows.
     space: SpaceId,
-    /// The scene as last laid out.
-    scene: Scene,
+    /// The scene as last laid out, with what the engine draws it from.
+    view: OverviewView,
     /// The presses held flights named since the scene was last laid out, in order: a batch can hold
     /// several, a step and then a push against the end among them.
     pending: Vec<Press>,
@@ -43,19 +47,6 @@ pub(super) struct LiveOverview {
     presses: Vec<Press>,
     /// Where the pointer goes as it closes: the last warp asked for while it was open.
     warp: Option<Warp>,
-}
-
-/// A press inside the overview, as the flight it held back named it: what the scene's next change
-/// plays.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Press {
-    /// A layout pass, a move or a step along the strip, or a workspace switch.
-    Moved(Cue),
-    /// A push against an end of the strip or of the stack, giving by `overshoot`.
-    Pushed {
-        press: Cue,
-        overshoot: OverlayVector,
-    },
 }
 
 /// A warp asked for while the overview was open.
@@ -78,10 +69,12 @@ impl Reactor {
         EventOutcome::no_change()
     }
 
-    /// Opens the overview as the tap's `session` on the focused display, and warms every workspace
-    /// of it so its thumbs have pictures. Refused, and that session ended, where that display shows
-    /// a space rini does not manage, a native full-screen one included. One open as another session
-    /// is closed first: the tap holds one session at a time, and the newest is the one it holds.
+    /// Opens the overview as the tap's `session` on the focused display, hands the flight engine its
+    /// scene to draw over that display, the rest windows told a flight began there, and warms every
+    /// workspace of it so its thumbs have pictures. Refused, and that session ended, where that
+    /// display shows a space rini does not manage, a native full-screen one included. One open as
+    /// another session is closed first: the tap holds one session at a time, and the newest is the
+    /// one it holds.
     fn open_overview(&mut self, session: SessionId) {
         if let Some(live) = &self.overview.live {
             if live.session == session {
@@ -89,18 +82,28 @@ impl Reactor {
             }
             self.close_overview();
         }
-        let scene = self
+        let view = self
             .overview_display()
             .and_then(|space| Some((space, self.lay_out_overview(space, 0.0)?)));
-        let Some((space, scene)) = scene else {
+        let Some((space, view)) = view else {
             info!("overview refused: the focused display shows no space rini manages");
             self.end_tap_session(session);
             return;
         };
+        let display = self.publish_animation_display_for(Some(space));
+        let cause = self.cause;
+        self.rest.flight = display.map(|display| (display, cause.at)).or(self.rest.flight);
+        let (arc, press) = self.overview_motion();
+        self.tell_overview(Flight::OverviewOpen {
+            view: view.clone(),
+            arc,
+            press,
+            cause,
+        });
         self.overview.live = Some(LiveOverview {
             session,
             space,
-            scene,
+            view,
             pending: Vec::new(),
             presses: Vec::new(),
             warp: None,
@@ -108,12 +111,36 @@ impl Reactor {
         self.warm_all_workspaces(space);
     }
 
-    /// Closes the overview, carrying out the last warp asked for while it was open. Focus is where
-    /// its last press left it, which is what the scene selected.
+    /// How long the overview zooms out and in, and how long a press inside it plays: the zoom
+    /// look's stretch of the configured length, and that length, both none with animation off or in
+    /// Low Power Mode, which the engine draws as cuts.
+    fn overview_motion(&self) -> (std::time::Duration, std::time::Duration) {
+        if !self.config.settings.animate || (self.reads.low_power)() {
+            return Default::default();
+        }
+        let press = self.config.settings.animation_duration.max(0.0);
+        (
+            std::time::Duration::from_secs_f64(press * ZOOM_STRETCH),
+            std::time::Duration::from_secs_f64(press),
+        )
+    }
+
+    /// Hands the flight engine what the overview draws.
+    fn tell_overview(&self, event: Flight) {
+        if let Some(tx) = &self.communication_manager.transitions_tx {
+            tx.send(event);
+        }
+    }
+
+    /// Closes the overview, the engine zooming back in onto the real layout as it is now, and
+    /// carries out the last warp asked for while it was open. Focus is where its last press left
+    /// it, which is what the scene selected.
     fn close_overview(&mut self) {
         let Some(live) = self.overview.live.take() else {
             return;
         };
+        let view = self.lay_out_overview(live.space, live.view.scene.scroll).unwrap_or(live.view);
+        self.tell_overview(Flight::OverviewClose { view });
         let point = match live.warp {
             Some(Warp::To(point)) => Some(point),
             Some(Warp::Onto(window)) => self.affinity().window_center_on_known_screen(window),
@@ -129,13 +156,13 @@ impl Reactor {
     /// left its display or the display is gone. Once per batch of events.
     pub(super) fn relay_overview(&mut self) {
         let Some(live) = &self.overview.live else { return };
-        let (session, space, scroll) = (live.session, live.space, live.scene.scroll);
-        let scene = if self.focus_left_overview(space) {
+        let (session, space, scroll) = (live.session, live.space, live.view.scene.scroll);
+        let view = if self.focus_left_overview(space) {
             None
         } else {
             self.lay_out_overview(space, scroll)
         };
-        let Some(scene) = scene else {
+        let Some(view) = view else {
             info!("overview closed: focus left its display, or the display is gone");
             self.close_overview();
             self.end_tap_session(session);
@@ -144,12 +171,14 @@ impl Reactor {
         let Some(live) = self.overview.live.as_mut() else {
             return;
         };
-        if scene == live.scene && live.pending.is_empty() {
+        if view == live.view && live.pending.is_empty() {
             return;
         }
         live.presses = std::mem::take(&mut live.pending);
-        debug!(selected = ?scene.selected, presses = ?live.presses, "overview laid out again");
-        live.scene = scene;
+        debug!(selected = ?view.scene.selected, presses = ?live.presses, "overview laid out again");
+        live.view = view.clone();
+        let presses = live.presses.clone();
+        self.tell_overview(Flight::OverviewScene { view, presses });
     }
 
     /// `flight`, over the display holding `space`, held back while the overview is open: the real
@@ -242,12 +271,39 @@ impl Reactor {
     }
 
     /// The scene `space`'s display is laid out as from the layout now, its stack scrolled by
-    /// `scroll` as it was last laid out; none where it shows no space rini manages.
-    fn lay_out_overview(&mut self, space: SpaceId, scroll: f64) -> Option<Scene> {
+    /// `scroll` as it was last laid out, with what the engine draws it from; none where it shows no
+    /// space rini manages.
+    fn lay_out_overview(&mut self, space: SpaceId, scroll: f64) -> Option<OverviewView> {
         if !self.is_space_active(space) {
             return None;
         }
-        Some(lay_out(&self.overview_input(space, scroll)?))
+        let input = self.overview_input(space, scroll)?;
+        let scene = lay_out(&input);
+        let shown = input.rows.get(input.active).map_or_else(Vec::new, |row| {
+            let tiled = row.columns.iter().flat_map(|column| &column.windows);
+            tiled.chain(&row.floating).map(|laid| (laid.window, laid.frame)).collect()
+        });
+        let rings = self.layout_rings();
+        let windows = scene
+            .rows
+            .iter()
+            .flat_map(|row| &row.tiles)
+            .filter_map(|tile| {
+                let server_id = self.state.windows.window(tile.window)?.info.sys_id?;
+                Some(OverviewWindow {
+                    window: tile.window,
+                    server_id,
+                    decoration: self.decoration_of(tile.window, &rings),
+                    floating: tile.holder == Holder::Floating,
+                })
+            })
+            .collect();
+        let outline = crate::decorations::domain::rules::decoration(
+            &self.config.settings.decorations,
+            Default::default(),
+        )
+        .ring;
+        Some(OverviewView { scene, windows, shown, outline })
     }
 
     /// What `space`'s scene is laid out from: a row per workspace in the stack's order, each its
@@ -328,8 +384,8 @@ impl Reactor {
 
     /// The scene the open overview was last laid out as.
     #[cfg(test)]
-    pub(crate) fn overview_scene(&self) -> Option<&Scene> {
-        self.overview.live.as_ref().map(|live| &live.scene)
+    pub(crate) fn overview_scene(&self) -> Option<&crate::overview::domain::scene::Scene> {
+        self.overview.live.as_ref().map(|live| &live.view.scene)
     }
 
     /// The presses the open overview's scene last answered.

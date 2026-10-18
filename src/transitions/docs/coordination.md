@@ -1080,6 +1080,31 @@ tried and raised back to 300ms, since a watch waits for the real frame to reach 
 captures. *How often 300ms, and 450ms for a cut end, is enough is not
 measured yet.*
 
+## The overview
+
+The overview (`specs/overview.md`) is drawn on the same overlay by the same engine, but it is a view
+the presses inside it change, held as long as its key is, rather than a movement with an end. It
+runs a lifecycle of its own beside the flights' (`domain/lifecycle/overview.rs`): frame zero of the
+shown workspace, the overlay up and the zoom out; held, with no clock running and nothing holding
+the pictures service, so the warm captures of the workspaces not shown run and each picture the
+cache takes goes onto its thumb (`Event::Taken`); every scene the reactor lays out after a batch
+played from where everything is drawn; and on its close the zoom back in onto the real layout, the
+overlay holed over the windows it lands on, a tick reading those windows where their thumbs end,
+what rests placed a tick ahead, the lift and the quiet. It writes no frame: every press inside it
+placed the real windows as it ran (`src/app/reactor/overview.rs`, `hold_for_overview`).
+
+It takes a generation the coordinator reserves for it, so a picture asked for a flight is never
+taken for the overview's, nor the reverse. From its open to its lift it holds the overlay: a flight
+asked for meanwhile, the reactor's right after the release among them, and a move of the overlay to
+another display wait in order and are sent back into the engine's inbox at its lift. A flight
+already flying as it opens is waited for; as that flight lifts, its quiet is settled at once and the
+work it owed the service is asked then, since the overview's hold would otherwise be let go under it
+by that quiet. A flight beginning in the overview's own quiet takes the service and the report from
+it.
+
+Held, its thumbs' rings and borders are dressed again as wide on screen as at rest
+(`Render::Rewear`); its zoom in begins by narrowing them again, so neither end of the zoom jumps.
+
 ## Structural findings
 
 1. **`animate_layout` is the real strategy point.** The per-window half is

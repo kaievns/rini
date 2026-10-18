@@ -24,6 +24,8 @@ use crate::pictures::domain::watch::{
     Accept, CHANGE_EVERY, Client, END_SLACK, Tag, Why, near, wholly_on,
 };
 
+pub mod overview;
+
 type Frames = Vec<(WindowId, ScreenRect)>;
 
 /// How long the overlay waits for its frame-zero pictures before showing what the cache holds.
@@ -765,8 +767,18 @@ pub struct Coordinator {
 impl Coordinator {
     pub fn generation(&self) -> Generation { self.generation }
 
+    /// A generation of its own for the overview to ask its pictures under, taken while no flight
+    /// flies: a flight's next begins after it.
+    pub fn reserve(&mut self) -> Generation {
+        self.generation.0 += 1;
+        self.generation
+    }
+
     /// Whether a transition is running: a pass now merges into it rather than starting one.
     pub fn is_flying(&self) -> bool { matches!(self.state, State::Flying(_)) }
+
+    /// Whether a flight has lifted and its quiet runs.
+    pub fn is_settling(&self) -> bool { matches!(self.state, State::Settling { .. }) }
 
     /// Whether the running flight holds the picture of `window` delivered under `generation` at `frame`
     /// to swap in later: the focus target's change waiting for the window losing focus to turn, its

@@ -44,8 +44,8 @@ pub enum Leg {
     },
 }
 
-/// One axis of a critically damped spring: `x(t) = to + (a + bt)e^-wt`.
-fn spring_axis(from: f64, to: f64, v0: f64, omega: f64, t: f64) -> (f64, f64) {
+/// One axis of a critically damped spring: `x(t) = to + (a + bt)e^-wt`, and how fast it goes.
+pub fn spring_axis(from: f64, to: f64, v0: f64, omega: f64, t: f64) -> (f64, f64) {
     let a = from - to;
     let b = v0 + omega * a;
     let decay = (-omega * t).exp();

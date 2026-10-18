@@ -9,7 +9,7 @@
 //! tiles. An empty workspace keeps its row as an outline of its tiling area.
 
 use rini_core::ids::WindowId;
-use rini_geometry::space::{OverlayRect, Point, ScreenRect, Size};
+use rini_geometry::space::{OverlayPoint, OverlayRect, Point, ScreenRect, Size};
 use rini_geometry::to_overlay_space;
 
 use super::depth::{Span, depth, row_tops};
@@ -92,6 +92,13 @@ impl SceneTile {
 pub struct RowScene {
     /// The usable frame at the scene's depth, centred on the axis.
     pub band: OverlayRect,
+    /// Where the row's strip starts: its first column's left edge, at the display's top. A tiled
+    /// thumb is its window's place on the strip at the scene's depth from here, before any column
+    /// stacks, so a press that only pans the row moves this and no thumb within it.
+    pub strip: OverlayPoint,
+    /// Where the display's top-left is drawn for the row's floating thumbs, each its window's frame
+    /// on the display at the scene's depth from here.
+    pub floating_origin: OverlayPoint,
     /// The tiled window centred on the axis.
     pub aligned_on: Option<WindowId>,
     /// The tiling area's outline at the scene's depth, for a workspace with no windows.
@@ -196,6 +203,14 @@ struct RowSpace {
 }
 
 impl RowSpace {
+    /// Where the display's top-left lands about `anchor`.
+    fn origin(&self, anchor: f64) -> OverlayPoint {
+        Point::new(
+            self.axis - anchor * self.scale,
+            self.top - self.usable_top * self.scale,
+        )
+    }
+
     fn place(&self, rect: OverlayRect, anchor: f64) -> OverlayRect {
         OverlayRect::new(
             Point::new(
@@ -273,6 +288,11 @@ fn lay_out_row(
         row.columns.iter().all(|column| column.windows.is_empty()) && row.floating.is_empty();
     RowScene {
         band: space.place(usable, display_anchor),
+        strip: Point::new(
+            column_rects.first().map_or(space.origin(anchor).x, |first| first.min_x()),
+            space.origin(anchor).y,
+        ),
+        floating_origin: space.origin(display_anchor),
         aligned_on: current.map(|(_, laid)| laid.window),
         outline: empty.then(|| space.place(tiling, display_anchor)),
         tiles,
@@ -321,7 +341,7 @@ mod tests {
     use rini_geometry::IsWithin;
 
     use super::super::depth::{MARGIN, ROW_GAP};
-    use super::super::fixture::{Col, GAP, overview, rect, row, strip, tiling, usable, w};
+    use super::super::fixture::{Col, GAP, display, overview, rect, row, strip, tiling, usable, w};
     use super::*;
 
     const HALF: f64 = 832.0;
@@ -453,6 +473,52 @@ mod tests {
             scene.rows[1].tile(w(21)),
             "a floating thumb stays still while its row pans"
         );
+    }
+
+    /// Every tiled thumb is its window's place on the strip at the scene's depth from its row's
+    /// strip, and every floating one its frame on the display from its floating origin: what the
+    /// overlay draws a row from as one piece, the strip's own scroll moving neither.
+    #[test]
+    fn every_thumb_is_its_place_at_the_scenes_depth_from_its_rows_strip() {
+        let mut input = four_rows();
+        input.rows[1].floating.push(Laid {
+            window: w(21),
+            frame: rect(300.0, 200.0, 600.0, 400.0),
+        });
+        let scene = lay_out(&input);
+        let at_depth = |origin: OverlayPoint, frame: OverlayRect, left: f64| {
+            OverlayRect::new(
+                Point::new(
+                    origin.x + (frame.min_x() - left) * scene.scale,
+                    origin.y + frame.min_y() * scene.scale,
+                ),
+                Size::new(frame.width() * scene.scale, frame.height() * scene.scale),
+            )
+        };
+        let on = |laid: &Laid| to_overlay_space(laid.frame, display());
+        let mut seen = 0;
+        for (row, scene_row) in input.rows.iter().zip(&scene.rows) {
+            let left = row.columns.first().map_or(0.0, |column| on(&column.windows[0]).min_x());
+            for laid in row.columns.iter().flat_map(|column| &column.windows) {
+                let expected = at_depth(scene_row.strip, on(laid), left);
+                let tile = scene_row.tile(laid.window).unwrap();
+                assert!(
+                    tile.in_row.is_within(1e-9, expected),
+                    "{tile:?} against {expected:?}"
+                );
+                seen += 1;
+            }
+            for laid in &row.floating {
+                let expected = at_depth(scene_row.floating_origin, on(laid), 0.0);
+                let tile = scene_row.tile(laid.window).unwrap();
+                assert!(
+                    tile.in_row.is_within(1e-9, expected),
+                    "{tile:?} against {expected:?}"
+                );
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, 8);
     }
 
     #[test]
