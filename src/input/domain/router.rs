@@ -19,6 +19,10 @@
 //!    a flags change after system UI, only when they differ from the last seen, as mouse events are
 //!    the most frequent kind. They close an overview whose hold they show up whether or not they
 //!    differ: a key-down records its flags first, so the click after it would otherwise match.
+//! 6. **Inside the overview a mouse button's press is swallowed, and its drags and release with it**,
+//!    since the overlay ignores the mouse and the window under the pointer is hidden behind it. A
+//!    press that went through before it opened finishes as it began, and a press swallowed is
+//!    released swallowed after it closes, so no application sees half a click.
 
 use std::time::Instant;
 
@@ -56,13 +60,49 @@ pub struct Verdict {
     pub action: Option<Action>,
 }
 
-/// The tap's whole state about the keyboard.
+/// A mouse button, as the tap's mask names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Button {
+    Left,
+    Right,
+    Other,
+}
+
+/// What a mouse button event says the button did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonPhase {
+    Down,
+    Dragged,
+    Up,
+}
+
+/// One mouse button event, as the tap read it.
+#[derive(Debug, Clone, Copy)]
+pub struct Click {
+    pub button: Button,
+    pub phase: ButtonPhase,
+    /// The event's modifier flags, as bits.
+    pub flags: u64,
+}
+
+/// What the tap does with a mouse button event.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClickVerdict {
+    /// Delete the event rather than deliver it.
+    pub swallow: bool,
+    /// The overview's close, sent first.
+    pub signal: Option<Signal>,
+}
+
+/// The tap's whole state about the keyboard, and the mouse buttons the overview swallowed.
 #[derive(Debug, Default)]
 pub struct KeyRouter {
     held: HeldKeys,
     switch: SwitchSession,
     binds: Vec<Bind>,
     hotkeys: HotkeyTable,
+    /// The buttons whose press the overview swallowed, held until their release is swallowed too.
+    swallowed: Vec<Button>,
 }
 
 impl KeyRouter {
@@ -106,8 +146,32 @@ impl KeyRouter {
         verdict
     }
 
+    /// The whole decision, for one mouse button event: its flags first, so a click that shows the
+    /// overview's hold up closes it and goes through.
+    pub fn on_click(&mut self, click: Click) -> ClickVerdict {
+        let signal = self.on_mouse_flags(click.flags);
+        let button = click.button;
+        let was_swallowed = self.swallowed.contains(&button);
+        let swallow = match click.phase {
+            ButtonPhase::Down => {
+                self.swallowed.retain(|held| *held != button);
+                let swallow = self.switch.overview_is_live();
+                if swallow {
+                    self.swallowed.push(button);
+                }
+                swallow
+            }
+            ButtonPhase::Dragged => was_swallowed,
+            ButtonPhase::Up => {
+                self.swallowed.retain(|held| *held != button);
+                was_swallowed
+            }
+        };
+        ClickVerdict { swallow, signal }
+    }
+
     /// The flags a mouse event carries; the overview's close when they show its hold up.
-    pub fn on_mouse_flags(&mut self, flags: u64) -> Option<Signal> {
+    fn on_mouse_flags(&mut self, flags: u64) -> Option<Signal> {
         if flags != self.held.flags() {
             self.held.observe_flags(flags);
             self.held.reconcile_modifiers();
@@ -723,6 +787,74 @@ mod tests {
         );
         assert_eq!(router.on_mouse_flags(0), None, "nothing left to close");
         assert!(!router.close_switch(SessionId(1)));
+    }
+
+    fn click(button: Button, phase: ButtonPhase, flags: u64) -> Click {
+        Click { button, phase, flags }
+    }
+
+    fn swallowed() -> ClickVerdict { ClickVerdict { swallow: true, signal: None } }
+
+    /// The overlay ignores the mouse: a click on a thumb would land on the hidden window under it.
+    #[test]
+    fn a_click_inside_the_overview_is_swallowed_and_one_after_its_close_passes() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+        for button in [Button::Left, Button::Right, Button::Other] {
+            for phase in [ButtonPhase::Down, ButtonPhase::Dragged, ButtonPhase::Up] {
+                let verdict = router.on_click(click(button, phase, alt()));
+                assert_eq!(verdict, swallowed(), "{button:?} {phase:?}");
+            }
+        }
+
+        router.on_key(let_go(now));
+        for phase in [ButtonPhase::Down, ButtonPhase::Dragged, ButtonPhase::Up] {
+            let verdict = router.on_click(click(Button::Left, phase, 0));
+            assert_eq!(verdict, ClickVerdict::default(), "{phase:?} after the close");
+        }
+    }
+
+    /// Alt's release went missing: the click that shows it up closes the overview and goes through.
+    #[test]
+    fn a_click_with_the_hold_up_closes_the_overview_and_passes() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+        assert_eq!(
+            router.on_click(click(Button::Left, ButtonPhase::Down, 0)),
+            ClickVerdict {
+                swallow: false,
+                signal: Some(overview(OverviewSignal::Close)),
+            }
+        );
+    }
+
+    /// No application sees half a click: a press swallowed is released swallowed after the close,
+    /// and one that went through before the open drags and releases through it.
+    #[test]
+    fn a_press_finishes_as_it_began_across_the_overview() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+        router.on_click(click(Button::Left, ButtonPhase::Down, alt()));
+        router.on_key(let_go(now));
+        assert_eq!(
+            router.on_click(click(Button::Left, ButtonPhase::Up, 0)),
+            swallowed(),
+            "its release, after the close"
+        );
+
+        assert_eq!(
+            router.on_click(click(Button::Right, ButtonPhase::Down, alt())),
+            ClickVerdict::default(),
+            "a press before the open"
+        );
+        opened(&mut router, now);
+        for phase in [ButtonPhase::Dragged, ButtonPhase::Up] {
+            let verdict = router.on_click(click(Button::Right, phase, alt()));
+            assert_eq!(verdict, ClickVerdict::default(), "{phase:?} inside it");
+        }
     }
 
     #[test]

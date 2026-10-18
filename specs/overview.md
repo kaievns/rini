@@ -119,8 +119,13 @@ Every workspace of one display at once, zoomed out, while its key is held.
   asked for MUST be carried out as it closes. The windows under the pointer are hidden, and a warp
   per press moves the cursor across the overview. Turning focus-follows-mouse off in the event tap
   MUST NOT be how: a new event mask replaces the tap, which closes the overview.
-- A click MUST NOT reach a hidden window. Choosing a thumb by clicking is not supported. Not yet
-  met.
+- A click MUST NOT reach a hidden window: the overlay ignores the mouse, so a press of any button
+  would land on the real window under the pointer, pressing what Kai cannot see and moving focus.
+  Every button's press inside it MUST be swallowed, its drags and its release with it, after the
+  close too; a press that began before it opened MUST finish as it began, so no application sees
+  half a click. Choosing a thumb by clicking is not supported. A scroll still reaches the window
+  under the pointer, since rini taps no trackpad gesture, a two-finger scroll among them
+  (`specs/input.md`).
 
 ## How it moves
 

@@ -62,9 +62,9 @@ held they read at their width, but they thicken at once as the zoom out lands an
 the zoom in begins. Keeping them at their width through the zoom needs each band's width to follow
 the zoom's track.
 
-**A click reaches the window under the overview.** The overlay ignores the mouse, so a click
-inside the overview reaches whichever real window is under the pointer behind it
-(`specs/overview.md`, "Keys inside it", not yet met).
+**A scroll reaches the window under the overview.** Every mouse button's press inside it is
+swallowed (`KeyRouter::on_click`), but the tap asks for no scroll event, so a scroll scrolls the
+hidden window under the pointer.
 
 **An overview opened while a flight runs waits for it to lift** rather than taking the flight's
 tiles from where they are drawn: up to the flight's length, 0.35s by default.

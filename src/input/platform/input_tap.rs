@@ -24,7 +24,7 @@ use tracing::{debug, error, trace, warn};
 use crate::input::domain::binding::Bind;
 use crate::input::domain::key::Hotkey;
 use crate::input::domain::pointer;
-use crate::input::domain::router::{KeyRouter, Keystroke};
+use crate::input::domain::router::{Button, ButtonPhase, Click, KeyRouter, Keystroke};
 use crate::input::domain::switch_session::{KeyEventKind, SessionId, Signal, SwitchKeys};
 use crate::input::event::{Event, EventSink, LeftPress, OnLeftPress};
 use crate::input::platform::keyboard::key_code_from_event;
@@ -445,18 +445,25 @@ impl InputTap {
         if let Some(kind) = key_event_kind(event_type) {
             return self.handle_keyboard_event(kind, event);
         }
-        let signal = self.router.borrow_mut().on_mouse_flags(CGEvent::flags(Some(event)).bits());
-        self.send_switch(signal);
+        let Some((button, phase)) = button_event(event_type) else {
+            return true;
+        };
+        let verdict = self.router.borrow_mut().on_click(Click {
+            button,
+            phase,
+            flags: CGEvent::flags(Some(event)).bits(),
+        });
+        self.send_switch(verdict.signal);
+        if verdict.swallow {
+            return false;
+        }
+        if button == Button::Other {
+            return true;
+        }
 
-        match event_type {
-            CGEventType::LeftMouseDown | CGEventType::RightMouseDown => {
-                set_mouse_state(MouseState::Down);
-            }
-            CGEventType::LeftMouseDragged | CGEventType::RightMouseDragged => {
-                set_mouse_state(MouseState::Down);
-            }
-            CGEventType::LeftMouseUp | CGEventType::RightMouseUp => set_mouse_state(MouseState::Up),
-            _ => {}
+        match phase {
+            ButtonPhase::Down | ButtonPhase::Dragged => set_mouse_state(MouseState::Down),
+            ButtonPhase::Up => set_mouse_state(MouseState::Up),
         }
 
         if !self.mouse.get().switches.processing {
@@ -598,6 +605,22 @@ fn key_event_kind(event_type: CGEventType) -> Option<KeyEventKind> {
     }
 }
 
+fn button_event(event_type: CGEventType) -> Option<(Button, ButtonPhase)> {
+    let read = match event_type {
+        CGEventType::LeftMouseDown => (Button::Left, ButtonPhase::Down),
+        CGEventType::LeftMouseDragged => (Button::Left, ButtonPhase::Dragged),
+        CGEventType::LeftMouseUp => (Button::Left, ButtonPhase::Up),
+        CGEventType::RightMouseDown => (Button::Right, ButtonPhase::Down),
+        CGEventType::RightMouseDragged => (Button::Right, ButtonPhase::Dragged),
+        CGEventType::RightMouseUp => (Button::Right, ButtonPhase::Up),
+        CGEventType::OtherMouseDown => (Button::Other, ButtonPhase::Down),
+        CGEventType::OtherMouseDragged => (Button::Other, ButtonPhase::Dragged),
+        CGEventType::OtherMouseUp => (Button::Other, ButtonPhase::Up),
+        _ => return None,
+    };
+    Some(read)
+}
+
 fn resolve_hotkey(spec: &str) -> Option<Hotkey> { Hotkey::from_str(spec).ok() }
 
 /// # Safety
@@ -687,6 +710,9 @@ fn build_event_mask(asks: Asks) -> CGEventMask {
         CGEventType::RightMouseUp,
         CGEventType::LeftMouseDragged,
         CGEventType::RightMouseDragged,
+        CGEventType::OtherMouseDown,
+        CGEventType::OtherMouseUp,
+        CGEventType::OtherMouseDragged,
     ] {
         add(&mut m, ty);
     }
@@ -719,7 +745,8 @@ mod tests {
     const MOUSE_MOVES: Asks = Asks { keys: false, mouse_moves: true };
 
     /// Mouse buttons are always asked for: they are how a drag is noticed, and a drag is how a
-    /// window is moved between displays.
+    /// window is moved between displays. Every button, the middle one included, since inside the
+    /// overview a press of any of them is swallowed before it reaches a hidden window.
     #[test]
     fn the_mask_always_carries_the_mouse_buttons() {
         for enabled in [false, true] {
@@ -734,6 +761,9 @@ mod tests {
                 CGEventType::RightMouseUp,
                 CGEventType::LeftMouseDragged,
                 CGEventType::RightMouseDragged,
+                CGEventType::OtherMouseDown,
+                CGEventType::OtherMouseUp,
+                CGEventType::OtherMouseDragged,
             ] {
                 assert!(wants(mask, ty), "{ty:?} missing with enabled={enabled}");
             }

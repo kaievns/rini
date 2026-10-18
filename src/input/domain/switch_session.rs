@@ -235,6 +235,11 @@ impl SwitchSession {
 
     pub fn is_live(&self) -> bool { self.live.is_some() }
 
+    /// Whether the session live is the overview's.
+    pub fn overview_is_live(&self) -> bool {
+        self.live.is_some_and(|live| self.opens(live) == Opens::Overview)
+    }
+
     /// End a live session because the tap cannot be trusted about what is held.
     ///
     /// Called when the tap is rebuilt or re-enabled. A switch commits rather than cancels: the user
