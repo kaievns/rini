@@ -248,10 +248,10 @@ fn nothing_flies_while_the_overview_is_open_and_frames_are_placed() {
             "{window:?} placed at {frame:?}: {written:?}"
         );
     }
-    assert_eq!(
-        reactor.overview_press(),
-        Some(Press::Moved(Cue::Focus { from: w(3), to: w(4) }))
-    );
+    assert_eq!(reactor.overview_presses(), [Press::Moved(Cue::Focus {
+        from: w(3),
+        to: w(4)
+    })]);
 }
 
 /// P and ; inside the overview switch the real workspace: the selection steps onto the empty row,
@@ -266,7 +266,7 @@ fn a_workspace_press_inside_the_overview_switches_the_real_workspace() {
     let workspaces = reactor.test_workspace_ids(space());
     assert_eq!(reactor.test_active_workspace(space()), Some(workspaces[2]));
     assert_eq!(selected(&reactor), (2, None));
-    assert_eq!(reactor.overview_press(), Some(Press::Moved(Cue::Switch)));
+    assert_eq!(reactor.overview_presses(), [Press::Moved(Cue::Switch)]);
 
     press(&mut apps, &mut reactor, LayoutCommand::NextWorkspace(None));
     assert_eq!(reactor.test_active_workspace(space()), Some(workspaces[3]));
@@ -516,12 +516,12 @@ fn a_flight_over_another_display_is_held_but_is_no_press_of_the_overviews() {
     assert!(reactor.send_flight(other, flight));
     batch(&mut apps, &mut reactor, Vec::new());
     assert!(!flew(&mut rx), "held");
-    assert_eq!(reactor.overview_press(), None);
+    assert_eq!(reactor.overview_presses(), []);
 
     let flight = push(&reactor);
     reactor.send_flight(space(), flight);
     batch(&mut apps, &mut reactor, Vec::new());
-    assert!(matches!(reactor.overview_press(), Some(Press::Pushed { .. })));
+    assert!(matches!(reactor.overview_presses(), [Press::Pushed { .. }]));
 }
 
 /// The overview does not open where the focused display shows a space rini does not manage, and
@@ -619,6 +619,38 @@ fn focus_does_not_follow_the_mouse_inside_the_overview() {
     assert_eq!(reactor.layout().focused_window(), Some(w(4)));
 }
 
+/// Two presses in one batch, a step onto the strip's last column and a push against its end: the
+/// scene is told both, in order, not the push alone.
+#[test]
+fn every_press_of_a_batch_is_kept_for_the_scene() {
+    let (mut apps, mut reactor) = desk();
+    reactor.settings_mut().animate = true;
+    let mut rx = reactor.connect_test_transitions();
+    press(
+        &mut apps,
+        &mut reactor,
+        LayoutCommand::MoveFocusToEnd(rini_ipc::protocol::StripEnd::Last),
+    );
+    let last = reactor.layout().focused_window().unwrap();
+    press(
+        &mut apps,
+        &mut reactor,
+        LayoutCommand::MoveFocus(Direction::Left),
+    );
+    let before = reactor.layout().focused_window().unwrap();
+    flew(&mut rx);
+    open(&mut apps, &mut reactor);
+    let right = || layout(LayoutCommand::MoveFocus(Direction::Right));
+    batch(&mut apps, &mut reactor, vec![right(), right()]);
+    assert_eq!(reactor.overview_presses(), [
+        Press::Moved(Cue::Focus { from: before, to: last }),
+        Press::Pushed {
+            press: Cue::Focus { from: last, to: last },
+            overshoot: OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0),
+        },
+    ]);
+}
+
 /// A press against the strip's end inside the overview flies no bounce; the scene is told it as a
 /// push, the strip giving the way it was pushed.
 #[test]
@@ -641,13 +673,10 @@ fn a_press_at_a_strip_end_inside_the_overview_is_cued_as_a_push() {
     );
     assert!(!flew(&mut rx));
     assert_eq!(reactor.layout().focused_window(), Some(last));
-    assert_eq!(
-        reactor.overview_press(),
-        Some(Press::Pushed {
-            press: Cue::Focus { from: last, to: last },
-            overshoot: OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0),
-        })
-    );
+    assert_eq!(reactor.overview_presses(), [Press::Pushed {
+        press: Cue::Focus { from: last, to: last },
+        overshoot: OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0),
+    }]);
 }
 
 /// A flight sent before the overview opened that lands inside it puts back no window a press

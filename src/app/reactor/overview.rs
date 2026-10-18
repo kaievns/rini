@@ -36,10 +36,11 @@ pub(super) struct LiveOverview {
     space: SpaceId,
     /// The scene as last laid out.
     scene: Scene,
-    /// The press a held flight named since the scene was last laid out.
-    pending: Option<Press>,
-    /// The press the scene last laid out answers, if a press changed it.
-    press: Option<Press>,
+    /// The presses held flights named since the scene was last laid out, in order: a batch can hold
+    /// several, a step and then a push against the end among them.
+    pending: Vec<Press>,
+    /// The presses the scene last laid out answers, none where no press changed it.
+    presses: Vec<Press>,
     /// Where the pointer goes as it closes: the last warp asked for while it was open.
     warp: Option<Warp>,
 }
@@ -100,8 +101,8 @@ impl Reactor {
             session,
             space,
             scene,
-            pending: None,
-            press: None,
+            pending: Vec::new(),
+            presses: Vec::new(),
             warp: None,
         });
         self.warm_all_workspaces(space);
@@ -143,11 +144,11 @@ impl Reactor {
         let Some(live) = self.overview.live.as_mut() else {
             return;
         };
-        if scene == live.scene && live.pending.is_none() {
+        if scene == live.scene && live.pending.is_empty() {
             return;
         }
-        live.press = live.pending.take();
-        debug!(selected = ?scene.selected, press = ?live.press, "overview laid out again");
+        live.presses = std::mem::take(&mut live.pending);
+        debug!(selected = ?scene.selected, presses = ?live.presses, "overview laid out again");
         live.scene = scene;
     }
 
@@ -175,7 +176,7 @@ impl Reactor {
             other => return Some(other),
         };
         if live.space == space {
-            live.pending = Some(press);
+            live.pending.push(press);
         }
         let frames: Vec<(WindowId, CGRect)> =
             frames.into_iter().map(|(window, frame)| (window, frame.to_cg())).collect();
@@ -331,9 +332,9 @@ impl Reactor {
         self.overview.live.as_ref().map(|live| &live.scene)
     }
 
-    /// The press the open overview's scene last answered.
+    /// The presses the open overview's scene last answered.
     #[cfg(test)]
-    pub(crate) fn overview_press(&self) -> Option<Press> {
-        self.overview.live.as_ref().and_then(|live| live.press)
+    pub(crate) fn overview_presses(&self) -> &[Press] {
+        self.overview.live.as_ref().map_or(&[], |live| &live.presses)
     }
 }

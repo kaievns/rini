@@ -95,7 +95,13 @@ reads the scene. Each requirement below says what it still waits for.
 - Every bind MUST do what it does outside, on the real layout, and the overview MUST re-lay out from
   what it did: Kai asked for the same keys to work. What a press asks to fly MUST NOT fly while it
   is open, since the overview is what is seen to move; the real windows MUST go straight to where
-  the flight would have put them, and the press MUST be kept for the overview to play.
+  the flight would have put them, and the press MUST be kept for the overview to play. Every press
+  of a batch MUST be kept, in order: autorepeat while rini is busy runs several in one, a step and
+  then a push against the end, and the push alone would play a bounce where a pan and a bounce
+  happened.
+
+> **Found 2026-10-18, not reported.** Review of the reactor's wiring showed each held flight's
+> press overwrote the one before it in the batch.
 - A flight that was flying as it opened MUST NOT, landing, put back a window a press inside it has
   placed since: the press's frame is the later one.
 
