@@ -197,7 +197,8 @@ pub fn held(scene: &Scene) -> Places {
 }
 
 /// The scene as the display shows it at rest: the zoom at 1, its active row's windows each at its
-/// frame in `shown`, and every other row where the stack has it, off the display above and below.
+/// frame in `shown`, its strip about where its thumbs' centres put it, and every other row where the
+/// stack has it, off the display above and below.
 /// What the overview zooms out from as it opens, and back into as it closes.
 pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     let mut places = held(scene);
@@ -218,7 +219,7 @@ pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     let strip = key(active, Part::Strip);
     let anchor = row.tiles.iter().find_map(|tile| {
         let laid = places.tiles.iter().find(|(w, k, _)| *w == tile.window && *k == strip)?;
-        Some(to_rest(tile.window)?.origin - laid.2.origin.to_vector().respace())
+        Some(to_rest(tile.window)?.center() - laid.2.center().to_vector().respace())
     });
     if let Some(anchor) = anchor
         && let Some((_, at)) = places.containers.iter_mut().find(|(k, _)| *k == strip)
@@ -226,12 +227,16 @@ pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
         *at = anchor;
     }
     let stacks = key(active, Part::Stacks);
-    let stacks_at = places.container(stacks).unwrap_or(Point::origin());
+    let at = |key: GroupKey| places.container(key).unwrap_or(Point::origin());
+    let (strip_at, stacks_at) = (at(strip), at(stacks));
     for (window, key, frame) in &mut places.tiles {
-        if *key == stacks
-            && let Some(rest) = to_rest(*window)
-        {
-            *frame = group_relative(rest, stacks_at);
+        let container = match *key {
+            k if k == strip => strip_at,
+            k if k == stacks => stacks_at,
+            _ => continue,
+        };
+        if let Some(rest) = to_rest(*window) {
+            *frame = group_relative(rest, container);
         }
     }
     places

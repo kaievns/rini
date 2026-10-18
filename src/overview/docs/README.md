@@ -16,7 +16,7 @@ score, and `transitions`' engine plays that on its own lifecycle
 
 | | |
 |---|---|
-| `domain/scene.rs` | `OverviewInput` in, `Scene` out (`lay_out`): one `RowScene` per workspace, its band, where its strip starts and where the display's top-left is drawn for its floating windows, the window it is aligned on, an empty one's outline, and a `SceneTile` per window with where it is drawn, where its row lays it out (`in_row`) and its `Holder`; the `Selection` the active ring is on |
+| `domain/scene.rs` | `OverviewInput` in, `Scene` out (`lay_out`): one `RowScene` per workspace, its band, where its strip starts and where the display's top-left is drawn for its floating windows, the window it is aligned on, an empty one's outline, and a `SceneTile` per window with where it is drawn, where its row lays it out (`in_row`, a tiled one `apart` from its neighbours) and its `Holder`; the `Selection` the active ring is on |
 | `domain/depth.rs` | The depth every row is drawn at (`depth`, between `DEEPEST` and `SHALLOWEST`) and each row's top down the display, centred when the stack fits and scrolled the least that keeps the selected row in view when it does not (`row_tops`) |
 | `domain/stacks.rs` | The columns that collapse into a stack at either edge (`edge_stacks`): the walk out from the pivot column, the top card's place, the cards behind it, and how many are drawn |
 | `domain/changes.rs` | What changed between two scenes (`changes`): each thumb that moved, changed holder or changed row, each row's pan, the stack's scroll, and the selection's move; the flight engine logs each scene it plays by it |
@@ -35,7 +35,11 @@ outline all map through the same transform, so a floating window keeps its place
 and a stacked column is drawn as the strip draws it. A row's `strip` is where its first column
 starts: every tiled thumb sits at its window's place on the strip from there, so the overlay draws
 a row as one container that a press along it moves, and no thumb in it, and the real strip's own
-scroll moves neither.
+scroll moves neither. Each tiled thumb is that place narrowed by the card's 14pt gap about its
+centre, its proportions kept (`apart`): at depth 0.3 the strip's own gap is under a point, and a run
+of terminals drew as one slab. Narrowing rather than spreading the row keeps every place, the axis
+and every pan as the strip has them. At rest the shown row's thumbs are drawn at their windows'
+frames, so frame zero is still the screen.
 
 **Stacks are the switcher's turned on their side.** Both draw `chrome`'s card stack
 (`src/chrome/domain/card.rs`): the step, the inset and the three cards drawn are one record, and

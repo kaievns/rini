@@ -74,8 +74,17 @@ Every workspace of one display at once, zoomed out, while its key is held.
   card overlaps MUST join the stack as its top card. The current column MUST NOT stack, and the top
   card MUST NOT cover it: it MUST stay the row's gap clear of the current column, partly past the
   edge where its 16pt inset would bring it nearer. A card not drawn MUST NOT hold a picture.
+- Two tiled thumbs side by side MUST be at least the card's gap apart, 14pt on screen, each its
+  window's place narrowed about its centre with its proportions kept, and a column's windows drawn
+  clear of each other with it: at the overview's depth the strip's own gap is under a point, and
+  neighbouring windows read as one.
+
+> **Reported 2026-10-19.** "add horisontal spacing between windows on the strip, otherwise they're
+> luped together and hard to see which one which, for example the rainbow terminals on ws3 is a
+> mess". Kai's 3pt gap is 0.9pt on screen at depth 0.3.
+
 - Its look MUST be the switcher's, from one record both draw from: the stacks' step, inset and
-  three cards drawn. Kai asked for one visual style across the two, reusing components where they
+  three cards drawn, and the gap between cards. Kai asked for one visual style across the two, reusing components where they
   apply; two copies of a value drift.
 
 > **Reported 2026-10-19.** "overall visual style must mutch the main app switcher, both should be
