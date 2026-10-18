@@ -12,6 +12,12 @@
 //! of an empty band.
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_geometry::space::{FromCg, Point, Rect, Size, ToCg};
+
+use crate::chrome::domain::card::{self, Stack, Toward};
+
+/// The panel's own points, top-left at its top-left corner.
+pub enum Panel {}
 
 /// The sizes the strip is built from, in points.
 ///
@@ -31,16 +37,12 @@ pub struct Metrics {
     /// and a caption.
     pub min_tile_width: f64,
     pub max_tile_width: f64,
-    /// How much higher each card behind a stack's top one sits than the card in front of it.
-    pub stack_rise: f64,
-    /// How much narrower each card behind sits, on each side. Wider than `tile_corner`, or a card
-    /// behind shows through the rounded top corner of the card in front.
-    pub stack_inset: f64,
-    /// A card's corner radius, and a departure from the design system: `--radius-control` is 5px, a
-    /// button's radius. A card is a picture of a window, and macOS rounds every window, so a
-    /// square-cornered card reads as a screenshot of a window rather than as a window.
+    /// A stack's cards behind its top one: each `step` higher than the card in front of it and
+    /// `inset` narrower on each side, the overview's edge stacks' turned upright.
+    pub stack: Stack,
+    /// A card's corner radius: the card's.
     pub tile_corner: f64,
-    /// Between rows.
+    /// Between rows: as far apart as the overview's thumbs.
     pub gap: f64,
     /// Inside the panel's edge, at the sides and above the strip.
     pub padding: f64,
@@ -71,10 +73,9 @@ impl Default for Metrics {
             tile_height: 163.0,
             min_tile_width: 104.0,
             max_tile_width: 340.0,
-            stack_rise: 8.0,
-            stack_inset: 12.0,
-            tile_corner: 11.0,
-            gap: 14.0,
+            stack: card::STACK,
+            tile_corner: card::CORNER,
+            gap: card::GAP,
             padding: 22.0,
             bottom_padding: 9.0,
             caption: 27.0,
@@ -87,7 +88,7 @@ impl Default for Metrics {
 impl Metrics {
     /// How tall each card of a stack with `depth` cards behind its top one is drawn.
     pub fn card_height(&self, depth: usize) -> f64 {
-        self.tile_height - depth as f64 * self.stack_rise
+        self.tile_height - depth as f64 * self.stack.step
     }
 
     /// How wide a row whose top window is `size` should be, with `depth` cards behind it.
@@ -108,19 +109,12 @@ impl Metrics {
     /// Every depth shares one silhouette: the deepest card's top is the row's top and the front card's
     /// bottom is `tile_height` below it, so captions line up and the selection ring is one size.
     pub fn cards(&self, row: CGRect, depth: usize) -> Vec<CGRect> {
-        let height = self.card_height(depth);
-        (0..=depth)
-            .map(|k| {
-                let inset = k as f64 * self.stack_inset;
-                CGRect::new(
-                    CGPoint::new(
-                        row.origin.x + inset,
-                        row.origin.y + (depth - k) as f64 * self.stack_rise,
-                    ),
-                    CGSize::new(row.size.width - 2.0 * inset, height),
-                )
-            })
-            .collect()
+        let row = Rect::<Panel>::from_cg(row);
+        let front: Rect<Panel> = Rect::new(
+            Point::new(row.min_x(), row.min_y() + depth as f64 * self.stack.step),
+            Size::new(row.width(), self.card_height(depth)),
+        );
+        (0..=depth).map(|k| self.stack.behind(front, k, Toward::Up).to_cg()).collect()
     }
 
     fn row_height(&self) -> f64 { self.tile_height + self.caption_gap + self.caption }
@@ -293,7 +287,7 @@ mod tests {
         let strip = lay_out(&[stack(wide(), 2)], 0, screen(), m).expect("strip");
         let front = m.cards(strip.rows[0], 2)[0];
 
-        assert_eq!(m.card_height(2), m.tile_height - 2.0 * m.stack_rise);
+        assert_eq!(m.card_height(2), m.tile_height - 2.0 * m.stack.step);
         assert!((front.size.width / front.size.height - size.width / size.height).abs() < 1e-9);
         assert!(m.card_width(size, 2) < m.card_width(size, 0));
     }
@@ -335,9 +329,9 @@ mod tests {
         assert_eq!(cards.len(), 3, "the top card and two behind");
         for pair in cards.windows(2) {
             let (front, behind) = (pair[0], pair[1]);
-            assert_eq!(front.origin.y - behind.origin.y, m.stack_rise);
-            assert_eq!(behind.origin.x - front.origin.x, m.stack_inset);
-            assert_eq!(front.size.width - behind.size.width, 2.0 * m.stack_inset);
+            assert_eq!(front.origin.y - behind.origin.y, m.stack.step);
+            assert_eq!(behind.origin.x - front.origin.x, m.stack.inset);
+            assert_eq!(front.size.width - behind.size.width, 2.0 * m.stack.inset);
             assert_eq!(behind.size.height, front.size.height);
         }
     }
@@ -373,10 +367,15 @@ mod tests {
 
     /// A card behind sits under the top card's rounded corner. Inset by less than the radius, it shows
     /// through the curve.
+    /// The switcher draws the card the overview draws its thumbs as: one corner, one gap between
+    /// cards, one stack (`chrome::domain::card`).
     #[test]
-    fn the_inset_clears_a_tiles_corner() {
-        let m = metrics();
-        assert!(m.stack_inset > m.tile_corner);
+    fn the_switcher_s_cards_are_the_chrome_card() {
+        let m = Metrics::default();
+        assert_eq!(m.stack, card::STACK);
+        assert_eq!(m.tile_corner, card::CORNER);
+        assert_eq!(m.gap, card::GAP);
+        assert_eq!(crate::switcher::domain::entries::BEHIND + 1, card::STACK.cards);
     }
 
     /// A stack is a row like any other to the hit test: a click on a card behind lands in its row.
@@ -387,7 +386,7 @@ mod tests {
         let deepest = m.cards(strip.rows[1], 2)[2];
         let point = CGPoint::new(
             deepest.origin.x + deepest.size.width / 2.0,
-            deepest.origin.y + m.stack_rise / 2.0,
+            deepest.origin.y + m.stack.step / 2.0,
         );
         assert_eq!(strip.row_at(point), Some(1));
     }

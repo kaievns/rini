@@ -9,10 +9,11 @@
 
 use rini_core::ids::WindowId;
 
+use crate::chrome::domain::card::STACK;
 use crate::switcher::domain::candidates::{Candidate, Scope};
 
-/// How many of a stack's windows are drawn behind its top one.
-pub const BEHIND: usize = 2;
+/// How many of a stack's windows are drawn behind its top one: the card's stack but its top card.
+pub const BEHIND: usize = STACK.cards - 1;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {

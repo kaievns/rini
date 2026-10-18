@@ -13,7 +13,8 @@ use rini_geometry::space::{OverlayPoint, OverlayRect, Point, ScreenRect, Size};
 use rini_geometry::to_overlay_space;
 
 use super::depth::{Span, depth, row_tops};
-use super::stacks::{DRAWN_CARDS, Edges, Side, edge_stacks};
+use super::stacks::{Edges, Side, edge_stacks};
+use crate::chrome::domain::card::STACK;
 
 /// A window and the frame it is laid out at when its workspace is shown.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,7 +82,7 @@ impl SceneTile {
     /// Whether it is drawn: every thumb but a card behind a stack's last drawn one.
     pub fn drawn(&self) -> bool {
         match self.holder {
-            Holder::Stack { depth, .. } => depth < DRAWN_CARDS,
+            Holder::Stack { depth, .. } => depth < STACK.cards,
             Holder::Row | Holder::Floating => true,
         }
     }

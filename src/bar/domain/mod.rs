@@ -8,7 +8,6 @@ pub mod ground;
 pub mod layout;
 pub mod model;
 pub mod motion;
-pub mod palette;
 pub mod pieces;
 pub mod placement;
 pub mod style;

@@ -259,6 +259,8 @@ switcher answers "every window I have, wherever it is".
 - Each card behind MUST sit 8pt higher than the card in front of it and 12pt narrower on each side, so
   the stack shows as edges above the top card. The inset MUST be wider than a tile's corner radius, or
   a card behind shows through the top card's rounded corner.
+- The cards MUST be the overview's, from one record both draw from: the stack's step, inset and three
+  cards (`specs/overview.md`, "What it shows"). A value changed for one changes for both.
 - Colours MUST come from the Okibi design system's resolved tokens rather than being chosen here.
   Specifically: the panel is a floating surface, so it takes the content plane `--n2` with a 1px
   `--line` hairline and a shadow; a card with no picture takes the raised plane `--n3`; captions take
@@ -411,7 +413,8 @@ switcher answers "every window I have, wherever it is".
 
 ## Where it lives
 
-`src/switcher/domain/layout.rs` is where the rows and a stack's cards go,
+`src/switcher/domain/layout.rs` is where the rows and a stack's cards go, the card it draws them as
+the overview's in `src/chrome/domain/card.rs`,
 `src/switcher/platform/panel.rs` the popup itself, `src/switcher/domain/candidates.rs` is who is
 offered and in what order, `src/switcher/domain/entries.rs` what a switch steps between, a window or an
 application's stack,

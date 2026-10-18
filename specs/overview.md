@@ -74,6 +74,14 @@ Every workspace of one display at once, zoomed out, while its key is held.
   card overlaps MUST join the stack as its top card. The current column MUST NOT stack, and the top
   card MUST NOT cover it: it MUST stay the row's gap clear of the current column, partly past the
   edge where its 16pt inset would bring it nearer. A card not drawn MUST NOT hold a picture.
+- Its look MUST be the switcher's, from one record both draw from: the stacks' step, inset and
+  three cards drawn. Kai asked for one visual style across the two, reusing components where they
+  apply; two copies of a value drift.
+
+> **Reported 2026-10-19.** "overall visual style must mutch the main app switcher, both should be
+> consistent with each other and reuse components where applicable". The stacks' values were the
+> overview's own copies of the switcher's.
+
 - An empty row MUST be drawn as its tiling area's outline in the focus ring's inactive paint, and in
   its active paint while selected.
 - Floating windows MUST be drawn on their row at their place on the display, over its tiles, never
@@ -187,6 +195,7 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 `src/overview/domain/` is the scene: `scene.rs` lays it out, `depth.rs` sets its depth and its
 rows' tops, `stacks.rs` its edge stacks, and `changes.rs` finds what changed between two scenes.
+The card it shares with the switcher is `src/chrome/domain/card.rs`.
 `src/input/domain/switch_session.rs` is the tap's side, the hold that opens and closes it, and
 `src/app/reactor/overview.rs` the reactor's: the scene's input read off the layout and handed to the
 flight engine, the flights held and their frames placed, the warps held, and the close. How it moves

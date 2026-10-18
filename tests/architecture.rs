@@ -9,7 +9,8 @@ use std::fs;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
-const FEATURES: [&str; 12] = [
+const FEATURES: [&str; 13] = [
+    "chrome",
     "windows",
     "displays",
     "layout",
@@ -58,7 +59,8 @@ const SKYLIGHT_VALUE_TYPES: [&str; 4] = [
 
 /// The features whose interfaces and `domain/` speak rini-geometry's spaces (`space` in
 /// `crates/rini-geometry`). CG geometry is their boundary, not their arithmetic.
-const TYPED: [&str; 5] = [
+const TYPED: [&str; 6] = [
+    "chrome",
     "decorations",
     "pictures",
     "overview",

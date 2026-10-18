@@ -1,6 +1,6 @@
 //! The Okibi 燠火 palette, dark ground, v1.8: the neutral spine, the one accent, and the meaning
-//! colours. Every colour rini's own chrome draws is a step on this, by name; a decoration's colours
-//! are the config's.
+//! colours. Every colour rini's own chrome draws, the bar, the switcher and the overview's, is a step
+//! on this, by name; a decoration's colours are the config's.
 //!
 //! Source: <https://kaievns.github.io/okibi-akiri-design-system-spec/llm-context.md>.
 
@@ -47,9 +47,6 @@ pub const EMBER_SOFT: Colour = Colour(0x3f2d28);
 
 /// The meaning colour for an error, `--err`. Text in it is 12.5px or larger and carries the `✕` glyph.
 pub const ERR: Colour = Colour(0xf85052);
-
-/// The bar's ground is `N1` at this opacity, so the wallpaper reads faintly through the chrome.
-pub const BAR_GROUND_ALPHA: f64 = 0.88;
 
 #[cfg(test)]
 mod tests {

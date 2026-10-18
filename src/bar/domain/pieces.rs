@@ -10,8 +10,8 @@ use super::format::{clock_label, date_label, until_next_minute};
 use super::glyphs;
 use super::layout::{Fold, Piece, Right, Target};
 use super::model::{Action, DisplayBar};
-use super::palette::Colour;
 use super::style::{self, CHEVRON_CLOSED, CHEVRON_OPEN, CONFIG_FAILED, FOCUS_DOT, Face};
+use crate::chrome::domain::palette::Colour;
 
 /// The wall clock, as much of it as the bar shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

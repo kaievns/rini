@@ -5,7 +5,7 @@
 
 use super::layout::Piece;
 use super::model::{DisplayBar, Row};
-use super::palette::{Colour, EMBER, ERR, N6, N7, N8, N9, N10, N11};
+use crate::chrome::domain::palette::{Colour, EMBER, ERR, N6, N7, N8, N9, N10, N11};
 
 /// A font by PostScript name, at a size in points.
 #[derive(Clone, Copy, Debug, PartialEq)]

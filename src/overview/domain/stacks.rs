@@ -1,30 +1,36 @@
 //! The columns of a row that collapse into a stack at either edge of the display.
 //!
-//! The switcher's stacks turned on their side. Walking out from the pivot column, the first column
-//! that crosses an edge and every one beyond it stack there. The top card is the nearest of them,
-//! at its own size, `EDGE_INSET` inside the edge, but never nearer the pivot than the row's gap
-//! beside it, so a wide card sits partly past the edge rather than over the selection. Each card
-//! behind is as wide as it, sits `CARD_STEP` further out and `CARD_INSET` shorter at top and
-//! bottom, and only `DRAWN_CARDS` are drawn. A column the top card overlaps joins the stack as its
-//! new top card, until none does. The pivot never stacks.
+//! The switcher's stacks turned on their side: the card's stack (`chrome::domain::card::STACK`)
+//! toward each edge. Walking out from the pivot column, the first column that crosses an edge and
+//! every one beyond it stack there. The top card is the nearest of them, at its own size,
+//! `EDGE_INSET` inside the edge, but never nearer the pivot than the row's gap beside it, so a wide
+//! card sits partly past the edge rather than over the selection. Each card behind is as wide as
+//! it, a step further out and shorter at top and bottom, and only the stack's cards are drawn. A
+//! column the top card overlaps joins the stack as its new top card, until none does. The pivot
+//! never stacks.
 
-use rini_geometry::space::{OverlayRect, Point, Size};
+use rini_geometry::space::{OverlayRect, Point};
+
+use crate::chrome::domain::card::{STACK, Toward};
 
 /// Between the top card's outer edge and the display's edge.
 pub const EDGE_INSET: f64 = 16.0;
-/// How much further toward the edge each card behind the top one sits.
-pub const CARD_STEP: f64 = 8.0;
-/// How much shorter each card behind sits, at its top and at its bottom.
-pub const CARD_INSET: f64 = 12.0;
-/// The cards a stack draws: its top card and two behind. Three read as a stack; more would thin
-/// each to a sliver.
-pub const DRAWN_CARDS: usize = 3;
 
 /// Which edge of the display a stack is at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
     Left,
     Right,
+}
+
+impl Side {
+    /// The way its cards behind go: out toward its edge.
+    fn toward(self) -> Toward {
+        match self {
+            Side::Left => Toward::Left,
+            Side::Right => Toward::Right,
+        }
+    }
 }
 
 /// The horizontal extent stacks form at the edges of.
@@ -41,12 +47,12 @@ pub struct Card {
     pub column: usize,
     /// How many cards are in front of it: 0 for the top card.
     pub depth: usize,
-    /// Where the card is drawn. A card past `DRAWN_CARDS` sits where the deepest drawn one does.
+    /// Where the card is drawn. A card past the stack's last drawn sits where that one does.
     pub frame: OverlayRect,
 }
 
 impl Card {
-    pub fn drawn(&self) -> bool { self.depth < DRAWN_CARDS }
+    pub fn drawn(&self) -> bool { self.depth < STACK.cards }
 }
 
 /// Each edge's stack, its top card first.
@@ -121,7 +127,7 @@ fn stack(columns: &[OverlayRect], pivot: usize, edges: Edges, side: Side) -> Vec
         .map(|(depth, column)| Card {
             column,
             depth,
-            frame: behind(top, depth.min(DRAWN_CARDS - 1), side),
+            frame: STACK.behind(top, depth, side.toward()),
         })
         .collect()
 }
@@ -152,22 +158,10 @@ impl Bound {
     }
 }
 
-/// The card `depth` behind `top`: `CARD_STEP` further out each, `CARD_INSET` shorter at each end.
-fn behind(top: OverlayRect, depth: usize, side: Side) -> OverlayRect {
-    let k = depth as f64;
-    let out = match side {
-        Side::Left => -CARD_STEP * k,
-        Side::Right => CARD_STEP * k,
-    };
-    let height = (top.height() - 2.0 * CARD_INSET * k).max(0.0);
-    OverlayRect::new(
-        Point::new(top.min_x() + out, top.center().y - height / 2.0),
-        Size::new(top.width(), height),
-    )
-}
-
 #[cfg(test)]
 mod tests {
+    use rini_geometry::space::Size;
+
     use super::*;
 
     const EDGES: Edges = Edges { left: 0.0, right: 1728.0 };
@@ -205,10 +199,15 @@ mod tests {
             "the top card keeps its size"
         );
         for card in right {
-            let k = card.depth.min(DRAWN_CARDS - 1) as f64;
-            assert!((card.frame.max_x() - (top.max_x() + CARD_STEP * k)).abs() < 1e-9);
-            assert!((card.frame.min_y() - (top.min_y() + CARD_INSET * k)).abs() < 1e-9);
-            assert!((card.frame.max_y() - (top.max_y() - CARD_INSET * k)).abs() < 1e-9);
+            assert_eq!(
+                card.frame,
+                STACK.behind(top, card.depth, Toward::Right),
+                "the card's stack"
+            );
+            let k = card.depth.min(2) as f64;
+            assert!((card.frame.max_x() - (top.max_x() + 8.0 * k)).abs() < 1e-9);
+            assert!((card.frame.min_y() - (top.min_y() + 12.0 * k)).abs() < 1e-9);
+            assert!((card.frame.max_y() - (top.max_y() - 12.0 * k)).abs() < 1e-9);
             assert_eq!(card.drawn(), card.depth < 3);
         }
         assert_eq!(right.iter().filter(|card| card.drawn()).count(), 3);
@@ -269,7 +268,7 @@ mod tests {
         assert!((top.min_x() - (EDGES.left + EDGE_INSET)).abs() < 1e-9);
         assert!(stacks.left.windows(2).all(|pair| pair[0].column == pair[1].column + 1));
         let deepest = stacks.left[2].frame;
-        assert!((deepest.min_x() - (top.min_x() - 2.0 * CARD_STEP)).abs() < 1e-9);
+        assert!((deepest.min_x() - (top.min_x() - 2.0 * STACK.step)).abs() < 1e-9);
         assert_eq!(stacks.left.last().unwrap().column, 0);
     }
 
@@ -279,7 +278,7 @@ mod tests {
         let stacks = edge_stacks(&columns, 1, EDGES);
         let undrawn: Vec<&Card> = stacks.right.iter().filter(|card| !card.drawn()).collect();
         assert!(!undrawn.is_empty());
-        let deepest = stacks.right[DRAWN_CARDS - 1].frame;
+        let deepest = stacks.right[STACK.cards - 1].frame;
         assert!(undrawn.iter().all(|card| card.frame == deepest));
     }
 }

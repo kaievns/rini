@@ -5,12 +5,12 @@ bottom in the stack's order. Each row is its strip at one depth, aligned on the 
 that workspace focuses. The requirements are `specs/overview.md`.
 
 This feature is the scene and nothing else: pure geometry over `rini-core`'s ids in rini-geometry's
-`Overlay` space. It names no other feature and has no `platform/`, as `layout` has none. The
-reactor fills its input from the layout and hands each scene to the flight engine, and the features
-that draw it read its `Scene` directly: `animation`'s overview choreography
-(`src/animation/domain/choreography/overview.rs`) turns it into the overlay's score, and
-`transitions`' engine plays that on its own lifecycle (`src/transitions/domain/lifecycle/overview.rs`,
-`src/transitions/platform/engine/overview.rs`).
+`Overlay` space. It names no other feature but `chrome`, whose card its stacks are, and has no
+`platform/`, as `layout` has none. The reactor fills its input from the layout and hands each scene
+to the flight engine, and the features that draw it read its `Scene` directly: `animation`'s
+overview choreography (`src/animation/domain/choreography/overview.rs`) turns it into the overlay's
+score, and `transitions`' engine plays that on its own lifecycle
+(`src/transitions/domain/lifecycle/overview.rs`, `src/transitions/platform/engine/overview.rs`).
 
 ## What it owns
 
@@ -37,8 +37,9 @@ starts: every tiled thumb sits at its window's place on the strip from there, so
 a row as one container that a press along it moves, and no thumb in it, and the real strip's own
 scroll moves neither.
 
-**Stacks are the switcher's turned on their side.** The constants are the overview's own rather
-than read from `switcher`, which is downstream of every feature that could draw this. The pivot,
+**Stacks are the switcher's turned on their side.** Both draw `chrome`'s card stack
+(`src/chrome/domain/card.rs`): the step, the inset and the three cards drawn are one record, and
+only the overview's `EDGE_INSET` is its own. The pivot,
 the current column or with none the one nearest the axis, never stacks, and no card covers it: a
 top card whose 16pt inset would bring it nearer the pivot than the row's gap beside it is pushed
 out to that gap and sits partly past the edge. Wide columns on a display with one or two rows hit

@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use super::layout::HEIGHT;
-use super::palette::{BAR_GROUND_ALPHA, Colour};
+use crate::chrome::domain::palette::Colour;
+
+/// The ground is `N1` at this opacity, so the wallpaper reads faintly through the chrome.
+pub const BAR_GROUND_ALPHA: f64 = 0.88;
 
 /// How far the blur spreads, in points: about the standard deviation of a Gaussian.
 pub const BLUR: f64 = 12.0;
@@ -127,7 +130,7 @@ impl Timer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bar::domain::palette::N1;
+    use crate::chrome::domain::palette::N1;
 
     fn picture(width: usize, height: usize, fill: [u8; 4]) -> Vec<u8> {
         (0..width * height).flat_map(|_| fill).collect()

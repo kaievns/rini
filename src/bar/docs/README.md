@@ -12,7 +12,7 @@ the Okibi 燠火 design system. The requirements are in `specs/bar.md`.
 | **What each bar shows** | `domain/model.rs`: `BarInput` in from the reactor, `BarModel` out, `Action` back |
 | **Where each piece goes** | `domain/layout.rs`: spans by ink, the underline, and the hit test; `domain/placement.rs`: where each picture goes so its ink lands on its span, and every frame of a scene, the tray's window and its extras inside it included (`frames`) |
 | **What each piece says, and what a click does** | `domain/pieces.rs` |
-| **How each piece is set** | `domain/style.rs` and `domain/palette.rs` |
+| **How each piece is set** | `domain/style.rs`, in the palette `src/chrome/domain/palette.rs` |
 | **The two movements** | `domain/motion.rs`: the fold's states and the fades' timing |
 | **The ground** | `domain/ground.rs`: what is pictured, the blur, the tint, and when; `platform/ground.rs` pictures it |
 | **Which menu extras are drawn** | `domain/extras.rs`: vitals, tray and skipped, the twin-block rule, which display's, ink columns, cutting a capture apart, the change test, the pictures kept, and the tick |
