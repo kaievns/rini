@@ -2,8 +2,8 @@
 //! what they did.
 //!
 //! Every thumb that moved, changed holder or changed row, with where it was and where it is; each
-//! row's pan, by how far its strip moved under the axis; how far the stack scrolled; and whether the
-//! selection moved.
+//! row's pan, by how far its strip moved under the axis; how far the stack scrolled; and whether
+//! the selection moved.
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::OverlayRect;

@@ -32,7 +32,10 @@ and a stacked column is drawn as the strip draws it.
 
 **Stacks are the switcher's turned on their side.** The constants are the overview's own rather
 than read from `switcher`, which is downstream of every feature that could draw this. The pivot,
-the current column or with none the one nearest the axis, never stacks.
+the current column or with none the one nearest the axis, never stacks, and no card covers it: a
+top card whose 16pt inset would bring it nearer the pivot than the row's gap beside it is pushed
+out to that gap and sits partly past the edge. Wide columns on a display with one or two rows hit
+this; at depth 0.5 a full-width neighbour's card would otherwise cover 424pt of the selection.
 
 **A pan is read off one window on the strip in both scenes.** The window the row is aligned on
 after, else the one it was aligned on before, else any window in both. A move along the strip keeps

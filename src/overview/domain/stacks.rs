@@ -1,10 +1,12 @@
 //! The columns of a row that collapse into a stack at either edge of the display.
 //!
 //! The switcher's stacks turned on their side. Walking out from the pivot column, the first column
-//! that crosses an edge and every one beyond it stack there. The top card is the nearest of them, at
-//! its own size, `EDGE_INSET` inside the edge; each card behind is as wide as it, sits `CARD_STEP`
-//! further out and `CARD_INSET` shorter at top and bottom, and only `DRAWN_CARDS` are drawn. A column the top card
-//! overlaps joins the stack as its new top card, until none does. The pivot never stacks.
+//! that crosses an edge and every one beyond it stack there. The top card is the nearest of them,
+//! at its own size, `EDGE_INSET` inside the edge, but never nearer the pivot than the row's gap
+//! beside it, so a wide card sits partly past the edge rather than over the selection. Each card
+//! behind is as wide as it, sits `CARD_STEP` further out and `CARD_INSET` shorter at top and
+//! bottom, and only `DRAWN_CARDS` are drawn. A column the top card overlaps joins the stack as its
+//! new top card, until none does. The pivot never stacks.
 
 use rini_geometry::space::{OverlayRect, Point, Size};
 
@@ -87,8 +89,21 @@ fn stack(columns: &[OverlayRect], pivot: usize, edges: Edges, side: Side) -> Vec
     let Some(first) = outward.iter().position(|&column| crosses(&columns[column])) else {
         return Vec::new();
     };
+    let pivot_rect = columns[pivot];
+    let neighbour = columns[outward[0]];
+    let clear = match side {
+        Side::Left => pivot_rect.min_x() - neighbour.max_x(),
+        Side::Right => neighbour.min_x() - pivot_rect.max_x(),
+    }
+    .max(0.0);
+    let bound = Bound {
+        pivot: pivot_rect,
+        clear,
+        edges,
+        side,
+    };
     let mut members: Vec<usize> = outward[first..].to_vec();
-    let mut top = top_card(columns[members[0]], edges, side);
+    let mut top = bound.top_card(columns[members[0]]);
     for &next in outward[..first].iter().rev() {
         let overlaps = match side {
             Side::Left => columns[next].min_x() < top.max_x(),
@@ -98,7 +113,7 @@ fn stack(columns: &[OverlayRect], pivot: usize, edges: Edges, side: Side) -> Vec
             break;
         }
         members.insert(0, next);
-        top = top_card(columns[next], edges, side);
+        top = bound.top_card(columns[next]);
     }
     members
         .into_iter()
@@ -111,13 +126,30 @@ fn stack(columns: &[OverlayRect], pivot: usize, edges: Edges, side: Side) -> Vec
         .collect()
 }
 
-/// The top card: `column` at its own size, its outer edge `EDGE_INSET` inside the edge.
-fn top_card(column: OverlayRect, edges: Edges, side: Side) -> OverlayRect {
-    let x = match side {
-        Side::Left => edges.left + EDGE_INSET,
-        Side::Right => edges.right - EDGE_INSET - column.width(),
-    };
-    OverlayRect::new(Point::new(x, column.min_y()), column.size)
+/// Where one side's top card may go: inside `edges`, and `clear` outside the pivot.
+struct Bound {
+    pivot: OverlayRect,
+    clear: f64,
+    edges: Edges,
+    side: Side,
+}
+
+impl Bound {
+    /// The top card: `column` at its own size, its outer edge `EDGE_INSET` inside the edge, pushed
+    /// out past it where that would bring it nearer the pivot than `clear`.
+    fn top_card(&self, column: OverlayRect) -> OverlayRect {
+        let x = match self.side {
+            Side::Left => {
+                let inside = self.edges.left + EDGE_INSET;
+                inside.min(self.pivot.min_x() - self.clear - column.width())
+            }
+            Side::Right => {
+                let inside = self.edges.right - EDGE_INSET - column.width();
+                inside.max(self.pivot.max_x() + self.clear)
+            }
+        };
+        OverlayRect::new(Point::new(x, column.min_y()), column.size)
+    }
 }
 
 /// The card `depth` behind `top`: `CARD_STEP` further out each, `CARD_INSET` shorter at each end.
@@ -212,6 +244,20 @@ mod tests {
         assert_eq!(stacks.card(1), None);
         assert_eq!(stacks.card(0).map(|(side, _)| side), Some(Side::Left));
         assert_eq!(stacks.card(2).map(|(side, _)| side), Some(Side::Right));
+    }
+
+    #[test]
+    fn a_top_card_never_covers_the_current_column() {
+        // Full-width columns at depth 0.5: 848pt wide, 8pt apart, the pivot at 440..1288.
+        let columns = strip(3, 848.0, 8.0, 1);
+        let stacks = edge_stacks(&columns, 1, EDGES);
+        let pivot = columns[1];
+        let left = stacks.left[0].frame;
+        let right = stacks.right[0].frame;
+        assert!(left.max_x() <= pivot.min_x() - 8.0 + 1e-9, "{left:?}");
+        assert!(right.min_x() >= pivot.max_x() + 8.0 - 1e-9, "{right:?}");
+        assert_eq!(left.size, columns[0].size, "the top card keeps its size");
+        assert_eq!(right.size, columns[2].size, "the top card keeps its size");
     }
 
     #[test]

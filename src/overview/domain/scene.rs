@@ -185,8 +185,8 @@ pub fn lay_out(input: &OverviewInput) -> Scene {
     }
 }
 
-/// How one row maps the display's overlay points: about `anchor`, which lands on `axis`, at `scale`,
-/// the usable frame's top landing on `top`.
+/// How one row maps the display's overlay points: about `anchor`, which lands on `axis`, at
+/// `scale`, the usable frame's top landing on `top`.
 struct RowSpace {
     axis: f64,
     scale: f64,

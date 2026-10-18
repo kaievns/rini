@@ -46,8 +46,8 @@ pub struct Span {
 /// The tops of `rows` rows `row_height` tall in `span`.
 ///
 /// A stack that fits is centred. One that does not starts from `scroll`, the scroll it was last
-/// laid out at, and moves it the least that brings the `selected` row inside the margins, never past
-/// either end of the stack.
+/// laid out at, and moves it the least that brings the `selected` row inside the margins, never
+/// past either end of the stack.
 pub fn row_tops(rows: usize, row_height: f64, span: Span, scroll: f64, selected: usize) -> RowTops {
     if rows == 0 {
         return RowTops { tops: Vec::new(), scroll: 0.0 };

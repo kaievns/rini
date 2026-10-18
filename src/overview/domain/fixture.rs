@@ -29,7 +29,8 @@ pub struct Col<'a> {
     pub windows: &'a [u32],
 }
 
-/// A strip of `columns`, `GAP` apart, its first column `scroll` left of the tiling area's left edge.
+/// A strip of `columns`, `GAP` apart, its first column `scroll` left of the tiling area's left
+/// edge.
 pub fn strip(columns: &[Col], scroll: f64) -> Vec<ColumnInput> {
     let tiling = tiling();
     let mut x = tiling.min_x() - scroll;

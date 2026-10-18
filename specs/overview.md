@@ -53,8 +53,10 @@ Each requirement below says what it still waits for.
 - Columns past either edge MUST collapse into a stack at that edge: the nearest one on top, its
   outer edge 16pt in, each card behind 8pt further out and 12pt shorter at top and bottom, three
   cards at most, as the switcher stacks an application's windows, on their side. A column the top
-  card overlaps MUST join the stack as its top card. The current column MUST NOT stack. A card not
-  drawn MUST NOT hold a picture. Not yet met: laid out, not drawn.
+  card overlaps MUST join the stack as its top card. The current column MUST NOT stack, and the top
+  card MUST NOT cover it: it MUST stay the row's gap clear of the current column, partly past the
+  edge where its 16pt inset would bring it nearer. A card not drawn MUST NOT hold a picture. Not
+  yet met: laid out, not drawn.
 - An empty row MUST be drawn as its tiling area's outline in the inactive paint, and in the active
   paint while selected. Not yet met: laid out, not drawn.
 - Floating windows MUST be drawn on their row at their place on the display, over its tiles, never
