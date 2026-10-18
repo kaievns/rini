@@ -231,7 +231,9 @@ is borrowed.
 
 - **Floating windows are not strip members.** Left/right from a floating window
   goes to the strip and resumes at the strip's own selection; left/right at the
-  strip's end stops there. Both branches used to walk the floating set: with
+  strip's end stops there. Focus to an end from a floating window goes on to
+  that end from the strip's selection, since reaching the end is the press, and
+  with the selection there already lands on it without an `edge_hit`. Both branches used to walk the floating set: with
   Zoom and System Settings floating, Mod+J/L cycled those two instead of the
   columns, the escape landed on the *first* column, and walking off the last
   column stepped onto Settings and bounced back. Floating windows are still in

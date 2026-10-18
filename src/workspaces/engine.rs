@@ -1736,6 +1736,50 @@ mod tests {
         assert_eq!(fx.engine.focused_window, Some(first));
     }
 
+    /// From a floating window a focus press to an end goes to that end of the strip, not to the
+    /// strip's own selection a step of one column resumes at, and pans there from the selection;
+    /// with the selection at that end already it lands there without a bounce.
+    #[test]
+    fn a_focus_press_to_an_end_from_a_floating_window_reaches_that_end() {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(535);
+        let [first, second, third, floating] = [1, 2, 3, 4].map(|idx| WindowId::new(78, idx));
+        fx.expose(space, CGSize::new(1000.0, 800.0));
+        let _ = fx.open(
+            space,
+            [first, second, third, floating].map(OnScreenEntry::plain).to_vec(),
+        );
+        fx.float(space, floating);
+        fx.engine.focused_window = Some(first);
+        let _ = fx.command(space, LayoutCommand::MoveFocusToEnd(StripEnd::First));
+        let _ = fx.command(space, LayoutCommand::MoveFocus(Direction::Right));
+        assert_eq!(
+            fx.engine.focused_window,
+            Some(second),
+            "the strip's selection is in the middle"
+        );
+
+        fx.engine.focused_window = Some(floating);
+        let last = fx.command(space, LayoutCommand::MoveFocusToEnd(StripEnd::Last));
+        assert_eq!(last.focus_window, Some(third));
+        assert_eq!(
+            last.stepped,
+            Some((second, third)),
+            "it pans from the strip's selection"
+        );
+        assert_eq!(last.edge_hit, None);
+
+        fx.engine.focused_window = Some(floating);
+        let there = fx.command(space, LayoutCommand::MoveFocusToEnd(StripEnd::Last));
+        assert_eq!(there.focus_window, Some(third));
+        assert_eq!(
+            (there.edge_hit, there.stepped),
+            (None, None),
+            "focus moved, so no bounce"
+        );
+        assert_eq!(fx.engine.focused_window, Some(third));
+    }
+
     /// Pulling a window out of a stacked column makes a new column and resizes the ones it leaves: not
     /// two columns changing places. Nor is a move up or down its column.
     #[test]

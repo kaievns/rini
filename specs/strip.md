@@ -344,8 +344,10 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   to show it as a focus press of one column does, and the press MUST be seen as one: a pan along
   the strip, never a cut, under Zoom on the navigation arc (`animation.md`, "The zoom look"). With
   the focused window's column at that end already, focus MUST NOT move, and the press MUST bounce
-  the view as a focus press into an end does (`animation.md`, "Pushing past an end"). The default
-  binds are `Mod+U` and `Mod+O`. The names are niri's, so a niri config's binds of them work as
+  the view as a focus press into an end does (`animation.md`, "Pushing past an end"). From a
+  floating window the press MUST focus that end of the strip it floats over, never the strip's own
+  selection short of it, taking the row and the pan from that selection, and MUST NOT bounce, since
+  focus moved. The default binds are `Mod+U` and `Mod+O`. The names are niri's, so a niri config's binds of them work as
   written.
 
 > **Reported 2026-10-18.** "and make the alt-u/o to navigate to the start/end of the strip", right

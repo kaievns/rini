@@ -127,9 +127,10 @@ impl LayoutEngine {
             return EventResponse::default();
         };
 
-        if is_floating {
-            // Floating windows are not strip members: navigation moves to the strip and resumes at its
-            // own selection. See "Navigation" in `src/layout/docs/strip.md`.
+        if is_floating && matches!(step, FocusStep::Toward(_)) {
+            // Floating windows are not strip members: a step moves to the strip and resumes at its
+            // own selection; a press to an end goes on to that end. See "Navigation" in
+            // `src/layout/docs/strip.md`.
             return self.move_focus_escape_to_tiled(window_store, space, ws_id, layout);
         }
 
@@ -161,6 +162,9 @@ impl LayoutEngine {
 
         if let Some(prev_wid) = previous_selection {
             let _ = self.workspace_tree_mut(ws_id).select_window(layout, prev_wid);
+        }
+        if is_floating {
+            return self.move_focus_escape_to_tiled(window_store, space, ws_id, layout);
         }
         // A strip end stops here: each display is its own strip. Only a vertical command, which
         // is not along a strip at all, may look to the adjacent display.
