@@ -26,8 +26,9 @@
 //!
 //! The overview is the same hold with nothing to step: its trigger opens it and its modifiers keep it
 //! open, and every other key passes, so a bind reaches the hotkey table and runs on the real layout.
-//! Its deadline counts from the last key it heard rather than from the open, since a browse is a run
-//! of presses, and a mouse event whose flags show its hold up closes it (`specs/overview.md`).
+//! Its deadline counts from the last key it heard with its hold down rather than from the open, since
+//! a browse is a run of presses, and any key or mouse event whose flags show its hold up closes it
+//! (`specs/overview.md`).
 
 use std::time::{Duration, Instant};
 
@@ -38,7 +39,7 @@ use crate::input::domain::hotkey::modifiers_satisfy;
 use crate::input::domain::key::{KeyCode, Modifiers};
 
 /// How long a switch may stay open before it commits itself, and the overview with no key heard
-/// before it closes.
+/// with its hold down before it closes.
 ///
 /// The backstop for every way the tap can lose track of the modifier: a rebuild on config reload, the
 /// re-enable governor's ten-second stand-down, a wiped held-key cache. Longer than any deliberate hold
@@ -263,6 +264,9 @@ impl SwitchSession {
         let hold_held = modifiers_satisfy(keys.hold, event.modifiers);
         let (opens, forward) = (keys.opens, keys.forward);
         if opens == Opens::Overview {
+            if !hold_held {
+                return self.let_go(event, forward);
+            }
             self.live = Some(Live { since: event.at, ..live });
         }
 
@@ -282,6 +286,18 @@ impl SwitchSession {
                 Opens::Overview => self.browse(event),
             },
         }
+    }
+
+    /// An event of any kind whose flags leave out the overview's hold closes it: its release went
+    /// missing, and the keys still coming would otherwise keep pushing its deadline out. A key-down
+    /// goes on to the hotkey table, and the trigger's key-up is eaten as its press was.
+    fn let_go(&mut self, event: KeyEvent, forward: KeyCode) -> Verdict {
+        self.live = None;
+        let close = Signal::Overview(OverviewSignal::Close);
+        if event.kind == KeyEventKind::Up && event.key == forward {
+            return Verdict::eat_with(close);
+        }
+        Verdict::pass_with(close)
     }
 
     /// The modifiers a mouse event's flags say are held. An overview whose hold they leave out is
@@ -959,6 +975,46 @@ mod tests {
         assert_eq!(
             session.on_key(down(KeyCode::KeyJ, Modifiers::ALT_LEFT, late)),
             Verdict::pass_with(overview(OverviewSignal::Close))
+        );
+        assert!(!session.is_live());
+    }
+
+    /// Alt's release went missing and Kai typed on: the first key with Alt up closes it and goes
+    /// on to the table, so the keys after it cannot keep it open.
+    #[test]
+    fn a_key_without_the_hold_closes_the_overview_and_goes_on() {
+        let base = Instant::now();
+        let mut session = opened_overview(base);
+        assert_eq!(
+            session.on_key(down(KeyCode::KeyJ, Modifiers::empty(), at(base, 40))),
+            Verdict::pass_with(overview(OverviewSignal::Close))
+        );
+        assert!(!session.is_live());
+
+        for seconds in [5, 10, 15, 20] {
+            let typed = base + Duration::from_secs(seconds);
+            assert_eq!(
+                session.on_key(down(KeyCode::KeyH, Modifiers::empty(), typed)),
+                Verdict::PASS
+            );
+            assert!(!session.is_live(), "{seconds}s in");
+        }
+    }
+
+    /// The trigger's press was swallowed, so its key-up with the hold gone is too, as it closes.
+    #[test]
+    fn the_triggers_release_without_the_hold_closes_the_overview_and_is_swallowed() {
+        let base = Instant::now();
+        let mut session = opened_overview(base);
+        let up = KeyEvent {
+            kind: KeyEventKind::Up,
+            key: KeyCode::Slash,
+            modifiers: Modifiers::empty(),
+            at: at(base, 30),
+        };
+        assert_eq!(
+            session.on_key(up),
+            Verdict::eat_with(overview(OverviewSignal::Close))
         );
         assert!(!session.is_live());
     }

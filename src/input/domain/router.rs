@@ -16,8 +16,9 @@
 //! 4. **Only a key-down reaches the table.** A bound key's down is swallowed whether it fires or is a
 //!    repeat; its up goes through.
 //! 5. **A mouse event's flags drop a modifier the edges left stuck**, because macOS drops a key-up or
-//!    a flags change after system UI, and close an overview whose hold they show up. Only when the
-//!    flags differ from the last seen, as mouse events are the most frequent kind.
+//!    a flags change after system UI, only when they differ from the last seen, as mouse events are
+//!    the most frequent kind. They close an overview whose hold they show up whether or not they
+//!    differ: a key-down records its flags first, so the click after it would otherwise match.
 
 use std::time::Instant;
 
@@ -107,11 +108,10 @@ impl KeyRouter {
 
     /// The flags a mouse event carries; the overview's close when they show its hold up.
     pub fn on_mouse_flags(&mut self, flags: u64) -> Option<Signal> {
-        if flags == self.held.flags() {
-            return None;
+        if flags != self.held.flags() {
+            self.held.observe_flags(flags);
+            self.held.reconcile_modifiers();
         }
-        self.held.observe_flags(flags);
-        self.held.reconcile_modifiers();
         self.switch.on_mouse(self.held.modifiers())
     }
 
@@ -694,6 +694,37 @@ mod tests {
 
         assert_eq!(router.on_mouse_flags(alt()), None, "flags unchanged");
         assert_eq!(router.on_mouse_flags(0), Some(overview(OverviewSignal::Close)));
+        assert!(!router.close_switch());
+    }
+
+    /// A key with no name records its flags and asks nothing more, so the click after it carries
+    /// the flags already seen and still closes the overview.
+    #[test]
+    fn a_mouse_event_with_the_flags_already_seen_still_closes_the_overview() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+        let nameless = Keystroke {
+            key: None,
+            ..down(KeyCode::KeyA, 0, now)
+        };
+        assert_eq!(router.on_key(nameless), passed());
+
+        assert_eq!(router.on_mouse_flags(0), Some(overview(OverviewSignal::Close)));
+        assert!(!router.close_switch());
+    }
+
+    /// Alt's release went missing: the next key closes the overview and goes on to the application.
+    #[test]
+    fn a_key_with_the_modifier_up_closes_the_overview() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+        assert_eq!(
+            router.on_key(down(KeyCode::KeyA, 0, now)),
+            signalled(false, overview(OverviewSignal::Close))
+        );
+        assert_eq!(router.on_mouse_flags(0), None, "nothing left to close");
         assert!(!router.close_switch());
     }
 

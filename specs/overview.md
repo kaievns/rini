@@ -30,9 +30,12 @@ nothing reads the scene. Each requirement below says what it still waits for.
   on the real layout, so there is nothing to cancel.
 - The trigger pressed again while it is open, its autorepeat included, MUST be swallowed and change
   nothing; passed, a held key would close and reopen it.
-- It MUST close 12s after the last key it heard, when a mouse event shows the modifier up, and when
-  the event tap is replaced: a session that outlives its modifier swallows keys with nothing left to
-  release it.
+- It MUST close when any key or mouse event shows the modifier up, 12s after the last key it heard
+  with the modifier down, and when the event tap is replaced: a session that outlives its modifier
+  swallows keys with nothing left to release it. A key that closes it MUST still go on as it would
+  with the overview shut, but the trigger's key-up, swallowed as its press was. A key with the
+  modifier up MUST NOT keep it open: with the release lost, typing on would push the 12s out for as
+  long as the typing lasts.
 - It MUST open on the focused display only: one overlay flies on one display at a time. A press
   taking focus off that display MUST close it. Not yet met.
 - It MUST NOT open on a native full-screen space, which rini does not manage. Not yet met.
