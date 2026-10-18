@@ -138,7 +138,7 @@ take niri's default: off. They were on, and a default-on flag can only be writte
 | `animations › journal { measure-handover; }` | rini's own: each lift is held up to 60ms for the overlay's own picture and measured against the screen just after it, into the journal; `journal false` turns it off with the writing | niri has no journal. Off by default because it holds every lift (`src/transitions/docs/journal.md`, "The handover, measured") |
 | `quit` | saves the layout and exits, never asks | so `skip-confirmation=` is refused |
 | `load-config-file` | bindable | IPC-only in niri |
-| `toggle-overview` | open while its bind's modifiers are held and closed when they are let go, or on Escape; a bind with no modifier is refused, and so are `open-overview` and `close-overview` | Kai's ask, "active while im holding" (`specs/overview.md`); niri's toggles on each press |
+| `toggle-overview` | open while its bind's modifiers are held and closed when they are let go, or on Escape; every `toggle-overview` bind opens it, each held by its own modifiers; a bind with no modifier is refused, and so are `open-overview` and `close-overview` | Kai's ask, "active while im holding" (`specs/overview.md`); niri's toggles on each press |
 | the `overview` section | refused | rini's overview takes no settings: its depth fits every workspace of the display |
 | `focus-column-first`, `-last` | focus lands on the row it came from, or the column's last when it has fewer | as `focus-column-left` and `-right` land: a rini column keeps no active window of its own (`window-rule › match` above) |
 | `focus-window-or-monitor-down`, `-up` | the only vertical focus | at the column's end it crosses to the display below; niri's `focus-window-down` would not, so it is not offered |

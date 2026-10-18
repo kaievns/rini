@@ -100,20 +100,23 @@ impl SwitchKeys {
     pub fn can_hold(&self) -> bool { self.hold != Modifiers::empty() }
 }
 
-/// The keys the overview answers to, from the first `toggle-overview` bind, its `Mod` already
-/// resolved: its key opens it and its modifiers hold it, so the chord is written once.
+/// The keys the overview answers to, one entry per `toggle-overview` bind, its `Mod` already
+/// resolved: each one's key opens it and its modifiers hold it, so the chord is written once.
 ///
 /// `parse` turns a spec such as `"Alt+Slash"` into its modifiers and key, as the switchers' do
 /// (`switcher::domain::trigger`), since which physical key a name means depends on the layout.
-pub fn overview_keys<F>(bindings: &[Bind], parse: F) -> Option<SwitchKeys>
-where F: FnOnce(&str) -> Option<(Modifiers, KeyCode)> {
-    let bind = bindings.iter().find(|bind| bind.action == Action::ToggleOverview)?;
-    let (hold, forward) = parse(&bind.key)?;
-    Some(SwitchKeys {
-        opens: Opens::Overview,
-        forward,
-        hold,
-    })
+pub fn overview_keys<F>(bindings: &[Bind], parse: F) -> Vec<SwitchKeys>
+where F: Fn(&str) -> Option<(Modifiers, KeyCode)> {
+    bindings
+        .iter()
+        .filter(|bind| bind.action == Action::ToggleOverview)
+        .filter_map(|bind| parse(&bind.key))
+        .map(|(hold, forward)| SwitchKeys {
+            opens: Opens::Overview,
+            forward,
+            hold,
+        })
+        .collect()
 }
 
 /// What the tap should tell the reactor.
@@ -1124,24 +1127,45 @@ mod tests {
         }
     }
 
-    /// The bind decides both the key and what holds it, and the first in the file wins.
+    /// Each bind decides both its key and what holds it, and every one of them opens it.
     #[test]
-    fn the_overviews_keys_come_from_its_first_bind() {
+    fn every_toggle_overview_bind_opens_the_overview() {
         let binds = [
             bound("Alt+J", Action::FocusColumnLeft),
             bound("Alt+Slash", Action::ToggleOverview),
             bound("Ctrl+Slash", Action::ToggleOverview),
+            bound("Hyper+Nonsense", Action::ToggleOverview),
         ];
-        assert_eq!(
-            overview_keys(&binds, parse),
-            Some(SwitchKeys {
+        let keys = overview_keys(&binds, parse);
+        assert_eq!(keys, [
+            SwitchKeys {
                 opens: Opens::Overview,
                 forward: KeyCode::Slash,
                 hold: Modifiers::ALT,
-            })
+            },
+            SwitchKeys {
+                opens: Opens::Overview,
+                forward: KeyCode::Slash,
+                hold: Modifiers::CONTROL,
+            },
+        ]);
+        assert_eq!(overview_keys(&binds[..1], parse), [], "no bind, no keys");
+
+        let base = Instant::now();
+        let mut session = SwitchSession::default();
+        session.set_keys(keys);
+        let second = session.on_key(down(KeyCode::Slash, Modifiers::CONTROL_LEFT, base));
+        assert_eq!(second, Verdict::eat_with(overview(OverviewSignal::Open)));
+        assert_eq!(
+            session.on_key(down(KeyCode::Slash, Modifiers::CONTROL_LEFT, at(base, 30))),
+            Verdict::eat(),
+            "its trigger again"
         );
-        assert_eq!(overview_keys(&binds[..1], parse), None, "no bind, no keys");
-        let unresolved = [bound("Hyper+Nonsense", Action::ToggleOverview)];
-        assert_eq!(overview_keys(&unresolved, parse), None);
+        let released = flags(Modifiers::empty(), at(base, 60));
+        assert_eq!(
+            session.on_key(released),
+            Verdict::pass_with(overview(OverviewSignal::Close)),
+            "held by its own modifier"
+        );
     }
 }

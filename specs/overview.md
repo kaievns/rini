@@ -21,7 +21,8 @@ nothing reads the scene. Each requirement below says what it still waits for.
 
 - `toggle-overview` MUST open the overview, and it MUST stay open while the bind's modifiers are
   held: Kai asked for it "active while im holding". niri's toggles; a niri config's bind still
-  opens it. Not yet met: held open by the tap, not drawn.
+  opens it. Every `toggle-overview` bind MUST open it, held by that bind's modifiers: a bind the
+  config accepts MUST NOT do nothing. Not yet met: held open by the tap, not drawn.
 - A `toggle-overview` bind with no modifier MUST be refused with the reason: nothing could close
   it.
 - Releasing the modifier MUST close it, and the release MUST be passed through, or every
