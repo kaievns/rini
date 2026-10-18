@@ -1,0 +1,106 @@
+# The overview
+
+Every workspace of one display at once, zoomed out, while its key is held.
+
+> **Reported 2026-10-18.** "okay, now a new feature sort of like expose but better, basically a view
+> of all workspaces (bind to alt-/ and active while im holding the alt-) this view pops in with zoom
+> out (similar to the zoom navigation animation) and presents an overview of all windows thumbs,
+> workspaces stacked up vertically and aligned vertically by the current window (the one that would
+> pop up if i try alt-p/; between workspaces) if there are too many windows one side or another they
+> should stack up at the end of the screen, sort of how they stack up in the cmd-tab app switcher.
+> when i'm in that view the normal alt-u/i/o/p/j/k/l/; buttons and their alt-shift variants should
+> work while im still holding the alt button. the navigation switches the way normal navigation
+> switches up/down left/right, the orange focus ring should move and the left/right aimation should
+> animate like normal slides (not zoom) navigation animation with the whole strip moving left right
+> (overflows stack up/out as needed)"
+
+Not yet met: no build opens the overview. The scene it draws is laid out, and nothing reads it.
+Each requirement below says what it still waits for.
+
+## Opening and closing
+
+- `toggle-overview` MUST open the overview, and it MUST stay open while the bind's modifiers are
+  held: Kai asked for it "active while im holding". niri's toggles; a niri config's bind still
+  opens it. Not yet met: the action is refused.
+- A `toggle-overview` bind with no modifier MUST be refused with the reason: nothing could close
+  it. Not yet met.
+- Releasing the modifier MUST close it, and the release MUST be passed through, or every
+  application believes the modifier is held. Not yet met.
+- Escape MUST close it as the release does and change nothing more: every press inside already ran
+  on the real layout, so there is nothing to cancel. Not yet met.
+- The trigger pressed again while it is open, its autorepeat included, MUST be swallowed and change
+  nothing; passed, a held key would close and reopen it. Not yet met.
+- It MUST close 12s after the last key it heard, when a mouse event shows the modifier up, and when
+  the event tap is replaced: a session that outlives its modifier swallows keys with nothing left to
+  release it. Not yet met.
+- It MUST open on the focused display only: one overlay flies on one display at a time. A press
+  taking focus off that display MUST close it. Not yet met.
+- It MUST NOT open on a native full-screen space, which rini does not manage. Not yet met.
+
+## What it shows
+
+- Every workspace of the display MUST be a row, in the stack's order, top to bottom, an empty one
+  included: up and down step through every workspace, and the selection needs somewhere to land.
+  Not yet met: laid out, not drawn.
+- Each row's current window, the one a switch to that workspace focuses, MUST sit on one vertical
+  axis at the tiling area's centre: Kai asked them aligned by that window, and the centre keeps the
+  selection still while a row pans under it. A row whose current window floats, or that has none,
+  MUST keep its strip where it shows, since no tiled window is the one to align. Not yet met: laid
+  out, not drawn.
+- Every row MUST fit the area below the bar at a depth between 0.2 and 0.5, 24pt between rows and
+  at the edges; with more rows than fit at 0.2, the stack MUST scroll the least that keeps the
+  selected row in view. First values for Kai to tune. Not yet met: laid out, not drawn.
+- Columns past either edge MUST collapse into a stack at that edge: the nearest one on top, its
+  outer edge 16pt in, each card behind 8pt further out and 12pt shorter at top and bottom, three
+  cards at most, as the switcher stacks an application's windows, on their side. A column the top
+  card overlaps MUST join the stack as its top card. The current column MUST NOT stack. A card not
+  drawn MUST NOT hold a picture. Not yet met: laid out, not drawn.
+- An empty row MUST be drawn as its tiling area's outline in the inactive paint, and in the active
+  paint while selected. Not yet met: laid out, not drawn.
+- Floating windows MUST be drawn on their row at their place on the display, over its tiles, never
+  stacked, and MUST NOT move while the row pans. Not yet met: laid out, not drawn.
+- Thumbs MUST be the windows' pictures; one with none MUST be the stand-in until one lands, and
+  MUST NOT hold the overview back. Pictures MUST keep being taken while it is open. Not yet met.
+- Only the selected window MUST wear the active ring; every other window MUST be dressed as on a
+  workspace not shown, as Kai reported of the strips beside on 2026-10-17. Not yet met: the
+  selection is laid out, and no ring is drawn.
+
+## Keys inside it
+
+- Every bind MUST do what it does outside, on the real layout, and the overview MUST re-lay out from
+  what it did: Kai asked for the same keys to work. Not yet met: what changed between two scenes is
+  found, and no press reaches it.
+- A key with no bind MUST pass through untouched: swallowing everything is how a live session
+  becomes a dead keyboard. The cost: Alt and a letter reach the hidden application. Not yet met.
+- A switcher's trigger MUST be swallowed while it is open. Not yet met.
+- Focus MUST NOT follow the mouse and the pointer MUST NOT be warped while it is open; the last warp
+  asked for MUST be carried out as it closes. The windows under the pointer are hidden, and a warp
+  per press moves the cursor across the overview. Not yet met.
+- A click MUST NOT reach a hidden window. Choosing a thumb by clicking is not supported. Not yet
+  met.
+
+## How it moves
+
+- It MUST zoom out from the screen as it is, on the first half of the zoom look's arc, under every
+  look: frame zero draws every window where it is on screen. Not yet met.
+- On close it MUST zoom back in, on the arc's second half, onto the real layout, the selected window
+  focused on its workspace, and hand over to the real windows as a flight does. Not yet met.
+- A release while it zooms out MUST turn it back from where it is drawn, without a jump. Not yet
+  met.
+- A press along a row MUST pan the whole row Slide's way under every look, the newly selected
+  window arriving on the axis, columns going into and coming out of the edge stacks as they cross
+  the edges. A move along the row MUST keep the moved window on the axis, the columns it passes
+  crossing beneath it. Not yet met: each row's pan and each column's change of stack are found, and
+  nothing plays them.
+- A press up or down the stack MUST move the ring to that row's current window, the stack panning
+  Slide's way when it scrolls. Not yet met: the selection's move and the scroll are found, and
+  nothing plays them.
+- A press at an end of a row or of the stack MUST bounce it, 72pt on screen. Not yet met.
+- With animation off or in Low Power Mode it MUST open, change and close as cuts. Not yet met.
+- Not yet met: an overview opened while a flight runs waits for it to land.
+
+## Where it lives
+
+`src/overview/domain/` is the scene: `scene.rs` lays it out, `depth.rs` sets its depth and its
+rows' tops, `stacks.rs` its edge stacks, and `changes.rs` finds what changed between two scenes.
+`src/overview/docs/README.md` explains the feature.

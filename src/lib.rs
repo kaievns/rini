@@ -16,6 +16,7 @@
 //! src/animation/    how things move on screen
 //! src/transitions/  when things happen in a transition
 //! src/switcher/     the window switcher popup
+//! src/overview/     every workspace of a display at once, while its key is held
 //! src/bar/          the menu bar across the top of every display
 //! ```
 //!
@@ -30,6 +31,7 @@ pub mod decorations;
 pub mod displays;
 pub mod input;
 pub mod layout;
+pub mod overview;
 pub mod pictures;
 pub mod switcher;
 pub mod transitions;

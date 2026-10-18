@@ -52,6 +52,7 @@ Rules for keeping this honest:
 | [`displays.md`](displays.md) | More than one screen, surviving a replug, and leaving the native Space switch to macOS |
 | [`focus.md`](focus.md) | Who has focus, and what is in front of what |
 | [`switcher.md`](switcher.md) | Every window, by application or one by one, in the order they were last used |
+| [`overview.md`](overview.md) | Every workspace of a display at once, while its key is held |
 | [`input.md`](input.md) | Bindings, modifiers, and the event tap |
 | [`persistence.md`](persistence.md) | What survives a restart, and what a bad file costs |
 | [`animation.md`](animation.md) | What moves, and what must never be seen to move |
