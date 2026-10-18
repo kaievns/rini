@@ -95,9 +95,11 @@ pub enum CrossCommand {
 /// Whether the selected window's column goes on the way a `CrossCommand` presses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnRoom {
-    /// A window lies that way in the column, or the focused window floats: the press stays here.
+    /// A window lies that way in the column, or the focused window floats and focus is pressed: the
+    /// press stays here.
     Within,
-    /// The column ends that way, holds one window, or there is no selection: on to the workspace.
+    /// The column ends that way, holds one window, there is no selection, or the focused window
+    /// floats and is moved: on to the workspace.
     Ended,
 }
 

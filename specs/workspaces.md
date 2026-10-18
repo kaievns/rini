@@ -63,8 +63,11 @@ moves along the strip within one workspace.
 - `move-window-up-or-to-workspace-up` and `move-window-down-or-to-workspace-down` MUST move the
   focused window up or down its column, and where the column ends MUST move it to the workspace
   that way with focus following, as `move-window-to-workspace-up` and `-down` do with `focus=true`.
-- With a floating window focused, each MUST act as its press within the column does, as the
-  display forms do: a floating window is in no column, so it has no end to go on from.
+- With a floating window focused, the focus forms MUST act as their press within the column does,
+  which takes focus back to the strip, and the move forms MUST move the floating window to the
+  workspace that way with focus following: a floating window is in no column, so a move within one
+  would move the strip's selection, not the window focused, and could carry it to another display.
+  A press of either MUST NOT carry a window to another display.
 - They MUST hold wherever a bind runs, the overview included, since it runs the real actions. The
   names are niri's, so a niri config's binds of them work as written. `focus-workspace-up` and
   `-down`, the moves to a workspace and the display forms, `focus-window-or-monitor-up` among them,
@@ -79,6 +82,11 @@ moves along the strip within one workspace.
 > his `Mod+I` and `Mod+K` were `focus-window-or-monitor-up` and `-down`, which cross to the display
 > above or below instead. niri's four actions had been refused as niri's alone. The shipped binds
 > keep `Mod+J` and `Mod+K` on the display forms and write the workspace forms beside them.
+>
+> **Found 2026-10-19, not reported.** Review found that a move with a floating window focused took
+> the column's move, which works on the strip's selection and not the floating window: at its
+> column's end on the lower of two stacked displays it carried that tiled window to the display
+> above. The move forms now move the floating window to the workspace instead.
 
 ## Relaunching an application
 

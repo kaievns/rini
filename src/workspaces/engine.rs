@@ -1885,6 +1885,11 @@ mod tests {
             resolved(&fx, focus(Up)),
             FocusCommand::Move(Direction::Up).into()
         );
+        assert_eq!(
+            resolved(&fx, moved(Up)),
+            to(RelativeWorkspace::Prev).into(),
+            "a floating window moves on to the workspace itself"
+        );
 
         let first = fx.workspaces(space)[0];
         fx.show(space, first);
@@ -1941,6 +1946,55 @@ mod tests {
         );
         assert_eq!(shown(&fx), Some(first), "focus follows it");
         assert_eq!(fx.workspace_of(space, top), Some(second));
+    }
+
+    /// A move on through the stack with a floating window focused moves that window to the workspace,
+    /// never the strip's selection to another display: on the lower of two stacked displays, up
+    /// pushes against the top of its stack and down carries the floating window to the workspace
+    /// below, the tiled window staying where it was.
+    #[test]
+    fn a_floating_move_through_the_stack_moves_it_and_crosses_no_display() {
+        use rini_ipc::protocol::Vertical::{Down, Up};
+        let TwoDisplays {
+            mut fx,
+            first: above,
+            second: below,
+            on_first: up_top,
+            on_second: tiled,
+        } = two_displays_stacked(590);
+        let floater = WindowId::new(74, 1);
+        let _ = fx.open(below, vec![OnScreenEntry::plain(floater)]);
+        fx.float(below, floater);
+        fx.engine.focused_window = Some(floater);
+        let [first, second] = [0, 1].map(|index| fx.workspaces(below)[index]);
+        let displays = |fx: &EngineFixture| {
+            [up_top, tiled, floater].map(|window| fx.engine.space_with_window(window))
+        };
+        let before = displays(&fx);
+
+        let pushed = fx.command(below, LayoutCommand::MoveNodeOrToWorkspace(Up));
+        assert_eq!(displays(&fx), before, "no window changes display");
+        assert_eq!(pushed.edge_hit, Some(Direction::Up), "the top of the stack");
+
+        let _ = fx.command(below, LayoutCommand::MoveNodeOrToWorkspace(Down));
+        assert_eq!(
+            fx.workspace_of(below, floater),
+            Some(second),
+            "the floating window moved"
+        );
+        assert_eq!(
+            fx.workspace_of(below, tiled),
+            Some(first),
+            "the tiled one stayed"
+        );
+        assert_eq!(
+            fx.engine.active_workspace(below),
+            Some(second),
+            "focus follows it"
+        );
+        let top = fx.workspaces(above)[0];
+        assert_eq!(fx.workspace_of(above, up_top), Some(top));
+        assert_eq!(fx.engine.active_workspace(above), Some(top));
     }
 
     /// Pulling a window out of a stacked column makes a new column and resizes the ones it leaves: not
