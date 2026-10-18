@@ -380,8 +380,9 @@ switcher answers "every window I have, wherever it is".
 - The redirect MUST arrive as ordinary key events with the modifier genuinely held, so the hold, the
   popup and the commit on release all come from the one session the tap already runs.
 
-  The keyboard layer sends Cmd+F17, Cmd+F18 and Cmd+F19 for the three switchers, from the same physical
-  keys under every Cmd hold. Nothing on macOS is bound to those, and rini binds them like any other
+  The keyboard layer sends Cmd+F17, Cmd+F18 and Cmd+F19 from the same physical keys under every Cmd
+  hold: Kai's two switchers on the first two and, since 2026-10-19, the overview on Cmd+F19, from
+  Cmd+Caps (`overview.md`). Nothing on macOS is bound to those, and rini binds them like any other
   chord. The concrete mapping belongs to the keyboard layer's config, not to rini.
 
   Three other routes were weighed and rejected:
@@ -396,6 +397,16 @@ switcher answers "every window I have, wherever it is".
     whenever rini is wedged. Declined as the less clean of two options with the same failure modes.
 
 > **Decided 2026-09-28.** "Let's just remap all three to F*. It's the same failure modes but cleaner."
+
+- The switcher MUST stay available with nothing of rini's own bound to it, Cmd+Caps (`Super+F19`)
+  included: Kai moved Cmd+Caps to the overview and kept the switcher for whoever binds it.
+  The default config MUST show its binds as examples only, none on `Super+F19`, the overview's
+  suggested key, so uncommenting both is not a key bound twice.
+
+> **Reported 2026-10-19.** "additionally i want to change the activation logic, and replace cmd-caps
+> from the app switcher to the overview (keep the app switcher around unbinded with an option to
+> bind it somwhere for those who wants it)". The rest of the line is the overview's, in
+> `overview.md`.
 
 ## Honest limitation
 

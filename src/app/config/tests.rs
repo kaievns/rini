@@ -84,6 +84,34 @@ fn the_reference_is_usable_under_every_mod_key_it_offers() {
     }
 }
 
+/// Kai moved Cmd+Caps from the switcher to the overview: the reference binds no switcher, and its
+/// overview example on Super+F19 binds beside `Mod+Slash` and every switcher example.
+#[test]
+fn the_references_switcher_and_overview_examples_bind_together_off_cmd_caps() {
+    assert!(
+        Config::reference().switcher_binds.is_empty(),
+        "no switcher bound"
+    );
+    let uncommented: String = DEFAULT_KDL
+        .lines()
+        .map(|line| match line.trim_start().strip_prefix("// ") {
+            Some(example) if example.starts_with("Super+F") => example,
+            _ => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let config = parse(&uncommented);
+    let overview: Vec<&str> = config
+        .binds
+        .iter()
+        .filter(|bind| bind.action == Action::ToggleOverview)
+        .map(|bind| bind.key.as_str())
+        .collect();
+    assert_eq!(overview, ["Mod+Slash", "Super+F19"]);
+    assert_eq!(config.switcher_binds.len(), 3, "every switcher example");
+    assert!(config.switcher_binds.iter().all(|bind| bind.key != "Super+F19"));
+}
+
 #[test]
 fn an_empty_section_means_the_same_as_an_absent_one() {
     let absent = parse("");
