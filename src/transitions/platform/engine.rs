@@ -4750,6 +4750,40 @@ mod tests {
                 assert!(matches!(replayed, Event::AnimateSurface { .. }));
             }
 
+            /// Opened again while it zooms back in or lands, the overview fills the holes its close
+            /// punched over the windows it lands on in the batch that zooms it out again, so no
+            /// real window shows through them over the thumbs.
+            #[test]
+            fn opened_again_as_it_closes_it_fills_its_holes_in() {
+                for landing in [false, true] {
+                    let mut h = harness();
+                    held_open(&mut h);
+                    let sent = h.step(Event::OverviewClose { view: view(1) });
+                    h.commit(only_batch(&sent).seq);
+                    if landing {
+                        h.place(1, view(1).shown[0].1);
+                        h.place(2, view(1).shown[1].1);
+                        h.advance(ARC + Duration::from_millis(1));
+                        let sent = h.step(Event::Tick);
+                        let place = only_batch(&sent);
+                        assert_eq!(kinds(place), vec!["place_rest"]);
+                        h.commit(place.seq);
+                    } else {
+                        h.advance(ARC / 2);
+                    }
+                    let opened = open(&h);
+                    let sent = h.step(opened);
+                    let batch = only_batch(&sent);
+                    let kinds = kinds(batch);
+                    assert_eq!(kinds[0], "holes", "landing {landing}: {kinds:?}");
+                    assert!(
+                        matches!(&batch.commands[0], Render::Holes(ends) if ends.is_empty()),
+                        "landing {landing}: the holes filled in"
+                    );
+                    assert!(kinds.contains(&"play"), "and it zooms out again: {kinds:?}");
+                }
+            }
+
             /// Asked to open while a flight flies, the overview waits for it to lift, then opens in
             /// that same turn, the flight's quiet settled first so nothing it owes lets the service
             /// go under the overview.

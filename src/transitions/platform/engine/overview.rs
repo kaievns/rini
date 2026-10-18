@@ -184,6 +184,7 @@ impl FlightEngine {
                 self.move_overview(Target::AtRest, arc_motion(arc), (&[], arc), now);
             }
             Command::Turn => {
+                self.render(Render::Holes(Vec::new()));
                 let arc = self.shown_overview.arc;
                 self.move_overview(Target::Held, arc_motion(arc), (&[], arc), now);
             }

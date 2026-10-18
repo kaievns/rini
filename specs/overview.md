@@ -131,7 +131,12 @@ Every workspace of one display at once, zoomed out, while its key is held.
 - A release while it zooms out MUST turn it back from where it is drawn, without a jump, each
   thing it draws as fast as it was going. Opened again while it zooms back in, it MUST zoom out
   again from where it is drawn: a quick let-go and press again would otherwise lift it and open it
-  afresh.
+  afresh. The overlay MUST be whole again as it does: the holes its close punched over the windows
+  it lands on would show each at full size over the thumbs until the next lift.
+
+> **Found 2026-10-18, not reported.** Review of the drawing showed the zoom out again kept the holes
+> the close had punched, the real windows and their bands showing through them.
+
 - A press along a row MUST pan the whole row Slide's way under every look, the newly selected
   window arriving on the axis, columns going into and coming out of the edge stacks as they cross
   the edges. A move along the row MUST keep the moved window on the axis, the columns it passes

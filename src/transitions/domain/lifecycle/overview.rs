@@ -58,7 +58,8 @@ pub enum Command {
     /// The zoom back in onto the real layout, from where everything is drawn, the overlay holed over
     /// the windows it lands on.
     Exit,
-    /// The zoom out again from where everything is drawn: opened again as it closed.
+    /// The zoom out again from where everything is drawn, the overlay's holes filled in again:
+    /// opened again as it closed.
     Turn,
     /// What is drawn at rest put where its windows are, under the overlay, a tick ahead of the lift.
     PlaceRest,
