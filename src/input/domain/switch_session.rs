@@ -1,4 +1,5 @@
-//! The switcher's hold-to-reveal session, as a decision the tap can make immediately.
+//! The switcher's hold-to-reveal session and the overview's hold, as a decision the tap can make
+//! immediately.
 //!
 //! The behaviour asked for is macOS's: a quick tap steps to the previous window, and holding the
 //! modifier keeps a switch open so further presses move a selection that only commits when the
@@ -22,35 +23,72 @@
 //!    down across any of those would swallow keys with nothing left to release it.
 //! 3. **A key that means nothing to the switch passes through.** Swallowing broadly would be the more
 //!    "correct" modal behaviour and is also how a live session turns into a dead keyboard.
+//!
+//! The overview is the same hold with nothing to step: its trigger opens it and its modifiers keep it
+//! open, and every other key passes, so a bind reaches the hotkey table and runs on the real layout.
+//! Its deadline counts from the last key it heard rather than from the open, since a browse is a run
+//! of presses, and a mouse event whose flags show its hold up closes it (`specs/overview.md`).
 
 use std::time::{Duration, Instant};
 
 use rini_ipc::protocol::SwitchScope;
 
+use crate::input::domain::binding::{Action, Bind};
 use crate::input::domain::hotkey::modifiers_satisfy;
 use crate::input::domain::key::{KeyCode, Modifiers};
 
-/// How long a switch may stay open with no further input before it commits itself.
+/// How long a switch may stay open before it commits itself, and the overview with no key heard
+/// before it closes.
 ///
 /// The backstop for every way the tap can lose track of the modifier: a rebuild on config reload, the
 /// re-enable governor's ten-second stand-down, a wiped held-key cache. Longer than any deliberate hold
 /// and short enough that a session nobody is holding cannot sit on the arrow keys.
 pub const MAX_SESSION: Duration = Duration::from_secs(12);
 
-/// The keys one switcher answers to. There is one of these per switcher that has a binding.
+/// What a session's keys open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opens {
+    /// A switcher over `scope`. `backward`, held alongside the hold, steps it backward instead:
+    /// Shift, normally.
+    Switch {
+        scope: SwitchScope,
+        backward: Modifiers,
+    },
+    /// The overview, open while the hold is down.
+    Overview,
+}
+
+impl Opens {
+    /// How a session these keys opened ends when its hold is let go or lost: a switch commits.
+    fn released(self) -> Signal {
+        match self {
+            Opens::Switch { .. } => Signal::Commit,
+            Opens::Overview => Signal::Overview(OverviewSignal::Close),
+        }
+    }
+
+    /// How it ends when its keys are replaced under it: a switch cancels.
+    fn dropped(self) -> Signal {
+        match self {
+            Opens::Switch { .. } => Signal::Cancel,
+            Opens::Overview => Signal::Overview(OverviewSignal::Close),
+        }
+    }
+}
+
+/// The keys one session answers to. There is one of these per switcher that has a binding, and one
+/// for the overview when it has one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitchKeys {
-    /// Which switcher these keys open.
-    pub scope: SwitchScope,
-    /// The chord that opens a switch and steps it forward.
+    /// What these keys open.
+    pub opens: Opens,
+    /// The chord that opens a session, and steps a switch forward.
     pub forward: KeyCode,
-    /// The modifiers that must be held for `forward` to mean "switch".
+    /// The modifiers that must be held for `forward` to open it.
     ///
-    /// These are also what must STAY held: releasing them is the commit. A trigger with no modifiers
+    /// These are also what must STAY held: releasing them ends it. A trigger with no modifiers
     /// cannot hold a session open at all, and [`SwitchKeys::can_hold`] says so.
     pub hold: Modifiers,
-    /// Held alongside `hold`, steps backward instead. Shift, normally.
-    pub backward: Modifiers,
 }
 
 impl SwitchKeys {
@@ -59,6 +97,22 @@ impl SwitchKeys {
     /// A trigger bound with no modifiers — a bare function key, say — has nothing whose release could
     /// commit, so it never opens a session and the one-shot binding handles it instead.
     pub fn can_hold(&self) -> bool { self.hold != Modifiers::empty() }
+}
+
+/// The keys the overview answers to, from the first `toggle-overview` bind, its `Mod` already
+/// resolved: its key opens it and its modifiers hold it, so the chord is written once.
+///
+/// `parse` turns a spec such as `"Alt+Slash"` into its modifiers and key, as the switchers' do
+/// (`switcher::domain::trigger`), since which physical key a name means depends on the layout.
+pub fn overview_keys<F>(bindings: &[Bind], parse: F) -> Option<SwitchKeys>
+where F: FnOnce(&str) -> Option<(Modifiers, KeyCode)> {
+    let bind = bindings.iter().find(|bind| bind.action == Action::ToggleOverview)?;
+    let (hold, forward) = parse(&bind.key)?;
+    Some(SwitchKeys {
+        opens: Opens::Overview,
+        forward,
+        hold,
+    })
 }
 
 /// What the tap should tell the reactor.
@@ -73,6 +127,17 @@ pub enum Signal {
     Commit,
     /// End the switch, changing nothing.
     Cancel,
+    /// The overview opened or closed.
+    Overview(OverviewSignal),
+}
+
+/// What the tap tells the reactor about the overview.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverviewSignal {
+    Open,
+    /// Its hold was let go or lost, Escape was pressed, or the tap stopped trusting the keys. Nothing
+    /// is undone: every press inside it already ran.
+    Close,
 }
 
 /// One key event, as the state machine needs it.
@@ -124,17 +189,19 @@ impl Verdict {
     const fn eat() -> Self { Self { swallow: true, signal: None } }
 }
 
-/// Whether a switch is open, and since when.
+/// Whether a switch or the overview is open, and since when.
 #[derive(Debug, Default)]
 pub struct SwitchSession {
-    /// One entry per switcher with a binding. At most one session is live, whichever opened it.
+    /// One entry per switcher with a binding, and the overview's. At most one session is live,
+    /// whichever opened it.
     keys: Vec<SwitchKeys>,
     live: Option<Live>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct Live {
-    opened: Instant,
+    /// Where the deadline counts from: the open for a switch, the last key event for the overview.
+    since: Instant,
     /// Which entry of `keys` opened this session: its key steps it and its modifiers hold it.
     trigger: usize,
 }
@@ -145,19 +212,23 @@ impl SwitchSession {
     /// Called when the bindings change. Ending the session is the point: the keys it was watching for
     /// may be gone, so there would be nothing left to close it.
     pub fn set_keys(&mut self, keys: Vec<SwitchKeys>) -> Option<Signal> {
+        let dropped = self.live.take().map(|live| self.opens(live).dropped());
         self.keys = keys;
-        self.live.take().map(|_| Signal::Cancel)
+        dropped
     }
 
     pub fn is_live(&self) -> bool { self.live.is_some() }
 
     /// End a live session because the tap cannot be trusted about what is held.
     ///
-    /// Called when the tap is rebuilt or re-enabled. Commits rather than cancels: the user pressed the
-    /// key meaning to go somewhere, and losing the keyboard is not a reason to pretend they did not.
-    pub fn abandon(&mut self) -> Option<Signal> { self.live.take().map(|_| Signal::Commit) }
+    /// Called when the tap is rebuilt or re-enabled. A switch commits rather than cancels: the user
+    /// pressed the key meaning to go somewhere, and losing the keyboard is not a reason to pretend
+    /// they did not. The overview closes.
+    pub fn abandon(&mut self) -> Option<Signal> {
+        self.live.take().map(|live| self.opens(live).released())
+    }
 
-    /// End a live session that the far side has already committed, with nothing to tell it.
+    /// End a live session that the far side has already ended, with nothing to tell it.
     ///
     /// A click on a popup row commits from the reactor, not from here, so the tap has to stop treating
     /// the switch as open: otherwise it would keep swallowing the arrow keys until the modifier is let
@@ -173,13 +244,13 @@ impl SwitchSession {
         // The deadline first, so an event arriving after one is the thing that closes the session
         // rather than being swallowed by it.
         if let Some(live) = self.live
-            && event.at.saturating_duration_since(live.opened) >= MAX_SESSION
+            && event.at.saturating_duration_since(live.since) >= MAX_SESSION
         {
             self.live = None;
             // Pass the event through: the switch is over, and if the event happens to
             // be the trigger the next branch would have opened a fresh session on a key the user
             // is still holding from the last one.
-            return Verdict::pass_with(Signal::Commit);
+            return Verdict::pass_with(self.opens(live).released());
         }
 
         let Some(live) = self.live else {
@@ -190,21 +261,43 @@ impl SwitchSession {
         };
         let keys = &self.keys[live.trigger];
         let hold_held = modifiers_satisfy(keys.hold, event.modifiers);
+        let (opens, forward) = (keys.opens, keys.forward);
+        if opens == Opens::Overview {
+            self.live = Some(Live { since: event.at, ..live });
+        }
 
         match event.kind {
-            // The commit. Never swallowed, whatever else is true.
+            // The commit, or the overview's close. Never swallowed, whatever else is true.
             KeyEventKind::FlagsChanged if !hold_held => {
                 self.live = None;
-                Verdict::pass_with(Signal::Commit)
+                Verdict::pass_with(opens.released())
             }
             KeyEventKind::FlagsChanged => Verdict::PASS,
             // The trigger's own release, whose press was swallowed. Swallow it too rather than
             // leaving the focused application an orphan key-up for a key it never saw pressed.
-            KeyEventKind::Up if event.key == keys.forward => Verdict::eat(),
+            KeyEventKind::Up if event.key == forward => Verdict::eat(),
             KeyEventKind::Up => Verdict::PASS,
-            KeyEventKind::Down => self.step(live, event, hold_held),
+            KeyEventKind::Down => match opens {
+                Opens::Switch { backward, .. } => self.step(live, event, hold_held, backward),
+                Opens::Overview => self.browse(event),
+            },
         }
     }
+
+    /// The modifiers a mouse event's flags say are held. An overview whose hold they leave out is
+    /// closed: its release went missing, and it would otherwise swallow its trigger until its
+    /// deadline.
+    pub fn on_mouse(&mut self, modifiers: Modifiers) -> Option<Signal> {
+        let live = self.live?;
+        let keys = &self.keys[live.trigger];
+        if keys.opens != Opens::Overview || modifiers_satisfy(keys.hold, modifiers) {
+            return None;
+        }
+        self.live = None;
+        Some(Signal::Overview(OverviewSignal::Close))
+    }
+
+    fn opens(&self, live: Live) -> Opens { self.keys[live.trigger].opens }
 
     /// A key going down with no switch open: open one if it is a trigger, pass it through otherwise.
     fn open(&mut self, event: KeyEvent) -> Verdict {
@@ -217,24 +310,34 @@ impl SwitchSession {
             // rather than opening a session that cannot close.
             return Verdict::PASS;
         }
-        let backward = modifiers_satisfy(keys.backward, event.modifiers);
-        let scope = keys.scope;
-        self.live = Some(Live { opened: event.at, trigger });
-        Verdict::eat_with(Signal::Open { backward, scope })
+        let signal = match keys.opens {
+            Opens::Switch { scope, backward } => Signal::Open {
+                backward: modifiers_satisfy(backward, event.modifiers),
+                scope,
+            },
+            Opens::Overview => Signal::Overview(OverviewSignal::Open),
+        };
+        self.live = Some(Live { since: event.at, trigger });
+        Verdict::eat_with(signal)
     }
 
     /// A key going down with a switch open.
-    fn step(&mut self, live: Live, event: KeyEvent, hold_held: bool) -> Verdict {
-        let keys = &self.keys[live.trigger];
-        if event.key == keys.forward && hold_held {
+    fn step(
+        &mut self,
+        live: Live,
+        event: KeyEvent,
+        hold_held: bool,
+        backward: Modifiers,
+    ) -> Verdict {
+        if event.key == self.keys[live.trigger].forward && hold_held {
             // Another press steps the selection. Repeats included, which is what makes holding the key
             // walk the list the way the native switcher does.
-            let backward = modifiers_satisfy(keys.backward, event.modifiers);
+            let backward = modifiers_satisfy(backward, event.modifiers);
             return Verdict::eat_with(Signal::Step(if backward { -1 } else { 1 }));
         }
-        // Another switcher's trigger, pressed while this one is open. Eaten with nothing sent: passed
-        // through it would reach the hotkey table and run that switcher's one-shot step in the middle
-        // of this switch, focusing a window nobody has committed to.
+        // Another switcher's trigger, or the overview's, pressed while this one is open. Eaten with
+        // nothing sent: passed through it would reach the hotkey table and run that switcher's
+        // one-shot step in the middle of this switch, focusing a window nobody has committed to.
         if self.trigger_for(event).is_some() {
             return Verdict::eat();
         }
@@ -252,7 +355,24 @@ impl SwitchSession {
         }
     }
 
-    /// Which switcher this key press is the trigger of.
+    /// A key going down with the overview open.
+    fn browse(&mut self, event: KeyEvent) -> Verdict {
+        // Its own trigger again, autorepeat included, or a switcher's: eaten with nothing sent.
+        // Passed, a held trigger would reach the table, and a switcher's would open over the overview.
+        if self.trigger_for(event).is_some() {
+            return Verdict::eat();
+        }
+        match event.key {
+            KeyCode::Escape => {
+                self.live = None;
+                Verdict::eat_with(Signal::Overview(OverviewSignal::Close))
+            }
+            // Every other key, so a bind reaches the hotkey table and a key with none the application.
+            _ => Verdict::PASS,
+        }
+    }
+
+    /// Which session this key press is the trigger of.
     ///
     /// The MOST specific match wins. Modifiers are matched as "at least these", so with `Ctrl + Q` and
     /// `Ctrl + Alt + Q` both bound, `Ctrl + Alt + Q` satisfies both — and it means the second one.
@@ -285,14 +405,18 @@ fn kinds(modifiers: Modifiers) -> usize {
 mod tests {
     use super::*;
 
-    fn keys() -> SwitchKeys {
+    fn switcher(scope: SwitchScope, forward: KeyCode, hold: Modifiers) -> SwitchKeys {
         SwitchKeys {
-            scope: SwitchScope::Everything,
-            forward: KeyCode::KeyQ,
-            hold: Modifiers::CONTROL,
-            backward: Modifiers::SHIFT,
+            opens: Opens::Switch {
+                scope,
+                backward: Modifiers::SHIFT,
+            },
+            forward,
+            hold,
         }
     }
+
+    fn keys() -> SwitchKeys { switcher(SwitchScope::Everything, KeyCode::KeyQ, Modifiers::CONTROL) }
 
     fn session() -> SwitchSession {
         let mut session = SwitchSession::default();
@@ -560,12 +684,11 @@ mod tests {
     fn a_trigger_with_nothing_to_hold_never_opens_a_session() {
         let base = Instant::now();
         let mut session = SwitchSession::default();
-        session.set_keys(vec![SwitchKeys {
-            scope: SwitchScope::Everything,
-            forward: KeyCode::KeyQ,
-            hold: Modifiers::empty(),
-            backward: Modifiers::SHIFT,
-        }]);
+        session.set_keys(vec![switcher(
+            SwitchScope::Everything,
+            KeyCode::KeyQ,
+            Modifiers::empty(),
+        )]);
 
         assert_eq!(
             session.on_key(down(KeyCode::KeyQ, Modifiers::empty(), base)),
@@ -653,22 +776,12 @@ mod tests {
         let mut session = SwitchSession::default();
         session.set_keys(vec![
             keys(),
-            SwitchKeys {
-                scope: SwitchScope::Workspace,
-                forward: KeyCode::KeyW,
-                hold: Modifiers::CONTROL,
-                backward: Modifiers::SHIFT,
-            },
-            SwitchKeys {
-                scope: SwitchScope::App,
-                forward: KeyCode::KeyQ,
-                hold: {
-                    let mut hold = Modifiers::CONTROL;
-                    hold.insert(Modifiers::ALT);
-                    hold
-                },
-                backward: Modifiers::SHIFT,
-            },
+            switcher(SwitchScope::Workspace, KeyCode::KeyW, Modifiers::CONTROL),
+            switcher(SwitchScope::App, KeyCode::KeyQ, {
+                let mut hold = Modifiers::CONTROL;
+                hold.insert(Modifiers::ALT);
+                hold
+            }),
         ]);
         session
     }
@@ -780,5 +893,199 @@ mod tests {
             "and the release commits nothing a second time"
         );
         assert!(!session.close(), "nothing left to close");
+    }
+    fn alt(when: Instant) -> KeyEvent {
+        KeyEvent {
+            kind: KeyEventKind::FlagsChanged,
+            key: KeyCode::AltLeft,
+            modifiers: Modifiers::ALT_LEFT,
+            at: when,
+        }
+    }
+
+    /// The switcher on Ctrl+Q and the overview on Alt+Slash.
+    fn with_overview() -> SwitchSession {
+        let mut session = SwitchSession::default();
+        session.set_keys(vec![keys(), SwitchKeys {
+            opens: Opens::Overview,
+            forward: KeyCode::Slash,
+            hold: Modifiers::ALT,
+        }]);
+        session
+    }
+
+    fn overview(signal: OverviewSignal) -> Signal { Signal::Overview(signal) }
+
+    fn opened_overview(base: Instant) -> SwitchSession {
+        let mut session = with_overview();
+        let opened = session.on_key(down(KeyCode::Slash, Modifiers::ALT_LEFT, base));
+        assert_eq!(opened, Verdict::eat_with(overview(OverviewSignal::Open)));
+        session
+    }
+
+    /// The overview has no selection to step on the tap's side: every other key passes, so the
+    /// hotkey table gets a bind and the application a key with none.
+    #[test]
+    fn inside_the_overview_every_other_key_passes() {
+        let base = Instant::now();
+        let mut session = opened_overview(base);
+        for key in [KeyCode::KeyJ, KeyCode::ArrowRight, KeyCode::KeyA] {
+            assert_eq!(
+                session.on_key(down(key, Modifiers::ALT_LEFT, at(base, 40))),
+                Verdict::PASS,
+                "{key:?}"
+            );
+        }
+        assert!(session.is_live());
+    }
+
+    /// Its deadline counts from the last key it heard, so a browse longer than `MAX_SESSION` stays
+    /// open while keys keep coming.
+    #[test]
+    fn the_overviews_deadline_counts_from_its_last_key() {
+        let base = Instant::now();
+        let mut session = opened_overview(base);
+        let pressed = base + MAX_SESSION - Duration::from_secs(1);
+        assert_eq!(
+            session.on_key(down(KeyCode::KeyJ, Modifiers::ALT_LEFT, pressed)),
+            Verdict::PASS
+        );
+
+        let later = pressed + MAX_SESSION - Duration::from_millis(1);
+        assert_eq!(session.on_key(alt(later)), Verdict::PASS);
+        assert!(session.is_live(), "a key 11s in keeps it open past 12s");
+
+        let late = later + MAX_SESSION;
+        assert_eq!(
+            session.on_key(down(KeyCode::KeyJ, Modifiers::ALT_LEFT, late)),
+            Verdict::pass_with(overview(OverviewSignal::Close))
+        );
+        assert!(!session.is_live());
+    }
+
+    /// A switch keeps counting from its open, however many keys it hears.
+    #[test]
+    fn a_switchs_deadline_still_counts_from_its_open() {
+        let base = Instant::now();
+        let mut session = with_overview();
+        session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, base));
+        session.on_key(down(KeyCode::KeyA, Modifiers::CONTROL_LEFT, at(base, 11_000)));
+
+        let late = down(KeyCode::KeyA, Modifiers::CONTROL_LEFT, base + MAX_SESSION);
+        assert_eq!(session.on_key(late), Verdict::pass_with(Signal::Commit));
+    }
+
+    /// The trigger's press was swallowed, so its release is too.
+    #[test]
+    fn the_overviews_trigger_release_is_swallowed() {
+        let base = Instant::now();
+        let mut session = opened_overview(base);
+        let up = KeyEvent {
+            kind: KeyEventKind::Up,
+            key: KeyCode::Slash,
+            modifiers: Modifiers::ALT_LEFT,
+            at: at(base, 30),
+        };
+        assert_eq!(session.on_key(up), Verdict::eat());
+        assert!(session.is_live());
+    }
+
+    /// One session at a time: the overview's trigger pressed mid-switch is eaten with nothing sent.
+    #[test]
+    fn the_overviews_trigger_mid_switch_does_nothing() {
+        let base = Instant::now();
+        let mut session = SwitchSession::default();
+        session.set_keys(vec![
+            switcher(SwitchScope::Everything, KeyCode::KeyQ, Modifiers::ALT),
+            SwitchKeys {
+                opens: Opens::Overview,
+                forward: KeyCode::Slash,
+                hold: Modifiers::ALT,
+            },
+        ]);
+        session.on_key(down(KeyCode::KeyQ, Modifiers::ALT_LEFT, base));
+
+        let verdict = session.on_key(down(KeyCode::Slash, Modifiers::ALT_LEFT, at(base, 40)));
+
+        assert_eq!(verdict, Verdict::eat());
+        assert_eq!(
+            session.on_key(KeyEvent {
+                modifiers: Modifiers::empty(),
+                ..alt(at(base, 60))
+            }),
+            Verdict::pass_with(Signal::Commit),
+            "the switch is still the session"
+        );
+    }
+
+    /// New keys close an overview in progress, as they cancel a switch.
+    #[test]
+    fn changing_the_keys_closes_the_overview() {
+        let base = Instant::now();
+        let mut session = opened_overview(base);
+        assert_eq!(
+            session.set_keys(Vec::new()),
+            Some(overview(OverviewSignal::Close))
+        );
+        assert!(!session.is_live());
+    }
+
+    /// A mouse event's flags close only an overview whose hold they leave out.
+    #[test]
+    fn a_mouse_event_closes_only_an_overview_it_shows_let_go() {
+        let base = Instant::now();
+        let mut session = opened_overview(base);
+        assert_eq!(session.on_mouse(Modifiers::ALT_LEFT), None, "Alt still held");
+        assert!(session.is_live());
+        assert_eq!(
+            session.on_mouse(Modifiers::empty()),
+            Some(overview(OverviewSignal::Close))
+        );
+        assert!(!session.is_live());
+        assert_eq!(session.on_mouse(Modifiers::empty()), None, "nothing left");
+
+        session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, base));
+        assert_eq!(
+            session.on_mouse(Modifiers::empty()),
+            None,
+            "a switch is not asked"
+        );
+        assert!(session.is_live());
+    }
+    fn bound(key: &str, action: Action) -> Bind {
+        Bind {
+            key: key.into(),
+            action,
+            repeat: false,
+        }
+    }
+
+    fn parse(spec: &str) -> Option<(Modifiers, KeyCode)> {
+        match spec {
+            "Alt+Slash" => Some((Modifiers::ALT, KeyCode::Slash)),
+            "Ctrl+Slash" => Some((Modifiers::CONTROL, KeyCode::Slash)),
+            _ => None,
+        }
+    }
+
+    /// The bind decides both the key and what holds it, and the first in the file wins.
+    #[test]
+    fn the_overviews_keys_come_from_its_first_bind() {
+        let binds = [
+            bound("Alt+J", Action::FocusColumnLeft),
+            bound("Alt+Slash", Action::ToggleOverview),
+            bound("Ctrl+Slash", Action::ToggleOverview),
+        ];
+        assert_eq!(
+            overview_keys(&binds, parse),
+            Some(SwitchKeys {
+                opens: Opens::Overview,
+                forward: KeyCode::Slash,
+                hold: Modifiers::ALT,
+            })
+        );
+        assert_eq!(overview_keys(&binds[..1], parse), None, "no bind, no keys");
+        let unresolved = [bound("Hyper+Nonsense", Action::ToggleOverview)];
+        assert_eq!(overview_keys(&unresolved, parse), None);
     }
 }

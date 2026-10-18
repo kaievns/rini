@@ -26,6 +26,9 @@ pub(crate) enum Lowered {
     ReloadConfig,
     /// The binding named a workspace that does not exist. Nothing happens, and the caller says so.
     UnknownWorkspace(String),
+    /// Nothing: the tap's session opens the overview on this bind's chord and holds it while its
+    /// modifiers are down, so a press that reaches the hotkey table is one no session took.
+    Held,
 }
 
 /// Lower a bound action to what carries it out.
@@ -126,6 +129,7 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
         Action::LoadConfigFile => Lowered::ReloadConfig,
         Action::Quit => reactor(R::SaveAndExit),
         Action::RedistributeWindows => reactor(R::RedistributeWindows),
+        Action::ToggleOverview => Lowered::Held,
         Action::NextWindow { scope, filter } => switch(false, scope, filter),
         Action::PreviousWindow { scope, filter } => switch(true, scope, filter),
     }

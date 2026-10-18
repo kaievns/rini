@@ -12,7 +12,7 @@ use rini_ipc::protocol::SwitchScope;
 
 use crate::input::domain::binding::{Action, Bind, switch_scope};
 use crate::input::domain::key::Modifiers;
-use crate::input::domain::switch_session::SwitchKeys;
+use crate::input::domain::switch_session::{Opens, SwitchKeys};
 
 /// The scope a binding opens a switcher over, if it is one. `previous-window` is a one-shot step and
 /// never a trigger: Shift on the forward chord is what steps a held switch backward.
@@ -44,13 +44,15 @@ where F: FnMut(&str) -> Option<(Modifiers, crate::input::domain::key::KeyCode)> 
         let bind = bindings.iter().find(|bind| trigger_scope(&bind.action) == Some(scope))?;
         let (modifiers, key) = parse(&bind.key)?;
         Some(SwitchKeys {
-            scope,
+            opens: Opens::Switch {
+                scope,
+                // Shift steps the other way. Not configurable: it is the same convention every
+                // switcher uses, and `previous-window` already exists for anyone who wants their
+                // own key.
+                backward: Modifiers::SHIFT,
+            },
             forward: key,
             hold: modifiers,
-            // Shift steps the other way. Not configurable: it is the same convention every
-            // switcher uses, and `previous-window` already exists for anyone who wants their own
-            // key.
-            backward: Modifiers::SHIFT,
         })
     })
     .collect()
@@ -92,7 +94,10 @@ mod tests {
 
         assert_eq!(keys.forward, KeyCode::KeyQ);
         assert_eq!(keys.hold, Modifiers::CONTROL);
-        assert_eq!(keys.scope, SwitchScope::Everything);
+        assert_eq!(keys.opens, Opens::Switch {
+            scope: SwitchScope::Everything,
+            backward: Modifiers::SHIFT,
+        });
         assert!(keys.can_hold());
     }
 
@@ -169,12 +174,19 @@ mod tests {
         let keys = switch_keys_from_bindings(&bindings, parse);
 
         assert_eq!(
-            keys.iter().map(|k| (k.scope, k.forward)).collect::<Vec<_>>(),
-            vec![
+            keys.iter().map(|k| (k.opens, k.forward)).collect::<Vec<_>>(),
+            [
                 (SwitchScope::Everything, KeyCode::KeyQ),
                 (SwitchScope::Workspace, KeyCode::Tab),
                 (SwitchScope::App, KeyCode::F13),
             ]
+            .map(|(scope, key)| (
+                Opens::Switch {
+                    scope,
+                    backward: Modifiers::SHIFT
+                },
+                key
+            ))
         );
     }
 

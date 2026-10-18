@@ -211,6 +211,7 @@ impl Controller {
             lower::Lowered::UnknownWorkspace(name) => {
                 warn!(%name, "a binding asked for a workspace that is not configured; ignoring");
             }
+            lower::Lowered::Held => debug!("toggle-overview reached the hotkey table; ignoring"),
         }
     }
 
@@ -280,14 +281,17 @@ impl Controller {
         debug!("register_hotkeys");
         let Registration { binds, switcher_binds } = Registration::of(&self.config);
         // Derived from the same bindings rather than configured separately, so the chord that opens a
-        // switch and the modifier that holds it open cannot disagree.
-        let switch_keys =
-            crate::switcher::domain::trigger::switch_keys_from_bindings(&switcher_binds, |spec| {
-                let hotkey =
-                    <crate::input::domain::key::Hotkey as std::str::FromStr>::from_str(spec)
-                        .ok()?;
-                Some((hotkey.modifiers, hotkey.key_code))
-            });
+        // switch or the overview and the modifier that holds it open cannot disagree.
+        let parse = |spec: &str| {
+            let hotkey =
+                <crate::input::domain::key::Hotkey as std::str::FromStr>::from_str(spec).ok()?;
+            Some((hotkey.modifiers, hotkey.key_code))
+        };
+        let mut switch_keys =
+            crate::switcher::domain::trigger::switch_keys_from_bindings(&switcher_binds, parse);
+        switch_keys.extend(crate::input::domain::switch_session::overview_keys(
+            &binds, parse,
+        ));
         self.event_tap_tx.send(input_tap::Request::SetSwitchKeys(switch_keys));
         self.event_tap_tx.send(input_tap::Request::SetHotkeys(
             binds.into_iter().chain(switcher_binds).collect(),

@@ -155,6 +155,7 @@ impl Reactor {
                 self.hide_switch();
                 EventOutcome::no_change()
             }
+            SwitchSignal::Overview(signal) => self.handle_overview_signal(signal),
         }
     }
 

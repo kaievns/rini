@@ -443,7 +443,8 @@ impl InputTap {
         if let Some(kind) = key_event_kind(event_type) {
             return self.handle_keyboard_event(kind, event);
         }
-        self.router.borrow_mut().on_mouse_flags(CGEvent::flags(Some(event)).bits());
+        let signal = self.router.borrow_mut().on_mouse_flags(CGEvent::flags(Some(event)).bits());
+        self.send_switch(signal);
 
         match event_type {
             CGEventType::LeftMouseDown | CGEventType::RightMouseDown => {

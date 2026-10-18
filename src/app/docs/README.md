@@ -22,6 +22,7 @@ knows the features and converts what they emit.
 | `reactor/app_rules.rs` | The app rules carried out: windows assigned by their rules as they appear, as their space activates and as a title changes, and the placements and resizes a rule asks for |
 | `reactor/drag_swap.rs` | A window being dragged: the drag session, and the swap with the window it is dragged over |
 | `reactor/switcher.rs` | The window switcher's session: the list snapshotted at open, the cursor over it, the popup, and the commit that focuses the chosen window wherever it is |
+| `reactor/overview.rs` | The overview's session, opened and closed by the tap's hold; nothing is drawn yet |
 | `reactor/command_space.rs` | Which space and screen a command acts on: the command space, the active display's space, the focused or main window's, and the screen a display selector names |
 | `reactor/autosave.rs` | The layout file written: debounced after a layout change, at once before exit |
 | `reactor/state.rs` | `RiniState` |

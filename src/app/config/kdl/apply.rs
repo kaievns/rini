@@ -775,6 +775,7 @@ fn written_binds<'a>(
                 .as_ref()
                 .filter(|action| {
                     check_action(action, in_switcher, part, checks.names.as_deref(), problems)
+                        && check_held(action, &chords, part, problems)
                 })
                 .map(|action| Bind {
                     key,
@@ -839,6 +840,32 @@ fn kept_running_binds(
         kept.push((in_switcher, bind.clone(), chords));
     }
     kept
+}
+
+/// Whether `action` may be bound on keys that `chords` press; says why not when it may not. The
+/// overview stays open while its bind's modifiers are held, so a bind with none could never close it.
+fn check_held(
+    action: &Action,
+    chords: &[Chords],
+    part: &BindPart,
+    problems: &mut Vec<Problem>,
+) -> bool {
+    let bare = chords.iter().flatten().any(|(modifiers, _)| *modifiers == Modifiers::empty());
+    if *action != Action::ToggleOverview || !bare {
+        return true;
+    }
+    problems.push(
+        Problem::at(
+            &part.span,
+            "`toggle-overview` needs a modifier to hold it open",
+            "here",
+        )
+        .help(
+            "the overview closes when its bind's modifiers are let go, so with none nothing could \
+             close it: `Mod+Slash { toggle-overview; }`",
+        ),
+    );
+    false
 }
 
 /// Whether `action` may be bound where it is written; says why not when it may not. A workspace

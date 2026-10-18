@@ -22,6 +22,7 @@ mod focus_heuristics;
 mod layout_pass;
 mod managers;
 mod observations;
+mod overview;
 mod present;
 mod quarantine;
 mod query;
@@ -458,6 +459,8 @@ pub struct Reactor {
     pub config: Config,
     /// The switcher session, while one is open.
     live_switch: Option<LiveSwitch>,
+    /// The overview, while it is open.
+    live_overview: Option<overview::LiveOverview>,
     /// Where the popup is drawn. `None` until the main thread registers itself, and absent entirely in
     /// tests — the switch works without it, which is what keeps the popup cosmetic.
     switcher_tx: Option<crate::switcher::platform::actor::Sender>,
@@ -619,6 +622,7 @@ impl Reactor {
 
         Reactor {
             live_switch: None,
+            live_overview: None,
             switcher_tx: None,
             bar: bar::BarFeed::default(),
             attention: Default::default(),

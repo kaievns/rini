@@ -197,6 +197,7 @@ fn table() -> Vec<(Action, Lowered)> {
         (Action::LoadConfigFile, Lowered::ReloadConfig),
         (Action::Quit, reactor(R::SaveAndExit)),
         (Action::RedistributeWindows, reactor(R::RedistributeWindows)),
+        (Action::ToggleOverview, Lowered::Held),
         (
             Action::NextWindow { scope: None, filter: None },
             switch(false, SwitchScope::Everything),

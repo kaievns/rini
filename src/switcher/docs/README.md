@@ -71,9 +71,9 @@ workspaces, is answered by the scope: rini offers every one of them wherever it 
 two steps into a held switch.
 
 **One session, several triggers.** The tap holds one live session at most, remembering which trigger
-opened it: that trigger's key steps it and its modifiers hold it. Another switcher's trigger pressed
-mid-switch is eaten with nothing sent, or it would reach the hotkey table and run a one-shot step in
-the middle of the switch. And the most specific trigger wins, because modifiers match as "at least
+opened it: that trigger's key steps it and its modifiers hold it. Another switcher's trigger, or the
+overview's, pressed mid-switch is eaten with nothing sent, or it would reach the hotkey table and
+run a one-shot step in the middle of the switch. And the most specific trigger wins, because modifiers match as "at least
 these" and `Ctrl+Alt+Q` satisfies a `Ctrl+Q` binding too.
 
 **The tap holds a flag, not a list.** `src/input/domain/switch_session.rs` answers "swallow or pass,

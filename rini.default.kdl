@@ -380,6 +380,8 @@ binds {
     //   load-config-file                              re-read this file now
     //   quit                                          save the layout and exit
     //   redistribute-windows                          spread windows back across workspaces by where they belong
+    //   toggle-overview                               every workspace of the display at once, open while
+    //                                                 the key's modifiers are held; needs a modifier
     // The switcher's next-window and previous-window go in recent-windows' binds.
 
     Mod+Z { toggle-space-activated; }
@@ -409,6 +411,8 @@ binds {
     Mod+Shift+4 { move-window-to-workspace 4 focus=false; }
 
     Mod+Tab { focus-workspace-previous; }
+
+    Mod+Slash { toggle-overview; }
 
     Mod+Comma { toggle-fold-left; }
     Mod+Period { toggle-fold-right; }

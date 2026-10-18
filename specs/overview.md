@@ -14,25 +14,25 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > animate like normal slides (not zoom) navigation animation with the whole strip moving left right
 > (overflows stack up/out as needed)"
 
-Not yet met: no build opens the overview. The scene it draws is laid out, and nothing reads it.
-Each requirement below says what it still waits for.
+Not yet met: nothing draws the overview. The tap opens and holds it, and its scene is laid out, but
+nothing reads the scene. Each requirement below says what it still waits for.
 
 ## Opening and closing
 
 - `toggle-overview` MUST open the overview, and it MUST stay open while the bind's modifiers are
   held: Kai asked for it "active while im holding". niri's toggles; a niri config's bind still
-  opens it. Not yet met: the action is refused.
+  opens it. Not yet met: held open by the tap, not drawn.
 - A `toggle-overview` bind with no modifier MUST be refused with the reason: nothing could close
-  it. Not yet met.
+  it.
 - Releasing the modifier MUST close it, and the release MUST be passed through, or every
-  application believes the modifier is held. Not yet met.
+  application believes the modifier is held.
 - Escape MUST close it as the release does and change nothing more: every press inside already ran
-  on the real layout, so there is nothing to cancel. Not yet met.
+  on the real layout, so there is nothing to cancel.
 - The trigger pressed again while it is open, its autorepeat included, MUST be swallowed and change
-  nothing; passed, a held key would close and reopen it. Not yet met.
+  nothing; passed, a held key would close and reopen it.
 - It MUST close 12s after the last key it heard, when a mouse event shows the modifier up, and when
   the event tap is replaced: a session that outlives its modifier swallows keys with nothing left to
-  release it. Not yet met.
+  release it.
 - It MUST open on the focused display only: one overlay flies on one display at a time. A press
   taking focus off that display MUST close it. Not yet met.
 - It MUST NOT open on a native full-screen space, which rini does not manage. Not yet met.
@@ -71,10 +71,11 @@ Each requirement below says what it still waits for.
 
 - Every bind MUST do what it does outside, on the real layout, and the overview MUST re-lay out from
   what it did: Kai asked for the same keys to work. Not yet met: what changed between two scenes is
-  found, and no press reaches it.
+  found, and a press runs on the real layout without the overview laying out again.
 - A key with no bind MUST pass through untouched: swallowing everything is how a live session
-  becomes a dead keyboard. The cost: Alt and a letter reach the hidden application. Not yet met.
-- A switcher's trigger MUST be swallowed while it is open. Not yet met.
+  becomes a dead keyboard. The cost: Alt and a letter reach the hidden application.
+- A switcher's trigger MUST be swallowed while it is open, and the overview's while a switch is:
+  one session is live at a time.
 - Focus MUST NOT follow the mouse and the pointer MUST NOT be warped while it is open; the last warp
   asked for MUST be carried out as it closes. The windows under the pointer are hidden, and a warp
   per press moves the cursor across the overview. Not yet met.
@@ -105,4 +106,5 @@ Each requirement below says what it still waits for.
 
 `src/overview/domain/` is the scene: `scene.rs` lays it out, `depth.rs` sets its depth and its
 rows' tops, `stacks.rs` its edge stacks, and `changes.rs` finds what changed between two scenes.
-`src/overview/docs/README.md` explains the feature.
+`src/input/domain/switch_session.rs` is the tap's side, the hold that opens and closes it, and
+`src/app/reactor/overview.rs` the reactor's. `src/overview/docs/README.md` explains the feature.

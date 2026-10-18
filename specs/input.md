@@ -90,7 +90,7 @@ binding naming one is satisfied by the flag alone.
 
 `src/input/domain/key.rs` is the vocabulary, `src/input/domain/binding.rs` what a bind names,
 `src/input/domain/hotkey.rs` what a press fires, `src/input/domain/held_keys.rs` which keys are held,
-`src/input/domain/switch_session.rs` the switcher's session, `src/input/domain/router.rs` the order
-they are asked in for each key event and what is swallowed, `src/input/platform/input_tap.rs` the
-tap. Measurements are in
+`src/input/domain/switch_session.rs` the switcher's and the overview's session,
+`src/input/domain/router.rs` the order they are asked in for each key event and what is swallowed,
+`src/input/platform/input_tap.rs` the tap. Measurements are in
 `docs/permissions-and-the-launch-agent.md`.

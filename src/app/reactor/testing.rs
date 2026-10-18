@@ -530,6 +530,8 @@ impl Reactor {
 
     pub(crate) fn switch_is_open(&self) -> bool { self.live_switch.is_some() }
 
+    pub(crate) fn overview_is_open(&self) -> bool { self.live_overview.is_some() }
+
     /// Whether the rest windows follow focus.
     pub(crate) fn rest_follows_focus(&self) -> bool { self.rest.following.on() }
 

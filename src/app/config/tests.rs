@@ -1459,6 +1459,47 @@ fn niris_focus_presses_to_an_end_are_rinis_and_bound_to_mod_u_and_mod_o() {
     assert_eq!(bound("Mod+O"), Some(&Action::FocusColumnLast));
 }
 
+/// niri's `toggle-overview` is rini's under niri's name, held open where niri's toggles, so a niri
+/// config's bind reads as written and prints back the same, and the shipped binds put it on
+/// `Mod+Slash` (`specs/overview.md`, "Opening and closing").
+#[test]
+fn niris_toggle_overview_is_rinis_and_bound_to_mod_slash() {
+    let config = parse("binds {\n    Mod+Slash { toggle-overview; }\n}\n");
+    let actions: Vec<Action> = config.binds.iter().map(|bind| bind.action.clone()).collect();
+    assert_eq!(actions, [Action::ToggleOverview]);
+    assert_prints_and_reads_back(&config);
+    let text = printed(&config);
+    assert!(text.contains("Mod+Slash { toggle-overview; }"), "{text}");
+
+    let shipped = Config::reference();
+    let bound = |key: &str| shipped.binds.iter().find(|bind| bind.key == key).map(|b| &b.action);
+    assert_eq!(bound("Mod+Slash"), Some(&Action::ToggleOverview));
+}
+
+/// The overview closes when its bind's modifiers are let go, so a bind with none is refused.
+#[test]
+fn toggle_overview_without_a_modifier_is_refused() {
+    let report = refused("binds {\n    Slash { toggle-overview; }\n}\n");
+    assert!(report.contains("needs a modifier to hold it open"), "{report}");
+    let (_, help) = report.split_once("help:").expect("a help line");
+    assert!(help.contains("nothing could close it"), "{report}");
+
+    let fragment = refused_fragment(&parse(""), "binds {\n    F13 { toggle-overview; }\n}\n");
+    assert!(fragment.contains("needs a modifier"), "{fragment}");
+}
+
+/// niri's `open-overview` and `close-overview` are refused for the held bind that does both.
+#[test]
+fn niris_open_and_close_overview_are_refused_for_the_held_bind() {
+    for (niri, why) in [
+        ("open-overview", "bind `toggle-overview` with a modifier"),
+        ("close-overview", "are let go"),
+    ] {
+        let report = refused(&format!("binds {{\n    Mod+Slash {{ {niri}; }}\n}}\n"));
+        assert!(report.contains(why), "{niri}: {report}");
+    }
+}
+
 /// Every action decodes from its name, with the arguments it needs.
 #[test]
 fn every_action_name_decodes() {

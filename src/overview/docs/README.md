@@ -47,5 +47,6 @@ the moved window on the axis, so it pans nothing; the columns it passes change p
 
 ## Known debt
 
-Nothing reads the scene yet: the input mode, the reactor's wiring and the drawing are the steps
-`specs/overview.md` marks not yet met.
+Nothing reads the scene yet. The tap opens and holds the overview
+(`src/input/domain/switch_session.rs`), and the reactor only records that it is open: its wiring
+and the drawing are the steps `specs/overview.md` marks not yet met.

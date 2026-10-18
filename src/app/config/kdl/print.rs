@@ -442,7 +442,8 @@ fn action(action: &Action) -> String {
         | Action::CloseWindow
         | Action::LoadConfigFile
         | Action::Quit
-        | Action::RedistributeWindows => String::new(),
+        | Action::RedistributeWindows
+        | Action::ToggleOverview => String::new(),
     };
     format!("{name}{takes}")
 }

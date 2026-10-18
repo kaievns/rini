@@ -1,22 +1,23 @@
 //! What the tap does with each key event, in the order the rules are asked.
 //!
 //! The tap reads a CGEvent into a [`Keystroke`] and does what the [`Verdict`] says. Everything between
-//! is here: which keys are held, the switcher's session, the hotkey table, and which of them answers
-//! first.
+//! is here: which keys are held, the switcher's and the overview's session, the hotkey table, and
+//! which of them answers first.
 //!
 //! 1. **rini's own events pass untouched.** A shortcut rini posts for an application has to reach
 //!    it, not come back as a rini hotkey, and it says nothing about what the user holds.
 //! 2. **The held keys are brought up to date before anything reads them**, from the event's own
 //!    flags: a `FlagsChanged` describes the state after it, not before.
-//! 3. **The switcher's session before the hotkey table.** The table swallows a held key's repeats
-//!    unless its bind asks for them, because a repeat re-fired commands such as workspace
-//!    back-and-forth. The session needs repeats to walk the selection and gets them by being asked
-//!    first, which leaves that rule as it is.
+//! 3. **The session before the hotkey table.** The table swallows a held key's repeats unless its
+//!    bind asks for them, because a repeat re-fired commands such as workspace back-and-forth. A
+//!    switch needs repeats to walk the selection and gets them by being asked first, which leaves
+//!    that rule as it is. The overview's session passes every key but its own, so a bind fires as it
+//!    does outside it.
 //! 4. **Only a key-down reaches the table.** A bound key's down is swallowed whether it fires or is a
 //!    repeat; its up goes through.
 //! 5. **A mouse event's flags drop a modifier the edges left stuck**, because macOS drops a key-up or
-//!    a flags change after system UI. Only when the flags differ from the last seen, as mouse events
-//!    are the most frequent kind.
+//!    a flags change after system UI, and close an overview whose hold they show up. Only when the
+//!    flags differ from the last seen, as mouse events are the most frequent kind.
 
 use std::time::Instant;
 
@@ -48,7 +49,7 @@ pub struct Keystroke {
 pub struct Verdict {
     /// Delete the event rather than deliver it.
     pub swallow: bool,
-    /// For the switcher, sent first.
+    /// For the switcher or the overview, sent first.
     pub signal: Option<Signal>,
     /// The bind the key fired.
     pub action: Option<Action>,
@@ -104,12 +105,14 @@ impl KeyRouter {
         verdict
     }
 
-    /// The flags a mouse event carries.
-    pub fn on_mouse_flags(&mut self, flags: u64) {
-        if flags != self.held.flags() {
-            self.held.observe_flags(flags);
-            self.held.reconcile_modifiers();
+    /// The flags a mouse event carries; the overview's close when they show its hold up.
+    pub fn on_mouse_flags(&mut self, flags: u64) -> Option<Signal> {
+        if flags == self.held.flags() {
+            return None;
         }
+        self.held.observe_flags(flags);
+        self.held.reconcile_modifiers();
+        self.switch.on_mouse(self.held.modifiers())
     }
 
     /// The tap came back after being off: any key-up may have been missed, so the held keys start
@@ -119,18 +122,19 @@ impl KeyRouter {
         self.tap_replaced()
     }
 
-    /// A new tap took the old one's place. The held keys survive it, a live switch does not: a session
-    /// that crossed it believing its modifier was down would keep swallowing the arrows with nothing
-    /// left to release it. Committed rather than cancelled, because the user pressed the key meaning
-    /// to go somewhere.
+    /// A new tap took the old one's place. The held keys survive it, a live session does not: one
+    /// that crossed it believing its modifier was down would keep swallowing keys with nothing left
+    /// to release it. A switch is committed rather than cancelled, because the user pressed the key
+    /// meaning to go somewhere; the overview is closed.
     pub fn tap_replaced(&mut self) -> Option<Signal> { self.switch.abandon() }
 
-    /// The keys each switcher answers to; a session in progress is cancelled.
+    /// The keys each switcher and the overview answer to; a session in progress is ended.
     pub fn set_switch_keys(&mut self, keys: Vec<SwitchKeys>) -> Option<Signal> {
         self.switch.set_keys(keys)
     }
 
-    /// The far side committed the switch, a click on the popup. True when one was open.
+    /// The far side ended the session: a click on the popup committed the switch. True when one was
+    /// open.
     pub fn close_switch(&mut self) -> bool { self.switch.close() }
 
     /// Every bind, its key free of `Mod`, resolved with `resolve`. Returns the keys it could not.
@@ -165,7 +169,7 @@ mod tests {
 
     use super::*;
     use crate::input::domain::key::{MOD_FAMILIES, ModFamily, Modifiers};
-    use crate::input::domain::switch_session::MAX_SESSION;
+    use crate::input::domain::switch_session::{MAX_SESSION, Opens, OverviewSignal};
 
     fn family(name: &str) -> &'static ModFamily {
         MOD_FAMILIES.iter().find(|f| f.name == name).expect("a family")
@@ -209,10 +213,12 @@ mod tests {
     /// Ctrl+Q also opens the switcher, held with Ctrl and stepped back with Shift.
     fn switching(router: &mut KeyRouter) {
         let keys = SwitchKeys {
-            scope: SwitchScope::Everything,
+            opens: Opens::Switch {
+                scope: SwitchScope::Everything,
+                backward: Modifiers::SHIFT,
+            },
             forward: KeyCode::KeyQ,
             hold: Modifiers::CONTROL,
-            backward: Modifiers::SHIFT,
         };
         assert_eq!(router.set_switch_keys(vec![keys]), None);
     }
@@ -510,5 +516,219 @@ mod tests {
             fired(Action::FocusColumnLeft)
         );
         assert_eq!(router.on_key(down(KeyCode::KeyJ, left("Ctrl"), now)), passed());
+    }
+    /// Kai's binds: the overview on Alt+Slash, Alt+J focusing left and Alt+Shift+J moving left, and
+    /// the switcher on Alt+Q.
+    fn overviewing() -> KeyRouter {
+        let mut router = KeyRouter::default();
+        let unresolved = router.set_binds(
+            vec![
+                bind("Alt+Slash", Action::ToggleOverview, false),
+                bind("Alt+J", Action::FocusColumnLeft, false),
+                bind("Alt+Shift+J", Action::MoveWindowLeft, false),
+            ],
+            |spec| match spec {
+                "Alt+Slash" => Some(Hotkey::new(Modifiers::ALT, KeyCode::Slash)),
+                "Alt+J" => Some(Hotkey::new(Modifiers::ALT, KeyCode::KeyJ)),
+                "Alt+Shift+J" => {
+                    let mut held = Modifiers::ALT;
+                    held.insert(Modifiers::SHIFT);
+                    Some(Hotkey::new(held, KeyCode::KeyJ))
+                }
+                _ => None,
+            },
+        );
+        assert!(unresolved.is_empty());
+        let keys = vec![
+            SwitchKeys {
+                opens: Opens::Overview,
+                forward: KeyCode::Slash,
+                hold: Modifiers::ALT,
+            },
+            SwitchKeys {
+                opens: Opens::Switch {
+                    scope: SwitchScope::Everything,
+                    backward: Modifiers::SHIFT,
+                },
+                forward: KeyCode::KeyQ,
+                hold: Modifiers::ALT,
+            },
+        ];
+        assert_eq!(router.set_switch_keys(keys), None);
+        router
+    }
+
+    fn overview(signal: OverviewSignal) -> Signal { Signal::Overview(signal) }
+
+    fn alt() -> u64 { left("Alt") }
+
+    fn opened(router: &mut KeyRouter, at: Instant) {
+        router.on_key(stroke(KeyEventKind::FlagsChanged, KeyCode::AltLeft, alt(), at));
+        let verdict = router.on_key(down(KeyCode::Slash, alt(), at));
+        assert_eq!(verdict, signalled(true, overview(OverviewSignal::Open)));
+    }
+
+    fn let_go(at: Instant) -> Keystroke {
+        stroke(KeyEventKind::FlagsChanged, KeyCode::AltLeft, 0, at)
+    }
+
+    #[test]
+    fn the_overview_opens_on_its_chord_and_closes_on_the_release_passed_through() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+
+        let held = stroke(
+            KeyEventKind::FlagsChanged,
+            KeyCode::ShiftLeft,
+            alt() | left("Shift"),
+            now,
+        );
+        assert_eq!(router.on_key(held), passed(), "Shift joining Alt keeps it open");
+
+        let released = router.on_key(let_go(now));
+        assert_eq!(released, signalled(false, overview(OverviewSignal::Close)));
+        assert!(!router.close_switch(), "and it is over");
+    }
+
+    /// Kai's ask: the same keys work inside it, Shift moves included, and act on the real layout.
+    #[test]
+    fn a_bound_key_inside_the_overview_fires_its_action() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+
+        assert_eq!(
+            router.on_key(down(KeyCode::KeyJ, alt(), now)),
+            fired(Action::FocusColumnLeft)
+        );
+        assert_eq!(
+            router.on_key(down(KeyCode::KeyJ, alt() | left("Shift"), now)),
+            fired(Action::MoveWindowLeft)
+        );
+        let up = stroke(KeyEventKind::Up, KeyCode::KeyJ, alt(), now);
+        assert_eq!(router.on_key(up), passed(), "a bound key's up goes through");
+        assert!(router.close_switch(), "and the overview stays open");
+    }
+
+    #[test]
+    fn an_unbound_key_inside_the_overview_passes() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+        for key in [KeyCode::KeyA, KeyCode::ArrowLeft] {
+            assert_eq!(router.on_key(down(key, alt(), now)), passed(), "{key:?}");
+        }
+        assert!(router.close_switch(), "and it is still open");
+    }
+
+    #[test]
+    fn escape_closes_the_overview_and_is_swallowed() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+
+        let escaped = router.on_key(down(KeyCode::Escape, alt(), now));
+        assert_eq!(escaped, signalled(true, overview(OverviewSignal::Close)));
+        assert_eq!(
+            router.on_key(let_go(now)),
+            passed(),
+            "the release closes nothing again"
+        );
+    }
+
+    /// Passed, a held Slash would reach the table and its toggle; it changes nothing instead.
+    #[test]
+    fn the_trigger_repeated_inside_the_overview_is_swallowed_and_changes_nothing() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+        let eaten = Verdict {
+            swallow: true,
+            signal: None,
+            action: None,
+        };
+
+        assert_eq!(router.on_key(repeat(KeyCode::Slash, alt(), now)), eaten);
+        assert_eq!(router.on_key(down(KeyCode::Slash, alt(), now)), eaten);
+        let up = stroke(KeyEventKind::Up, KeyCode::Slash, alt(), now);
+        assert_eq!(router.on_key(up), eaten, "its key-up too");
+        assert_eq!(
+            router.on_key(let_go(now)),
+            signalled(false, overview(OverviewSignal::Close)),
+            "still the one overview"
+        );
+    }
+
+    #[test]
+    fn the_overview_closes_twelve_seconds_after_its_last_key() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+        let pressed = now + Duration::from_secs(10);
+        assert_eq!(
+            router.on_key(down(KeyCode::KeyJ, alt(), pressed)),
+            fired(Action::FocusColumnLeft)
+        );
+        let again = pressed + MAX_SESSION - Duration::from_millis(1);
+        assert_eq!(
+            router.on_key(down(KeyCode::KeyJ, alt(), again)),
+            fired(Action::FocusColumnLeft),
+            "21.999s after the open, 11.999s after its last key: still open"
+        );
+
+        let late = again + MAX_SESSION;
+        assert_eq!(router.on_key(down(KeyCode::KeyJ, alt(), late)), Verdict {
+            swallow: true,
+            signal: Some(overview(OverviewSignal::Close)),
+            action: Some(Action::FocusColumnLeft),
+        });
+    }
+
+    /// Alt's release went missing; the next mouse event's flags show it up.
+    #[test]
+    fn a_mouse_event_with_the_modifier_up_closes_the_overview() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+
+        assert_eq!(router.on_mouse_flags(alt()), None, "flags unchanged");
+        assert_eq!(router.on_mouse_flags(0), Some(overview(OverviewSignal::Close)));
+        assert!(!router.close_switch());
+    }
+
+    #[test]
+    fn replacing_the_tap_closes_the_overview() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+
+        assert_eq!(router.tap_replaced(), Some(overview(OverviewSignal::Close)));
+        assert_eq!(router.tap_replaced(), None, "nothing left to close");
+
+        opened(&mut router, now);
+        assert_eq!(
+            router.tap_re_enabled(alt()),
+            Some(overview(OverviewSignal::Close))
+        );
+    }
+
+    /// One session at a time: a switcher's trigger neither opens a switch nor reaches the table.
+    #[test]
+    fn a_switchers_trigger_inside_the_overview_is_swallowed() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        opened(&mut router, now);
+
+        let verdict = router.on_key(down(KeyCode::KeyQ, alt(), now));
+        assert_eq!(verdict, Verdict {
+            swallow: true,
+            signal: None,
+            action: None,
+        });
+        assert_eq!(
+            router.on_key(let_go(now)),
+            signalled(false, overview(OverviewSignal::Close))
+        );
     }
 }

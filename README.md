@@ -279,6 +279,7 @@ The default binds, with `Mod` as Alt (`input › mod-key`):
 | `Mod+1`..`Mod+4` | show a workspace |
 | `Mod+Shift+1`..`Mod+Shift+4` | send the window to a workspace, focus staying here |
 | `Mod+Tab` | the previous workspace |
+| `Mod+Slash` | the overview, every workspace at once, while Mod is held |
 | `Mod+Comma` / `Mod+Period` | fold into the column left or right, and back |
 | `Mod+Shift+Comma` | give every window in a joined column its own column |
 | `Mod+F` | full width |

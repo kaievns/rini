@@ -131,7 +131,11 @@ pub const NIRI: &[(&str, &str, &str)] = &[
     ),
     ("", "hotkey-overlay", "rini has no hotkey overlay"),
     ("", "blur", "rini draws no blur behind windows"),
-    ("", "overview", "rini has no overview"),
+    (
+        "",
+        "overview",
+        "rini's overview takes no settings; its depth fits every workspace",
+    ),
     ("", "xwayland-satellite", "there is no Xwayland on macOS"),
     ("", "layer-rule", "macOS has no layer-shell surfaces to rule"),
     ("", "switch-events", "lid and tablet switches are not supported"),
@@ -479,9 +483,14 @@ pub const NIRI_ACTIONS: &[(&str, &str)] = &[
     ("set-dynamic-cast-window", NOT_IN_RINI),
     ("set-dynamic-cast-monitor", NOT_IN_RINI),
     ("clear-dynamic-cast-target", NOT_IN_RINI),
-    ("toggle-overview", "rini has no overview"),
-    ("open-overview", "rini has no overview"),
-    ("close-overview", "rini has no overview"),
+    (
+        "open-overview",
+        "rini's overview is open while its key is held: bind `toggle-overview` with a modifier",
+    ),
+    (
+        "close-overview",
+        "rini's overview closes when the modifiers of its `toggle-overview` bind are let go",
+    ),
 ];
 
 /// rini's own action names that are gone, with what does their job now.

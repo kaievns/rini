@@ -106,6 +106,9 @@ pub enum Action {
     /// Save the layout and exit.
     Quit,
     RedistributeWindows,
+    /// The overview, open while the bind's modifiers are held: the tap's session opens it on this
+    /// bind's chord. niri's toggles.
+    ToggleOverview,
     /// The switcher, only in `recent-windows › binds`.
     NextWindow {
         #[knus(property, str)]
@@ -312,7 +315,7 @@ mod tests {
 
     #[test]
     fn every_action_name_is_kebab_case_and_counted() {
-        assert_eq!(Action::VARIANTS.len(), 60);
+        assert_eq!(Action::VARIANTS.len(), 61);
         for name in Action::VARIANTS {
             assert!(
                 name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),

@@ -158,8 +158,9 @@ switcher answers "every window I have, wherever it is".
   separately would be a second record of one fact, free to disagree.
 - Each switcher with a binding MUST get its own trigger, and a live session MUST answer only to the
   trigger that opened it: its key steps, and its modifiers hold.
-- Another switcher's trigger pressed while a switch is open MUST be swallowed and change nothing. Passed
-  through, it reaches the hotkey table and runs that switcher's one-shot step mid-switch.
+- Another switcher's trigger, or the overview's, pressed while a switch is open MUST be swallowed and
+  change nothing. Passed through, it reaches the hotkey table and runs that switcher's one-shot step
+  mid-switch.
 - When a key press satisfies more than one trigger, the one naming the most modifiers MUST win.
   Modifiers match as "at least these", so `Ctrl + Alt + Q` satisfies a `Ctrl + Q` binding too.
 
