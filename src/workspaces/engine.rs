@@ -1699,6 +1699,43 @@ mod tests {
         assert_eq!(back.stepped, Some((second, first)));
     }
 
+    /// A focus press to an end names the window it left and the one it reached, and at that end
+    /// already the window it stayed on, twice, with the edge it stopped at, as a press of one
+    /// column does; it pushes no window.
+    #[test]
+    fn a_focus_press_to_an_end_names_where_it_went_and_one_there_already_where_it_stayed() {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(534);
+        let [first, second, third] = [1, 2, 3].map(|idx| WindowId::new(77, idx));
+        fx.expose(space, CGSize::new(1000.0, 800.0));
+        let _ = fx.open(space, vec![
+            OnScreenEntry::plain(first),
+            OnScreenEntry::plain(second),
+            OnScreenEntry::plain(third),
+        ]);
+        fx.engine.focused_window = Some(first);
+        let _ = fx.command(space, LayoutCommand::MoveFocus(Direction::Left));
+        let _ = fx.command(space, LayoutCommand::MoveFocus(Direction::Left));
+        let to_end = |end| LayoutCommand::MoveFocusToEnd(end);
+
+        let last = fx.command(space, to_end(StripEnd::Last));
+        assert_eq!(last.focus_window, Some(third));
+        assert_eq!(last.stepped, Some((first, third)));
+        assert_eq!((last.edge_hit, last.pushed, last.moved), (None, None, None));
+
+        let again = fx.command(space, to_end(StripEnd::Last));
+        assert_eq!(again.focus_window, Some(third), "focus stayed at the end");
+        assert_eq!(again.edge_hit, Some(Direction::Right));
+        assert_eq!(again.stepped, Some((third, third)));
+        assert_eq!(again.pushed, None, "a focus press pushes no window");
+
+        let back = fx.command(space, to_end(StripEnd::First));
+        assert_eq!(back.stepped, Some((third, first)));
+        let stopped = fx.command(space, to_end(StripEnd::First));
+        assert_eq!(stopped.edge_hit, Some(Direction::Left));
+        assert_eq!(fx.engine.focused_window, Some(first));
+    }
+
     /// Pulling a window out of a stacked column makes a new column and resizes the ones it leaves: not
     /// two columns changing places. Nor is a move up or down its column.
     #[test]

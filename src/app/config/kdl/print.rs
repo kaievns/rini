@@ -401,6 +401,8 @@ fn action(action: &Action) -> String {
         }
         Action::FocusColumnLeft
         | Action::FocusColumnRight
+        | Action::FocusColumnFirst
+        | Action::FocusColumnLast
         | Action::FocusWindowOrMonitorDown
         | Action::FocusWindowOrMonitorUp
         | Action::MoveWindowLeft

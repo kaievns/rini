@@ -26,6 +26,8 @@ pub enum FocusCommand {
     /// `next_window` / `prev_window`: a step through the visible windows, wrapping at both ends.
     Cycle(Cycle),
     Move(Direction),
+    /// To the column at that end of the strip.
+    ToEnd(StripEnd),
 }
 
 /// Moving windows within the strip.
@@ -109,6 +111,7 @@ impl From<LayoutCommand> for EngineCommand {
             L::NextWindow => FocusCommand::Cycle(Cycle::Forward).into(),
             L::PrevWindow => FocusCommand::Cycle(Cycle::Backward).into(),
             L::MoveFocus(direction) => FocusCommand::Move(direction).into(),
+            L::MoveFocusToEnd(end) => FocusCommand::ToEnd(end).into(),
             L::SwapWindows(a, b) => {
                 let id = |w: rini_ipc::protocol::WindowId| WindowId::new(w.pid, w.idx);
                 ArrangeCommand::Swap(id(a), id(b)).into()
@@ -185,6 +188,10 @@ mod tests {
             (
                 LayoutCommand::MoveFocus(Direction::Up),
                 FocusCommand::Move(Direction::Up).into(),
+            ),
+            (
+                LayoutCommand::MoveFocusToEnd(StripEnd::First),
+                FocusCommand::ToEnd(StripEnd::First).into(),
             ),
             (
                 LayoutCommand::SwapWindows(ipc(1, 2), ipc(3, 4)),

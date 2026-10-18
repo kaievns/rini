@@ -3106,6 +3106,83 @@ fn a_focus_press_that_scrolls_the_strip_names_itself_and_zooms_under_zoom() {
     assert_eq!(share, 0.5);
 }
 
+/// A focus press to an end of the strip pans there as a press of one column does, never a cut: one
+/// strip movement from where the strip stood, named as a focus press from the window it left to
+/// the one it reached, flat under Slide and under Zoom on the navigation arc as deep as a move of
+/// the two. At that end already it bounces as a focus press there does ("Focus to an end of the
+/// strip" in `specs/strip.md`).
+#[test]
+fn a_focus_press_to_an_end_pans_there_under_every_look_and_bounces_once_there() {
+    use rini_geometry::space::OverlayVector;
+
+    use crate::animation::domain::choreography::zoom::zoom_depth;
+    use crate::animation::domain::choreography::{Cue, Look};
+    use crate::animation::domain::motion::accents::Accent;
+    use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
+    use crate::transitions::platform::engine::Event as Anim;
+    for look in [Look::Slide, Look::Zoom] {
+        let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+        let mut config = reactor.config().clone();
+        config.settings.look = look;
+        let scrolling = &mut config.settings.layout.scrolling;
+        scrolling.column_width_ratio = 0.5;
+        scrolling.max_column_width_ratio = scrolling.max_column_width_ratio.max(0.5);
+        reactor.handle_event(Event::ConfigUpdated(Box::new(config)));
+        strip_movements(&mut rx);
+        let [w1, _, w3, w4] = [1, 2, 3, 4].map(|idx| WindowId::new(1, idx));
+
+        reactor.handle_test_layout_command(LayoutCommand::MoveFocusToEnd(StripEnd::Last));
+        let flights = strip_movements(&mut rx);
+        assert_eq!(flights.len(), 1, "{look:?}: one strip movement for the press");
+        let flight = &flights[0];
+        assert_eq!(flight.cue, Cue::Focus { from: w1, to: w4 }, "{look:?}");
+        assert_eq!(reactor.layout().focused_window(), Some(w4), "{look:?}");
+        let frame = |window| flight.windows.iter().find(|w| w.window == window).unwrap().frame;
+        let (first, last) = (frame(w1), frame(w4));
+        let two_columns = frame(w3).origin.x - first.origin.x;
+        assert!(
+            (flight.from_offset.x.abs() - two_columns).abs() < 1.0,
+            "{look:?}: the strip pans the two columns that bring the last into view: {:?}",
+            flight.from_offset
+        );
+        assert!(!flight.duration.is_zero(), "{look:?}: a pan, not a cut");
+        assert!(
+            flight.windows.iter().all(|w| w.from.is_none()),
+            "{look:?}: nothing changes places"
+        );
+        match (look, flight.accent) {
+            (Look::Slide, None) => {}
+            (Look::Zoom, Some(Accent::Arc { depth, swap: None, .. })) => {
+                let narrower = first.size.width.min(last.size.width);
+                let pair = last.max().x - first.min().x;
+                assert_eq!(depth, zoom_depth(1728.0, pair, narrower), "as deep as a move");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        reactor.handle_test_layout_command(LayoutCommand::MoveFocusToEnd(StripEnd::Last));
+        let mut bounces = Vec::new();
+        while let Ok((_, event)) = rx.try_recv() {
+            match event {
+                Anim::Bounce { overshoot, cue, .. } => bounces.push((overshoot, cue)),
+                Anim::AnimateSurface { .. } => panic!("{look:?}: the strip moved at its end"),
+                _ => {}
+            }
+        }
+        assert_eq!(
+            bounces,
+            vec![
+                (OverlayVector::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), Cue::Focus {
+                    from: w4,
+                    to: w4
+                })
+            ],
+            "{look:?}: at the end already, one bounce, focus staying put"
+        );
+        assert_eq!(reactor.layout().focused_window(), Some(w4), "{look:?}");
+    }
+}
+
 /// Only a full-size window steps, away from where it goes ("Moving a window along the strip" in
 /// `specs/animation.md`). A full-size window the camera follows does not move on screen at all, so
 /// the move steps the whole strip a third of the display away from where it went and back, the

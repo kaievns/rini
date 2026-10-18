@@ -11,6 +11,7 @@ use tracing::debug;
 use super::CommandTarget;
 use crate::workspaces::domain::command::FocusCommand;
 use crate::workspaces::domain::workspace_focus;
+use crate::workspaces::engine::navigation::FocusStep;
 use crate::workspaces::engine::{EventResponse, LayoutEngine, WindowStore};
 
 impl LayoutEngine {
@@ -85,10 +86,18 @@ impl LayoutEngine {
                     space,
                     visible_spaces,
                     visible_space_centers,
-                    direction,
+                    FocusStep::Toward(direction),
                     is_floating,
                 )
             }
+            FocusCommand::ToEnd(end) => self.move_focus_internal(
+                window_store,
+                space,
+                visible_spaces,
+                visible_space_centers,
+                FocusStep::ToEnd(end),
+                is_floating,
+            ),
         }
     }
 }

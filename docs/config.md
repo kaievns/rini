@@ -138,6 +138,7 @@ take niri's default: off. They were on, and a default-on flag can only be writte
 | `animations › journal { measure-handover; }` | rini's own: each lift is held up to 60ms for the overlay's own picture and measured against the screen just after it, into the journal; `journal false` turns it off with the writing | niri has no journal. Off by default because it holds every lift (`src/transitions/docs/journal.md`, "The handover, measured") |
 | `quit` | saves the layout and exits, never asks | so `skip-confirmation=` is refused |
 | `load-config-file` | bindable | IPC-only in niri |
+| `focus-column-first`, `-last` | focus lands on the row it came from, or the column's last when it has fewer | as `focus-column-left` and `-right` land: a rini column keeps no active window of its own (`window-rule › match` above) |
 | `focus-window-or-monitor-down`, `-up` | the only vertical focus | at the column's end it crosses to the display below; niri's `focus-window-down` would not, so it is not offered |
 | `set-column-width "+5%"` | relative percentages only | niri's absolute `"50%"` and pixel forms are refused, not yet supported |
 

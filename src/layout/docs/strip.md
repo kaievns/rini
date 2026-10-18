@@ -269,6 +269,12 @@ is borrowed.
   the window it left and the one it reached, and at an end the window it stayed
   on, twice; a move into an end sets `pushed`, the window it pushed. A look plays
   each press as it chooses ("The zoom look" in `specs/animation.md`).
+- **Focus to an end is focus left or right taken there.** `MoveFocusToEnd`
+  (`focus-column-first` and `-last`) selects the first or last column on the
+  row a step of one column takes (`focus_column`), scrolls the strip as that
+  step does (`show_focus`), and goes through `move_focus_internal` as a
+  `FocusStep::ToEnd`, so it names the same `stepped` pair and stops at the end
+  it is already at with the same `edge_hit`.
 
 ## Joining
 

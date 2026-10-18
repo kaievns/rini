@@ -153,6 +153,10 @@ enum WindowCommands {
         #[arg(long, requires = "window_id")]
         window_server_id: Option<String>,
     },
+    /// Focus the first column of the selected window's strip
+    FocusFirst,
+    /// Focus the last column of the selected window's strip
+    FocusLast,
     /// Toggle window floating state
     ToggleFloat,
     /// Toggle the selected column filling the tiling area, still scrolling with the strip
@@ -441,6 +445,8 @@ fn map_window_command(cmd: WindowCommands) -> Result<RiniCommand, String> {
                 );
             }
         },
+        WindowCommands::FocusFirst => RiniCommand::Layout(LC::MoveFocusToEnd(StripEnd::First)),
+        WindowCommands::FocusLast => RiniCommand::Layout(LC::MoveFocusToEnd(StripEnd::Last)),
         WindowCommands::ToggleFloat => RiniCommand::Layout(LC::ToggleWindowFloating),
         WindowCommands::ToggleFullscreenWithinGaps => {
             RiniCommand::Layout(LC::ToggleFullscreenWithinGaps)
@@ -792,9 +798,9 @@ mod tests {
         assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
     }
 
-    /// Every window subcommand has to map to a DISTINCT wire command. The arms are 33 lines of
-    /// near-identical shape, which is exactly where a copy-paste sends two keys to one command and
-    /// nothing complains.
+    /// Every window subcommand has to map to a DISTINCT wire command. The arms are of near-identical
+    /// shape, which is exactly where a copy-paste sends two keys to one command and nothing
+    /// complains.
     #[test]
     fn no_two_window_subcommands_map_to_the_same_wire_command() {
         let commands = vec![
@@ -805,6 +811,8 @@ mod tests {
                 window_id: None,
                 window_server_id: None,
             }),
+            ("focus-first", WindowCommands::FocusFirst),
+            ("focus-last", WindowCommands::FocusLast),
             ("toggle-float", WindowCommands::ToggleFloat),
             (
                 "toggle-fullscreen-within-gaps",
@@ -850,6 +858,29 @@ mod tests {
                 build_execute_request(command).unwrap(),
                 RiniRequest::ExecuteCommand {
                     command: RiniCommand::Layout(LC::MoveNodeToEnd(end)),
+                },
+                "{name}"
+            );
+        }
+    }
+
+    /// `window focus-first` and `focus-last` focus the two ends of the selected window's strip.
+    #[test]
+    fn the_focus_presses_to_an_end_name_their_end() {
+        use rini_ipc::protocol::LayoutCommand as LC;
+        for (name, end) in [
+            ("focus-first", StripEnd::First),
+            ("focus-last", StripEnd::Last),
+        ] {
+            let cli = Cli::try_parse_from(["rini-cli", "execute", "window", name])
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let Commands::Execute { command } = cli.command else {
+                panic!("{name} is not an execute subcommand");
+            };
+            assert_eq!(
+                build_execute_request(command).unwrap(),
+                RiniRequest::ExecuteCommand {
+                    command: RiniCommand::Layout(LC::MoveFocusToEnd(end)),
                 },
                 "{name}"
             );

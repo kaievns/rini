@@ -8,11 +8,29 @@ use rini_core::ids::{SpaceId, WindowId};
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
-use crate::layout::LayoutId;
 use crate::layout::domain::boundary::strip_edge;
+use crate::layout::{LayoutId, StripEnd};
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::{EventResponse, LayoutEngine};
 use crate::workspaces::{Direction, WindowStore};
+
+/// Where a focus press goes: one column or row toward a side, or to the column at an end of the
+/// strip.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum FocusStep {
+    Toward(Direction),
+    ToEnd(StripEnd),
+}
+
+impl FocusStep {
+    /// The way the press goes, which says where it stops and which way the strip scrolls.
+    fn direction(self) -> Direction {
+        match self {
+            FocusStep::Toward(direction) => direction,
+            FocusStep::ToEnd(end) => end.direction(),
+        }
+    }
+}
 
 impl LayoutEngine {
     pub(super) fn filter_active_workspace_windows(
@@ -97,9 +115,10 @@ impl LayoutEngine {
         space: SpaceId,
         visible_spaces: &[SpaceId],
         visible_space_centers: &HashMap<SpaceId, CGPoint>,
-        direction: Direction,
+        step: FocusStep,
         is_floating: bool,
     ) -> EventResponse {
+        let direction = step.direction();
         let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
             warn!(
                 "No active workspace/layout for space {:?}; move_focus ignored",
@@ -116,8 +135,11 @@ impl LayoutEngine {
 
         let previous_selection = self.workspace_tree(ws_id).selected_window(layout);
 
-        let (focus_window_raw, raise_windows) =
-            self.workspace_tree_mut(ws_id).move_focus(layout, direction);
+        let tree = self.workspace_tree_mut(ws_id);
+        let (focus_window_raw, raise_windows) = match step {
+            FocusStep::Toward(direction) => tree.move_focus(layout, direction),
+            FocusStep::ToEnd(end) => tree.move_focus_to_end(layout, end),
+        };
         let focus_window =
             self.filter_active_workspace_window(window_store, space, focus_window_raw);
         let raise_windows =

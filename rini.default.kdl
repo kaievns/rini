@@ -344,6 +344,7 @@ binds {
     // wrap, and right from the rightmost display does nothing.
     //
     //   focus-column-left / focus-column-right        stop at the end of the strip
+    //   focus-column-first / focus-column-last        the first or last column of the strip
     //   focus-window-or-monitor-up / -down            within the column, then the display above/below
     //   move-window-left / move-window-right          a lone window swaps columns; a stacked one leaves as a new column
     //   move-window-to-first / move-window-to-last    the same, to that end of the strip in one press
@@ -387,6 +388,8 @@ binds {
     Mod+J { focus-window-or-monitor-down; }
     Mod+K { focus-window-or-monitor-up; }
     Mod+L { focus-column-right; }
+    Mod+U { focus-column-first; }
+    Mod+O { focus-column-last; }
 
     Mod+Shift+H { move-window-left; }
     Mod+Shift+J { move-window-down-or-to-monitor-down; }

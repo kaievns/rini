@@ -1435,6 +1435,30 @@ fn niris_moves_to_an_end_are_refused_for_rinis() {
     }
 }
 
+/// niri's `focus-column-first` and `focus-column-last` are rini's actions under niri's names, so
+/// a niri config's binds of them read as written and print back the same, and the shipped binds
+/// put them on `Mod+U` and `Mod+O` ("Focus to an end of the strip" in `specs/strip.md`).
+#[test]
+fn niris_focus_presses_to_an_end_are_rinis_and_bound_to_mod_u_and_mod_o() {
+    let config =
+        parse("binds {\n    Mod+U { focus-column-first; }\n    Mod+O { focus-column-last; }\n}\n");
+    let actions: Vec<Action> = config.binds.iter().map(|bind| bind.action.clone()).collect();
+    assert_eq!(actions, [Action::FocusColumnFirst, Action::FocusColumnLast]);
+    assert_prints_and_reads_back(&config);
+    let text = printed(&config);
+    for line in [
+        "Mod+U { focus-column-first; }",
+        "Mod+O { focus-column-last; }",
+    ] {
+        assert!(text.contains(line), "{line}:\n{text}");
+    }
+
+    let shipped = Config::reference();
+    let bound = |key: &str| shipped.binds.iter().find(|bind| bind.key == key).map(|b| &b.action);
+    assert_eq!(bound("Mod+U"), Some(&Action::FocusColumnFirst));
+    assert_eq!(bound("Mod+O"), Some(&Action::FocusColumnLast));
+}
+
 /// Every action decodes from its name, with the arguments it needs.
 #[test]
 fn every_action_name_decodes() {

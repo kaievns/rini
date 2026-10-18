@@ -683,8 +683,9 @@ Tiles sit on whole points so the lift does not pop by a fraction ("Whole points"
 A command that pushes past an end of the strip (the first/last column) or of the workspace stack
 (next/prev at the bottom/top, which never wraps, or nothing further to skip to) used to stop dead,
 which read as a dropped keypress. The layout reports it as `EventResponse::edge_hit`, from
-`move_focus_internal`'s fallback (`focus_strip_end`), `MoveNode`'s and `MoveNodeToEnd`'s, all
-left/right only, and from `handle_workspace_command` and `move_window_to_workspace`, both up/down.
+`move_focus_internal`'s fallback (`focus_strip_end`), for `MoveFocus` and `MoveFocusToEnd`, from
+`MoveNode`'s and `MoveNodeToEnd`'s, all left/right only, and from `handle_workspace_command` and
+`move_window_to_workspace`, both up/down.
 Moving reports it because moving without a cue was indistinguishable from a stuck key — the same
 reason a focus press does. A `MoveWindowToWorkspace` naming a workspace outright reports nothing:
 not finding workspace 7 is a request that cannot be honoured, not a push against an end, so

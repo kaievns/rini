@@ -49,6 +49,8 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
     match action {
         Action::FocusColumnLeft => layout(LayoutCommand::MoveFocus(Direction::Left)),
         Action::FocusColumnRight => layout(LayoutCommand::MoveFocus(Direction::Right)),
+        Action::FocusColumnFirst => layout(LayoutCommand::MoveFocusToEnd(StripEnd::First)),
+        Action::FocusColumnLast => layout(LayoutCommand::MoveFocusToEnd(StripEnd::Last)),
         Action::FocusWindowOrMonitorDown => layout(LayoutCommand::MoveFocus(Direction::Down)),
         Action::FocusWindowOrMonitorUp => layout(LayoutCommand::MoveFocus(Direction::Up)),
         Action::MoveWindowLeft => layout(LayoutCommand::MoveNode(Direction::Left)),

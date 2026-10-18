@@ -40,6 +40,14 @@ fn table() -> Vec<(Action, Lowered)> {
         (Action::FocusColumnLeft, layout(LayoutCommand::MoveFocus(Left))),
         (Action::FocusColumnRight, layout(LayoutCommand::MoveFocus(Right))),
         (
+            Action::FocusColumnFirst,
+            layout(LayoutCommand::MoveFocusToEnd(StripEnd::First)),
+        ),
+        (
+            Action::FocusColumnLast,
+            layout(LayoutCommand::MoveFocusToEnd(StripEnd::Last)),
+        ),
+        (
             Action::FocusWindowOrMonitorDown,
             layout(LayoutCommand::MoveFocus(Down)),
         ),

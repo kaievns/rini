@@ -336,6 +336,22 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > them right, so on screen they kept their place, and the one parked beyond the right edge was drawn
 > the shrink onto the screen and slid off. It now starts where the strip had it at the last pass.
 
+## Focus to an end of the strip
+
+- **`focus-column-first` and `focus-column-last` MUST focus the first or last column of the
+  focused window's strip in one press**, on the row `focus-column-left` and `-right` take into a
+  column: the focused window's own, or the column's last when it has fewer. The strip MUST scroll
+  to show it as a focus press of one column does, and the press MUST be seen as one: a pan along
+  the strip, never a cut, under Zoom on the navigation arc (`animation.md`, "The zoom look"). With
+  the focused window's column at that end already, focus MUST NOT move, and the press MUST bounce
+  the view as a focus press into an end does (`animation.md`, "Pushing past an end"). The default
+  binds are `Mod+U` and `Mod+O`. The names are niri's, so a niri config's binds of them work as
+  written.
+
+> **Reported 2026-10-18.** "and make the alt-u/o to navigate to the start/end of the strip", right
+> after `move-window-to-first` and `-to-last` landed on `Mod+Shift+U` and `Mod+Shift+O`. Kai's `Mod`
+> is Alt. niri's `focus-column-first` and `focus-column-last` were refused as niri's alone.
+
 ## Moving along the strip
 
 - **`move-window-to-first` and `move-window-to-last` MUST take the focused window to that end of
@@ -432,7 +448,8 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 `src/layout/domain/constraints.rs` the widths, `src/layout/domain/column_width.rs` the width a column
 holds and a window carries, `src/layout/domain/strip.rs` the geometry,
 `src/workspaces/engine/commands/` the commands, a move to an end among them in
-`src/workspaces/engine/commands/arrange.rs`.
+`src/workspaces/engine/commands/arrange.rs`, and `src/workspaces/engine/navigation.rs` focus along
+the strip, to an end of it included.
 Which edge a mouse drag moves, and what it asks of the column, is `src/layout/domain/edge_drag.rs`.
 A title-bar zoom is told from a resize by `src/windows/domain/zoom.rs`, and the full-width toggle both
 routes share is in `src/workspaces/engine/commands/floating.rs`. Taking a window off the strip and

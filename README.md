@@ -272,6 +272,7 @@ The default binds, with `Mod` as Alt (`input › mod-key`):
 | keys | action |
 |---|---|
 | `Mod+H` / `Mod+L` | focus the column left or right |
+| `Mod+U` / `Mod+O` | focus the first or last column of the strip |
 | `Mod+J` / `Mod+K` | focus the window below or above, then the display below or above |
 | `Mod+Shift+H/J/K/L` | move the window |
 | `Mod+Shift+U` / `Mod+Shift+O` | move the window to the start or the end of its strip |

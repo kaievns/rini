@@ -1022,12 +1022,33 @@ impl ScrollingLayoutSystem {
     }
 
     fn move_focus_horizontal(state: &mut LayoutState, dir: Direction) -> Option<WindowId> {
-        let (col_idx, row_idx) = state.selected_location()?;
+        let (col_idx, _) = state.selected_location()?;
         let target_col = match dir {
             Direction::Left => col_idx.checked_sub(1)?,
             Direction::Right => (col_idx + 1 < state.columns.len()).then_some(col_idx + 1)?,
             _ => return None,
         };
+        Self::focus_column(state, target_col)
+    }
+
+    /// Focus moved to the column at `end` of the strip; `None` with no selection or with the
+    /// selection's column already there.
+    fn move_focus_to_end_column(state: &mut LayoutState, end: StripEnd) -> Option<WindowId> {
+        let (col_idx, _) = state.selected_location()?;
+        let target_col = match end {
+            StripEnd::First => 0,
+            StripEnd::Last => state.columns.len() - 1,
+        };
+        if target_col == col_idx {
+            return None;
+        }
+        Self::focus_column(state, target_col)
+    }
+
+    /// Select the column at `target_col` on the selection's row, or on its last row when it has
+    /// fewer.
+    fn focus_column(state: &mut LayoutState, target_col: usize) -> Option<WindowId> {
+        let (_, row_idx) = state.selected_location()?;
         let target_column = &state.columns[target_col];
         if target_column.windows.is_empty() {
             return None;
@@ -1275,6 +1296,33 @@ impl ScrollingLayoutSystem {
             Direction::Left | Direction::Right => Self::move_focus_horizontal(state, direction),
             Direction::Up | Direction::Down => Self::move_focus_vertical(state, direction),
         };
+        Self::show_focus(state, new_sel, direction, reveals_only)
+    }
+
+    /// Focus taken to the column at `end` of the strip, as `move_focus` takes it one column that
+    /// way, and the strip scrolled to show it as that does. No window when the selection's column
+    /// is at that end already.
+    pub fn move_focus_to_end(
+        &mut self,
+        layout: LayoutId,
+        end: StripEnd,
+    ) -> (Option<WindowId>, Vec<WindowId>) {
+        let reveals_only = self.settings.reveals_only();
+        let Some(state) = self.layout_state_mut(layout) else {
+            return (None, vec![]);
+        };
+        let new_sel = Self::move_focus_to_end_column(state, end);
+        Self::show_focus(state, new_sel, end.direction(), reveals_only)
+    }
+
+    /// The strip scrolled after a focus press toward `direction` that reached `new_sel`, and the
+    /// windows of the selection's column to raise.
+    fn show_focus(
+        state: &mut LayoutState,
+        new_sel: Option<WindowId>,
+        direction: Direction,
+        reveals_only: bool,
+    ) -> (Option<WindowId>, Vec<WindowId>) {
         if new_sel.is_some() && reveals_only {
             if matches!(direction, Direction::Left | Direction::Right) {
                 state.reveal_selected_in_direction(direction);
@@ -2647,6 +2695,146 @@ mod tests {
         assert!(system.move_selection_to_end(layout, StripEnd::Last));
         let after = frame_for(&render(&mut system, layout, display, &gaps), windows[0]);
         assert!(after.origin.x >= 0.0 && after.max().x <= 1000.0, "{after:?}");
+    }
+
+    /// Four lone columns: focus to an end reaches that end's column in one press, from anywhere,
+    /// and raises its window.
+    #[test]
+    fn focus_reaches_either_end_of_the_strip_in_one_press() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let [w1, w2, w3, w4] = [1, 2, 3, 4].map(|idx| wid(1, idx));
+        for window in [w1, w2, w3, w4] {
+            system.add_window_after_selection(layout, window);
+        }
+        system.select_window(layout, w2);
+
+        assert_eq!(
+            system.move_focus_to_end(layout, StripEnd::Last),
+            (Some(w4), vec![w4])
+        );
+        assert_eq!(system.selected_window(layout), Some(w4));
+        assert_eq!(
+            system.move_focus_to_end(layout, StripEnd::First),
+            (Some(w1), vec![w1])
+        );
+        assert_eq!(system.selected_window(layout), Some(w1));
+        assert_eq!(
+            order(&system, layout),
+            [[w1], [w2], [w3], [w4]],
+            "no column moved"
+        );
+    }
+
+    /// Into a stacked column, focus to an end lands on the row a step of one column takes: the
+    /// row it left, or the column's last when it has fewer. It raises the whole column.
+    #[test]
+    fn focus_to_an_end_lands_on_the_row_a_step_of_one_column_takes() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let [w1, w2, w3, w4, w5, w6] = [1, 2, 3, 4, 5, 6].map(|idx| wid(1, idx));
+        for window in [w1, w2, w3, w4, w5, w6] {
+            system.add_window_after_selection(layout, window);
+        }
+        for window in [w2, w5, w6] {
+            system.select_window(layout, window);
+            system.toggle_fold_of_selection(layout, Direction::Left);
+        }
+        assert_eq!(order(&system, layout), [vec![w1, w2], vec![w3], vec![
+            w4, w5, w6
+        ]]);
+
+        system.select_window(layout, w2);
+        assert_eq!(
+            system.move_focus_to_end(layout, StripEnd::Last),
+            (Some(w5), vec![w4, w5, w6]),
+            "the second row to the second row"
+        );
+        system.select_window(layout, w6);
+        assert_eq!(
+            system.move_focus_to_end(layout, StripEnd::First),
+            (Some(w2), vec![w1, w2]),
+            "the third row to the last of two"
+        );
+        system.select_window(layout, w3);
+        assert_eq!(system.move_focus_to_end(layout, StripEnd::First).0, Some(w1));
+    }
+
+    /// With the selection's column at that end already, or a strip of one column, lone or stacked,
+    /// focus goes nowhere and the selection stays.
+    #[test]
+    fn focus_to_the_end_it_is_at_goes_nowhere() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let [w1, w2, w3] = [1, 2, 3].map(|idx| wid(1, idx));
+        for window in [w1, w2, w3] {
+            system.add_window_after_selection(layout, window);
+        }
+        system.select_window(layout, w1);
+        assert_eq!(system.move_focus_to_end(layout, StripEnd::First).0, None);
+        assert_eq!(system.selected_window(layout), Some(w1));
+        system.select_window(layout, w3);
+        assert_eq!(system.move_focus_to_end(layout, StripEnd::Last).0, None);
+        assert_eq!(system.selected_window(layout), Some(w3));
+
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        system.add_window_after_selection(layout, w1);
+        for end in [StripEnd::First, StripEnd::Last] {
+            assert_eq!(system.move_focus_to_end(layout, end).0, None, "{end:?}");
+        }
+        system.add_window_after_selection(layout, w2);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert_eq!(order(&system, layout), [[w1, w2]]);
+        for end in [StripEnd::First, StripEnd::Last] {
+            assert_eq!(system.move_focus_to_end(layout, end).0, None, "{end:?}");
+            assert_eq!(system.selected_window(layout), Some(w2), "{end:?}");
+        }
+    }
+
+    /// Focus to an end scrolls the strip to where stepping there one column at a time leaves it,
+    /// whether the strip only reveals the focused column or centres it.
+    #[test]
+    fn focus_to_an_end_scrolls_the_strip_as_stepping_there_does() {
+        for center in [CenterFocusedColumn::Never, CenterFocusedColumn::Always] {
+            let settings = ScrollingLayoutSettings {
+                center_focused_column: center,
+                ..ScrollingLayoutSettings::default()
+            };
+            let display = screen(1000.0, 800.0);
+            let gaps = Gaps::default();
+            let windows = [1, 2, 3, 4, 5].map(|idx| wid(1, idx));
+            let strip = |press: &dyn Fn(&mut ScrollingLayoutSystem, LayoutId)| {
+                let mut system = ScrollingLayoutSystem::new(&settings);
+                let layout = system.create_layout();
+                for window in windows {
+                    system.add_window_after_selection(layout, window);
+                }
+                system.select_window(layout, windows[2]);
+                let before = frame_for(&render(&mut system, layout, display, &gaps), windows[4]);
+                assert!(
+                    before.max().x > 1000.0,
+                    "{center:?}: off screen at first: {before:?}"
+                );
+                press(&mut system, layout);
+                render(&mut system, layout, display, &gaps)
+            };
+            let stepped = strip(&|system, layout| {
+                for _ in 0..2 {
+                    let _ = system.move_focus(layout, Direction::Right);
+                    let _ = render(system, layout, display, &gaps);
+                }
+            });
+            let jumped = strip(&|system, layout| {
+                let _ = system.move_focus_to_end(layout, StripEnd::Last);
+            });
+            assert_eq!(jumped, stepped, "{center:?}");
+            let last = frame_for(&jumped, windows[4]);
+            assert!(
+                last.origin.x >= 0.0 && last.max().x <= 1000.0,
+                "{center:?}: {last:?}"
+            );
+        }
     }
 
     #[test]

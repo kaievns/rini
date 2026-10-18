@@ -10,6 +10,9 @@ pub enum LayoutCommand {
     NextWindow,
     PrevWindow,
     MoveFocus(#[serde(rename = "direction")] Direction),
+    /// Focus the column at that end of the selected window's strip, on the row `MoveFocus` takes
+    /// into a column: the selected window's, or the column's last when it has fewer.
+    MoveFocusToEnd(StripEnd),
     MoveNode(Direction),
     /// Take the selected window to that end of the strip: a lone window's column goes there, and a
     /// stacked window leaves its column as a new column there.
@@ -198,6 +201,22 @@ mod tests {
         assert!(serde_json::from_value::<LayoutCommand>(left).is_err());
         assert_eq!(StripEnd::First.direction(), Direction::Left);
         assert_eq!(StripEnd::Last.direction(), Direction::Right);
+    }
+
+    /// A focus press to an end names the end, `first` or `last`, as a move to an end does.
+    #[test]
+    fn a_focus_press_to_an_end_names_the_end() {
+        let first = serde_json::json!({ "move_focus_to_end": "first" });
+        assert_eq!(
+            serde_json::from_value::<LayoutCommand>(first).unwrap(),
+            LayoutCommand::MoveFocusToEnd(StripEnd::First)
+        );
+        assert_eq!(
+            serde_json::to_value(LayoutCommand::MoveFocusToEnd(StripEnd::Last)).unwrap(),
+            serde_json::json!({ "move_focus_to_end": "last" })
+        );
+        let right = serde_json::json!({ "move_focus_to_end": "right" });
+        assert!(serde_json::from_value::<LayoutCommand>(right).is_err());
     }
 
     /// The explode is `explode_column`, and `toggle_stack` is no command (`specs/strip.md`).

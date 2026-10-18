@@ -350,8 +350,6 @@ pub const NIRI_ACTIONS: &[(&str, &str)] = &[
     ("toggle-windowed-fullscreen", FULLSCREEN),
     ("focus-window-in-column", NOT_IN_RINI),
     ("focus-window-previous", SWITCHER),
-    ("focus-column-first", NOT_IN_RINI),
-    ("focus-column-last", NOT_IN_RINI),
     ("focus-column-right-or-first", NOT_IN_RINI),
     ("focus-column-left-or-last", NOT_IN_RINI),
     ("focus-column", NOT_IN_RINI),
