@@ -4812,6 +4812,54 @@ mod tests {
                 }
             }
 
+            /// Opened again as it zooms back in, but on another display, the overlay moving there
+            /// first: no turn back on this display's overlay. It lands and lifts, and the move, the
+            /// open and the scene after it go on in order, so it opens afresh there, frame zero
+            /// asked under a generation of its own with the overlay on that display.
+            #[test]
+            fn opened_again_on_another_display_as_it_closes_it_lifts_and_opens_there() {
+                let mut h = harness();
+                held_open(&mut h);
+                let generation = lifecycle(&h).generation();
+                let sent = h.step(Event::OverviewClose { view: view(1) });
+                h.commit(only_batch(&sent).seq);
+                h.advance(ARC / 2);
+                let elsewhere = Event::SetDisplay {
+                    id: 2,
+                    frame: DISPLAY,
+                    scale: 2.0,
+                    top_band: BAND,
+                    rests: true,
+                };
+                let opened = open(&h);
+                let scene = Event::OverviewScene {
+                    view: view(2),
+                    presses: Vec::new(),
+                };
+                for event in [elsewhere, opened, scene] {
+                    let sent = h.step(event);
+                    let drawn: Vec<_> = batches(&sent).into_iter().map(kinds).collect();
+                    assert!(drawn.is_empty(), "held: {drawn:?}");
+                }
+                assert!(lifecycle(&h).is_landing(), "no turn back");
+
+                h.place(1, view(1).shown[0].1);
+                h.place(2, view(1).shown[1].1);
+                h.advance(ARC);
+                let place = only_batch(&h.step(Event::Tick)).seq;
+                h.commit(place);
+                let sent = h.step(Event::Tick);
+                assert_eq!(kinds(only_batch(&sent)), vec!["lift"]);
+
+                let mut asked = Vec::new();
+                while let Ok((_, replayed)) = h.engine.rx.try_recv() {
+                    asked.extend(asked_frame_zero(&h.step(replayed)));
+                }
+                assert_eq!(h.engine.display_id, Some(2), "the overlay moved");
+                assert_eq!(asked, vec![w(1), w(2)], "frame zero asked there");
+                assert!(lifecycle(&h).generation() != generation, "afresh");
+            }
+
             /// Asked to open while a flight flies, the overview waits for it to lift, then opens in
             /// that same turn, the flight's quiet settled first so nothing it owes lets the service
             /// go under the overview.

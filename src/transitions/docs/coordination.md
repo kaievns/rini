@@ -1091,8 +1091,11 @@ cache takes goes onto its thumb (`Event::Taken`); every scene the reactor lays o
 played from where everything is drawn; and on its close the zoom back in onto the real layout, the
 overlay holed over the windows it lands on, a tick reading those windows where their thumbs end,
 what rests placed a tick ahead, the lift and the quiet. Opened again before that lift, it fills
-those holes in and zooms out again from where everything is drawn. It writes no frame: every press inside it
-placed the real windows as it ran (`src/app/reactor/overview.rs`, `hold_for_overview`).
+those holes in and zooms out again from where everything is drawn. Opened again on another
+display, the overlay's move there held, it lands and lifts first, and the open waits with the move,
+the scenes and the close after it, so it opens afresh on that display. It writes no frame: every
+press inside it placed the real windows as it ran (`src/app/reactor/overview.rs`,
+`hold_for_overview`).
 
 It takes a generation the coordinator reserves for it, so a picture asked for a flight is never
 taken for the overview's, nor the reverse. From its open to its lift it holds the overlay: a flight

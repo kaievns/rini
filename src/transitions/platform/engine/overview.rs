@@ -61,7 +61,8 @@ pub(super) struct Shown {
     widened: bool,
     /// The scene it last played, which the next is logged against.
     played: Option<Scene>,
-    /// What waits for its lift: every flight asked for and every move of the overlay, in order.
+    /// What waits for its lift: every flight asked for and every move of the overlay, and an open
+    /// on another display with what follows it, in order.
     held: Vec<Event>,
 }
 
@@ -106,15 +107,19 @@ impl FlightEngine {
     }
 
     /// `event` held for the overview's lift while it holds the overlay: a flight, or a move of the
-    /// overlay. Handed back otherwise, a flight beginning in its quiet taking the service from it.
+    /// overlay; an open as it closes on another display than the overlay's, which opens afresh
+    /// there after the lift, and the scenes and close after it. Handed back otherwise, a flight
+    /// beginning in its quiet taking the service from it.
     pub(super) fn wait_for_overview(&mut self, event: Event) -> Option<Event> {
-        let waits = matches!(
-            event,
+        let waits = match event {
             Event::Animate { .. }
-                | Event::AnimateSurface { .. }
-                | Event::Bounce { .. }
-                | Event::SetDisplay { .. }
-        );
+            | Event::AnimateSurface { .. }
+            | Event::Bounce { .. }
+            | Event::SetDisplay { .. } => true,
+            Event::OverviewOpen { .. } => self.opens_elsewhere(),
+            Event::OverviewScene { .. } | Event::OverviewClose { .. } => self.open_waits(),
+            _ => false,
+        };
         if !waits {
             return Some(event);
         }
@@ -126,6 +131,28 @@ impl FlightEngine {
             self.drive_overview(Step::Overtaken);
         }
         Some(event)
+    }
+
+    /// Whether an open now, as it closes, is for another display than the one it is drawn on: the
+    /// last move of the overlay it holds is to another display. Zoomed out again there, it would
+    /// draw that display's scene on this one's overlay.
+    fn opens_elsewhere(&self) -> bool {
+        if !self.flights.overview().is_landing() {
+            return false;
+        }
+        let moved_to = self.shown_overview.held.iter().rev().find_map(|event| match event {
+            Event::SetDisplay { id, .. } => Some(*id),
+            _ => None,
+        });
+        moved_to.is_some_and(|id| Some(id) != self.display_id)
+    }
+
+    /// Whether an open waits for the lift among what is held.
+    fn open_waits(&self) -> bool {
+        self.shown_overview
+            .held
+            .iter()
+            .any(|event| matches!(event, Event::OverviewOpen { .. }))
     }
 
     /// The flight an overview waited for has lifted: it opens now, under a generation of its own.
