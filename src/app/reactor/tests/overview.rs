@@ -989,3 +989,155 @@ fn every_scene_and_the_close_are_handed_to_the_engine() {
         ScreenRect::from_cg(reactor.test_frame(w(6)))
     )]);
 }
+
+/// Kai's binds for the sixteen keys he named, as his config writes them.
+const KAIS_BINDS: &str = "binds {
+    Mod+J { focus-column-left; }
+    Mod+L { focus-column-right; }
+    Mod+U { focus-column-first; }
+    Mod+O { focus-column-last; }
+    Mod+K { focus-window-or-monitor-down; }
+    Mod+I { focus-window-or-monitor-up; }
+    Mod+Shift+J { move-window-left; }
+    Mod+Shift+L { move-window-right; }
+    Mod+Shift+U { move-window-to-first; }
+    Mod+Shift+O { move-window-to-last; }
+    Mod+Shift+K { move-window-down-or-to-monitor-down; }
+    Mod+Shift+I { move-window-up-or-to-monitor-up; }
+    Mod+P { focus-workspace-up; }
+    Mod+Semicolon { focus-workspace-down; }
+    Mod+Shift+P { move-window-to-workspace-up; }
+    Mod+Shift+Semicolon { move-window-to-workspace-down; }
+}
+";
+
+/// What the scene a press inside the overview laid out was handed with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Kept {
+    /// No press: a step within a column flies nothing, and the scene slides to its new selection.
+    Slid,
+    Moved,
+    /// A push against an end of the row.
+    PushedAlongRow,
+    /// A push against an end of the stack.
+    PushedAtStackEnd,
+}
+
+/// Each of Kai's sixteen binds pressed inside the overview, lowered as his config's binds are, runs
+/// on the real layout with nothing flying, is kept for the scene as the press it was, a push where
+/// it ran into an end, and leaves the scene selecting the window focus is on, on the workspace
+/// shown; a move keeps the moved window focused and on the axis.
+#[test]
+fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() {
+    use crate::app::config::Config;
+    use crate::app::controller::lower::{Lowered, lower};
+    let config = Config::parse("kai.kdl", KAIS_BINDS).unwrap_or_else(|e| panic!("{}", e.render()));
+    let (mut apps, mut reactor) = desk();
+    reactor.settings_mut().animate = true;
+    let mut rx = reactor.connect_test_transitions();
+    focus(&mut apps, &mut reactor, w(4));
+    press(
+        &mut apps,
+        &mut reactor,
+        LayoutCommand::ToggleFold(Direction::Left),
+    );
+    assert_eq!(
+        reactor.layout().focused_window(),
+        Some(w(4)),
+        "w4 under w3 in one column"
+    );
+    open(&mut apps, &mut reactor);
+    sent(&mut rx);
+
+    use Kept::*;
+    let steps = [
+        ("Mod+I", Slid),
+        ("Mod+K", Slid),
+        ("Mod+L", Moved),
+        ("Mod+L", PushedAlongRow),
+        ("Mod+J", Moved),
+        ("Mod+O", Moved),
+        ("Mod+U", Moved),
+        ("Mod+J", PushedAlongRow),
+        ("Mod+Shift+K", Moved),
+        ("Mod+Shift+I", Moved),
+        ("Mod+Shift+L", Moved),
+        ("Mod+Shift+J", Moved),
+        ("Mod+Shift+O", Moved),
+        ("Mod+Shift+O", PushedAlongRow),
+        ("Mod+Shift+U", Moved),
+        ("Mod+Shift+U", PushedAlongRow),
+        ("Mod+Semicolon", Moved),
+        ("Mod+P", Moved),
+        ("Mod+P", Moved),
+        ("Mod+P", PushedAtStackEnd),
+        ("Mod+Shift+Semicolon", Moved),
+        ("Mod+Shift+P", Moved),
+        ("Mod+Shift+P", PushedAtStackEnd),
+    ];
+    let mut pressed = std::collections::BTreeSet::new();
+    for (key, kept) in steps {
+        let action = config.binds.iter().find(|bind| bind.key == key).expect(key).action.clone();
+        let Lowered::Command(command) = lower(action, &[]) else {
+            panic!("{key} lowers to a command");
+        };
+        let moving = matches!(
+            command,
+            Command::Layout(
+                LayoutCommand::MoveNode(_)
+                    | LayoutCommand::MoveNodeToEnd(_)
+                    | LayoutCommand::MoveWindowToWorkspace { .. }
+            )
+        );
+        let before = reactor.layout().focused_window();
+        batch(&mut apps, &mut reactor, vec![Event::Command(command)]);
+        let events = sent(&mut rx);
+        assert!(
+            !events.iter().any(|event| event.pressed().is_some()),
+            "{key}: nothing flies"
+        );
+        let scenes: Vec<(Scene, Vec<Press>)> = events
+            .into_iter()
+            .filter_map(|event| match event {
+                Engine::OverviewScene { view, presses } => Some((view.scene, presses)),
+                _ => None,
+            })
+            .collect();
+        let [(scene, presses)] = &scenes[..] else {
+            panic!("{key}: one scene, not {scenes:?}");
+        };
+        let was = match presses[..] {
+            [] => Slid,
+            [Press::Moved(_)] => Moved,
+            [Press::Pushed { press: Cue::Switch, overshoot }] => {
+                assert_eq!(overshoot.x, 0.0, "{key}: {overshoot:?}");
+                PushedAtStackEnd
+            }
+            [Press::Pushed { overshoot, .. }] => {
+                assert_eq!(overshoot.y, 0.0, "{key}: {overshoot:?}");
+                PushedAlongRow
+            }
+            _ => panic!("{key}: {presses:?}"),
+        };
+        assert_eq!(was, kept, "{key}: {presses:?}");
+        assert_eq!(Some(scene), reactor.overview_scene());
+        let focused = reactor.layout().focused_window();
+        let shown = reactor.test_active_workspace(space());
+        let row = reactor.test_workspace_ids(space()).iter().position(|id| Some(*id) == shown);
+        assert_eq!(
+            (Some(scene.selected.row), scene.selected.window),
+            (row, focused),
+            "{key}: the selection is the real focus"
+        );
+        if moving {
+            assert_eq!(focused, before, "{key}: the moved window keeps focus");
+            let moved = before.and_then(|window| scene.find(window)).expect("its thumb");
+            assert!(
+                (moved.1.frame.center().x - scene.axis).abs() < 1e-6,
+                "{key}: {moved:?}"
+            );
+        }
+        pressed.insert(key);
+    }
+    assert_eq!(pressed.len(), 16, "every one of Kai's binds");
+}

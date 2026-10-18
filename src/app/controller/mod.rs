@@ -1,7 +1,7 @@
 //! The controller launches app threads, registers the hotkeys and lowers what they fire, and
 //! re-registers them when the config is reloaded.
 
-mod lower;
+pub(in crate::app) mod lower;
 
 use dispatchr::queue;
 use dispatchr::time::Time;

@@ -161,7 +161,9 @@ Every workspace of one display at once, zoomed out, while its key is held.
   crossing beneath it. A press while one plays MUST bend it from where everything is drawn, at the
   speed it is going, as a press merged into a flight does.
 - A press up or down the stack MUST move the ring to that row's current window, the stack panning
-  Slide's way when it scrolls.
+  Slide's way when it scrolls. A step up or down within a column flies nothing, inside it or out,
+  so there is no press to keep; the ring MUST still move to the window it reaches, the scene sliding
+  there, since Kai asked to see the ring move.
 - A press at an end of a row or of the stack MUST bounce it, 72pt on screen.
 - With animation off or in Low Power Mode it MUST open, change and close as cuts.
 - An overview opened while a flight runs MUST wait for that flight to lift, then zoom out from the
