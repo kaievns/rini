@@ -495,8 +495,8 @@ fn the_overview_opens_where_the_layouts_focus_is() {
     );
 }
 
-/// A flight over another display while the overview is open is held as the overview's are, its
-/// windows placed, but it is no press of the overview's: its scene is not told of it.
+/// A flight over another display while the overview is open is held as the overview's are, but it
+/// is no press of the overview's: its scene is not told of it.
 #[test]
 fn a_flight_over_another_display_is_held_but_is_no_press_of_the_overviews() {
     let (mut apps, mut reactor, other) = two_displays();
@@ -522,6 +522,73 @@ fn a_flight_over_another_display_is_held_but_is_no_press_of_the_overviews() {
     reactor.send_flight(space(), flight);
     batch(&mut apps, &mut reactor, Vec::new());
     assert!(matches!(reactor.overview_presses(), [Press::Pushed { .. }]));
+}
+
+/// A flight over another display while the overview is open lands as a cut: its windows are
+/// written where it was taking them at once, and a move from one park to another is judged against
+/// that display, the flight's own, and left out as it is outside the overview.
+#[test]
+fn a_flight_over_another_display_places_its_windows_as_a_cut() {
+    use crate::decorations::domain::style::Worn;
+    use crate::transitions::domain::request::AnimationRequest;
+    use crate::windows::domain::info::WindowServerInfo;
+
+    let (mut apps, mut reactor, other) = two_displays();
+    let mut rx = reactor.connect_test_transitions();
+    open(&mut apps, &mut reactor);
+    let wsid = reactor.test_window_server_id(w(2));
+    let rect = |x: f64, y: f64| CGRect::new(CGPoint::new(x, y), CGSize::new(800., 600.));
+    let mut fly = |reactor: &mut Reactor, from: CGRect, to: CGRect| {
+        let flight = Engine::Animate {
+            windows: vec![AnimationRequest {
+                window: w(2),
+                server_id: wsid,
+                from: ScreenRect::from_cg(from),
+                to: ScreenRect::from_cg(to),
+                floating: false,
+                worn: Worn::default(),
+                strip_before: None,
+                strip_after: None,
+            }],
+            focus: None,
+            focused_before: None,
+            key: None,
+            duration: std::time::Duration::ZERO,
+            look: reactor.settings().look,
+            cause: *reactor.cause(),
+        };
+        assert!(reactor.send_flight(other, flight));
+        assert!(!flew(&mut rx), "held");
+        apps.requests()
+            .into_iter()
+            .filter_map(|request| match request {
+                Request::SetWindowFrame { window, frame, .. } if window == w(2) => Some(frame),
+                _ => None,
+            })
+            .collect::<Vec<CGRect>>()
+    };
+
+    let moved = rect(1600., 100.);
+    assert_eq!(fly(&mut reactor, rect(1500., 100.), moved), vec![moved]);
+
+    let (parked, parked_again) = (rect(2860., 880.), rect(2870., 890.));
+    reactor.window_server().set_window(
+        wsid,
+        Some(WindowServerInfo {
+            id: wsid,
+            pid: 1,
+            layer: 0,
+            frame: parked,
+            min_frame: CGSize::ZERO,
+            max_frame: CGSize::ZERO,
+        }),
+    );
+    assert_eq!(
+        fly(&mut reactor, parked, parked_again),
+        Vec::new(),
+        "park to park on the right display"
+    );
+    assert_eq!(reactor.overview_presses(), []);
 }
 
 /// The overview does not open where the focused display shows a space rini does not manage, and
