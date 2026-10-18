@@ -346,9 +346,12 @@ binds {
     //   focus-column-left / focus-column-right        stop at the end of the strip
     //   focus-column-first / focus-column-last        the first or last column of the strip
     //   focus-window-or-monitor-up / -down            within the column, then the display above/below
+    //   focus-window-or-workspace-up / -down          within the column, then the workspace above/below
     //   move-window-left / move-window-right          a lone window swaps columns; a stacked one leaves as a new column
     //   move-window-to-first / move-window-to-last    the same, to that end of the strip in one press
     //   move-window-up-or-to-monitor-up / move-window-down-or-to-monitor-down
+    //   move-window-up-or-to-workspace-up / move-window-down-or-to-workspace-down
+    //                                                 within the column, then to the workspace above/below, following it
     //   toggle-fold-left / toggle-fold-right          fold the window into the column on that side, or back
     //                                                 out to the row it came from; pressing one key twice undoes it
     //   explode-column                                give every window in the column its own column, in
@@ -399,6 +402,12 @@ binds {
     Mod+Shift+L { move-window-right; }
     Mod+Shift+U { move-window-to-first; }
     Mod+Shift+O { move-window-to-last; }
+
+    // To go on to the workspace above or below at the end of a column, in place of the display:
+    // Mod+J { focus-window-or-workspace-down; }
+    // Mod+K { focus-window-or-workspace-up; }
+    // Mod+Shift+J { move-window-down-or-to-workspace-down; }
+    // Mod+Shift+K { move-window-up-or-to-workspace-up; }
 
     Mod+1 { focus-workspace 1; }
     Mod+2 { focus-workspace 2; }

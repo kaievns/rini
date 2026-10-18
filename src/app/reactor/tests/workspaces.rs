@@ -2540,3 +2540,114 @@ mod query_view {
         assert!(reactor.layout().virtual_workspace_manager().existing_workspaces().is_empty());
     }
 }
+
+/// What the engine was sent and the windows were asked, in order, until everything settled, each
+/// flight's cause left out: it names the press as sent, and when.
+fn everything_sent(
+    apps: &mut Apps,
+    reactor: &mut Reactor,
+    rx: &mut crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
+) -> Vec<String> {
+    let mut seen = Vec::new();
+    let mut drain = |apps: &mut Apps, seen: &mut Vec<String>| {
+        let cause = regex::Regex::new(r"cause: Cause \{ at: Instant \{[^}]*\}, what: [^}]*\}")
+            .expect("a pattern");
+        while let Ok((_, event)) = rx.try_recv() {
+            seen.push(cause.replace_all(&format!("{event:?}"), "cause").into_owned());
+        }
+        seen.extend(apps.requests().iter().map(|request| format!("{request:?}")));
+    };
+    drain(apps, &mut seen);
+    apps.simulate_until_quiet(reactor);
+    drain(apps, &mut seen);
+    seen
+}
+
+/// A press on through the stack under `look`, beside the plain command it means, each on a reactor
+/// of its own set up alike: two windows on the first of four workspaces, the second folded under
+/// the first, then `before` pressed. Both send the engine and the windows the same, and land on the
+/// same window and workspace.
+fn presses_alike(
+    look: crate::animation::domain::choreography::Look,
+    before: &[LayoutCommand],
+    press: LayoutCommand,
+    plain: LayoutCommand,
+) {
+    let run = |command: &LayoutCommand| {
+        let (mut apps, mut reactor, mut rx) = started(test_reactor_with_workspace_count(4));
+        let mut config = reactor.config().clone();
+        config.settings.look = look;
+        reactor.handle_event(Event::ConfigUpdated(Box::new(config)));
+        reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+        reactor.handle_test_layout_command(LayoutCommand::ToggleFold(Direction::Left));
+        for command in before {
+            reactor.handle_test_layout_command(command.clone());
+        }
+        everything_sent(&mut apps, &mut reactor, &mut rx);
+        let focused = reactor.layout().focused_window();
+        reactor.handle_test_layout_command(command.clone());
+        let sent = everything_sent(&mut apps, &mut reactor, &mut rx);
+        let space = SpaceId::new(1);
+        let shown = reactor
+            .test_workspace_ids(space)
+            .iter()
+            .position(|id| Some(*id) == reactor.test_active_workspace(space));
+        let moved = reactor.layout().focused_window() != focused;
+        ((sent, reactor.layout().focused_window(), shown), moved)
+    };
+    let ((pressed, moved), (plainly, _)) = (run(&press), run(&plain));
+    assert!(
+        moved || !pressed.0.is_empty(),
+        "{look:?} {press:?}: the press did something"
+    );
+    assert_eq!(pressed, plainly, "{look:?}: {press:?} as {plain:?}");
+}
+
+/// Under Slide and Zoom, a press on through the stack is the step along the column while the column
+/// goes on, and at its end the switch or the move to the workspace that way, a push at the end of
+/// the stack included: the same flights, frames, landing window and workspace ("Up and down a
+/// column and on through the stack" in `specs/workspaces.md`).
+#[test]
+fn a_press_through_the_stack_flies_as_the_command_it_is() {
+    use rini_ipc::protocol::{RelativeWorkspace, Vertical};
+
+    use crate::animation::domain::choreography::Look;
+    let focus = LayoutCommand::MoveFocusOrWorkspace;
+    let moved = LayoutCommand::MoveNodeOrToWorkspace;
+    let to = |relative| LayoutCommand::MoveWindowToWorkspace {
+        workspace: WorkspaceSelector::Relative(relative),
+        follow: true,
+        window_id: None,
+    };
+    let up = LayoutCommand::MoveFocus(Direction::Up);
+    let down = LayoutCommand::NextWorkspace(None);
+    for look in [Look::Slide, Look::Zoom] {
+        presses_alike(look, &[], focus(Vertical::Up), up.clone());
+        presses_alike(look, &[], focus(Vertical::Down), down.clone());
+        presses_alike(
+            look,
+            std::slice::from_ref(&up),
+            focus(Vertical::Up),
+            LayoutCommand::PrevWorkspace(None),
+        );
+        presses_alike(
+            look,
+            std::slice::from_ref(&down),
+            focus(Vertical::Up),
+            LayoutCommand::PrevWorkspace(None),
+        );
+        presses_alike(
+            look,
+            &[],
+            moved(Vertical::Up),
+            LayoutCommand::MoveNode(Direction::Up),
+        );
+        presses_alike(look, &[], moved(Vertical::Down), to(RelativeWorkspace::Next));
+        presses_alike(
+            look,
+            std::slice::from_ref(&up),
+            moved(Vertical::Up),
+            to(RelativeWorkspace::Prev),
+        );
+    }
+}

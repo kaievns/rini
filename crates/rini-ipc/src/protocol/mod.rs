@@ -13,7 +13,7 @@ mod transport;
 pub use commands::{
     Command, ConfigCommand, LayoutCommand, ReactorCommand, RiniCommand, SwitchScope,
 };
-pub use layout::{Direction, LayoutKind, ResizeOrientation, StripEnd};
+pub use layout::{Direction, LayoutKind, ResizeOrientation, StripEnd, Vertical};
 pub use queries::{
     ApplicationData, ContainerNodeType, ContainerTreeNode, DiagnosticCensusWindow,
     DiagnosticDisplayCensus, DiagnosticSpace, DiagnosticWindow, DiagnosticsData, DisplayData,

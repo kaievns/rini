@@ -65,7 +65,9 @@ merging back.
   and that is not configurable (`specs/focus.md`).
 - Up and down cross displays: `Mod+J` and `Mod+K` move within a column, then to the display below
   or above. The workspace stack is reached by number, `Mod+1`..`Mod+4`, or by `focus-workspace-up`
-  and `-down`, which are unbound by default.
+  and `-down`, which are unbound by default. `focus-window-or-workspace-up` and `-down` go on to the
+  workspace above or below where the column ends instead of the display, and the default config
+  writes them beside `Mod+J` and `Mod+K`.
 - The default binds send a window to another workspace without following it (`focus=false`). The
   action itself follows unless told otherwise, as niri's does.
 - A display's identity is its UUID. macOS mints a new space id on every reconnect: one monitor was
@@ -291,7 +293,8 @@ The default binds, with `Mod` as Alt (`input › mod-key`):
 | `Mod+Ctrl+Q` | save the layout and quit |
 
 Not bound by default: `switch-preset-column-width` (the `Mod+R` the specs name),
-`focus-workspace-up` and `-down`, and the switcher, which goes in `recent-windows › binds`.
+`focus-workspace-up` and `-down`, `focus-window-or-workspace-up` and `-down` and their moves, and
+the switcher, which goes in `recent-windows › binds`.
 
 ## How the project is kept
 

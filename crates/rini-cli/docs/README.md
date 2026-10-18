@@ -34,4 +34,5 @@ rini-cli execute workspace switch 1        # the second workspace: the CLI count
 rini-cli execute window toggle-fold left
 rini-cli execute window focus-last         # the last column of the selected window's strip
 rini-cli execute window move-to-first      # the selected window to the start of its strip
+rini-cli execute window focus-or-workspace up   # up the column, then the workspace above
 ```

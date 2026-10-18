@@ -42,6 +42,9 @@ pub enum Action {
     /// Within the column, then the display below at its end.
     FocusWindowOrMonitorDown,
     FocusWindowOrMonitorUp,
+    /// Within the column, then the workspace below at its end, as `FocusWorkspaceDown` goes.
+    FocusWindowOrWorkspaceDown,
+    FocusWindowOrWorkspaceUp,
     /// A lone window swaps columns; a stacked one leaves as a new column.
     MoveWindowLeft,
     MoveWindowRight,
@@ -51,6 +54,10 @@ pub enum Action {
     MoveWindowToLast,
     MoveWindowDownOrToMonitorDown,
     MoveWindowUpOrToMonitorUp,
+    /// Within the column, then to the workspace below at its end, as `MoveWindowToWorkspaceDown`
+    /// goes with focus following.
+    MoveWindowDownOrToWorkspaceDown,
+    MoveWindowUpOrToWorkspaceUp,
     ToggleFoldLeft,
     ToggleFoldRight,
     /// Every window in the column gets a column of its own.
@@ -315,7 +322,7 @@ mod tests {
 
     #[test]
     fn every_action_name_is_kebab_case_and_counted() {
-        assert_eq!(Action::VARIANTS.len(), 61);
+        assert_eq!(Action::VARIANTS.len(), 65);
         for name in Action::VARIANTS {
             assert!(
                 name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),

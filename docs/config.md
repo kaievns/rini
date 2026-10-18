@@ -141,7 +141,8 @@ take niri's default: off. They were on, and a default-on flag can only be writte
 | `toggle-overview` | open while its bind's modifiers are held and closed when they are let go, or on Escape; every `toggle-overview` bind opens it, each held by its own modifiers; a bind with no modifier is refused, and so are `open-overview` and `close-overview` | Kai's ask, "active while im holding" (`specs/overview.md`); niri's toggles on each press |
 | the `overview` section | refused | rini's overview takes no settings: its depth fits every workspace of the display |
 | `focus-column-first`, `-last` | focus lands on the row it came from, or the column's last when it has fewer | as `focus-column-left` and `-right` land: a rini column keeps no active window of its own (`window-rule › match` above) |
-| `focus-window-or-monitor-down`, `-up` | the only vertical focus | at the column's end it crosses to the display below; niri's `focus-window-down` would not, so it is not offered |
+| `focus-window-or-monitor-down`, `-up`; `focus-window-or-workspace-down`, `-up` | the only vertical focus | at the column's end the first crosses to the display below, the second to the workspace below as `focus-workspace-down` does; niri's `focus-window-down` would stop, so it is not offered |
+| `move-window-down-or-to-workspace-down`, `-up-or-to-workspace-up` | at the column's end the window goes to the workspace below, focus following, as `move-window-to-workspace-down` with its default `focus=true` | takes no `focus=`, as niri's takes none |
 | `set-column-width "+5%"` | relative percentages only | niri's absolute `"50%"` and pixel forms are refused, not yet supported |
 
 rini-only actions keep rini's own words: `move-window-left` and `-right` (a lone window swaps

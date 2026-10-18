@@ -405,12 +405,16 @@ fn action(action: &Action) -> String {
         | Action::FocusColumnLast
         | Action::FocusWindowOrMonitorDown
         | Action::FocusWindowOrMonitorUp
+        | Action::FocusWindowOrWorkspaceDown
+        | Action::FocusWindowOrWorkspaceUp
         | Action::MoveWindowLeft
         | Action::MoveWindowRight
         | Action::MoveWindowToFirst
         | Action::MoveWindowToLast
         | Action::MoveWindowDownOrToMonitorDown
         | Action::MoveWindowUpOrToMonitorUp
+        | Action::MoveWindowDownOrToWorkspaceDown
+        | Action::MoveWindowUpOrToWorkspaceUp
         | Action::ToggleFoldLeft
         | Action::ToggleFoldRight
         | Action::ExplodeColumn

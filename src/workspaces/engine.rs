@@ -755,6 +755,39 @@ impl LayoutEngine {
             EngineCommand::Strip(command) => self.with_target(space, |engine, target| {
                 engine.handle_strip_command(target, command)
             }),
+            EngineCommand::Cross(_) => {
+                let command = self.resolve_cross(window_store, space, command);
+                self.handle_command(
+                    window_store,
+                    memory,
+                    space,
+                    visible_spaces,
+                    visible_space_centers,
+                    command,
+                )
+            }
+        }
+    }
+
+    /// `command` as it is carried out on `space`: a press on through the stack becomes the focus,
+    /// arrange or workspace command its column leaves room for, and anything else is itself. The
+    /// reactor resolves before it reads whether a command switches the workspace.
+    pub fn resolve_cross(
+        &self,
+        window_store: &WindowStore,
+        space: Option<SpaceId>,
+        command: EngineCommand,
+    ) -> EngineCommand {
+        match command {
+            EngineCommand::Cross(press) => {
+                press.resolve(self.column_room(window_store, space, press))
+            }
+            EngineCommand::Focus(_)
+            | EngineCommand::Arrange(_)
+            | EngineCommand::Resize(_)
+            | EngineCommand::Strip(_)
+            | EngineCommand::Floating(_)
+            | EngineCommand::Workspace(_) => command,
         }
     }
 
@@ -1778,6 +1811,136 @@ mod tests {
             "focus moved, so no bounce"
         );
         assert_eq!(fx.engine.focused_window, Some(third));
+    }
+
+    /// The second workspace showing, `top` stacked over `bottom` in one column, focus on `bottom`.
+    fn a_stack_on_the_second_workspace() -> (EngineFixture, SpaceId, WindowId, WindowId) {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(534);
+        let (top, bottom) = (WindowId::new(77, 1), WindowId::new(77, 2));
+        fx.expose(space, CGSize::new(1000.0, 800.0));
+        let second = fx.workspaces(space)[1];
+        fx.show(space, second);
+        let _ = fx.open(space, vec![
+            OnScreenEntry::plain(top),
+            OnScreenEntry::plain(bottom),
+        ]);
+        fx.engine.focused_window = Some(top);
+        let _ = fx.command(space, LayoutCommand::MoveFocus(Direction::Right));
+        let _ = fx.command(space, LayoutCommand::ToggleFold(Direction::Left));
+        assert_eq!(fx.engine.focused_window, Some(bottom), "bottom under top");
+        (fx, space, top, bottom)
+    }
+
+    /// A press on through the stack is the step along the column while the column goes on that way,
+    /// and the step through the stack where it ends, holds one window or holds none; with a floating
+    /// window focused it is the column's step, which takes focus back into the strip.
+    #[test]
+    fn a_press_through_the_stack_resolves_by_the_room_left_in_the_column() {
+        use rini_ipc::protocol::Vertical::{Down, Up};
+
+        use crate::workspaces::domain::command::{ArrangeCommand, FocusCommand, WorkspaceCommand};
+        let (mut fx, space, top, bottom) = a_stack_on_the_second_workspace();
+        let resolved = |fx: &EngineFixture, command: LayoutCommand| {
+            fx.engine.resolve_cross(&fx.windows, Some(space), command.into())
+        };
+        let focus = |way| LayoutCommand::MoveFocusOrWorkspace(way);
+        let moved = |way| LayoutCommand::MoveNodeOrToWorkspace(way);
+        let to = |relative| WorkspaceCommand::MoveWindow {
+            workspace: WorkspaceSelector::Relative(relative),
+            follow: true,
+            window_id: None,
+        };
+
+        assert_eq!(
+            resolved(&fx, focus(Up)),
+            FocusCommand::Move(Direction::Up).into()
+        );
+        assert_eq!(
+            resolved(&fx, moved(Up)),
+            ArrangeCommand::MoveNode(Direction::Up).into()
+        );
+        assert_eq!(resolved(&fx, focus(Down)), WorkspaceCommand::Next(None).into());
+        assert_eq!(resolved(&fx, moved(Down)), to(RelativeWorkspace::Next).into());
+
+        let _ = fx.command(space, focus(Up));
+        assert_eq!(fx.engine.focused_window, Some(top));
+        assert_eq!(resolved(&fx, focus(Up)), WorkspaceCommand::Prev(None).into());
+        assert_eq!(resolved(&fx, moved(Up)), to(RelativeWorkspace::Prev).into());
+        assert_eq!(
+            resolved(&fx, focus(Down)),
+            FocusCommand::Move(Direction::Down).into()
+        );
+
+        let _ = fx.command(space, LayoutCommand::MoveNode(Direction::Right));
+        assert_eq!(
+            resolved(&fx, focus(Down)),
+            WorkspaceCommand::Next(None).into(),
+            "a column of one"
+        );
+
+        fx.float(space, bottom);
+        fx.engine.focused_window = Some(bottom);
+        assert_eq!(
+            resolved(&fx, focus(Up)),
+            FocusCommand::Move(Direction::Up).into()
+        );
+
+        let first = fx.workspaces(space)[0];
+        fx.show(space, first);
+        fx.engine.focused_window = None;
+        assert_eq!(
+            resolved(&fx, focus(Down)),
+            WorkspaceCommand::Next(None).into(),
+            "an empty workspace"
+        );
+        let other = LayoutCommand::MoveFocus(Direction::Up);
+        assert_eq!(
+            resolved(&fx, other.clone()),
+            other.into(),
+            "anything else is itself"
+        );
+    }
+
+    /// Carried out, a press steps along the column, then goes on to the workspace above with focus
+    /// on what a switch there focuses, and at the top of the stack pushes against it as a switch
+    /// does; a move takes the window up its column, then to the workspace above, following it.
+    #[test]
+    fn a_press_through_the_stack_steps_the_column_then_the_stack() {
+        use rini_ipc::protocol::Vertical::Up;
+        let (mut fx, space, top, bottom) = a_stack_on_the_second_workspace();
+        let [first, second] = [0, 1].map(|index| fx.workspaces(space)[index]);
+        let shown = |fx: &EngineFixture| fx.engine.active_workspace(space);
+
+        let stepped = fx.command(space, LayoutCommand::MoveFocusOrWorkspace(Up));
+        assert_eq!((stepped.focus_window, shown(&fx)), (Some(top), Some(second)));
+        let switched = fx.command(space, LayoutCommand::MoveFocusOrWorkspace(Up));
+        assert!(switched.changed);
+        assert_eq!(shown(&fx), Some(first), "on to the workspace above");
+        let pushed = fx.command(space, LayoutCommand::MoveFocusOrWorkspace(Up));
+        assert_eq!(
+            (pushed.changed, pushed.edge_hit),
+            (false, Some(Direction::Up)),
+            "the top of the stack"
+        );
+
+        fx.show(space, second);
+        fx.engine.focused_window = Some(bottom);
+        let _ = fx.event(LayoutEvent::WindowFocused(space, bottom));
+        let _ = fx.command(space, LayoutCommand::MoveNodeOrToWorkspace(Up));
+        assert_eq!(
+            fx.workspace_of(space, bottom),
+            Some(second),
+            "up its column first"
+        );
+        let _ = fx.command(space, LayoutCommand::MoveNodeOrToWorkspace(Up));
+        assert_eq!(
+            fx.workspace_of(space, bottom),
+            Some(first),
+            "then to the workspace above"
+        );
+        assert_eq!(shown(&fx), Some(first), "focus follows it");
+        assert_eq!(fx.workspace_of(space, top), Some(second));
     }
 
     /// Pulling a window out of a stacked column makes a new column and resizes the ones it leaves: not

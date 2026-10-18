@@ -28,7 +28,7 @@ knows the features and converts what they emit.
 | `reactor/state.rs` | `RiniState` |
 | `reactor/events/` | The reducers, one module per event family |
 | `reactor/events/app.rs` | Applications launching, terminating, losing their thread, activating, and the windows each one reports |
-| `reactor/events/command.rs` | The commands: layout commands, closing a window, a config update, saving before exit, and focusing or moving the mouse to a display |
+| `reactor/events/command.rs` | The commands: layout commands, a press on through the stack resolved first so a switch it becomes is one, closing a window, a config update, saving before exit, and focusing or moving the mouse to a display |
 | `reactor/events/drag.rs` | A mouse-up ending a drag: the swap it deferred carried out, and a window dragged onto another display's space moved to that display's strip in its own workspace |
 | `reactor/events/focus.rs` | `resolve`: the space and window a workflow's focus request lands on |
 | `reactor/events/outcome.rs` | `EventOutcome`: what a reducer leaves for after its mutation, in order (window-server updates, discoveries, app requests, raises and refreshes), `absorb`, which merges two, `absorb_ahead`, which takes in what is left of work handed back mid-drain, and `take_work_before_arrange`, which splits off what goes before the arrange and keeps whether it focused a window |

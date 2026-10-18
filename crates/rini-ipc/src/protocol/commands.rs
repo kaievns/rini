@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Direction, DisplaySelector, ResizeOrientation, StripEnd, WindowId, WorkspaceSelector};
+use crate::{
+    Direction, DisplaySelector, ResizeOrientation, StripEnd, Vertical, WindowId, WorkspaceSelector,
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[cfg_attr(test, derive(strum::VariantNames))]
@@ -13,7 +15,13 @@ pub enum LayoutCommand {
     /// Focus the column at that end of the selected window's strip, on the row `MoveFocus` takes
     /// into a column: the selected window's, or the column's last when it has fewer.
     MoveFocusToEnd(StripEnd),
+    /// `MoveFocus` up or down the selected window's column, and where the column ends, or holds
+    /// one window, on to the workspace that way as `PrevWorkspace` or `NextWorkspace` goes.
+    MoveFocusOrWorkspace(Vertical),
     MoveNode(Direction),
+    /// `MoveNode` up or down the selected window's column, and where the column ends, or holds one
+    /// window, on to the workspace that way as `MoveWindowToWorkspace` goes, focus following.
+    MoveNodeOrToWorkspace(Vertical),
     /// Take the selected window to that end of the strip: a lone window's column goes there, and a
     /// stacked window leaves its column as a new column there.
     MoveNodeToEnd(StripEnd),
@@ -217,6 +225,30 @@ mod tests {
         );
         let right = serde_json::json!({ "move_focus_to_end": "right" });
         assert!(serde_json::from_value::<LayoutCommand>(right).is_err());
+    }
+
+    /// A press that goes on through the workspace stack names `up` or `down`, and nothing else.
+    #[test]
+    fn a_press_on_to_the_workspace_names_up_or_down() {
+        let up = serde_json::json!({ "move_focus_or_workspace": "up" });
+        assert_eq!(
+            serde_json::from_value::<LayoutCommand>(up).unwrap(),
+            LayoutCommand::MoveFocusOrWorkspace(Vertical::Up)
+        );
+        assert_eq!(
+            serde_json::to_value(LayoutCommand::MoveNodeOrToWorkspace(Vertical::Down)).unwrap(),
+            serde_json::json!({ "move_node_or_to_workspace": "down" })
+        );
+        let left = serde_json::json!({ "move_focus_or_workspace": "left" });
+        assert!(serde_json::from_value::<LayoutCommand>(left).is_err());
+        assert_eq!(
+            (Vertical::Up.direction(), Vertical::Up.workspace()),
+            (Direction::Up, crate::RelativeWorkspace::Prev)
+        );
+        assert_eq!(
+            (Vertical::Down.direction(), Vertical::Down.workspace()),
+            (Direction::Down, crate::RelativeWorkspace::Next)
+        );
     }
 
     /// The explode is `explode_column`, and `toggle_stack` is no command (`specs/strip.md`).

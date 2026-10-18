@@ -6,7 +6,7 @@ use rini_core::ids::{WindowId as InternalWindowId, WindowServerId};
 use rini_ipc::RiniMachClient;
 use rini_ipc::protocol::{
     self as reactor, DisplaySelector, RiniCommand, RiniRequest, RiniResponse, StripEnd,
-    SwitchScope, WorkspaceSelector,
+    SwitchScope, Vertical, WorkspaceSelector,
 };
 
 #[derive(Parser)]
@@ -157,6 +157,12 @@ enum WindowCommands {
     FocusFirst,
     /// Focus the last column of the selected window's strip
     FocusLast,
+    /// Focus the window above or below in the column, and where the column ends the workspace
+    /// that way, as `workspace prev` or `next` does
+    FocusOrWorkspace {
+        #[arg(value_enum)]
+        direction: CliVertical,
+    },
     /// Toggle window floating state
     ToggleFloat,
     /// Toggle the selected column filling the tiling area, still scrolling with the strip
@@ -169,6 +175,12 @@ enum WindowCommands {
     /// Move the selected window to the end of its strip: a lone window's column goes last, a
     /// stacked window leaves its column as the last column
     MoveToLast,
+    /// Move the selected window up or down its column, and where the column ends to the
+    /// workspace that way, following it
+    MoveOrToWorkspace {
+        #[arg(value_enum)]
+        direction: CliVertical,
+    },
     /// Resize the selected window by a fractional amount.
     /// - Pass a signed floating value: positive to grow, negative to shrink.
     /// - The value is a fraction of the tiling area (e.g. `0.05` = 5%).
@@ -188,6 +200,21 @@ enum WindowCommands {
         #[arg(long, visible_alias = "window-server-id")]
         window_id: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliVertical {
+    Up,
+    Down,
+}
+
+impl From<CliVertical> for Vertical {
+    fn from(value: CliVertical) -> Self {
+        match value {
+            CliVertical::Up => Self::Up,
+            CliVertical::Down => Self::Down,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -447,6 +474,9 @@ fn map_window_command(cmd: WindowCommands) -> Result<RiniCommand, String> {
         },
         WindowCommands::FocusFirst => RiniCommand::Layout(LC::MoveFocusToEnd(StripEnd::First)),
         WindowCommands::FocusLast => RiniCommand::Layout(LC::MoveFocusToEnd(StripEnd::Last)),
+        WindowCommands::FocusOrWorkspace { direction } => {
+            RiniCommand::Layout(LC::MoveFocusOrWorkspace(direction.into()))
+        }
         WindowCommands::ToggleFloat => RiniCommand::Layout(LC::ToggleWindowFloating),
         WindowCommands::ToggleFullscreenWithinGaps => {
             RiniCommand::Layout(LC::ToggleFullscreenWithinGaps)
@@ -456,6 +486,9 @@ fn map_window_command(cmd: WindowCommands) -> Result<RiniCommand, String> {
         }
         WindowCommands::MoveToFirst => RiniCommand::Layout(LC::MoveNodeToEnd(StripEnd::First)),
         WindowCommands::MoveToLast => RiniCommand::Layout(LC::MoveNodeToEnd(StripEnd::Last)),
+        WindowCommands::MoveOrToWorkspace { direction } => {
+            RiniCommand::Layout(LC::MoveNodeOrToWorkspace(direction.into()))
+        }
         WindowCommands::ResizeBy { amount, orientation } => {
             RiniCommand::Layout(LC::ResizeWindowBy {
                 amount,
@@ -823,6 +856,18 @@ mod tests {
             }),
             ("move-to-first", WindowCommands::MoveToFirst),
             ("move-to-last", WindowCommands::MoveToLast),
+            ("focus-or-workspace up", WindowCommands::FocusOrWorkspace {
+                direction: CliVertical::Up,
+            }),
+            ("focus-or-workspace down", WindowCommands::FocusOrWorkspace {
+                direction: CliVertical::Down,
+            }),
+            ("move-or-to-workspace up", WindowCommands::MoveOrToWorkspace {
+                direction: CliVertical::Up,
+            }),
+            ("move-or-to-workspace down", WindowCommands::MoveOrToWorkspace {
+                direction: CliVertical::Down,
+            }),
             ("resize-by", WindowCommands::ResizeBy {
                 amount: 0.05,
                 orientation: CliResizeOrientation::Horizontal,
@@ -837,6 +882,49 @@ mod tests {
                 panic!("{label} and {other} both map to {wire}");
             }
             seen.push((label, wire));
+        }
+    }
+
+    /// `window focus-or-workspace` and `move-or-to-workspace` name up or down, and nothing else.
+    #[test]
+    fn the_presses_on_through_the_stack_name_up_or_down() {
+        use rini_ipc::protocol::LayoutCommand as LC;
+        for (name, way, command) in [
+            (
+                "focus-or-workspace",
+                "up",
+                LC::MoveFocusOrWorkspace(Vertical::Up),
+            ),
+            (
+                "focus-or-workspace",
+                "down",
+                LC::MoveFocusOrWorkspace(Vertical::Down),
+            ),
+            (
+                "move-or-to-workspace",
+                "up",
+                LC::MoveNodeOrToWorkspace(Vertical::Up),
+            ),
+            (
+                "move-or-to-workspace",
+                "down",
+                LC::MoveNodeOrToWorkspace(Vertical::Down),
+            ),
+        ] {
+            let cli = Cli::try_parse_from(["rini-cli", "execute", "window", name, way])
+                .unwrap_or_else(|e| panic!("{name} {way}: {e}"));
+            let Commands::Execute { command: execute } = cli.command else {
+                panic!("{name} is not an execute subcommand");
+            };
+            assert_eq!(
+                build_execute_request(execute).unwrap(),
+                RiniRequest::ExecuteCommand {
+                    command: RiniCommand::Layout(command)
+                },
+                "{name} {way}"
+            );
+            let sideways = Cli::try_parse_from(["rini-cli", "execute", "window", name, "left"]);
+            assert!(sideways.is_err(), "{name} left");
         }
     }
 

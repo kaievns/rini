@@ -310,13 +310,16 @@ pub const NIRI: &[(&str, &str, &str)] = &[
 ];
 
 const CROSSING_FOCUS: &str = "rini's `focus-window-or-monitor-down` and `-up` cross to the next \
-                              display at the column's end; there is no form that stops yet";
+                              display at the column's end, and `focus-window-or-workspace-down` \
+                              and `-up` to the next workspace; there is no form that stops yet";
 const MOVE_WINDOW: &str = "rini's nearest is `move-window-left` or `-right`: a lone window swaps \
                            columns and a stacked one leaves as a new column";
 const MOVE_TO_END: &str = "rini's nearest is `move-window-to-first` or `-to-last`: a lone window's \
                            column goes to that end and a stacked one leaves as a new column there";
 const MOVE_VERTICAL: &str = "rini's nearest is `move-window-down-or-to-monitor-down` or \
-                             `move-window-up-or-to-monitor-up`, which cross displays at the column's end";
+                             `move-window-up-or-to-monitor-up`, which cross displays at the column's \
+                             end, or `move-window-down-or-to-workspace-down` or \
+                             `move-window-up-or-to-workspace-up`, which cross workspaces";
 const FOLD: &str = "rini's nearest is `toggle-fold-left` or `toggle-fold-right`, whose fold-out lands \
                     on the side asked for";
 const CONSUME: &str = "rini's nearest is `toggle-fold-left`, which moves the window into the column \
@@ -371,8 +374,6 @@ pub const NIRI_ACTIONS: &[(&str, &str)] = &[
     ("focus-window-down-or-column-right", NOT_IN_RINI),
     ("focus-window-up-or-column-left", NOT_IN_RINI),
     ("focus-window-up-or-column-right", NOT_IN_RINI),
-    ("focus-window-or-workspace-down", CROSSING_FOCUS),
-    ("focus-window-or-workspace-up", CROSSING_FOCUS),
     ("focus-window-top", NOT_IN_RINI),
     ("focus-window-bottom", NOT_IN_RINI),
     ("focus-window-down-or-top", NOT_IN_RINI),
@@ -386,8 +387,6 @@ pub const NIRI_ACTIONS: &[(&str, &str)] = &[
     ("move-column-to-index", NOT_IN_RINI),
     ("move-window-down", MOVE_VERTICAL),
     ("move-window-up", MOVE_VERTICAL),
-    ("move-window-down-or-to-workspace-down", MOVE_VERTICAL),
-    ("move-window-up-or-to-workspace-up", MOVE_VERTICAL),
     ("consume-or-expel-window-left", FOLD),
     ("consume-or-expel-window-right", FOLD),
     ("consume-window-into-column", CONSUME),

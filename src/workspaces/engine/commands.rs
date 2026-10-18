@@ -7,6 +7,7 @@ use crate::layout::LayoutId;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 
 pub(super) mod arrange;
+pub(super) mod cross;
 pub(super) mod floating;
 pub(super) mod focus;
 pub(super) mod resize;
