@@ -381,9 +381,10 @@ switcher answers "every window I have, wherever it is".
   popup and the commit on release all come from the one session the tap already runs.
 
   The keyboard layer sends Cmd+F17, Cmd+F18 and Cmd+F19 from the same physical keys under every Cmd
-  hold: Kai's two switchers on the first two and, since 2026-10-19, the overview on Cmd+F19, from
-  Cmd+Caps (`overview.md`). Nothing on macOS is bound to those, and rini binds them like any other
-  chord. The concrete mapping belongs to the keyboard layer's config, not to rini.
+  hold: Kai's two switchers on the first two, and Cmd+F19 from Cmd+Caps, which since 2026-10-19 a
+  config MAY bind to the overview in place of a switcher (`overview.md`). Nothing on macOS is bound
+  to those, and rini binds them like any other chord. The concrete mapping belongs to the keyboard
+  layer's config, not to rini.
 
   Three other routes were weighed and rejected:
   - **The keyboard layer's TCP server** (kanata's `push-msg`). It is unauthenticated, and any local
@@ -399,7 +400,8 @@ switcher answers "every window I have, wherever it is".
 > **Decided 2026-09-28.** "Let's just remap all three to F*. It's the same failure modes but cleaner."
 
 - The switcher MUST stay available with nothing of rini's own bound to it, Cmd+Caps (`Super+F19`)
-  included: Kai moved Cmd+Caps to the overview and kept the switcher for whoever binds it.
+  included: Kai asked for Cmd+Caps to move to the overview and the switcher kept for whoever binds
+  it.
   The default config MUST show its binds as examples only, none on `Super+F19`, the overview's
   suggested key, so uncommenting both is not a key bound twice.
 
