@@ -18,7 +18,8 @@
 //! 5. **A mouse event's flags drop a modifier the edges left stuck**, because macOS drops a key-up or
 //!    a flags change after system UI, only when they differ from the last seen, as mouse events are
 //!    the most frequent kind. They close an overview whose hold they show up whether or not they
-//!    differ: a key-down records its flags first, so the click after it would otherwise match.
+//!    differ: a key-down records its flags first, so the click after it would otherwise match. A
+//!    move's flags are read only while the overview is open, and only to close it.
 //! 6. **Inside the overview a mouse button's press is swallowed, and its drags and release with it**,
 //!    since the overlay ignores the mouse and the window under the pointer is hidden behind it. A
 //!    press that went through before it opened finishes as it began, and a press swallowed is
@@ -168,6 +169,16 @@ impl KeyRouter {
             }
         };
         ClickVerdict { swallow, signal }
+    }
+
+    /// A mouse move, its flags read by `flags` only while the overview is open: moves are the most
+    /// frequent event, and outside it nothing needs their flags. Its close when they show the hold
+    /// up.
+    pub fn on_mouse_move(&mut self, flags: impl FnOnce() -> u64) -> Option<Signal> {
+        if !self.switch.overview_is_live() {
+            return None;
+        }
+        self.on_mouse_flags(flags())
     }
 
     /// The flags a mouse event carries; the overview's close when they show its hold up.
@@ -855,6 +866,21 @@ mod tests {
             let verdict = router.on_click(click(Button::Right, phase, alt()));
             assert_eq!(verdict, ClickVerdict::default(), "{phase:?} inside it");
         }
+    }
+
+    /// Alt's release went missing and Kai moved the mouse: the move closes the overview. Outside
+    /// it a move's flags are never read, as moves are the most frequent event.
+    #[test]
+    fn a_mouse_move_with_the_hold_up_closes_the_overview_and_one_outside_it_reads_nothing() {
+        let now = Instant::now();
+        let mut router = overviewing();
+        let unread = || -> u64 { panic!("a move's flags read outside the overview") };
+        assert_eq!(router.on_mouse_move(unread), None);
+
+        opened(&mut router, now);
+        assert_eq!(router.on_mouse_move(alt), None, "Alt still held");
+        assert_eq!(router.on_mouse_move(|| 0), Some(overview(OverviewSignal::Close)));
+        assert_eq!(router.on_mouse_move(unread), None, "and it is over");
     }
 
     #[test]

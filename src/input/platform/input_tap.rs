@@ -440,6 +440,9 @@ impl InputTap {
 
     fn on_event(&self, event_type: CGEventType, event: &CGEvent) -> bool {
         if event_type == CGEventType::MouseMoved {
+            let signal =
+                self.router.borrow_mut().on_mouse_move(|| CGEvent::flags(Some(event)).bits());
+            self.send_switch(signal);
             return self.on_mouse_moved(event);
         }
         if let Some(kind) = key_event_kind(event_type) {
