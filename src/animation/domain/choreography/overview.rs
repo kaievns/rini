@@ -737,20 +737,20 @@ mod tests {
             let (before, after) = (scene(&STRIP, from), scene(&STRIP, to));
             let score = pose(&held(&before));
             let edits = toward(&score, &held(&after), 0.0, Motion::Slide { seconds: PRESS });
-            let still = !tracks(&edits).iter().any(|track| track.node() == Node::Tile(w(9)));
+            let still = !tracks(&edits).iter().any(|track| track.node() == Node::Tile(w(10)));
             (played(&score, &edits), before, (after, still))
         };
         let (score, before, (after, still)) = panned(6, 7);
         assert!(still, "its stack holds it still: nothing moves it");
-        let stays = before.find(w(9)).unwrap().1.holder;
+        let stays = before.find(w(10)).unwrap().1.holder;
         assert!(matches!(stays, Holder::Stack { side: Side::Right, depth: 0 }));
-        assert_eq!(after.find(w(9)).unwrap().1.holder, stays);
-        let at = |t: f64| drawn(&score, 9, t);
+        assert_eq!(after.find(w(10)).unwrap().1.holder, stays);
+        let at = |t: f64| drawn(&score, 10, t);
         for t in [0.0, 0.05, PRESS / 2.0, PRESS - 0.01, PRESS + 0.01] {
             assert!(at(t).is_within(1e-6, at(0.0)), "{t}: {:?}", at(t));
         }
 
-        let (score, before, (after, _)) = panned(5, 6);
+        let (score, before, (after, _)) = panned(4, 5);
         assert!(matches!(before.find(w(7)).unwrap().1.holder, Holder::Stack {
             side: Side::Right,
             ..
@@ -758,6 +758,21 @@ mod tests {
         assert_eq!(after.find(w(7)).unwrap().1.holder, Holder::Row);
         assert!(drawn(&score, 7, 0.0).is_within(1e-6, before.find(w(7)).unwrap().1.frame));
         assert!(drawn(&score, 7, PRESS + 0.01).is_within(1e-6, after.find(w(7)).unwrap().1.frame));
+    }
+
+    /// Every row is drawn over its edge stacks, so the thumb beside a stack, the selected one among
+    /// them, covers the stack's top card where it reaches over it rather than the reverse.
+    #[test]
+    fn every_row_is_drawn_over_its_stacks() {
+        let scene = scene(&STRIP, 3);
+        let order = held(&scene).banding.group_order;
+        let at = |key: GroupKey| order.iter().position(|k| *k == key).unwrap();
+        for row in 0..scene.rows.len() {
+            assert!(
+                at(strip_of(row)) < at(key(row, Part::Stacks)),
+                "row {row}: {order:?}"
+            );
+        }
     }
 
     /// A move keeps the moved window on the axis all the way, the column it passes crossing

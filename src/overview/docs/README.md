@@ -43,11 +43,14 @@ frames, so frame zero is still the screen.
 
 **Stacks are the switcher's turned on their side.** Both draw `chrome`'s card stack
 (`src/chrome/domain/card.rs`): the step, the inset and the three cards drawn are one record, and
-only the overview's `EDGE_INSET` is its own. The pivot,
-the current column or with none the one nearest the axis, never stacks, and no card covers it: a
-top card whose 16pt inset would bring it nearer the pivot than the row's gap beside it is pushed
-out to that gap and sits partly past the edge. Wide columns on a display with one or two rows hit
-this; at depth 0.5 a full-width neighbour's card would otherwise cover 424pt of the selection.
+only the overview's `EDGE_INSET` and `TUCK` are its own. The pivot, the current column or with none
+the one nearest the axis, never stacks. Only the columns from the first that crosses an edge stack
+there; the thumb beside a stack stays in its row, the pivot among them, and every row is drawn over
+its stacks, so that thumb covers the top card where it reaches over it and nothing covers the
+pivot. A column the top card overlapped used to join the stack as its top card, which left a gap as
+wide as that column between the row and the stack (reported 2026-10-19). A top card at its edge
+always reaches under the thumb beside it unless the gap between the two is wider than the inset;
+then it moves in to reach `TUCK` under it.
 
 **A pan is read off one window on the strip in both scenes.** The window the row is aligned on
 after, else the one it was aligned on before, else any window in both. A move along the strip keeps

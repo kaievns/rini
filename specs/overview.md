@@ -70,10 +70,16 @@ Every workspace of one display at once, zoomed out, while its key is held.
   selected row in view. First values for Kai to tune.
 - Columns past either edge MUST collapse into a stack at that edge: the nearest one on top, its
   outer edge 16pt in, each card behind 8pt further out and 12pt shorter at top and bottom, three
-  cards at most, as the switcher stacks an application's windows, on their side. A column the top
-  card overlaps MUST join the stack as its top card. The current column MUST NOT stack, and the top
-  card MUST NOT cover it: it MUST stay the row's gap clear of the current column, partly past the
-  edge where its 16pt inset would bring it nearer. A card not drawn MUST NOT hold a picture.
+  cards at most, as the switcher stacks an application's windows, on their side. The current column
+  MUST NOT stack. The thumb beside a stack MUST stay in its row and be drawn over the stack's top
+  card, the current column among them, and the top card MUST move in from the edge where it would
+  otherwise reach less than 24pt under that thumb: no gap may open between a row and its stacks.
+  A card not drawn MUST NOT hold a picture.
+
+> **Reported 2026-10-19.** "there are gaps between stacks on the sides and next thumbs, leth the
+> strip thumbs overlap the stacks instead so there were no gaps". A column the top card overlapped
+> joined the stack as its top card, leaving a gap as wide as that column between the row and the
+> stack.
 - Two tiled thumbs side by side MUST be at least the card's gap apart, 14pt on screen, each its
   window's place narrowed about its centre with its proportions kept, and a column's windows drawn
   clear of each other with it: at the overview's depth the strip's own gap is under a point, and
