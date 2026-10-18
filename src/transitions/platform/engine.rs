@@ -4492,8 +4492,7 @@ mod tests {
             }
 
             /// Held, every thumb's ring is dressed again as wide on screen under the zoom as it is
-            /// at rest, and narrowed back as the zoom in begins, so the zoom thins it at neither end
-            /// and the selection reads while held.
+            /// at rest, so the selection reads while held, and narrowed back as the zoom in begins.
             #[test]
             fn the_thumbs_rings_are_as_wide_on_screen_as_at_rest_while_held() {
                 let mut h = harness();

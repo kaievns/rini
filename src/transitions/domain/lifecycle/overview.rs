@@ -71,7 +71,8 @@ pub enum Command {
     /// The frame clock started, or stopped: it ticks only while something is to be waited for.
     Clock(bool),
     /// The thumbs' bands drawn as wide on screen as at rest, or at their own width, which the zoom
-    /// thins: wide only while it is held, so neither end of the zoom jumps.
+    /// thins: wide only while it is held, so they thicken as the zoom out lands and thin as the zoom
+    /// in begins (`specs/overview.md`, not yet met).
     Widen(bool),
     /// The flights held while it was up go on, in order.
     Replay,

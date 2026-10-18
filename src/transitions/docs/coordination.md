@@ -1103,8 +1103,10 @@ work it owed the service is asked then, since the overview's hold would otherwis
 by that quiet. A flight beginning in the overview's own quiet takes the service and the report from
 it.
 
-Held, its thumbs' rings and borders are dressed again as wide on screen as at rest
-(`Render::Rewear`); its zoom in begins by narrowing them again, so neither end of the zoom jumps.
+From the end of its zoom out to the start of its zoom in, its thumbs' rings and borders are dressed
+again as wide on screen as at rest (`Render::Rewear`), and through the zoom at their own width,
+which the zoom thins. So they visibly thicken as the zoom out lands and thin as the zoom in begins:
+keeping them steady through the zoom is what `specs/overview.md` marks not yet met.
 
 ## Structural findings
 

@@ -57,9 +57,10 @@ the moved window on the axis, so it pans nothing; the columns it passes change p
 **The ring thins as the overview zooms.** A thumb's ring and border are drawn at their width in the
 strip's points, so the zoom out draws them thinner as it goes, down to the depth's share of their
 width: a 1pt ring is 0.22pt on screen at depth 0.22. While held they are dressed again as wide on
-screen as at rest (`Command::Widen`), and narrowed again as the zoom in begins, so each end of the
-zoom shows them at their width and only the zoom itself thins them. Keeping them at their width
-through the zoom needs each band's width to follow the zoom's track.
+screen as at rest (`Command::Widen`), and narrowed again as the zoom in begins: at rest and while
+held they read at their width, but they thicken at once as the zoom out lands and thin at once as
+the zoom in begins. Keeping them at their width through the zoom needs each band's width to follow
+the zoom's track.
 
 **A click reaches the window under the overview.** The overlay ignores the mouse, so a click
 inside the overview reaches whichever real window is under the pointer behind it
