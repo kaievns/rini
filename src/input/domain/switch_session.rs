@@ -17,17 +17,17 @@
 //! 1. **The modifier's release is never swallowed.** Suppressing that `FlagsChanged` would leave every
 //!    application believing the modifier is still held, forever. The commit rides ON the release and the
 //!    release still goes through.
-//! 2. **A session has a hard deadline**, checked against arriving events rather than kept by a timer.
+//! 2. **A switch has a hard deadline**, checked against arriving events rather than kept by a timer.
 //!    The tap can be rebuilt on a config reload, stood down for ten seconds by its own re-enable
-//!    governor, or have its held-key cache wiped — and a session that believed the modifier was still
-//!    down across any of those would swallow keys with nothing left to release it.
+//!    governor, or have its held-key cache wiped — and a switch that believed the modifier was still
+//!    down across any of those would swallow the arrow keys with nothing left to release it.
 //! 3. **A key that means nothing to the switch passes through.** Swallowing broadly would be the more
 //!    "correct" modal behaviour and is also how a live session turns into a dead keyboard.
 //!
 //! The overview is the same hold with nothing to step: its trigger opens it and its modifiers keep it
 //! open, and every other key passes, so a bind reaches the hotkey table and runs on the real layout.
-//! Its deadline counts from the last key it heard with its hold down rather than from the open, since
-//! a browse is a run of presses, and any key or mouse event whose flags show its hold up closes it
+//! It has no deadline: it stays open for as long as its hold is down, and any key or mouse event
+//! whose flags show the hold up closes it, as the tap replaced or re-enabled does
 //! (`specs/overview.md`).
 
 use std::time::{Duration, Instant};
@@ -38,8 +38,7 @@ use crate::input::domain::binding::{Action, Bind};
 use crate::input::domain::hotkey::modifiers_satisfy;
 use crate::input::domain::key::{KeyCode, Modifiers};
 
-/// How long a switch may stay open before it commits itself, and the overview with no key heard
-/// with its hold down before it closes.
+/// How long a switch may stay open before it commits itself. The overview has none.
 ///
 /// The backstop for every way the tap can lose track of the modifier: a rebuild on config reload, the
 /// re-enable governor's ten-second stand-down, a wiped held-key cache. Longer than any deliberate hold
@@ -216,7 +215,7 @@ pub struct SwitchSession {
 
 #[derive(Debug, Clone, Copy)]
 struct Live {
-    /// Where the deadline counts from: the open for a switch, the last key event for the overview.
+    /// When it opened: a switch's deadline counts from here.
     since: Instant,
     /// Which entry of `keys` opened this session: its key steps it and its modifiers hold it.
     trigger: usize,
@@ -266,9 +265,10 @@ impl SwitchSession {
             return Verdict::PASS;
         }
 
-        // The deadline first, so an event arriving after one is the thing that closes the session
+        // The deadline first, so an event arriving after one is the thing that closes the switch
         // rather than being swallowed by it.
         if let Some(live) = self.live
+            && matches!(self.opens(live), Opens::Switch { .. })
             && event.at.saturating_duration_since(live.since) >= MAX_SESSION
         {
             self.live = None;
@@ -287,11 +287,8 @@ impl SwitchSession {
         let keys = &self.keys[live.trigger];
         let hold_held = modifiers_satisfy(keys.hold, event.modifiers);
         let (opens, forward) = (keys.opens, keys.forward);
-        if opens == Opens::Overview {
-            if !hold_held {
-                return self.let_go(event, forward);
-            }
-            self.live = Some(Live { since: event.at, ..live });
+        if opens == Opens::Overview && !hold_held {
+            return self.let_go(event, forward);
         }
 
         match event.kind {
@@ -313,8 +310,8 @@ impl SwitchSession {
     }
 
     /// An event of any kind whose flags leave out the overview's hold closes it: its release went
-    /// missing, and the keys still coming would otherwise keep pushing its deadline out. A key-down
-    /// goes on to the hotkey table, and the trigger's key-up is eaten as its press was.
+    /// missing, and with no deadline nothing else would. A key-down goes on to the hotkey table, and
+    /// the trigger's key-up is eaten as its press was.
     fn let_go(&mut self, event: KeyEvent, forward: KeyCode) -> Verdict {
         self.live = None;
         let close = Signal::Overview(OverviewSignal::Close);
@@ -325,8 +322,7 @@ impl SwitchSession {
     }
 
     /// The modifiers a mouse event's flags say are held. An overview whose hold they leave out is
-    /// closed: its release went missing, and it would otherwise swallow its trigger until its
-    /// deadline.
+    /// closed: its release went missing, and it would otherwise stay open, holding every flight.
     pub fn on_mouse(&mut self, modifiers: Modifiers) -> Option<Signal> {
         let live = self.live?;
         let keys = &self.keys[live.trigger];
@@ -1015,28 +1011,19 @@ mod tests {
         assert!(session.is_live());
     }
 
-    /// Its deadline counts from the last key it heard, so a browse longer than `MAX_SESSION` stays
-    /// open while keys keep coming.
+    /// Kai looks for as long as he holds Alt: keys and silence past `MAX_SESSION` with the hold
+    /// down leave it open.
     #[test]
-    fn the_overviews_deadline_counts_from_its_last_key() {
+    fn the_overview_stays_open_while_its_hold_is_down_however_long() {
         let base = Instant::now();
         let mut session = opened_overview(base);
-        let pressed = base + MAX_SESSION - Duration::from_secs(1);
+        let looked = base + MAX_SESSION + Duration::from_secs(8);
         assert_eq!(
-            session.on_key(down(KeyCode::KeyJ, Modifiers::ALT_LEFT, pressed)),
+            session.on_key(down(KeyCode::KeyL, Modifiers::ALT_LEFT, looked)),
             Verdict::PASS
         );
-
-        let later = pressed + MAX_SESSION - Duration::from_millis(1);
-        assert_eq!(session.on_key(alt(later)), Verdict::PASS);
-        assert!(session.is_live(), "a key 11s in keeps it open past 12s");
-
-        let late = later + MAX_SESSION;
-        assert_eq!(
-            session.on_key(down(KeyCode::KeyJ, Modifiers::ALT_LEFT, late)),
-            Verdict::pass_with(overview(OverviewSignal::Close))
-        );
-        assert!(!session.is_live());
+        assert_eq!(session.on_key(alt(looked + MAX_SESSION)), Verdict::PASS);
+        assert!(session.is_live(), "Alt held throughout");
     }
 
     /// Alt's release went missing and Kai typed on: the first key with Alt up closes it and goes

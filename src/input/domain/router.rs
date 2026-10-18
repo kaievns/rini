@@ -518,19 +518,21 @@ mod tests {
         );
         assert_eq!(router.on_key(down(KeyCode::KeyJ, left("Ctrl"), now)), passed());
     }
-    /// Kai's binds: the overview on Alt+Slash, Alt+J focusing left and Alt+Shift+J moving left, and
-    /// the switcher on Alt+Q.
+    /// Kai's binds: the overview on Alt+Slash, Alt+J and Alt+L focusing left and right and
+    /// Alt+Shift+J moving left, and the switcher on Alt+Q.
     fn overviewing() -> KeyRouter {
         let mut router = KeyRouter::default();
         let unresolved = router.set_binds(
             vec![
                 bind("Alt+Slash", Action::ToggleOverview, false),
                 bind("Alt+J", Action::FocusColumnLeft, false),
+                bind("Alt+L", Action::FocusColumnRight, false),
                 bind("Alt+Shift+J", Action::MoveWindowLeft, false),
             ],
             |spec| match spec {
                 "Alt+Slash" => Some(Hotkey::new(Modifiers::ALT, KeyCode::Slash)),
                 "Alt+J" => Some(Hotkey::new(Modifiers::ALT, KeyCode::KeyJ)),
+                "Alt+L" => Some(Hotkey::new(Modifiers::ALT, KeyCode::KeyL)),
                 "Alt+Shift+J" => {
                     let mut held = Modifiers::ALT;
                     held.insert(Modifiers::SHIFT);
@@ -664,29 +666,20 @@ mod tests {
         );
     }
 
+    /// "active while im holding the alt": a bind 20s after the open, Alt held throughout and no
+    /// key between, fires and leaves the overview open.
     #[test]
-    fn the_overview_closes_twelve_seconds_after_its_last_key() {
+    fn a_bind_twenty_seconds_into_the_overview_fires_and_leaves_it_open() {
         let now = Instant::now();
         let mut router = overviewing();
         opened(&mut router, now);
-        let pressed = now + Duration::from_secs(10);
-        assert_eq!(
-            router.on_key(down(KeyCode::KeyJ, alt(), pressed)),
-            fired(Action::FocusColumnLeft)
-        );
-        let again = pressed + MAX_SESSION - Duration::from_millis(1);
-        assert_eq!(
-            router.on_key(down(KeyCode::KeyJ, alt(), again)),
-            fired(Action::FocusColumnLeft),
-            "21.999s after the open, 11.999s after its last key: still open"
-        );
 
-        let late = again + MAX_SESSION;
-        assert_eq!(router.on_key(down(KeyCode::KeyJ, alt(), late)), Verdict {
-            swallow: true,
-            signal: Some(overview(OverviewSignal::Close)),
-            action: Some(Action::FocusColumnLeft),
-        });
+        let later = now + Duration::from_secs(20);
+        assert_eq!(
+            router.on_key(down(KeyCode::KeyL, alt(), later)),
+            fired(Action::FocusColumnRight)
+        );
+        assert!(router.close_switch(SessionId(1)), "still open");
     }
 
     /// Alt's release went missing; the next mouse event's flags show it up.

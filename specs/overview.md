@@ -28,12 +28,13 @@ Every workspace of one display at once, zoomed out, while its key is held.
   on the real layout, so there is nothing to cancel.
 - The trigger pressed again while it is open, its autorepeat included, MUST be swallowed and change
   nothing; passed, a held key would close and reopen it.
-- It MUST close when any key or mouse event shows the modifier up, 12s after the last key it heard
-  with the modifier down, and when the event tap is replaced: a session that outlives its modifier
-  swallows keys with nothing left to release it. A key that closes it MUST still go on as it would
-  with the overview shut, but the trigger's key-up, swallowed as its press was. A key with the
-  modifier up MUST NOT keep it open: with the release lost, typing on would push the 12s out for as
-  long as the typing lasts.
+- It MUST close when any key or mouse event shows the modifier up, and when the event tap is
+  replaced: a session that outlives its modifier swallows keys with nothing left to release it. A
+  key that closes it MUST still go on as it would with the overview shut, but the trigger's key-up,
+  swallowed as its press was. It MUST NOT close on a deadline while the modifier is held, however
+  long: Kai asked for it "active while im holding", and a deadline would close it under his hand,
+  his next press then flying on the real layout. The flags are a level, so the first event after
+  a lost release closes it.
 - It MUST open on the focused display only: one overlay flies on one display at a time. A press
   taking focus off that display MUST close it. The other displays MUST keep working while it is
   open, their windows placed as cuts, since the one overlay is the overview's.

@@ -82,7 +82,7 @@ delivery path and the window server blocks each matching event until the callbac
 the cursor live on the reactor side, where the popup will be drawn.
 
 **Three rules there are about not stranding the user**, and each one has a test that fails when it is
-removed: the modifier's release is never swallowed, a session has a hard deadline checked against
+removed: the modifier's release is never swallowed, a switch has a hard deadline checked against
 arriving events rather than a timer, and a key the switch has no use for passes through.
 
 **Its own window, not the animation overlay's.** The overlay is opaque black across the whole display,
