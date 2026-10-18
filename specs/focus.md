@@ -130,12 +130,13 @@ The strip is ONE group. Everything on it stacks together, and nothing off it may
 ## Focus follows mouse
 
 - MAY be enabled by configuration. When on, moving the pointer over a window focuses it.
-- MUST be suppressed during a drag and during an animation, or the pointer chases windows that are
-  moving under it.
+- MUST be suppressed during a drag, during an animation and while the overview is open, or the
+  pointer chases windows that are moving under it or hidden behind the overview
+  (`specs/overview.md`, "Keys inside it").
 - A move must not be acted on more often than the sampling interval, which is longer in low-power mode.
   Every hardware move becoming a window-server query is not acceptable.
-- No key held MUST pause it. `focus-follows-mouse` takes no `suspend-while-held=`, which is not
-  niri's, and a file that writes one MUST be refused.
+- No configurable hotkey MUST pause it while held. `focus-follows-mouse` takes no
+  `suspend-while-held=`, which is not niri's, and a file that writes one MUST be refused.
 
 > **Reported 2026-10-15.** Kai's decision: the hotkey that paused focus-follows-mouse while held goes.
 > It was rift's `focus_follows_mouse_disable_hotkey`, niri has no counterpart, and Kai leaves
