@@ -1020,7 +1020,7 @@ fn the_every_window_switch_offers_one_stack_per_application_in_focus_order() {
 /// windows land on the third application, not on the first one's third window.
 #[test]
 fn a_held_every_window_switch_steps_between_applications_not_windows() {
-    use crate::input::domain::switch_session::Signal;
+    use crate::input::domain::switch_session::{SessionId, Signal};
 
     let (a1, a2, a3) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
     let (b, c) = (WindowId::new(2, 1), WindowId::new(3, 1));
@@ -1030,6 +1030,7 @@ fn a_held_every_window_switch_steps_between_applications_not_windows() {
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
+        session: SessionId(1),
     });
     reactor.dispatch_test_switch(Signal::Step(1));
     let committed = reactor.dispatch_test_switch(Signal::Commit);
@@ -1163,7 +1164,7 @@ fn a_tap_steps_from_the_stack_holding_the_focused_window() {
 /// The popup is sent one row per application: its top window, at most two behind it, and the count.
 #[test]
 fn the_popup_draws_one_stack_per_application() {
-    use crate::input::domain::switch_session::Signal;
+    use crate::input::domain::switch_session::{SessionId, Signal};
     use crate::switcher::platform::actor;
 
     let ghostty: Vec<WindowId> = (1..=4).map(|idx| WindowId::new(1, idx)).collect();
@@ -1178,6 +1179,7 @@ fn the_popup_draws_one_stack_per_application() {
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
+        session: SessionId(1),
     });
 
     let mut drawn = None;
@@ -1205,7 +1207,7 @@ fn the_popup_draws_one_stack_per_application() {
 /// and a tap stays where it is.
 #[test]
 fn a_switch_with_one_entry_opens_no_popup() {
-    use crate::input::domain::switch_session::Signal;
+    use crate::input::domain::switch_session::{SessionId, Signal};
 
     let (first, second) = (WindowId::new(1, 1), WindowId::new(1, 2));
     let (mut reactor, _) = switch_desk(&[(first, 0), (second, 1)], &[second, first]);
@@ -1214,6 +1216,7 @@ fn a_switch_with_one_entry_opens_no_popup() {
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
+        session: SessionId(1),
     });
     let committed = reactor.dispatch_test_switch(Signal::Commit);
 
@@ -1233,7 +1236,7 @@ fn a_switch_with_one_entry_opens_no_popup() {
 /// never a window the stack stands for but does not draw.
 #[test]
 fn a_switch_reads_and_warms_only_the_windows_it_draws() {
-    use crate::input::domain::switch_session::Signal;
+    use crate::input::domain::switch_session::{SessionId, Signal};
 
     let ghostty: Vec<WindowId> = (1..=4).map(|idx| WindowId::new(1, idx)).collect();
     let slack = WindowId::new(2, 1);
@@ -1248,6 +1251,7 @@ fn a_switch_reads_and_warms_only_the_windows_it_draws() {
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
+        session: SessionId(1),
     });
 
     let mut read = Vec::new();
@@ -1412,7 +1416,7 @@ fn a_workspace_switch_is_a_hard_filter_whatever_the_other_display_shows() {
 /// they are, and a held switch over it commits within them.
 #[test]
 fn an_app_switch_stays_inside_the_focused_application() {
-    use crate::input::domain::switch_session::Signal;
+    use crate::input::domain::switch_session::{SessionId, Signal};
 
     let mut reactor = test_reactor();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
@@ -1451,6 +1455,7 @@ fn an_app_switch_stays_inside_the_focused_application() {
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::App,
+        session: SessionId(1),
     });
     let committed = reactor.dispatch_test_switch(Signal::Commit);
     assert_eq!(
@@ -1487,7 +1492,7 @@ fn an_app_switch_with_nothing_focused_offers_nothing() {
 /// input thread; nothing but the commit touches a window.
 #[test]
 fn a_held_switch_focuses_only_on_the_commit() {
-    use crate::input::domain::switch_session::Signal;
+    use crate::input::domain::switch_session::{SessionId, Signal};
 
     let first = WindowId::new(1, 1);
     let second = WindowId::new(2, 1);
@@ -1500,6 +1505,7 @@ fn a_held_switch_focuses_only_on_the_commit() {
     let opened = reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
+        session: SessionId(1),
     });
     assert_eq!(focus_target(&opened), None, "opening a switch focuses nothing");
     let stepped = reactor.dispatch_test_switch(Signal::Step(1));
@@ -1517,7 +1523,7 @@ fn a_held_switch_focuses_only_on_the_commit() {
 /// switch is open. A window the switch does not offer commits nothing rather than something nearby.
 #[test]
 fn a_click_on_a_row_commits_that_window() {
-    use crate::input::domain::switch_session::Signal;
+    use crate::input::domain::switch_session::{SessionId, Signal};
 
     let first = WindowId::new(1, 1);
     let second = WindowId::new(2, 1);
@@ -1534,6 +1540,7 @@ fn a_click_on_a_row_commits_that_window() {
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
+        session: SessionId(1),
     });
     assert_eq!(
         focus_target(&reactor.dispatch_test_pick(WindowId::new(9, 9))),
@@ -1552,11 +1559,36 @@ fn a_click_on_a_row_commits_that_window() {
     );
 }
 
+/// A click ends the tap's session it committed, by its number, so an end the tap hears after the
+/// next switch opened leaves that one open.
+#[test]
+fn a_click_ends_the_session_it_committed() {
+    use crate::input::domain::switch_session::{SessionId, Signal};
+    use crate::input::platform::input_tap::Request as Tap;
+
+    let (first, second) = (WindowId::new(1, 1), WindowId::new(2, 1));
+    let (mut reactor, _) = switch_desk(&[(first, 0), (second, 0)], &[second, first]);
+    let mut tap = reactor.connect_test_event_tap();
+    reactor.dispatch_test_switch(Signal::Open {
+        backward: false,
+        scope: SwitchScope::Everything,
+        session: SessionId(7),
+    });
+    reactor.dispatch_test_pick(first);
+    let mut ended = Vec::new();
+    while let Ok((_, request)) = tap.try_recv() {
+        if let Tap::EndSwitchSession(session) = request {
+            ended.push(session);
+        }
+    }
+    assert_eq!(ended, vec![SessionId(7)]);
+}
+
 /// The panel hands over the window a row is drawn for, which for a stack is its top window. A window
 /// drawn behind is no row of its own.
 #[test]
 fn a_click_on_a_stack_commits_its_top_window() {
-    use crate::input::domain::switch_session::Signal;
+    use crate::input::domain::switch_session::{SessionId, Signal};
 
     let (a1, a2) = (WindowId::new(1, 1), WindowId::new(1, 2));
     let (b1, b2) = (WindowId::new(2, 1), WindowId::new(2, 2));
@@ -1565,6 +1597,7 @@ fn a_click_on_a_stack_commits_its_top_window() {
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
+        session: SessionId(1),
     });
     assert_eq!(
         focus_target(&reactor.dispatch_test_pick(b2)),
@@ -1577,7 +1610,7 @@ fn a_click_on_a_stack_commits_its_top_window() {
 /// Escape leaves everything where it was.
 #[test]
 fn a_cancelled_switch_focuses_nothing() {
-    use crate::input::domain::switch_session::Signal;
+    use crate::input::domain::switch_session::{SessionId, Signal};
 
     let first = WindowId::new(1, 1);
     let second = WindowId::new(2, 1);
@@ -1586,6 +1619,7 @@ fn a_cancelled_switch_focuses_nothing() {
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
+        session: SessionId(1),
     });
     assert!(reactor.switch_is_open(), "two applications: the switch opened");
     reactor.dispatch_test_switch(Signal::Cancel);
@@ -1632,7 +1666,7 @@ fn an_app_switch_quick_tap_toggles_the_two_most_recent() {
 /// the display along — or focus would sit on a window parked off-screen and the key would look dead.
 #[test]
 fn an_app_switch_reaches_a_window_on_another_workspace_with_a_hold() {
-    use crate::input::domain::switch_session::Signal;
+    use crate::input::domain::switch_session::{SessionId, Signal};
 
     let (mut reactor, space, [_, second, elsewhere]) = three_ghosttys();
     assert_eq!(
@@ -1644,6 +1678,7 @@ fn an_app_switch_reaches_a_window_on_another_workspace_with_a_hold() {
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::App,
+        session: SessionId(1),
     });
     reactor.dispatch_test_switch(Signal::Step(1));
     let committed = reactor.dispatch_test_switch(Signal::Commit);

@@ -13,7 +13,7 @@ use tracing::{debug, info};
 use super::events::EventOutcome;
 use super::{Reactor, ScreenInfo};
 use crate::animation::domain::choreography::Cue;
-use crate::input::domain::switch_session::OverviewSignal;
+use crate::input::domain::switch_session::{OverviewSignal, SessionId};
 use crate::overview::domain::scene::{ColumnInput, Laid, OverviewInput, RowInput, Scene, lay_out};
 use crate::transitions::platform::engine::Event as Flight;
 use crate::workspaces::VirtualWorkspaceId;
@@ -30,6 +30,8 @@ pub(super) struct OverviewFeed {
 
 /// An overview in progress.
 pub(super) struct LiveOverview {
+    /// The tap's session it is, which closing it from here ends.
+    session: SessionId,
     /// The space of the display it shows.
     space: SpaceId,
     /// The scene as last laid out.
@@ -69,28 +71,33 @@ impl Reactor {
     pub(super) fn handle_overview_signal(&mut self, signal: OverviewSignal) -> EventOutcome {
         info!(?signal, "overview");
         match signal {
-            OverviewSignal::Open => self.open_overview(),
+            OverviewSignal::Open(session) => self.open_overview(session),
             OverviewSignal::Close => self.close_overview(),
         }
         EventOutcome::no_change()
     }
 
-    /// Opens the overview on the focused display, and warms every workspace of it so its thumbs
-    /// have pictures. Refused, and the tap's session ended, where that display shows a space rini
-    /// does not manage, a native full-screen one included.
-    fn open_overview(&mut self) {
-        if self.overview.live.is_some() {
-            return;
+    /// Opens the overview as the tap's `session` on the focused display, and warms every workspace
+    /// of it so its thumbs have pictures. Refused, and that session ended, where that display shows
+    /// a space rini does not manage, a native full-screen one included. One open as another session
+    /// is closed first: the tap holds one session at a time, and the newest is the one it holds.
+    fn open_overview(&mut self, session: SessionId) {
+        if let Some(live) = &self.overview.live {
+            if live.session == session {
+                return;
+            }
+            self.close_overview();
         }
         let scene = self
             .overview_display()
             .and_then(|space| Some((space, self.lay_out_overview(space, 0.0)?)));
         let Some((space, scene)) = scene else {
             info!("overview refused: the focused display shows no space rini manages");
-            self.end_tap_session();
+            self.end_tap_session(session);
             return;
         };
         self.overview.live = Some(LiveOverview {
+            session,
             space,
             scene,
             pending: None,
@@ -121,7 +128,7 @@ impl Reactor {
     /// left its display or the display is gone. Once per batch of events.
     pub(super) fn relay_overview(&mut self) {
         let Some(live) = &self.overview.live else { return };
-        let (space, scroll) = (live.space, live.scene.scroll);
+        let (session, space, scroll) = (live.session, live.space, live.scene.scroll);
         let scene = if self.focus_left_overview(space) {
             None
         } else {
@@ -130,7 +137,7 @@ impl Reactor {
         let Some(scene) = scene else {
             info!("overview closed: focus left its display, or the display is gone");
             self.close_overview();
-            self.end_tap_session();
+            self.end_tap_session(session);
             return;
         };
         let Some(live) = self.overview.live.as_mut() else {
@@ -198,10 +205,12 @@ impl Reactor {
     /// Whether the overview is open, the windows under the pointer hidden behind it.
     pub(super) fn overview_covers_the_pointer(&self) -> bool { self.overview.live.is_some() }
 
-    /// Tells the tap its session is over from here, so it stops holding keys for it.
-    pub(super) fn end_tap_session(&self) {
+    /// Tells the tap its `session` is over from here, so it stops holding keys for it.
+    pub(super) fn end_tap_session(&self, session: SessionId) {
         if let Some(event_tap_tx) = &self.communication_manager.event_tap_tx {
-            event_tap_tx.send(crate::input::platform::input_tap::Request::EndSwitchSession);
+            event_tap_tx.send(crate::input::platform::input_tap::Request::EndSwitchSession(
+                session,
+            ));
         }
     }
 

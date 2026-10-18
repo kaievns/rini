@@ -27,7 +27,7 @@ use crate::input::domain::held_keys::HeldKeys;
 use crate::input::domain::hotkey::{HotkeyTable, Press};
 use crate::input::domain::key::{Hotkey, KeyCode};
 use crate::input::domain::switch_session::{
-    KeyEvent, KeyEventKind, Signal, SwitchKeys, SwitchSession,
+    KeyEvent, KeyEventKind, SessionId, Signal, SwitchKeys, SwitchSession,
 };
 
 /// One key event, as the tap read it.
@@ -133,9 +133,9 @@ impl KeyRouter {
         self.switch.set_keys(keys)
     }
 
-    /// The far side ended the session: a click on the popup committed the switch. True when one was
-    /// open.
-    pub fn close_switch(&mut self) -> bool { self.switch.close() }
+    /// The far side ended `session`: a click on the popup committed the switch, or the reactor
+    /// refused or closed the overview. True when it was the one open.
+    pub fn close_switch(&mut self, session: SessionId) -> bool { self.switch.close(session) }
 
     /// Every bind, its key free of `Mod`, resolved with `resolve`. Returns the keys it could not.
     pub fn set_binds(
@@ -267,6 +267,7 @@ mod tests {
         Signal::Open {
             backward: false,
             scope: SwitchScope::Everything,
+            session: SessionId(1),
         }
     }
 
@@ -308,7 +309,7 @@ mod tests {
             ..down(KeyCode::KeyQ, left("Ctrl"), now)
         };
         assert_eq!(router.on_key(posted), passed());
-        assert!(!router.close_switch(), "no session was opened");
+        assert!(!router.close_switch(SessionId(1)), "no session was opened");
     }
 
     #[test]
@@ -496,7 +497,7 @@ mod tests {
         let mut router = router();
         switching(&mut router);
         router.on_key(down(KeyCode::KeyQ, left("Ctrl"), now));
-        assert!(router.close_switch());
+        assert!(router.close_switch(SessionId(1)));
         let arrow = router.on_key(down(KeyCode::ArrowLeft, left("Ctrl"), now));
         assert_eq!(arrow, passed());
     }
@@ -565,7 +566,10 @@ mod tests {
     fn opened(router: &mut KeyRouter, at: Instant) {
         router.on_key(stroke(KeyEventKind::FlagsChanged, KeyCode::AltLeft, alt(), at));
         let verdict = router.on_key(down(KeyCode::Slash, alt(), at));
-        assert_eq!(verdict, signalled(true, overview(OverviewSignal::Open)));
+        let Some(Signal::Overview(OverviewSignal::Open(_))) = verdict.signal else {
+            panic!("{verdict:?}")
+        };
+        assert!(verdict.swallow);
     }
 
     fn let_go(at: Instant) -> Keystroke {
@@ -588,7 +592,7 @@ mod tests {
 
         let released = router.on_key(let_go(now));
         assert_eq!(released, signalled(false, overview(OverviewSignal::Close)));
-        assert!(!router.close_switch(), "and it is over");
+        assert!(!router.close_switch(SessionId(1)), "and it is over");
     }
 
     /// Kai's ask: the same keys work inside it, Shift moves included, and act on the real layout.
@@ -608,7 +612,7 @@ mod tests {
         );
         let up = stroke(KeyEventKind::Up, KeyCode::KeyJ, alt(), now);
         assert_eq!(router.on_key(up), passed(), "a bound key's up goes through");
-        assert!(router.close_switch(), "and the overview stays open");
+        assert!(router.close_switch(SessionId(1)), "and the overview stays open");
     }
 
     #[test]
@@ -619,7 +623,7 @@ mod tests {
         for key in [KeyCode::KeyA, KeyCode::ArrowLeft] {
             assert_eq!(router.on_key(down(key, alt(), now)), passed(), "{key:?}");
         }
-        assert!(router.close_switch(), "and it is still open");
+        assert!(router.close_switch(SessionId(1)), "and it is still open");
     }
 
     #[test]
@@ -694,7 +698,7 @@ mod tests {
 
         assert_eq!(router.on_mouse_flags(alt()), None, "flags unchanged");
         assert_eq!(router.on_mouse_flags(0), Some(overview(OverviewSignal::Close)));
-        assert!(!router.close_switch());
+        assert!(!router.close_switch(SessionId(1)));
     }
 
     /// A key with no name records its flags and asks nothing more, so the click after it carries
@@ -711,7 +715,7 @@ mod tests {
         assert_eq!(router.on_key(nameless), passed());
 
         assert_eq!(router.on_mouse_flags(0), Some(overview(OverviewSignal::Close)));
-        assert!(!router.close_switch());
+        assert!(!router.close_switch(SessionId(1)));
     }
 
     /// Alt's release went missing: the next key closes the overview and goes on to the application.
@@ -725,7 +729,7 @@ mod tests {
             signalled(false, overview(OverviewSignal::Close))
         );
         assert_eq!(router.on_mouse_flags(0), None, "nothing left to close");
-        assert!(!router.close_switch());
+        assert!(!router.close_switch(SessionId(1)));
     }
 
     #[test]

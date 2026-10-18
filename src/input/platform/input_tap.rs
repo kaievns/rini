@@ -25,7 +25,7 @@ use crate::input::domain::binding::Bind;
 use crate::input::domain::key::Hotkey;
 use crate::input::domain::pointer;
 use crate::input::domain::router::{KeyRouter, Keystroke};
-use crate::input::domain::switch_session::{KeyEventKind, Signal, SwitchKeys};
+use crate::input::domain::switch_session::{KeyEventKind, SessionId, Signal, SwitchKeys};
 use crate::input::event::{Event, EventSink, LeftPress, OnLeftPress};
 use crate::input::platform::keyboard::key_code_from_event;
 use crate::input::platform::{cursor, tap};
@@ -49,8 +49,9 @@ pub enum Request {
     /// The keys each switcher's session answers to; empty disables them all.
     SetSwitchKeys(Vec<SwitchKeys>),
     /// The session was ended from outside the tap — a switch committed by a click on the popup, an
-    /// overview the reactor refused or closed — so stop treating it as open.
-    EndSwitchSession,
+    /// overview the reactor refused or closed — so stop treating it as open, unless a later one
+    /// has opened since.
+    EndSwitchSession(SessionId),
 }
 
 pub struct InputTap {
@@ -367,8 +368,8 @@ impl InputTap {
                 let signal = self.router.borrow_mut().set_switch_keys(keys);
                 self.send_switch(signal);
             }
-            Request::EndSwitchSession => {
-                if self.router.borrow_mut().close_switch() {
+            Request::EndSwitchSession(session) => {
+                if self.router.borrow_mut().close_switch(session) {
                     debug!("session ended from outside the tap");
                 }
             }

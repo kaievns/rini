@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 
 use super::Reactor;
 use super::events::{EventOutcome, command};
-use crate::input::domain::switch_session::Signal as SwitchSignal;
+use crate::input::domain::switch_session::{SessionId, Signal as SwitchSignal};
 use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, switch_list};
 use crate::switcher::domain::entries::{Entry, entries};
 use crate::switcher::domain::selection::Selection;
@@ -21,6 +21,8 @@ use crate::switcher::domain::selection::Selection;
 pub(super) struct LiveSwitch {
     list: Vec<Entry>,
     cursor: Selection,
+    /// The tap's session it is, which a click ends.
+    session: SessionId,
 }
 
 impl Reactor {
@@ -100,7 +102,7 @@ impl Reactor {
     /// through windows the user never asked to see.
     pub(super) fn handle_switch_signal(&mut self, signal: SwitchSignal) -> EventOutcome {
         match signal {
-            SwitchSignal::Open { backward, scope } => {
+            SwitchSignal::Open { backward, scope, session } => {
                 // No scope to resolve — an application switch with nothing focused — opens nothing,
                 // and the commit that follows finds no live switch and does nothing either.
                 let resolved = self.switch_scope(scope);
@@ -124,7 +126,7 @@ impl Reactor {
                     if backward {
                         cursor.step(-2);
                     }
-                    Some(LiveSwitch { list, cursor })
+                    Some(LiveSwitch { list, cursor, session })
                 });
                 self.draw_switch();
                 EventOutcome::no_change()
@@ -177,7 +179,8 @@ impl Reactor {
             return EventOutcome::no_change();
         };
         switch.cursor.select(index);
-        self.end_tap_session();
+        let session = switch.session;
+        self.end_tap_session(session);
         self.handle_switch_signal(SwitchSignal::Commit)
     }
 

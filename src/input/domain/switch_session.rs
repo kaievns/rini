@@ -119,12 +119,21 @@ where F: Fn(&str) -> Option<(Modifiers, KeyCode)> {
         .collect()
 }
 
+/// Which session the tap opened, counted from 1 since the tap started: the far side ends a session
+/// by its number, so an end that reaches the tap after the next session opened ends nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionId(pub u64);
+
 /// What the tap should tell the reactor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signal {
-    /// Begin a switch over `scope`. The reactor builds the list and selects the second entry, so an
-    /// Open followed straight by a Commit is the quick tap.
-    Open { backward: bool, scope: SwitchScope },
+    /// Begin switch `session` over `scope`. The reactor builds the list and selects the second
+    /// entry, so an Open followed straight by a Commit is the quick tap.
+    Open {
+        backward: bool,
+        scope: SwitchScope,
+        session: SessionId,
+    },
     /// Move the selection. Negative steps backward.
     Step(isize),
     /// Focus the selection and end the switch.
@@ -138,7 +147,8 @@ pub enum Signal {
 /// What the tap tells the reactor about the overview.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverviewSignal {
-    Open,
+    /// It opened as `session`.
+    Open(SessionId),
     /// Its hold was let go or lost, Escape was pressed, or the tap stopped trusting the keys. Nothing
     /// is undone: every press inside it already ran.
     Close,
@@ -200,6 +210,8 @@ pub struct SwitchSession {
     /// whichever opened it.
     keys: Vec<SwitchKeys>,
     live: Option<Live>,
+    /// How many sessions have opened: the last one's number.
+    opened: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -208,6 +220,7 @@ struct Live {
     since: Instant,
     /// Which entry of `keys` opened this session: its key steps it and its modifiers hold it.
     trigger: usize,
+    session: SessionId,
 }
 
 impl SwitchSession {
@@ -232,12 +245,20 @@ impl SwitchSession {
         self.live.take().map(|live| self.opens(live).released())
     }
 
-    /// End a live session that the far side has already ended, with nothing to tell it.
+    /// End `session`, which the far side has already ended, with nothing to tell it.
     ///
     /// A click on a popup row commits from the reactor, not from here, so the tap has to stop treating
     /// the switch as open: otherwise it would keep swallowing the arrow keys until the modifier is let
-    /// go, and send a second commit on that release. True when there was a session to end.
-    pub fn close(&mut self) -> bool { self.live.take().is_some() }
+    /// go, and send a second commit on that release. A later session is left open: the end crossed
+    /// its open on the way, and closing it would leave the far side holding it open with nothing
+    /// left to close it. True when `session` was live.
+    pub fn close(&mut self, session: SessionId) -> bool {
+        if !self.live.is_some_and(|live| live.session == session) {
+            return false;
+        }
+        self.live = None;
+        true
+    }
 
     /// The whole decision, for one key event.
     pub fn on_key(&mut self, event: KeyEvent) -> Verdict {
@@ -329,14 +350,21 @@ impl SwitchSession {
             // rather than opening a session that cannot close.
             return Verdict::PASS;
         }
+        self.opened += 1;
+        let session = SessionId(self.opened);
         let signal = match keys.opens {
             Opens::Switch { scope, backward } => Signal::Open {
                 backward: modifiers_satisfy(backward, event.modifiers),
                 scope,
+                session,
             },
-            Opens::Overview => Signal::Overview(OverviewSignal::Open),
+            Opens::Overview => Signal::Overview(OverviewSignal::Open(session)),
         };
-        self.live = Some(Live { since: event.at, trigger });
+        self.live = Some(Live {
+            since: event.at,
+            trigger,
+            session,
+        });
         Verdict::eat_with(signal)
     }
 
@@ -475,7 +503,8 @@ mod tests {
             swallow: true,
             signal: Some(Signal::Open {
                 backward: false,
-                scope: SwitchScope::Everything
+                scope: SwitchScope::Everything,
+                session: SessionId(1),
             })
         });
         assert!(session.is_live());
@@ -546,7 +575,8 @@ mod tests {
             swallow: true,
             signal: Some(Signal::Open {
                 backward: true,
-                scope: SwitchScope::Everything
+                scope: SwitchScope::Everything,
+                session: SessionId(1),
             })
         });
 
@@ -822,7 +852,8 @@ mod tests {
             opened.signal,
             Some(Signal::Open {
                 backward: false,
-                scope: SwitchScope::Workspace
+                scope: SwitchScope::Workspace,
+                session: SessionId(1),
             })
         );
         session.on_key(flags(Modifiers::empty(), at(base, 50)));
@@ -832,7 +863,8 @@ mod tests {
             opened.signal,
             Some(Signal::Open {
                 backward: false,
-                scope: SwitchScope::Everything
+                scope: SwitchScope::Everything,
+                session: SessionId(2),
             })
         );
     }
@@ -849,7 +881,8 @@ mod tests {
             opened.signal,
             Some(Signal::Open {
                 backward: false,
-                scope: SwitchScope::App
+                scope: SwitchScope::App,
+                session: SessionId(1),
             })
         );
     }
@@ -899,7 +932,7 @@ mod tests {
         let mut session = session();
         session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, base));
 
-        assert!(session.close());
+        assert!(session.close(SessionId(1)));
         assert!(!session.is_live());
         assert_eq!(
             session.on_key(down(KeyCode::ArrowRight, Modifiers::CONTROL_LEFT, at(base, 40))),
@@ -911,7 +944,7 @@ mod tests {
             Verdict::PASS,
             "and the release commits nothing a second time"
         );
-        assert!(!session.close(), "nothing left to close");
+        assert!(!session.close(SessionId(1)), "nothing left to close");
     }
     fn alt(when: Instant) -> KeyEvent {
         KeyEvent {
@@ -938,8 +971,32 @@ mod tests {
     fn opened_overview(base: Instant) -> SwitchSession {
         let mut session = with_overview();
         let opened = session.on_key(down(KeyCode::Slash, Modifiers::ALT_LEFT, base));
-        assert_eq!(opened, Verdict::eat_with(overview(OverviewSignal::Open)));
+        assert_eq!(
+            opened,
+            Verdict::eat_with(overview(OverviewSignal::Open(SessionId(1))))
+        );
         session
+    }
+
+    /// The far side ends the session it names and no other: an end that crossed the next open on
+    /// its way leaves that one open, held as before, and its release still closes it.
+    #[test]
+    fn an_end_for_a_session_already_over_leaves_the_next_one_open() {
+        let base = Instant::now();
+        let mut session = opened_overview(base);
+        session.on_key(flags(Modifiers::empty(), at(base, 40)));
+        let reopened = session.on_key(down(KeyCode::Slash, Modifiers::ALT_LEFT, at(base, 80)));
+        assert_eq!(
+            reopened,
+            Verdict::eat_with(overview(OverviewSignal::Open(SessionId(2))))
+        );
+
+        assert!(!session.close(SessionId(1)), "the first is over");
+        assert!(session.is_live(), "and the second open");
+        assert_eq!(
+            session.on_key(flags(Modifiers::empty(), at(base, 120))),
+            Verdict::pass_with(overview(OverviewSignal::Close))
+        );
     }
 
     /// The overview has no selection to step on the tap's side: every other key passes, so the
@@ -1155,7 +1212,10 @@ mod tests {
         let mut session = SwitchSession::default();
         session.set_keys(keys);
         let second = session.on_key(down(KeyCode::Slash, Modifiers::CONTROL_LEFT, base));
-        assert_eq!(second, Verdict::eat_with(overview(OverviewSignal::Open)));
+        assert_eq!(
+            second,
+            Verdict::eat_with(overview(OverviewSignal::Open(SessionId(1))))
+        );
         assert_eq!(
             session.on_key(down(KeyCode::Slash, Modifiers::CONTROL_LEFT, at(base, 30))),
             Verdict::eat(),

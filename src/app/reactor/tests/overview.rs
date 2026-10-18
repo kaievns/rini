@@ -14,7 +14,11 @@ use crate::app::reactor::overview::Press;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::tests::fixtures::strip_movements;
 use crate::app::reactor::*;
-use crate::input::domain::switch_session::{OverviewSignal, Signal};
+use crate::input::domain::key::{KeyCode, Modifiers, modifier_mask_for_key};
+use crate::input::domain::router::{KeyRouter, Keystroke};
+use crate::input::domain::switch_session::{
+    KeyEventKind, Opens, OverviewSignal, SessionId, Signal, SwitchKeys,
+};
 use crate::input::platform::input_tap::Request as Tap;
 use crate::transitions::platform::engine::Event as Engine;
 use crate::windows::domain::request::Request;
@@ -74,7 +78,7 @@ fn overview(signal: OverviewSignal) -> Event { Event::Switch(Signal::Overview(si
 fn layout(command: LayoutCommand) -> Event { Event::Command(Command::Layout(command)) }
 
 fn open(apps: &mut Apps, reactor: &mut Reactor) {
-    batch(apps, reactor, vec![overview(OverviewSignal::Open)]);
+    batch(apps, reactor, vec![overview(OverviewSignal::Open(SessionId(1)))]);
     assert!(reactor.overview_is_open());
 }
 
@@ -110,7 +114,7 @@ fn selected(reactor: &Reactor) -> (usize, Option<WindowId>) {
 #[test]
 fn the_overview_opens_and_closes_on_the_taps_signals_and_changes_nothing() {
     let (mut apps, mut reactor) = desk();
-    let opened = reactor.dispatch_test_switch(Signal::Overview(OverviewSignal::Open));
+    let opened = reactor.dispatch_test_switch(Signal::Overview(OverviewSignal::Open(SessionId(1))));
     assert!(reactor.overview_is_open());
     assert!(!reactor.switch_is_open());
     assert!(opened.raise_requests.is_empty() && opened.focused_window.is_none());
@@ -344,21 +348,133 @@ fn focus_leaving_the_display_closes_the_overview() {
     open(&mut apps, &mut reactor);
     the_tap_was_sent(&mut tap);
 
-    let wsid = reactor.test_window_server_id(w(2));
-    batch(&mut apps, &mut reactor, vec![Event::Command(Command::Reactor(
-        ReactorCommand::FocusWindow {
-            window_id: w(2).into(),
-            window_server_id: Some(wsid.as_u32()),
-        },
-    ))]);
+    focus_the_right_display(&mut apps, &mut reactor);
     assert_eq!(reactor.layout().focused_window(), Some(w(2)));
     assert!(!reactor.overview_is_open());
     assert!(
         the_tap_was_sent(&mut tap)
             .iter()
-            .any(|request| matches!(request, Tap::EndSwitchSession)),
+            .any(|request| matches!(request, Tap::EndSwitchSession(SessionId(1)))),
         "the tap's session is ended"
     );
+}
+
+/// A press focusing w2, on the right display of `two_displays`, and w2 the key window.
+fn focus_the_right_display(apps: &mut Apps, reactor: &mut Reactor) {
+    let wsid = reactor.test_window_server_id(w(2));
+    batch(apps, reactor, vec![Event::Command(Command::Reactor(
+        ReactorCommand::FocusWindow {
+            window_id: w(2).into(),
+            window_server_id: Some(wsid.as_u32()),
+        },
+    ))]);
+    reactor.set_test_focus(w(2));
+}
+
+/// The tap's side, for a test to hold its requests back and hand them over late: the overview on
+/// Alt+Slash.
+struct Keys {
+    router: KeyRouter,
+    at: std::time::Instant,
+}
+
+impl Keys {
+    fn new() -> Self {
+        let mut router = KeyRouter::default();
+        router.set_switch_keys(vec![SwitchKeys {
+            opens: Opens::Overview,
+            forward: KeyCode::Slash,
+            hold: Modifiers::ALT,
+        }]);
+        Self {
+            router,
+            at: std::time::Instant::now(),
+        }
+    }
+
+    fn stroke(&mut self, kind: KeyEventKind, key: KeyCode, flags: u64) -> Option<Signal> {
+        self.router
+            .on_key(Keystroke {
+                kind,
+                key: Some(key),
+                flags,
+                repeat: false,
+                synthetic: false,
+                at: self.at,
+            })
+            .signal
+    }
+
+    fn alt() -> u64 { modifier_mask_for_key(KeyCode::AltLeft).unwrap() }
+
+    /// Alt, then Slash: what the tap tells the reactor.
+    fn open(&mut self) -> Option<Signal> {
+        self.stroke(KeyEventKind::FlagsChanged, KeyCode::AltLeft, Self::alt());
+        self.stroke(KeyEventKind::Down, KeyCode::Slash, Self::alt())
+    }
+
+    fn let_go(&mut self) -> Option<Signal> {
+        self.stroke(KeyEventKind::FlagsChanged, KeyCode::AltLeft, 0)
+    }
+
+    /// The tap carrying out what the reactor asked of it.
+    fn hand_over(&mut self, requests: Vec<Tap>) {
+        for request in requests {
+            if let Tap::EndSwitchSession(session) = request {
+                self.router.close_switch(session);
+            }
+        }
+    }
+}
+
+/// The reactor ends the tap's session as focus leaves the display, and Alt is let go and the
+/// overview opened again before the end reaches the tap: the end closes only the session it names,
+/// so the tap still holds the new one, and letting go of Alt closes the reactor's overview.
+#[test]
+fn an_end_reaching_the_tap_after_the_overview_reopened_closes_nothing() {
+    let (mut apps, mut reactor, _) = two_displays();
+    let mut tap = reactor.connect_test_event_tap();
+    let mut keys = Keys::new();
+    let signals = |signals: Vec<Option<Signal>>| signals.into_iter().flatten().map(Event::Switch);
+
+    batch(&mut apps, &mut reactor, signals(vec![keys.open()]).collect());
+    assert!(reactor.overview_is_open());
+    focus_the_right_display(&mut apps, &mut reactor);
+    assert!(!reactor.overview_is_open());
+    let late = the_tap_was_sent(&mut tap);
+
+    let again: Vec<Event> = signals(vec![keys.let_go(), keys.open()]).collect();
+    batch(&mut apps, &mut reactor, again);
+    assert!(reactor.overview_is_open(), "open again, on the right display");
+    keys.hand_over(late);
+
+    let released = signals(vec![keys.let_go()]).collect::<Vec<_>>();
+    assert!(!released.is_empty(), "the tap still holds it");
+    batch(&mut apps, &mut reactor, released);
+    assert!(!reactor.overview_is_open());
+}
+
+/// The tap opening another session while one is open here closes this one, so the session the
+/// reactor ends is the tap's newest.
+#[test]
+fn an_overview_opened_as_another_session_is_that_session() {
+    let (mut apps, mut reactor, _) = two_displays();
+    let mut tap = reactor.connect_test_event_tap();
+    for session in [1, 2] {
+        batch(&mut apps, &mut reactor, vec![overview(OverviewSignal::Open(
+            SessionId(session),
+        ))]);
+    }
+    the_tap_was_sent(&mut tap);
+    focus_the_right_display(&mut apps, &mut reactor);
+    let ended: Vec<SessionId> = the_tap_was_sent(&mut tap)
+        .into_iter()
+        .filter_map(|request| match request {
+            Tap::EndSwitchSession(session) => Some(session),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ended, vec![SessionId(2)]);
 }
 
 /// A flight over another display while the overview is open is held as the overview's are, its
@@ -400,12 +516,14 @@ fn the_overview_does_not_open_on_a_space_rini_does_not_manage() {
     )));
     apps.simulate_until_quiet(&mut reactor);
     let mut tap = reactor.connect_test_event_tap();
-    batch(&mut apps, &mut reactor, vec![overview(OverviewSignal::Open)]);
+    batch(&mut apps, &mut reactor, vec![overview(OverviewSignal::Open(
+        SessionId(1),
+    ))]);
     assert!(!reactor.overview_is_open());
     assert!(
         the_tap_was_sent(&mut tap)
             .iter()
-            .any(|request| matches!(request, Tap::EndSwitchSession))
+            .any(|request| matches!(request, Tap::EndSwitchSession(SessionId(1))))
     );
 }
 
@@ -621,7 +739,7 @@ fn nothing_is_held_once_the_overview_closes() {
     let mut rx = reactor.connect_test_transitions();
     let mut tap = reactor.connect_test_event_tap();
     batch(&mut apps, &mut reactor, vec![
-        overview(OverviewSignal::Open),
+        overview(OverviewSignal::Open(SessionId(1))),
         layout(LayoutCommand::MoveFocus(Direction::Right)),
         overview(OverviewSignal::Close),
     ]);

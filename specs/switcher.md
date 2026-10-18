@@ -201,6 +201,12 @@ switcher answers "every window I have, wherever it is".
 > **Asked 2026-09-24, built 2026-09-28.** "It should also accept arrow keys and mouse clicks too like a
 > normal window switcher popup."
 
+- That end MUST end only the session the click committed. A switch opened since, before the end
+  reached the tap, MUST stay open, or its popup stays up with nothing left to commit it.
+
+> **Found 2026-10-18, not reported.** Review of the overview's wiring showed an end from rini could
+> cross the next session's open on its way to the tap and close that one there.
+
 ## The pictures
 
 - A row's top card MUST show a picture of its window where one is available, scaled to fit rather than
