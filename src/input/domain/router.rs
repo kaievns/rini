@@ -711,6 +711,51 @@ mod tests {
         assert!(router.close_switch(SessionId(1)), "and it is still open");
     }
 
+    /// Held by `Mod` itself, the overview looks a key up with the sides as pressed: a bind on the
+    /// right Alt fires on it, and one on the left Alt does not.
+    #[test]
+    fn inside_an_overview_held_by_mod_a_side_bind_keeps_its_side() {
+        let now = Instant::now();
+        let mut router = KeyRouter::default();
+        let unresolved = router.set_binds(
+            vec![
+                bind("Alt+Slash", Action::ToggleOverview, false),
+                bind("AltRight+J", Action::FocusColumnLeft, false),
+                bind("AltLeft+L", Action::FocusColumnRight, false),
+            ],
+            |spec| match spec {
+                "Alt+Slash" => Some(Hotkey::new(Modifiers::ALT, KeyCode::Slash)),
+                "AltRight+J" => Some(Hotkey::new(Modifiers::ALT_RIGHT, KeyCode::KeyJ)),
+                "AltLeft+L" => Some(Hotkey::new(Modifiers::ALT_LEFT, KeyCode::KeyL)),
+                _ => None,
+            },
+        );
+        assert!(unresolved.is_empty());
+        router.set_switch_keys(vec![SwitchKeys {
+            opens: Opens::Overview { mod_key: ModKey::Alt },
+            forward: KeyCode::Slash,
+            hold: Modifiers::ALT,
+        }]);
+        let right_alt = family("Alt").mask | family("Alt").right_mask;
+        router.on_key(stroke(
+            KeyEventKind::FlagsChanged,
+            KeyCode::AltRight,
+            right_alt,
+            now,
+        ));
+        let opened = router.on_key(down(KeyCode::Slash, right_alt, now));
+        assert_eq!(
+            opened,
+            signalled(true, overview(OverviewSignal::Open(SessionId(1))))
+        );
+        assert_eq!(
+            router.on_key(down(KeyCode::KeyJ, right_alt, now)),
+            fired(Action::FocusColumnLeft)
+        );
+        assert_eq!(router.on_key(down(KeyCode::KeyL, right_alt, now)), eaten());
+        assert!(router.close_switch(SessionId(1)), "and it is still open");
+    }
+
     /// Kai's binds as `Mod`, Alt, resolves them, with the overview on `trigger` held by `hold`.
     fn overview_held(trigger: KeyCode, hold: Modifiers) -> KeyRouter {
         let mut router = KeyRouter::default();

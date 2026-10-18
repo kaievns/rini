@@ -110,10 +110,14 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 - A key pressed inside it MUST run the bind it has with `Mod` in place of the modifiers holding it
   open, every other modifier held kept: with the hold on Cmd, J alone runs `Mod+J`, Shift+J
-  `Mod+Shift+J` and Comma `Mod+Comma`; with the hold on `Mod` itself, Alt+J runs `Mod+J` as it does
-  outside. Kai asked for the keys "without meta-" while Cmd holds it, and for a hold moved back to
-  `Mod+Slash` to work the same (Reported 2026-10-19, above). A bind Cmd and the key name outside it MUST NOT run inside: that
-  chord is the hold and the key.
+  `Mod+Shift+J` and Comma `Mod+Comma`. With the hold on `Mod` itself the key MUST be looked up as
+  pressed, sides and all, as outside: Alt+J runs `Mod+J`, and a bind on the right Alt alone fires
+  on the right Alt key. Kai asked for the keys "without meta-" while Cmd holds it, and for a hold
+  moved back to `Mod+Slash` to work the same (Reported 2026-10-19, above). A bind on the hold's
+  modifiers and the key MUST NOT run inside: that chord is the hold and the key, so under a Cmd
+  hold a `Super+J` bind is out of reach until it closes. Under a Cmd hold, a chord macOS answers in
+  the window server, Cmd+Tab's application switcher, still reaches macOS, whatever its `Mod` bind
+  does: an event tap cannot take it back.
 - Every bind MUST do what it does outside, on the real layout, and the overview MUST re-lay out from
   what it did: Kai asked for the same keys to work. What a press asks to fly MUST NOT fly while it
   is open, since the overview is what is seen to move; the real windows MUST go straight to where
@@ -135,6 +139,11 @@ Every workspace of one display at once, zoomed out, while its key is held.
   Passed, it reaches the hidden application with the hold still down: Cmd+Q would quit it and Cmd+W
   close its window, unseen. This cannot leave a dead keyboard, since a key whose flags show the hold
   up closes it first and goes on. A key rini has no name for passes, since no bind can name it.
+
+> **Found 2026-10-19, not reported.** Moving the hold to Cmd for Kai's report above showed the old
+> rule, that a key with no bind passes through untouched so a live session never becomes a dead
+> keyboard, would hand Cmd+Q and Cmd+W to the hidden application. The swallow is safe because any
+> event whose flags show the hold up closes the overview before it is read.
 - A switcher's trigger MUST be swallowed while it is open, and the overview's while a switch is:
   one session is live at a time.
 - Focus MUST NOT follow the mouse and the pointer MUST NOT be warped while it is open; the last warp

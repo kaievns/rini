@@ -123,15 +123,16 @@ where F: Fn(&str) -> Option<(Modifiers, KeyCode)> {
 
 /// The modifiers a key pressed with `held` inside the overview is looked up with: `held` without
 /// every modifier `hold` names, and with `Mod` in their place. So with the hold on Cmd, J alone is
-/// `Mod+J` and Shift+J `Mod+Shift+J`; with the hold on `Mod` itself, Alt+J stays `Mod+J`.
+/// `Mod+J` and Shift+J `Mod+Shift+J`; with the hold on `Mod` itself the chord is `held` as it is,
+/// sides and all, so an `AltRight+J` bind still fires on the right Alt key alone.
 pub fn with_mod_for_hold(held: Modifiers, hold: Modifiers, mod_key: ModKey) -> Modifiers {
+    let mod_family = mod_key.modifiers();
     let mut chord = held;
     for family in MOD_FAMILIES {
-        if hold.intersects(family.generic) {
+        if family.generic != mod_family && hold.intersects(family.generic) {
             chord.remove(family.generic);
         }
     }
-    let mod_family = mod_key.modifiers();
     if !chord.intersects(mod_family)
         && let Some(family) = MOD_FAMILIES.iter().find(|family| family.generic == mod_family)
     {
@@ -1200,7 +1201,8 @@ mod tests {
     }
 
     /// The hold's modifiers give way to `Mod`, either side of the hold, and a `Mod` held besides
-    /// keeps its own side; everything else held stays.
+    /// keeps its own side; a hold on `Mod` itself leaves the chord as held, sides and all;
+    /// everything else held stays.
     #[test]
     fn inside_the_overview_mod_stands_in_for_the_hold() {
         let rows = [
@@ -1232,7 +1234,13 @@ mod tests {
                 Modifiers::ALT_RIGHT,
                 Modifiers::ALT,
                 ModKey::Alt,
+                Modifiers::ALT_RIGHT,
+            ),
+            (
+                both(Modifiers::ALT_LEFT, Modifiers::ALT_RIGHT),
                 Modifiers::ALT_LEFT,
+                ModKey::Alt,
+                both(Modifiers::ALT_LEFT, Modifiers::ALT_RIGHT),
             ),
             (
                 both(Modifiers::ALT_LEFT, Modifiers::SHIFT_RIGHT),
@@ -1274,7 +1282,7 @@ mod tests {
         let session = opened_overview(base);
         assert_eq!(
             session.overview_chord(both(Modifiers::ALT_RIGHT, Modifiers::SHIFT_LEFT)),
-            Some(both(Modifiers::ALT_LEFT, Modifiers::SHIFT_LEFT))
+            Some(both(Modifiers::ALT_RIGHT, Modifiers::SHIFT_LEFT))
         );
     }
 
