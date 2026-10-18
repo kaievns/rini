@@ -1141,3 +1141,43 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
     }
     assert_eq!(pressed.len(), 16, "every one of Kai's binds");
 }
+
+/// The overview closes, and the tap's session with it, once its display shows no space rini
+/// manages: the display gone from under it, or its space unmanaged.
+#[test]
+fn the_overview_closes_when_its_display_shows_no_space_rini_manages() {
+    let gone = |reactor: &mut Reactor| {
+        let mut screens = make_screen_snapshots(vec![usable()], vec![None]);
+        screens[0].bounds = display();
+        reactor.handle_test_batch(vec![space_state_event_from_screens(screens)]);
+    };
+    let unmanaged = |reactor: &mut Reactor| {
+        reactor.handle_test_batch(vec![Event::Command(Command::Reactor(
+            ReactorCommand::ToggleSpaceActivated,
+        ))]);
+    };
+    for (case, take_away) in [
+        ("display gone", &gone as &dyn Fn(&mut Reactor)),
+        ("unmanaged", &unmanaged),
+    ] {
+        let (mut apps, mut reactor) = desk();
+        let mut tap = reactor.connect_test_event_tap();
+        let mut rx = reactor.connect_test_transitions();
+        open(&mut apps, &mut reactor);
+        the_tap_was_sent(&mut tap);
+        sent(&mut rx);
+
+        take_away(&mut reactor);
+        assert!(reactor.overview_scene().is_none(), "{case}");
+        assert!(
+            sent(&mut rx).iter().any(|event| matches!(event, Engine::OverviewClose { .. })),
+            "{case}: the engine zooms back in"
+        );
+        assert!(
+            the_tap_was_sent(&mut tap)
+                .iter()
+                .any(|request| matches!(request, Tap::EndSwitchSession(SessionId(1)))),
+            "{case}: the tap's session is ended"
+        );
+    }
+}
