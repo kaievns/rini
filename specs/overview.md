@@ -124,7 +124,12 @@ Every workspace of one display at once, zoomed out, while its key is held.
 ## How it moves
 
 - It MUST zoom out from the screen as it is, on the first half of the zoom look's arc, under every
-  look: frame zero draws every window where it is on screen.
+  look: frame zero draws every window where it is on screen. Every open MUST draw afresh, after one
+  the renderer had no overlay for as well: thumbs kept from that one would carry its pictures and
+  its widened bands, a 1pt ring drawn near 4.5pt wide.
+
+> **Found 2026-10-18, not reported.** Review of the lifecycle showed an overview the renderer could
+> not draw dropped its phase without letting go of its thumbs, which only its lift did.
 - On close it MUST zoom back in, on the arc's second half, onto the real layout, the selected window
   focused on its workspace, and hand over to the real windows as a flight does: lifted only once
   the windows it lands on are where it draws them, or its patience has run out.

@@ -4749,6 +4749,35 @@ mod tests {
                 assert!(matches!(replayed, Event::AnimateSurface { .. }));
             }
 
+            /// Held when the renderer reports it has nothing to draw on, the overview lets go of
+            /// what it drew: opened again, frame zero is dressed afresh, each thumb on the picture
+            /// there is now and its ring at its own width, not the widened one it was held with.
+            #[test]
+            fn an_overview_the_renderer_cannot_draw_opens_afresh() {
+                let mut h = harness();
+                held_open(&mut h);
+                let sent = h.step(Event::Rendered(Unavailable { seq: h.engine.shown }));
+                assert!(!lifecycle(&h).holds_overlay(), "{:?}", holds(&sent));
+                h.engine.pictures.insert(w(3), test_picture(ScreenSize::new(1000.0, 1037.0)));
+                let opened = open(&h);
+                h.step(opened);
+                let frame_zero = frame_zero(&h);
+                let sent = h.step(frame_zero);
+                let Some(Render::Stage { tiles, .. }) = only_batch(&sent)
+                    .commands
+                    .iter()
+                    .find(|command| matches!(command, Render::Stage { .. }))
+                else {
+                    panic!("frame zero staged")
+                };
+                let stand_in = tiles.iter().find(|tile| tile.window == w(3)).unwrap();
+                assert_ne!(stand_in.snapshot.source, Route::StandIn, "w3's picture now");
+                for tile in tiles {
+                    let width = tile.worn.decoration.ring.unwrap().width;
+                    assert_eq!(width, 1.0, "{:?} at its own width", tile.window);
+                }
+            }
+
             /// Opened again while it zooms back in or lands, the overview fills the holes its close
             /// punched over the windows it lands on in the batch that zooms it out again, so no
             /// real window shows through them over the thumbs.

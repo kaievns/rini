@@ -193,6 +193,7 @@ impl FlightEngine {
             }
             Command::Lift(generation) => self.lift_overview(generation),
             Command::Settle => self.settle(),
+            Command::Forget => self.shown_overview.forget(),
             Command::ReportUp => self.report(true),
             Command::ReportSettled => self.report(false),
             Command::Clock(on) => self.overview_clock(on),
@@ -563,13 +564,7 @@ impl FlightEngine {
     /// Its overlay down over the real windows, its tiles let go, and its quiet once that is drawn.
     fn lift_overview(&mut self, generation: Generation) {
         self.hide(vec![Owed::Quiet(generation)]);
-        let shown = &mut self.shown_overview;
-        shown.tiles.clear();
-        shown.score = Score::default();
-        shown.presses.clear();
-        shown.outlines.clear();
-        shown.widened = false;
-        shown.played = None;
+        self.shown_overview.forget();
     }
 
     /// Its frame clock started or stopped: a flight's, when one flies, is left alone.
@@ -599,6 +594,17 @@ impl FlightEngine {
 }
 
 impl Shown {
+    /// What it drew let go: the next open makes its thumbs afresh, at their own width.
+    fn forget(&mut self) {
+        self.tiles.clear();
+        self.score = Score::default();
+        self.frame_zero.clear();
+        self.presses.clear();
+        self.outlines.clear();
+        self.widened = false;
+        self.played = None;
+    }
+
     /// `decoration` as its thumb wears it now: as wide on screen as at rest while it is held.
     fn dressed(&self, decoration: Decoration, scale: f64) -> Decoration {
         if self.widened {

@@ -66,6 +66,8 @@ pub enum Command {
     Lift(Generation),
     /// The overlay is down: the bar is pictured again, and the rest of the service still waits.
     Settle,
+    /// What it drew let go with no lift: closed before its show, or the renderer has no overlay.
+    Forget,
     ReportUp,
     ReportSettled,
     /// The frame clock started, or stopped: it ticks only while something is to be waited for.
@@ -176,6 +178,7 @@ impl Overview {
             | (Some(Phase::Entering { .. } | Phase::Held), Event::Unavailable) => {
                 self.phase = None;
                 out.extend([
+                    Command::Forget,
                     Command::Clock(false),
                     Command::Release,
                     Command::ReportSettled,
@@ -493,6 +496,7 @@ mod tests {
         let t0 = Instant::now();
         let (mut overview, _) = opened(false, t0);
         assert_eq!(overview.on(Event::Close, t0), vec![
+            Command::Forget,
             Command::Clock(false),
             Command::Release,
             Command::ReportSettled,
@@ -500,6 +504,26 @@ mod tests {
         ]);
         assert!(!overview.holds_overlay());
         assert!(overview.on(Event::FrameZero(Generation(4)), t0).is_empty());
+    }
+
+    /// With no overlay to draw on as it zooms out or while it is held, it lets go of what it drew,
+    /// with no lift, so the next open draws afresh.
+    #[test]
+    fn with_no_overlay_while_shown_it_forgets_what_it_drew() {
+        let t0 = Instant::now();
+        let (mut overview, _) = opened(false, t0);
+        overview.on(Event::FrameZero(Generation(4)), t0);
+        assert_eq!(overview.on(Event::Unavailable, t0)[0], Command::Forget);
+        assert!(!overview.holds_overlay());
+        let mut overview = held(t0);
+        assert_eq!(overview.on(Event::Unavailable, t0 + ARC), vec![
+            Command::Forget,
+            Command::Clock(false),
+            Command::Release,
+            Command::ReportSettled,
+            Command::Replay,
+        ]);
+        assert!(!overview.holds_overlay());
     }
 
     /// With no arc to play, animation off or Low Power Mode, it is held as it shows and lifts as
