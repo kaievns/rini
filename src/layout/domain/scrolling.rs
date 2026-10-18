@@ -1283,6 +1283,13 @@ impl ScrollingLayoutSystem {
         state.columns[col_idx].windows.clone()
     }
 
+    /// Every column's windows, left to right, each column's top to bottom.
+    pub fn columns(&self, layout: LayoutId) -> Vec<Vec<WindowId>> {
+        self.layout_state(layout)
+            .map(|state| state.columns.iter().map(|column| column.windows.clone()).collect())
+            .unwrap_or_default()
+    }
+
     pub fn move_focus(
         &mut self,
         layout: LayoutId,

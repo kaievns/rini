@@ -459,8 +459,8 @@ pub struct Reactor {
     pub config: Config,
     /// The switcher session, while one is open.
     live_switch: Option<LiveSwitch>,
-    /// The overview, while it is open.
-    live_overview: Option<overview::LiveOverview>,
+    /// The overview, while it is open, and what its presses placed.
+    overview: overview::OverviewFeed,
     /// Where the popup is drawn. `None` until the main thread registers itself, and absent entirely in
     /// tests — the switch works without it, which is what keeps the popup cosmetic.
     switcher_tx: Option<crate::switcher::platform::actor::Sender>,
@@ -622,7 +622,7 @@ impl Reactor {
 
         Reactor {
             live_switch: None,
-            live_overview: None,
+            overview: overview::OverviewFeed::default(),
             switcher_tx: None,
             bar: bar::BarFeed::default(),
             attention: Default::default(),
@@ -755,7 +755,8 @@ impl Reactor {
     }
 
     /// One batch of the loop's events, then the strip laid out again if a rule now gives a window
-    /// another border, and what the batch changed on the bar and at rest.
+    /// another border, the open overview laid out again, and what the batch changed on the bar and
+    /// at rest.
     fn handle_batch(&mut self, batch: impl IntoIterator<Item = (tracing::Span, Event)>) {
         for (span, event) in batch {
             let _guard = span.enter();
@@ -764,6 +765,7 @@ impl Reactor {
         if self.refresh_borders() {
             self.update_layout(Pass::Plain, None);
         }
+        self.relay_overview();
         self.publish_bar();
         self.publish_rest();
     }

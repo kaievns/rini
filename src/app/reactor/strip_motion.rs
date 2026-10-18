@@ -51,11 +51,21 @@ impl Reactor {
     /// it. Each write is a synchronous request into another process, and those land at different
     /// times, which does not matter here: nothing is visible until the overlay comes down.
     pub(super) fn apply_overlay_frames(&mut self, frames: Vec<(WindowId, CGRect)>) {
+        self.place_frames_on(self.active_display_space(), frames);
+    }
+
+    /// Places windows at their final frames immediately, judging which are parked against the
+    /// display holding `space`, the first one when it is on none.
+    pub(super) fn place_frames_on(
+        &mut self,
+        space: Option<SpaceId>,
+        frames: Vec<(WindowId, CGRect)>,
+    ) {
         let display = self
             .space_state
             .screens
             .iter()
-            .find(|screen| screen.space == self.active_display_space())
+            .find(|screen| screen.space == space)
             .or_else(|| self.space_state.screens.first())
             .map_or(CGRect::ZERO, |screen| screen.frame);
         // A park-to-park move is not sent: nothing visible changes, and the app's repaint would
@@ -113,7 +123,7 @@ impl Reactor {
     /// it holds unless something better arrives, so this settles rather than re-capturing. During a
     /// flight the pictures service holds the targets until it settles ("Capture work in flight" in
     /// `src/transitions/docs/coordination.md`), so calling this from the switch handler is safe.
-    fn warm_all_workspaces(&mut self, space: SpaceId) {
+    pub(super) fn warm_all_workspaces(&mut self, space: SpaceId) {
         let Some(pictures) = self.communication_manager.pictures.clone() else {
             return;
         };
@@ -813,12 +823,17 @@ impl Reactor {
 
     /// Hands the flight engine `event`, a flight over the display holding `space`, told first which
     /// display that is, and notes the display and the press for the rest windows, which hold what the
-    /// flight changes from now (`publish_rest`). Whether the engine runs to take it.
+    /// flight changes from now (`publish_rest`). Whether the engine runs to take it. While the
+    /// overview is open nothing is sent: the overview holds the flight and places its frames
+    /// (`hold_for_overview`).
     pub(super) fn send_flight(
         &mut self,
         space: SpaceId,
         event: crate::transitions::platform::engine::Event,
     ) -> bool {
+        let Some(event) = self.hold_for_overview(space, event) else {
+            return true;
+        };
         let display = self.publish_animation_display_for(Some(space));
         let Some(tx) = &self.communication_manager.transitions_tx else {
             return false;

@@ -1016,25 +1016,6 @@ fn the_every_window_switch_offers_one_stack_per_application_in_focus_order() {
     );
 }
 
-/// The overview opens and closes on the tap's signals, changing no focus either way and opening no
-/// switch: every press inside it runs as it does outside.
-#[test]
-fn the_overview_opens_and_closes_on_the_taps_signals_and_changes_nothing() {
-    use crate::input::domain::switch_session::{OverviewSignal, Signal};
-
-    let (a, b) = (WindowId::new(1, 1), WindowId::new(2, 1));
-    let (mut reactor, _) = switch_desk(&[(a, 0), (b, 0)], &[b, a]);
-
-    let opened = reactor.dispatch_test_switch(Signal::Overview(OverviewSignal::Open));
-    assert!(reactor.overview_is_open());
-    assert!(!reactor.switch_is_open());
-    assert_eq!(focus_target(&opened), None);
-
-    let closed = reactor.dispatch_test_switch(Signal::Overview(OverviewSignal::Close));
-    assert!(!reactor.overview_is_open());
-    assert_eq!(focus_target(&closed), None);
-}
-
 /// A held every-window switch moves a stack at a time: two steps past an application with three
 /// windows land on the third application, not on the first one's third window.
 #[test]

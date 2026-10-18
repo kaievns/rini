@@ -335,9 +335,12 @@ impl Reactor {
     }
 
     /// Where the mouse goes with focus on `wid`: its centre when the mouse follows focus, except
-    /// during a workspace switch, which holds the warp until its layout lands.
+    /// during a workspace switch, which holds the warp until its layout lands, and while the
+    /// overview is open, which holds it until it closes.
     pub(super) fn warp_for_focus(&mut self, wid: WindowId) -> Option<CGPoint> {
-        if !self.config.settings.warp_mouse_to_focus {
+        if !self.config.settings.warp_mouse_to_focus
+            || self.hold_warp(super::overview::Warp::Onto(wid))
+        {
             return None;
         }
         if self.workspace_switch_manager.workspace_switch_state == WorkspaceSwitchState::Active {

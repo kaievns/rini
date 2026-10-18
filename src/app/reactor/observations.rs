@@ -198,7 +198,12 @@ impl Reactor {
         )
     }
 
+    /// The pointer entered `wsid`: focus follows it or it is raised, as configured, except while the
+    /// overview covers the windows under it.
     pub(super) fn on_mouse_moved(&mut self, wsid: WindowServerId) -> anyhow::Result<EventOutcome> {
+        if self.overview_covers_the_pointer() {
+            return Ok(EventOutcome::no_change());
+        }
         let window = self.state.windows.tracked_window_id(wsid);
         let active_space = window.and_then(|window| self.active_space_for_window(window));
         window::handle_mouse_moved_over_window(&self.apps, window::MouseMovedPayload {

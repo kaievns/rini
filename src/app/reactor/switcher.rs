@@ -177,9 +177,7 @@ impl Reactor {
             return EventOutcome::no_change();
         };
         switch.cursor.select(index);
-        if let Some(event_tap_tx) = &self.communication_manager.event_tap_tx {
-            event_tap_tx.send(crate::input::platform::input_tap::Request::EndSwitchSession);
-        }
+        self.end_tap_session();
         self.handle_switch_signal(SwitchSignal::Commit)
     }
 

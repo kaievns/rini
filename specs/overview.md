@@ -14,8 +14,9 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > animate like normal slides (not zoom) navigation animation with the whole strip moving left right
 > (overflows stack up/out as needed)"
 
-Not yet met: nothing draws the overview. The tap opens and holds it, and its scene is laid out, but
-nothing reads the scene. Each requirement below says what it still waits for.
+Not yet met: nothing draws the overview. The tap opens and holds it, and the scene is laid out
+from the real layout as it opens and after every batch of events while it is open, but nothing
+reads the scene. Each requirement below says what it still waits for.
 
 ## Opening and closing
 
@@ -38,8 +39,11 @@ nothing reads the scene. Each requirement below says what it still waits for.
   modifier up MUST NOT keep it open: with the release lost, typing on would push the 12s out for as
   long as the typing lasts.
 - It MUST open on the focused display only: one overlay flies on one display at a time. A press
-  taking focus off that display MUST close it. Not yet met.
-- It MUST NOT open on a native full-screen space, which rini does not manage. Not yet met.
+  taking focus off that display MUST close it. The other displays MUST keep working while it is
+  open, their windows placed as cuts, since the one overlay is the overview's.
+- It MUST NOT open on a space rini does not manage, a native full-screen one included: there is no
+  strip there to lay out. Refused or closed from rini's side, its key MUST stop being held for it,
+  or the trigger stays swallowed with no overview open.
 
 ## What it shows
 
@@ -66,7 +70,8 @@ nothing reads the scene. Each requirement below says what it still waits for.
 - Floating windows MUST be drawn on their row at their place on the display, over its tiles, never
   stacked, and MUST NOT move while the row pans. Not yet met: laid out, not drawn.
 - Thumbs MUST be the windows' pictures; one with none MUST be the stand-in until one lands, and
-  MUST NOT hold the overview back. Pictures MUST keep being taken while it is open. Not yet met.
+  MUST NOT hold the overview back. Pictures MUST keep being taken while it is open. Not yet met:
+  every workspace of the display is asked to be pictured as it opens, and nothing draws a thumb.
 - Only the selected window MUST wear the active ring; every other window MUST be dressed as on a
   workspace not shown, as Kai reported of the strips beside on 2026-10-17. Not yet met: the
   selection is laid out, and no ring is drawn.
@@ -74,15 +79,24 @@ nothing reads the scene. Each requirement below says what it still waits for.
 ## Keys inside it
 
 - Every bind MUST do what it does outside, on the real layout, and the overview MUST re-lay out from
-  what it did: Kai asked for the same keys to work. Not yet met: what changed between two scenes is
-  found, and a press runs on the real layout without the overview laying out again.
+  what it did: Kai asked for the same keys to work. What a press asks to fly MUST NOT fly while it
+  is open, since the overview is what is seen to move; the real windows MUST go straight to where
+  the flight would have put them, and the press MUST be kept for the overview to play.
+- A flight that was flying as it opened MUST NOT, landing, put back a window a press inside it has
+  placed since: the press's frame is the later one.
+
+> **Found 2026-10-18, not reported.** Wiring the overview showed it: a press flies, the overview
+> opens within the flight's 0.35s, a press inside places a window again, and the first flight,
+> landing, would put that window back where it was taking it.
+
 - A key with no bind MUST pass through untouched: swallowing everything is how a live session
   becomes a dead keyboard. The cost: Alt and a letter reach the hidden application.
 - A switcher's trigger MUST be swallowed while it is open, and the overview's while a switch is:
   one session is live at a time.
 - Focus MUST NOT follow the mouse and the pointer MUST NOT be warped while it is open; the last warp
   asked for MUST be carried out as it closes. The windows under the pointer are hidden, and a warp
-  per press moves the cursor across the overview. Not yet met.
+  per press moves the cursor across the overview. Turning focus-follows-mouse off in the event tap
+  MUST NOT be how: a new event mask replaces the tap, which closes the overview.
 - A click MUST NOT reach a hidden window. Choosing a thumb by clicking is not supported. Not yet
   met.
 
@@ -102,7 +116,8 @@ nothing reads the scene. Each requirement below says what it still waits for.
 - A press up or down the stack MUST move the ring to that row's current window, the stack panning
   Slide's way when it scrolls. Not yet met: the selection's move and the scroll are found, and
   nothing plays them.
-- A press at an end of a row or of the stack MUST bounce it, 72pt on screen. Not yet met.
+- A press at an end of a row or of the stack MUST bounce it, 72pt on screen. Not yet met: the push
+  is kept for the overview, the way it gives with it, and nothing plays it.
 - With animation off or in Low Power Mode it MUST open, change and close as cuts. Not yet met.
 - Not yet met: an overview opened while a flight runs waits for it to land.
 
@@ -111,4 +126,6 @@ nothing reads the scene. Each requirement below says what it still waits for.
 `src/overview/domain/` is the scene: `scene.rs` lays it out, `depth.rs` sets its depth and its
 rows' tops, `stacks.rs` its edge stacks, and `changes.rs` finds what changed between two scenes.
 `src/input/domain/switch_session.rs` is the tap's side, the hold that opens and closes it, and
-`src/app/reactor/overview.rs` the reactor's. `src/overview/docs/README.md` explains the feature.
+`src/app/reactor/overview.rs` the reactor's: the scene's input read off the layout, the flights held
+and their frames placed, the warps held, and the close. `src/overview/docs/README.md` explains the
+feature.

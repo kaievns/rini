@@ -229,7 +229,11 @@ impl Reactor {
             && warp_space.is_some_and(|space| self.warp_mouse_to_space_center(space))
     }
 
+    /// Moves the pointer to `point`, or holds it for the overview's close while it is open.
     pub fn warp_mouse(&mut self, point: CGPoint) {
+        if self.hold_warp(super::overview::Warp::To(point)) {
+            return;
+        }
         let Some(event_tap_tx) = self.communication_manager.event_tap_tx.clone() else {
             return;
         };

@@ -47,14 +47,15 @@ the moved window on the axis, so it pans nothing; the columns it passes change p
 
 ## Known debt
 
-Nothing reads the scene yet. The tap opens and holds the overview
-(`src/input/domain/switch_session.rs`), and the reactor only records that it is open: its wiring
-and the drawing are the steps `specs/overview.md` marks not yet met.
+Nothing draws the scene yet. The tap opens and holds the overview
+(`src/input/domain/switch_session.rs`), and the reactor lays the scene out from the real layout as
+it opens and after every batch while it is open (`src/app/reactor/overview.rs`); the drawing is the
+step `specs/overview.md` marks not yet met.
 
-**Focus must stop following the mouse in the reactor, not in the tap.** The tap's switch for it,
-`Request::SetFocusFollowsMouseEnabled`, changes the event mask when focus-follows-mouse is
-configured, and a new mask replaces the tap (`rebuild_event_tap_mask_if_needed`), which closes the
-overview (`KeyRouter::tap_replaced`). Turned off that way, it would close on the drain after it
-opens, and again whenever a menu closing turns it back on while it is open. The step that wires it
-drops pointer-focus events in the reactor while the overview is open, with a test that it survives
-`SetFocusFollowsMouseEnabled`.
+**Focus stops following the mouse in the reactor, not in the tap.** The reactor ignores the
+pointer entering a window while the overview is open, and never asks the tap to stop following it:
+the tap's switch for it, `Request::SetFocusFollowsMouseEnabled`, changes the event mask when
+focus-follows-mouse is configured, and a new mask replaces the tap
+(`rebuild_event_tap_mask_if_needed`), which closes the overview (`KeyRouter::tap_replaced`). A menu
+opening or closing while it is open still sends that request (`update_focus_follows_mouse_state`),
+and can close it that way.

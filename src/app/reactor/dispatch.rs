@@ -238,6 +238,7 @@ impl Reactor {
                 Ok(outcome)
             }
             Event::ApplyOverlayFrames(frames) => {
+                let frames = self.not_superseded(frames);
                 self.apply_overlay_frames(frames);
                 Ok(EventOutcome::no_change())
             }

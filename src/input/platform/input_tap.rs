@@ -48,7 +48,8 @@ pub enum Request {
     SetLowPowerMode(bool),
     /// The keys each switcher's session answers to; empty disables them all.
     SetSwitchKeys(Vec<SwitchKeys>),
-    /// A switch was committed from outside the tap — a click on the popup — so stop treating it as open.
+    /// The session was ended from outside the tap — a switch committed by a click on the popup, an
+    /// overview the reactor refused or closed — so stop treating it as open.
     EndSwitchSession,
 }
 
@@ -368,7 +369,7 @@ impl InputTap {
             }
             Request::EndSwitchSession => {
                 if self.router.borrow_mut().close_switch() {
-                    debug!("switcher session ended by a commit from outside the tap");
+                    debug!("session ended from outside the tap");
                 }
             }
             Request::KeyboardLayoutChanged => {

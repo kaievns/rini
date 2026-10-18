@@ -280,6 +280,19 @@ impl LayoutEngine {
         self.with_floating_positions(window_store, space, workspace_id, tiled)
     }
 
+    /// The columns of `workspace_id`'s strip on `space`, left to right, each one's windows top to
+    /// bottom; none for a workspace with no strip there.
+    pub fn strip_columns(
+        &self,
+        space: SpaceId,
+        workspace_id: VirtualWorkspaceId,
+    ) -> Vec<Vec<WindowId>> {
+        self.workspace_layouts
+            .active(space, workspace_id)
+            .map(|layout| self.workspace_tree(workspace_id).columns(layout))
+            .unwrap_or_default()
+    }
+
     /// `tiled` with the floating windows of `workspace_id` at their stored positions.
     fn with_floating_positions(
         &self,
