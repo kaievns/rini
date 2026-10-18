@@ -214,11 +214,13 @@ impl Reactor {
         }
     }
 
-    /// The space of the display the user is on: where the key window is, else the layout's focus,
-    /// else the space commands act on.
+    /// The space of the display the user is on: where the layout's focus is, else the key window,
+    /// else the space commands act on. The layout's focus first, as `focus_left_overview` reads it,
+    /// or a key window the layout does not track on another display opens it where it then closes.
     fn overview_display(&self) -> Option<SpaceId> {
-        self.main_window()
-            .or_else(|| self.layout_engine.focused_window())
+        self.layout_engine
+            .focused_window()
+            .or_else(|| self.main_window())
             .and_then(|window| self.space_of(window))
             .or_else(|| self.raw_command_space())
     }

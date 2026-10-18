@@ -41,6 +41,14 @@ reads the scene. Each requirement below says what it still waits for.
 - It MUST open on the focused display only: one overlay flies on one display at a time. A press
   taking focus off that display MUST close it. The other displays MUST keep working while it is
   open, their windows placed as cuts, since the one overlay is the overview's.
+- The open and the close MUST judge the focused display the same way, from the window the layout
+  has focused: a key window the layout does not track, on another display, would open it there
+  and close it in the same batch, so Alt+/ does nothing.
+
+> **Found 2026-10-18, not reported.** Review of the reactor's wiring showed the open read the key
+> window first and the close the layout's focus; not reproduced live, since it takes two displays
+> and a key window the layout does not track.
+
 - It MUST NOT open on a space rini does not manage, a native full-screen one included: there is no
   strip there to lay out. Refused or closed from rini's side, its key MUST stop being held for it,
   or the trigger stays swallowed with no overview open. That end MUST end only the session it was

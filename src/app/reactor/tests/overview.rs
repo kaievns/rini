@@ -477,6 +477,24 @@ fn an_overview_opened_as_another_session_is_that_session() {
     assert_eq!(ended, vec![SessionId(2)]);
 }
 
+/// With the key window on the right display, one the layout's focus is not on, the overview opens
+/// where the layout's focus is, the display whose leaving closes it, and stays open.
+#[test]
+fn the_overview_opens_where_the_layouts_focus_is() {
+    let (mut apps, mut reactor, _) = two_displays();
+    let mut tap = reactor.connect_test_event_tap();
+    reactor.set_test_focus(w(2));
+    assert_eq!(reactor.layout().focused_window(), Some(w(1)));
+
+    open(&mut apps, &mut reactor);
+    assert_eq!(selected(&reactor), (0, Some(w(1))));
+    let sent = the_tap_was_sent(&mut tap);
+    assert!(
+        !sent.iter().any(|request| matches!(request, Tap::EndSwitchSession(_))),
+        "{sent:?}"
+    );
+}
+
 /// A flight over another display while the overview is open is held as the overview's are, its
 /// windows placed, but it is no press of the overview's: its scene is not told of it.
 #[test]
