@@ -15,7 +15,7 @@ use crate::app::channels;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::tests::fixtures::strip_movements;
 use crate::app::reactor::*;
-use crate::input::domain::key::{KeyCode, Modifiers, modifier_mask_for_key};
+use crate::input::domain::key::{KeyCode, ModKey, Modifiers, modifier_mask_for_key};
 use crate::input::domain::router::{KeyRouter, Keystroke};
 use crate::input::domain::switch_session::{
     KeyEventKind, Opens, OverviewSignal, SessionId, Signal, SwitchKeys,
@@ -384,7 +384,7 @@ impl Keys {
     fn new() -> Self {
         let mut router = KeyRouter::default();
         router.set_switch_keys(vec![SwitchKeys {
-            opens: Opens::Overview,
+            opens: Opens::Overview { mod_key: ModKey::Alt },
             forward: KeyCode::Slash,
             hold: Modifiers::ALT,
         }]);

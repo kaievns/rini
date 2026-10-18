@@ -25,7 +25,8 @@
 //!    "correct" modal behaviour and is also how a live session turns into a dead keyboard.
 //!
 //! The overview is the same hold with nothing to step: its trigger opens it and its modifiers keep it
-//! open, and every other key passes, so a bind reaches the hotkey table and runs on the real layout.
+//! open, and every other key goes on to the hotkey table, looked up as pressed with `Mod` in place
+//! of the hold (`with_mod_for_hold`), so a bind runs on the real layout whichever modifier holds it.
 //! It has no deadline: it stays open for as long as its hold is down, and any key or mouse event
 //! whose flags show the hold up closes it, as the tap replaced or re-enabled does
 //! (`specs/overview.md`).
@@ -36,7 +37,7 @@ use rini_ipc::protocol::SwitchScope;
 
 use crate::input::domain::binding::{Action, Bind};
 use crate::input::domain::hotkey::modifiers_satisfy;
-use crate::input::domain::key::{KeyCode, Modifiers};
+use crate::input::domain::key::{KeyCode, MOD_FAMILIES, ModKey, Modifiers};
 
 /// How long a switch may stay open before it commits itself. The overview has none.
 ///
@@ -54,8 +55,9 @@ pub enum Opens {
         scope: SwitchScope,
         backward: Modifiers,
     },
-    /// The overview, open while the hold is down.
-    Overview,
+    /// The overview, open while the hold is down. Inside it a key is looked up with `mod_key` in
+    /// place of the hold.
+    Overview { mod_key: ModKey },
 }
 
 impl Opens {
@@ -63,7 +65,7 @@ impl Opens {
     fn released(self) -> Signal {
         match self {
             Opens::Switch { .. } => Signal::Commit,
-            Opens::Overview => Signal::Overview(OverviewSignal::Close),
+            Opens::Overview { .. } => Signal::Overview(OverviewSignal::Close),
         }
     }
 
@@ -71,7 +73,7 @@ impl Opens {
     fn dropped(self) -> Signal {
         match self {
             Opens::Switch { .. } => Signal::Cancel,
-            Opens::Overview => Signal::Overview(OverviewSignal::Close),
+            Opens::Overview { .. } => Signal::Overview(OverviewSignal::Close),
         }
     }
 }
@@ -100,22 +102,42 @@ impl SwitchKeys {
 }
 
 /// The keys the overview answers to, one entry per `toggle-overview` bind, its `Mod` already
-/// resolved: each one's key opens it and its modifiers hold it, so the chord is written once.
+/// resolved to `mod_key`: each one's key opens it and its modifiers hold it, so the chord is written
+/// once.
 ///
 /// `parse` turns a spec such as `"Alt+Slash"` into its modifiers and key, as the switchers' do
 /// (`switcher::domain::trigger`), since which physical key a name means depends on the layout.
-pub fn overview_keys<F>(bindings: &[Bind], parse: F) -> Vec<SwitchKeys>
+pub fn overview_keys<F>(bindings: &[Bind], mod_key: ModKey, parse: F) -> Vec<SwitchKeys>
 where F: Fn(&str) -> Option<(Modifiers, KeyCode)> {
     bindings
         .iter()
         .filter(|bind| bind.action == Action::ToggleOverview)
         .filter_map(|bind| parse(&bind.key))
         .map(|(hold, forward)| SwitchKeys {
-            opens: Opens::Overview,
+            opens: Opens::Overview { mod_key },
             forward,
             hold,
         })
         .collect()
+}
+
+/// The modifiers a key pressed with `held` inside the overview is looked up with: `held` without
+/// every modifier `hold` names, and with `Mod` in their place. So with the hold on Cmd, J alone is
+/// `Mod+J` and Shift+J `Mod+Shift+J`; with the hold on `Mod` itself, Alt+J stays `Mod+J`.
+pub fn with_mod_for_hold(held: Modifiers, hold: Modifiers, mod_key: ModKey) -> Modifiers {
+    let mut chord = held;
+    for family in MOD_FAMILIES {
+        if hold.intersects(family.generic) {
+            chord.remove(family.generic);
+        }
+    }
+    let mod_family = mod_key.modifiers();
+    if !chord.intersects(mod_family)
+        && let Some(family) = MOD_FAMILIES.iter().find(|family| family.generic == mod_family)
+    {
+        chord.insert(family.left);
+    }
+    chord
 }
 
 /// Which session the tap opened, counted from 1 since the tap started: the far side ends a session
@@ -237,7 +259,17 @@ impl SwitchSession {
 
     /// Whether the session live is the overview's.
     pub fn overview_is_live(&self) -> bool {
-        self.live.is_some_and(|live| self.opens(live) == Opens::Overview)
+        self.live.is_some_and(|live| matches!(self.opens(live), Opens::Overview { .. }))
+    }
+
+    /// The modifiers a key held with `held` is looked up with while the overview is open
+    /// (`with_mod_for_hold`); `None` while it is not.
+    pub fn overview_chord(&self, held: Modifiers) -> Option<Modifiers> {
+        let keys = &self.keys[self.live?.trigger];
+        match keys.opens {
+            Opens::Overview { mod_key } => Some(with_mod_for_hold(held, keys.hold, mod_key)),
+            Opens::Switch { .. } => None,
+        }
     }
 
     /// End a live session because the tap cannot be trusted about what is held.
@@ -292,7 +324,7 @@ impl SwitchSession {
         let keys = &self.keys[live.trigger];
         let hold_held = modifiers_satisfy(keys.hold, event.modifiers);
         let (opens, forward) = (keys.opens, keys.forward);
-        if opens == Opens::Overview && !hold_held {
+        if matches!(opens, Opens::Overview { .. }) && !hold_held {
             return self.let_go(event, forward);
         }
 
@@ -309,7 +341,7 @@ impl SwitchSession {
             KeyEventKind::Up => Verdict::PASS,
             KeyEventKind::Down => match opens {
                 Opens::Switch { backward, .. } => self.step(live, event, hold_held, backward),
-                Opens::Overview => self.browse(event),
+                Opens::Overview { .. } => self.browse(event),
             },
         }
     }
@@ -331,7 +363,8 @@ impl SwitchSession {
     pub fn on_mouse(&mut self, modifiers: Modifiers) -> Option<Signal> {
         let live = self.live?;
         let keys = &self.keys[live.trigger];
-        if keys.opens != Opens::Overview || modifiers_satisfy(keys.hold, modifiers) {
+        if !matches!(keys.opens, Opens::Overview { .. }) || modifiers_satisfy(keys.hold, modifiers)
+        {
             return None;
         }
         self.live = None;
@@ -359,7 +392,7 @@ impl SwitchSession {
                 scope,
                 session,
             },
-            Opens::Overview => Signal::Overview(OverviewSignal::Open(session)),
+            Opens::Overview { .. } => Signal::Overview(OverviewSignal::Open(session)),
         };
         self.live = Some(Live {
             since: event.at,
@@ -415,7 +448,7 @@ impl SwitchSession {
                 self.live = None;
                 Verdict::eat_with(Signal::Overview(OverviewSignal::Close))
             }
-            // Every other key, so a bind reaches the hotkey table and a key with none the application.
+            // Every other key goes on to the hotkey table, which swallows one with no bind there.
             _ => Verdict::PASS,
         }
     }
@@ -960,7 +993,7 @@ mod tests {
     fn with_overview() -> SwitchSession {
         let mut session = SwitchSession::default();
         session.set_keys(vec![keys(), SwitchKeys {
-            opens: Opens::Overview,
+            opens: Opens::Overview { mod_key: ModKey::Alt },
             forward: KeyCode::Slash,
             hold: Modifiers::ALT,
         }]);
@@ -1000,8 +1033,8 @@ mod tests {
         );
     }
 
-    /// The overview has no selection to step on the tap's side: every other key passes, so the
-    /// hotkey table gets a bind and the application a key with none.
+    /// The overview has no selection to step on the tap's side: every other key passes on to the
+    /// hotkey table.
     #[test]
     fn inside_the_overview_every_other_key_passes() {
         let base = Instant::now();
@@ -1106,7 +1139,7 @@ mod tests {
         session.set_keys(vec![
             switcher(SwitchScope::Everything, KeyCode::KeyQ, Modifiers::ALT),
             SwitchKeys {
-                opens: Opens::Overview,
+                opens: Opens::Overview { mod_key: ModKey::Alt },
                 forward: KeyCode::Slash,
                 hold: Modifiers::ALT,
             },
@@ -1160,6 +1193,91 @@ mod tests {
         );
         assert!(session.is_live());
     }
+    fn both(first: Modifiers, second: Modifiers) -> Modifiers {
+        let mut held = first;
+        held.insert(second);
+        held
+    }
+
+    /// The hold's modifiers give way to `Mod`, either side of the hold, and a `Mod` held besides
+    /// keeps its own side; everything else held stays.
+    #[test]
+    fn inside_the_overview_mod_stands_in_for_the_hold() {
+        let rows = [
+            (
+                Modifiers::META_LEFT,
+                Modifiers::META,
+                ModKey::Alt,
+                Modifiers::ALT_LEFT,
+            ),
+            (
+                both(Modifiers::META_RIGHT, Modifiers::SHIFT_LEFT),
+                Modifiers::META,
+                ModKey::Alt,
+                both(Modifiers::ALT_LEFT, Modifiers::SHIFT_LEFT),
+            ),
+            (
+                both(Modifiers::META_LEFT, Modifiers::ALT_RIGHT),
+                Modifiers::META,
+                ModKey::Alt,
+                Modifiers::ALT_RIGHT,
+            ),
+            (
+                Modifiers::ALT_LEFT,
+                Modifiers::ALT,
+                ModKey::Alt,
+                Modifiers::ALT_LEFT,
+            ),
+            (
+                Modifiers::ALT_RIGHT,
+                Modifiers::ALT,
+                ModKey::Alt,
+                Modifiers::ALT_LEFT,
+            ),
+            (
+                both(Modifiers::ALT_LEFT, Modifiers::SHIFT_RIGHT),
+                Modifiers::ALT,
+                ModKey::Alt,
+                both(Modifiers::ALT_LEFT, Modifiers::SHIFT_RIGHT),
+            ),
+            (
+                both(Modifiers::CONTROL_LEFT, Modifiers::ALT_LEFT),
+                Modifiers::CONTROL_LEFT,
+                ModKey::Super,
+                both(Modifiers::ALT_LEFT, Modifiers::META_LEFT),
+            ),
+            (
+                both(Modifiers::CONTROL_LEFT, Modifiers::ALT_LEFT),
+                both(Modifiers::CONTROL, Modifiers::ALT),
+                ModKey::Super,
+                Modifiers::META_LEFT,
+            ),
+        ];
+        for (held, hold, mod_key, chord) in rows {
+            assert_eq!(
+                with_mod_for_hold(held, hold, mod_key),
+                chord,
+                "{held} held by {hold}, Mod {mod_key:?}"
+            );
+        }
+    }
+
+    /// Only the overview looks its keys up with `Mod`: a switch has no chord, nor does nothing open.
+    #[test]
+    fn only_a_live_overview_has_a_chord() {
+        let base = Instant::now();
+        let mut session = with_overview();
+        assert_eq!(session.overview_chord(Modifiers::ALT_LEFT), None, "nothing open");
+        session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, base));
+        assert_eq!(session.overview_chord(Modifiers::CONTROL_LEFT), None, "a switch");
+
+        let session = opened_overview(base);
+        assert_eq!(
+            session.overview_chord(both(Modifiers::ALT_RIGHT, Modifiers::SHIFT_LEFT)),
+            Some(both(Modifiers::ALT_LEFT, Modifiers::SHIFT_LEFT))
+        );
+    }
+
     fn bound(key: &str, action: Action) -> Bind {
         Bind {
             key: key.into(),
@@ -1185,20 +1303,24 @@ mod tests {
             bound("Ctrl+Slash", Action::ToggleOverview),
             bound("Hyper+Nonsense", Action::ToggleOverview),
         ];
-        let keys = overview_keys(&binds, parse);
+        let keys = overview_keys(&binds, ModKey::Alt, parse);
         assert_eq!(keys, [
             SwitchKeys {
-                opens: Opens::Overview,
+                opens: Opens::Overview { mod_key: ModKey::Alt },
                 forward: KeyCode::Slash,
                 hold: Modifiers::ALT,
             },
             SwitchKeys {
-                opens: Opens::Overview,
+                opens: Opens::Overview { mod_key: ModKey::Alt },
                 forward: KeyCode::Slash,
                 hold: Modifiers::CONTROL,
             },
         ]);
-        assert_eq!(overview_keys(&binds[..1], parse), [], "no bind, no keys");
+        assert_eq!(
+            overview_keys(&binds[..1], ModKey::Alt, parse),
+            [],
+            "no bind, no keys"
+        );
 
         let base = Instant::now();
         let mut session = SwitchSession::default();
