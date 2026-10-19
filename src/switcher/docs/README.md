@@ -136,9 +136,10 @@ this desktop as the native switcher a step darker. The appearance is pinned dark
 machine does not get light glass under a dark wash. The glass draws its own rim, so the panel has no
 hairline of its own.
 
-**Every card has a faint edge.** A 1px `--n11` hairline at `TILE_EDGE_ALPHA`, drawn over the picture.
-Light rather than `--line`, because the cards are mostly dark windows and a hairline darker than them
-disappears.
+**Every card has a faint edge.** The card's `EDGE`, `--n11`, at `EDGE_ALPHA`, `EDGE_WIDTH` wide
+(`src/chrome/domain/card.rs`), drawn over the picture, the edge the overview's unselected thumbs
+wear too. Light rather than `--line`, because the cards are mostly dark windows and a hairline
+darker than them disappears.
 
 Four deliberate departures from the defaults, all because a switcher is not a document. It sits on
 `--n0` rather than the content plane `--n2` — it floats OVER content rather than being content, and at

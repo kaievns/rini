@@ -133,7 +133,8 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 > **Reported 2026-10-19.** "much better. make the background dimmer (blur maybe a little?) and add
 > grey outlines to the inactive windows same way as the app switcher does". The desktop was
-> darkened at the switcher's 0.40 and not blurred.
+> darkened at the switcher's 0.40 and not blurred, and a thumb beside the selected one wore no ring
+> and no edge but its window's own 1pt hairline, a third of a point on screen at depth 0.3.
 
 - Every thumb MUST cast a shadow while the overview is held, so it floats over what is behind it,
   and the selected one a stronger one to accent it: the lift a carried window takes in a flight,
@@ -149,21 +150,31 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 - Its look MUST be the switcher's, from one record both draw from: the stacks' step, inset and three
   cards drawn, the gap between cards, the selected card's ring width, the colour that darkens what
-  is behind, the card's 11pt corner and the `--ember-soft` wash under the selected card. Kai asked
-  for one visual style across the two, reusing components where they apply; two copies of a value
-  drift. Held, every thumb MUST round to the card's corner on screen at any depth (at its window's
-  corner a thumb reads 3pt on screen for a 10pt corner at depth 0.3), or to the corner its picture
-  keeps on screen where that is wider, since no clip rounds a picture tighter than its own corner (a
-  26pt window at depth 0.5 keeps 13pt), its ring and border round that corner, and the selected
-  thumb MUST wear the card's selection as the switcher's selected card does: the wash under it 4pt
-  out at a corner 3pt past the thumb's, 14pt on the card's, and its ring laid with its outer edge on
-  the wash's. Through the zoom out and back in each MUST ease on screen from the window's own
-  corner, ring and no wash to the card's with the zoom, the wash never reaching past the ring, so
-  frame zero and the landing are the screen and neither hand-over to the real windows jumps.
+  is behind, the card's faint edge, the card's 11pt corner and the `--ember-soft` wash under the
+  selected card. Kai asked for one visual style across the two, reusing components where they apply;
+  two copies of a value drift. Held, every thumb MUST round to the card's corner on screen at any
+  depth (at its window's corner a thumb reads 3pt on screen for a 10pt corner at depth 0.3), or to
+  the corner its picture keeps on screen where that is wider, since no clip rounds a picture tighter
+  than its own corner (a 26pt window at depth 0.5 keeps 13pt), its ring and border round that
+  corner, and the selected thumb MUST wear the card's selection as the switcher's selected card
+  does: the wash under it 4pt out at a corner 3pt past the thumb's, 14pt on the card's, and its ring
+  laid with its outer edge on the wash's. Through the zoom out and back in each MUST ease on screen
+  from the window's own corner, ring and no wash to the card's with the zoom, the wash never
+  reaching past the ring, so frame zero and the landing are the screen and neither hand-over to the
+  real windows jumps.
 
 > **Reported 2026-10-19.** "overall visual style must mutch the main app switcher, both should be
 > consistent with each other and reuse components where applicable". The stacks' values were the
 > overview's own copies of the switcher's.
+
+- Held, every thumb but the selected one MUST wear the card's faint edge over its picture, as the
+  switcher edges its cards: `--n11` at 0.16, 1pt wide on screen at any depth and through the zoom,
+  round the thumb's corner, its cards in an edge stack included, so a dark window reads as a window
+  against the darkened desktop. Kai asked for grey outlines on the inactive windows "same way as
+  the app switcher does" (Reported 2026-10-19, above). The edge MUST rise with the zoom out from
+  none at frame zero and fall with the zoom in to none at the landing, since the screen has none.
+  The selected thumb MUST NOT wear it: it wears its ring and wash. An empty workspace's outline
+  MUST keep the focus ring's paint, which is not the card's edge.
 
 - A row with nothing on its strip, a workspace holding only floating windows included, MUST be drawn
   as its tiling area's outline in the focus ring's inactive paint, and in its active paint while

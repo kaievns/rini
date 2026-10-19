@@ -56,6 +56,11 @@ pub struct Metrics {
     /// colour the overview darkens the desktop behind its thumbs with, deeper.
     pub backdrop: Colour,
     pub backdrop_alpha: f64,
+    /// The faint edge every card wears over its picture, how much of it shows and how wide: the
+    /// card's, which the overview's unselected thumbs wear too.
+    pub edge: Colour,
+    pub edge_alpha: f64,
+    pub edge_width: f64,
     /// Inside the panel's edge, at the sides and above the strip.
     pub padding: f64,
     /// Below the captions, and SMALLER than `padding` on purpose.
@@ -94,6 +99,9 @@ impl Default for Metrics {
             wash: card::WASH,
             backdrop: card::BACKDROP,
             backdrop_alpha: card::BACKDROP_ALPHA,
+            edge: card::EDGE,
+            edge_alpha: card::EDGE_ALPHA,
+            edge_width: card::EDGE_WIDTH,
             padding: 22.0,
             bottom_padding: 9.0,
             caption: 27.0,
@@ -394,8 +402,8 @@ mod tests {
     }
 
     /// The switcher draws the card the overview draws its thumbs as: one corner, one gap between
-    /// cards, one stack, one ring around the selected one and one darkening behind them
-    /// (`chrome::domain::card`).
+    /// cards, one stack, one ring around the selected one, one faint edge around each and one
+    /// darkening behind them (`chrome::domain::card`).
     #[test]
     fn the_switcher_s_cards_are_the_chrome_card() {
         let m = Metrics::default();
@@ -408,6 +416,9 @@ mod tests {
         assert_eq!(m.wash, card::WASH);
         assert_eq!(m.backdrop, card::BACKDROP);
         assert_eq!(m.backdrop_alpha, card::BACKDROP_ALPHA);
+        assert_eq!(m.edge, card::EDGE);
+        assert_eq!(m.edge_alpha, card::EDGE_ALPHA);
+        assert_eq!(m.edge_width, card::EDGE_WIDTH);
         assert_eq!(crate::switcher::domain::entries::BEHIND + 1, card::STACK.cards);
     }
 

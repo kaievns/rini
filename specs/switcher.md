@@ -259,13 +259,13 @@ switcher answers "every window I have, wherever it is".
 - Each card behind MUST sit 8pt higher than the card in front of it and 12pt narrower on each side, so
   the stack shows as edges above the top card. The inset MUST be wider than a tile's corner radius, or
   a card behind shows through the top card's rounded corner.
-- The cards MUST be the overview's, from one record both draw from: the stack's step, inset and three
-  cards, the gap between cards, the selected card's ring width and the colour that darkens what is
-  behind (`specs/overview.md`, "What it shows"). A value changed for one changes for both. The
-  overview darkens the bare desktop deeper than this panel's glass, so how far each darkens is its
-  own. The card's corner and its selection, the wash and the ring at the wash's outer edge, are the
-  overview's too: its thumbs round to that corner on screen, or to a wider one their picture keeps,
-  and its selected thumb wears that selection.
+- The cards MUST be the overview's, from one record both draw from: the stack's step, inset and
+  three cards, the gap between cards, the selected card's ring width, the faint edge every card
+  wears and the colour that darkens what is behind (`specs/overview.md`, "What it shows"). A value
+  changed for one changes for both. The overview darkens the bare desktop deeper than this panel's
+  glass, so how far each darkens is its own. The card's corner and its selection, the wash and the
+  ring at the wash's outer edge, are the overview's too: its thumbs round to that corner on screen,
+  or to a wider one their picture keeps, and its selected thumb wears that selection.
 - Colours MUST come from the Okibi design system's resolved tokens rather than being chosen here.
   Specifically: the panel is a floating surface, so it takes the content plane `--n2` with a 1px
   `--line` hairline and a shadow; a card with no picture takes the raised plane `--n3`; captions take
@@ -290,7 +290,8 @@ switcher answers "every window I have, wherever it is".
   get light glass under a dark layer.
 - Every card, a stack's cards behind included, MUST have a faint default edge, light rather than dark,
   so a card reads as a window whatever the window looks like. The cards are mostly dark windows, and a
-  hairline darker than them disappears.
+  hairline darker than them disappears. It is the card's edge, `--n11` at 0.16 and 1pt wide, which
+  the overview's unselected thumbs wear too.
 - The panel's corner radius MUST follow macOS's floating surfaces rather than the design system's card
   radius. The system tops out at 7px with "corners stay crisp", which is right for a card in a document
   and wrong for a panel that sits beside Spotlight and the volume HUD.

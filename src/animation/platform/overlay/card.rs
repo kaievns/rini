@@ -1,6 +1,7 @@
 //! The overview's thumbs drawn as the card (`choreography::overview::card`): while the overview
 //! holds the overlay every tile but a floating window's is laid as its card dress has it, its
-//! picture clipped to that corner, the selected one's wash drawn under it in the card's `WASH`.
+//! picture clipped to that corner, the selected one's wash drawn under it in the card's `WASH` and
+//! every other's picture edged in the card's `EDGE`.
 //! Along the zoom each piece plays its dress at every frame, and once the zoom ends the dress its
 //! models give; the outlines of empty workspaces keep their width on screen with the zoom.
 
@@ -8,7 +9,7 @@ use std::cell::Cell;
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2_core_foundation::{CGPoint, CGRect};
+use objc2_core_foundation::{CFRetained, CGPoint, CGRect};
 use objc2_core_graphics::CGColor;
 use objc2_quartz_core::CALayer;
 use rini_core::ids::WindowId;
@@ -19,14 +20,15 @@ use super::resize::{
     ride_as,
 };
 use super::{
-    TILE_SIZE_KEY, Tile, Tree, as_frame, clip_corners, number_object, point_object, rect_object,
+    TILE_SIZE_KEY, Tile, Tree, as_frame, cf_object, clip_corners, number_object, point_object,
+    rect_object,
 };
 use crate::animation::domain::choreography::overview::card::{
-    self, Dress, Thumb, Wash, Zoomed, dressed, dressed_over, dressing,
+    self, Dress, Edge, Thumb, Wash, Zoomed, dressed, dressed_over, dressing,
 };
 use crate::animation::domain::motion::plan::GroupKey;
 use crate::animation::domain::motion::score::{Channel, Node};
-use crate::chrome::domain::card::WASH;
+use crate::chrome::domain::card::{EDGE, EDGE_ALPHA, WASH};
 use crate::decorations::domain::shape::{Fit, Laying, Widths};
 use crate::decorations::domain::style::Ring;
 use crate::decorations::platform::layers::{Resize, add_under, remove_under, round_continuous};
@@ -45,6 +47,66 @@ const WASH_KEYS: [&str; 4] = [
     WASH_SIZE_KEY,
     WASH_CORNER_KEY,
 ];
+
+pub(super) const EDGE_WIDTH_KEY: &str = "rini.card.edge.width";
+pub(super) const EDGE_COLOUR_KEY: &str = "rini.card.edge.colour";
+const EDGE_KEYS: [&str; 2] = [EDGE_WIDTH_KEY, EDGE_COLOUR_KEY];
+
+/// The card's `EDGE` at `share` of its `EDGE_ALPHA`.
+pub(super) fn edge_colour(share: f64) -> CFRetained<CGColor> {
+    let (red, green, blue) = EDGE.rgb();
+    CGColor::new_srgb(red, green, blue, EDGE_ALPHA * share.clamp(0.0, 1.0))
+}
+
+/// A thumb's `picture` edged as `edge` has it: a border, which Core Animation draws over the
+/// picture and round its corner.
+fn place_edge(picture: &CALayer, edge: Edge) {
+    picture.setBorderWidth(edge.width);
+    picture.setBorderColor(Some(&edge_colour(edge.share)));
+}
+
+/// A thumb's `picture` edged through `frames` from `begin` over `seconds`, each piece only while it
+/// changes, and nothing playing while none of it shows.
+fn install_edge(picture: &CALayer, (begin, seconds): (f64, f64), frames: &[(TileSize, Dress)]) {
+    if frames.iter().all(|(_, dress)| dress.edge.share <= 0.0) {
+        remove_under(picture, &EDGE_KEYS);
+        return;
+    }
+    let lay = |key: &str,
+               key_path: &str,
+               changes: bool,
+               values: &dyn Fn() -> Vec<Retained<AnyObject>>| {
+        if changes {
+            add_under(picture, &keyframes(key_path, values(), (begin, seconds)), key);
+        } else {
+            remove_under(picture, &[key]);
+        }
+    };
+    lay(
+        EDGE_WIDTH_KEY,
+        "borderWidth",
+        changing(frames, |(_, dress)| dress.edge.width),
+        &|| frames.iter().map(|(_, dress)| number_object(dress.edge.width)).collect(),
+    );
+    lay(
+        EDGE_COLOUR_KEY,
+        "borderColor",
+        changing(frames, |(_, dress)| dress.edge.share),
+        &|| {
+            frames
+                .iter()
+                .map(|(_, dress)| cf_object(&edge_colour(dress.edge.share)))
+                .collect()
+        },
+    );
+}
+
+/// A thumb's `picture` with no edge, nothing playing on it.
+fn take_off_edge(picture: &CALayer) {
+    remove_under(picture, &EDGE_KEYS);
+    picture.setBorderWidth(0.0);
+    picture.setBorderColor(None);
+}
 
 /// The card's wash under a thumb: a holder riding the thumb's frame, which draws nothing, and the
 /// wash in it, reaching out of the thumb.
@@ -238,7 +300,8 @@ impl Tree {
     }
 
     /// `window`'s tile laid as its card dress has it once the replica's tracks end, its picture
-    /// clipped, the wash under it as selected or not, the one wearing the active ring selected;
+    /// clipped, the wash under it and the edge over it as selected or not, the one wearing the
+    /// active ring selected;
     /// along the zoom while it plays, its dress at every sample, its lift's shape with it; else
     /// while its own track resizes it, that resize laid again as it is laid now, its lift and its
     /// wash with it; and else nothing riding any of it.
@@ -266,6 +329,7 @@ impl Tree {
         if let Some(frame) = model {
             card.place(frame.size.respace(), held.wash);
         }
+        place_edge(&entry.picture, held.edge);
         let frames = dressing(&self.replica, window, self.now)
             .map(|span| (span, dressed_over(&self.replica, window, thumb, span)))
             .filter(|(_, frames)| frames.len() > 1);
@@ -283,6 +347,7 @@ impl Tree {
                     fits: &fits,
                 });
                 card.install((begin, end - begin), &frames);
+                install_edge(&entry.picture, (begin, end - begin), &frames);
                 if live.is_none() {
                     for layer in entry.layers() {
                         remove_under(layer, &[TILE_SIZE_KEY]);
@@ -292,10 +357,12 @@ impl Tree {
             }
             (None, Some(track)) => {
                 install_tile_resize(entry, track);
+                remove_under(&entry.picture, &EDGE_KEYS);
                 Some(track.ends())
             }
             (None, None) => {
                 remove_resize(entry);
+                remove_under(&entry.picture, &EDGE_KEYS);
                 None
             }
         };
@@ -304,9 +371,9 @@ impl Tree {
         }
     }
 
-    /// `window`'s tile, riding the floating container, drawn as its window lays it rather than as
-    /// a card: a card it wore as a thumb taken off, its picture clipped as it was given, and its own
-    /// resize, where its track has one, laid again so, its frame's resize left playing.
+    /// `window`'s tile, riding the floating container, drawn as its window lays it rather than as a
+    /// card: a card and an edge it wore as a thumb taken off, its picture clipped as it was given,
+    /// and its own resize, where its track has one, laid again so, its frame's resize left playing.
     fn undress_card(&mut self, window: WindowId) {
         let model = self.replica.model(Node::Tile(window)).map(as_frame);
         let resize = self
@@ -320,6 +387,7 @@ impl Tree {
             return;
         };
         card.layer().removeFromSuperlayer();
+        take_off_edge(&entry.picture);
         entry.decorations.lay(None);
         clip_corners(entry, entry.clipped);
         match resize {

@@ -73,10 +73,6 @@ const EMBER: (f64, f64, f64) = palette::EMBER.rgb();
 /// floating surfaces — Spotlight, the volume HUD, a popover — are rounded far more than 7px. Matching
 /// the platform reads as correct here in a way that matching the document system does not.
 const CORNER: f64 = 26.0;
-/// A tile's default hairline: `--n11` faint enough to read as the window's edge rather than as a frame.
-/// Light rather than `--line`, because the tiles are mostly dark windows and a hairline darker than
-/// them disappears.
-const TILE_EDGE_ALPHA: f64 = 0.16;
 
 /// The app icon badged into a tile's corner. Small enough to read as a cue rather than as content,
 /// large enough to tell two apps apart at a glance.
@@ -767,8 +763,8 @@ fn card(metrics: &Metrics, scale: f64, z: f64) -> Retained<CALayer> {
     // The raised plane, so a card with no picture yet reads as a surface rather than as a hole.
     card.setBackgroundColor(Some(&token(N3, 1.0)));
     // Drawn over the picture, so every card has an edge whatever its window looks like.
-    card.setBorderWidth(1.0);
-    card.setBorderColor(Some(&token(N11, TILE_EDGE_ALPHA)));
+    card.setBorderWidth(metrics.edge_width);
+    card.setBorderColor(Some(&token(metrics.edge.rgb(), metrics.edge_alpha)));
     card
 }
 
@@ -823,6 +819,21 @@ mod tests {
         }
         assert!(continuous(&card));
         assert_eq!(card.cornerRadius(), metrics.tile_corner);
+    }
+
+    /// Every card wears the card's faint edge over its picture, the one the overview's unselected
+    /// thumbs wear: its colour, how much of it shows and how wide (`chrome::domain::card`).
+    #[test]
+    fn every_card_wears_the_card_s_edge() {
+        use crate::chrome::domain::card::{EDGE, EDGE_ALPHA, EDGE_WIDTH};
+        let card = card(&Metrics::default(), 2.0, 1.0);
+        assert_eq!(card.borderWidth(), EDGE_WIDTH);
+        let (red, green, blue) = EDGE.rgb();
+        let edge = objc2_core_graphics::CGColor::new_srgb(red, green, blue, EDGE_ALPHA);
+        assert!(objc2_core_graphics::CGColor::equal_to_color(
+            card.borderColor().as_deref(),
+            Some(&edge)
+        ));
     }
 
     /// A card behind shows its window's picture, and one past the row's depth is hidden letting go of

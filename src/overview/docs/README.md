@@ -105,6 +105,15 @@ to 1.6ms undressed, most of it the paths of the casters' shadows and masks at ev
 wash's reach and the ring's outer edge are sampled at the same moments and the wash is inside at
 each, so Core Animation's line between two keeps it inside.
 
+**Every other thumb wears the card's edge.** Held, each thumb but the selected one wears the card's
+faint `EDGE` over its picture, `EDGE_WIDTH` wide on screen at `EDGE_ALPHA`, as the switcher edges
+every card (`src/chrome/domain/card.rs`): the picture's own border, so it rounds the picture's
+corner and lies under the ring. Its width is divided by the zoom and its alpha eased in by the share
+held (`Edge` in `src/animation/domain/choreography/overview/card.rs`), so frame zero and the landing
+have none. With the edge's width and colour played on every unselected thumb and the desktop's
+blur, the zoom out's play, 4 rows of 8 thumbs in a release test build, took 4.99 to 5.06ms at the
+median of 40 over three runs, against 4.57 to 4.67ms without them, on an M3 Pro, 2026-10-19.
+
 **The desktop darkens and blurs on the score too.** Held, the desktop behind the thumbs is
 darkened by the card's backdrop, `--n0`, the switcher's darkening colour, at 0.60 (`BACKDROP`,
 `DESKTOP_ALPHA` in `src/chrome/domain/card.rs`), deeper than the switcher's `BACKDROP_ALPHA`, 0.40,

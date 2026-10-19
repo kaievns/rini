@@ -2253,6 +2253,14 @@ mod tests {
         value.downcast_ref::<NSNumber>().expect("a number").doubleValue()
     }
 
+    /// The alpha of a colour handed over as an object.
+    fn alpha_in(value: &AnyObject) -> f64 {
+        // SAFETY: the value was made from a CGColor, which is what it is read back as.
+        let colour: &objc2_core_graphics::CGColor =
+            unsafe { &*(value as *const AnyObject as *const objc2_core_graphics::CGColor) };
+        objc2_core_graphics::CGColor::alpha(Some(colour))
+    }
+
     /// The bounding box of a path handed over as an object.
     fn path_in(value: &AnyObject) -> CGRect {
         objc2_core_graphics::CGPath::bounding_box(Some(&path_of(value)))
@@ -3875,6 +3883,21 @@ mod tests {
                 let resizing = track
                     .is_some_and(|track| resizes(track) && (!carded || track.ends() > tree.now));
                 let sampled = tree.held.and_then(|_| card_frames(tree, window));
+                let edging =
+                    tree.held.and_then(|_| card_dresses(tree, window)).map(|(_, frames)| {
+                        let shows = frames.iter().any(|(_, dress)| dress.edge.share > 0.0);
+                        let moves = |f: fn(&Dressed) -> f64| {
+                            shows && frames.iter().any(|frame| f(frame) != f(&frames[0]))
+                        };
+                        let mut keys = Vec::new();
+                        if moves(|(_, dress)| dress.edge.width) {
+                            keys.push(card::EDGE_WIDTH_KEY);
+                        }
+                        if moves(|(_, dress)| dress.edge.share) {
+                            keys.push(card::EDGE_COLOUR_KEY);
+                        }
+                        keys
+                    });
                 let turns = sampled
                     .as_ref()
                     .is_some_and(|(_, fits)| fits.iter().any(|fit| fit.corner != fits[0].corner));
@@ -3904,6 +3927,9 @@ mod tests {
                     }
                     if turns && index == 0 {
                         keys.push(PICTURE_CORNER_KEY);
+                    }
+                    if index == 0 {
+                        keys.extend(edging.iter().flatten());
                     }
                     if turns && index == 2 {
                         keys.push("rini.tile.hairline.corner");
@@ -3950,12 +3976,15 @@ mod tests {
         fn plays_its_cards(tree: &Tree) {
             use crate::animation::domain::choreography::overview::card::dressed;
             for (window, entry) in &tree.tile_layers {
+                let unedged = |entry: &Tile| entry.picture.borderWidth() == 0.0;
                 if tree.replica.parent(*window) == Some(GroupKey::Floating) {
                     assert!(entry.card.is_none(), "{window:?} floating, a card");
+                    assert!(unedged(entry), "{window:?} floating, an edge");
                     continue;
                 }
                 let Some(card) = &entry.card else {
                     assert!(tree.held.is_none(), "{window:?} held, a card");
+                    assert!(unedged(entry), "{window:?} an edge in a flight");
                     continue;
                 };
                 assert!(tree.held.is_some(), "{window:?} no card in a flight");
@@ -3973,6 +4002,14 @@ mod tests {
                 let out = held.wash.out;
                 let wash = rect(-out, -out, size.width + 2.0 * out, size.height + 2.0 * out);
                 assert_eq!(card.wash().frame(), wash, "{window:?}");
+                assert_eq!(entry.picture.borderWidth(), held.edge.width, "{window:?}");
+                assert!(
+                    objc2_core_graphics::CGColor::equal_to_color(
+                        entry.picture.borderColor().as_deref(),
+                        Some(&card::edge_colour(held.edge.share))
+                    ),
+                    "{window:?} its edge"
+                );
                 let track = tree.replica.track(Node::Tile(*window), Channel::Base);
                 let Some(((begin, end), fits)) = card_frames(tree, *window) else {
                     let live = |track: &Track| resizes(track) && track.ends() > tree.now;
@@ -4007,8 +4044,36 @@ mod tests {
                     washing.push("rini.card.wash.corner");
                 }
                 assert_eq!(rini_keys(card.wash()), sorted(washing), "{window:?} its wash");
-                let corner = installed(&entry.picture, PICTURE_CORNER_KEY, number_in);
                 let last = (fits.len() - 1) as f64;
+                let keyed = |f: &dyn Fn(&Dressed) -> f64| -> Vec<(f64, f64)> {
+                    dresses
+                        .iter()
+                        .enumerate()
+                        .map(|(k, frame)| (k as f64 / last, f(frame)))
+                        .collect()
+                };
+                let keys = rini_keys(&entry.picture);
+                for (key, on, f) in [
+                    (
+                        card::EDGE_WIDTH_KEY,
+                        number_in as fn(&AnyObject) -> f64,
+                        (|(_, dress): &Dressed| dress.edge.width) as fn(&Dressed) -> f64,
+                    ),
+                    (card::EDGE_COLOUR_KEY, alpha_in, |(_, dress): &Dressed| {
+                        crate::chrome::domain::card::EDGE_ALPHA * dress.edge.share
+                    }),
+                ] {
+                    if keys.contains(&key.to_string()) {
+                        let edge = installed(&entry.picture, key, on);
+                        assert_eq!((edge.begin, edge.seconds), (begin, end - begin));
+                        let want = keyed(&f);
+                        assert_eq!(edge.keys.len(), want.len(), "{window:?} {key}");
+                        for ((unit, got), (at, want)) in edge.keys.iter().zip(&want) {
+                            assert!(unit == at && (got - want).abs() < 1e-6, "{window:?} {key}");
+                        }
+                    }
+                }
+                let corner = installed(&entry.picture, PICTURE_CORNER_KEY, number_in);
                 assert_eq!((corner.begin, corner.seconds), (begin, end - begin));
                 let corners: Vec<(f64, f64)> =
                     fits.iter().enumerate().map(|(k, fit)| (k as f64 / last, fit.corner)).collect();
@@ -5010,6 +5075,138 @@ mod tests {
                 assert_eq!(picture.cornerRadius(), 10.0, "{window:?} landed on its window's");
                 assert_eq!(ring.borderWidth(), 1.0);
                 assert_eq!(wash.opacity(), 0.0);
+            }
+        }
+
+        /// The overview's unselected thumbs wear the switcher's faint card edge over their
+        /// pictures, `EDGE_WIDTH` wide on screen at every frame of the zoom, its alpha eased in
+        /// from none at frame zero to `EDGE_ALPHA` held and out to none at the landing, and the
+        /// selected thumb none of it, wearing its ring and wash instead.
+        #[test]
+        fn the_overview_s_unselected_thumbs_wear_the_card_s_edge_and_the_selected_one_its_ring() {
+            use crate::animation::domain::choreography::overview::{
+                Motion, at_rest, held, pose, toward,
+            };
+            use crate::animation::domain::motion::plan::on_overlay;
+            use crate::chrome::domain::card::{EDGE_ALPHA, EDGE_WIDTH};
+            use crate::decorations::domain::style::Ring;
+            use crate::overview::domain::fixture::{Col, overview, row, strip, w};
+            use crate::overview::domain::scene::lay_out;
+
+            let _core_animation = hold_core_animation();
+            let columns = [
+                Col { width: 800.0, windows: &[1] },
+                Col { width: 800.0, windows: &[2] },
+                Col { width: 800.0, windows: &[3] },
+            ];
+            let input = overview(vec![row(strip(&columns, 0.0), Some(2))], 0);
+            let scene = lay_out(&input);
+            let depth = scene.scale;
+            let shown: Vec<(WindowId, OverlayRect)> = input.rows[0]
+                .columns
+                .iter()
+                .flat_map(|column| &column.windows)
+                .map(|laid| (laid.window, to_overlay_space(laid.frame, DISPLAY)))
+                .collect();
+            let rest = at_rest(&scene, &shown);
+            let tiles: Vec<OverlayTile> = rest
+                .tiles
+                .iter()
+                .map(|(window, _, frame)| {
+                    let rect = on_overlay(*frame);
+                    let mut tile = overlay_tile(*window, rect, rect, false);
+                    tile.radius = Some(10.0);
+                    let selected = *window == w(2);
+                    tile.worn = Worn {
+                        decoration: ringed(1.0),
+                        wears_ring: if selected { Ring::Active } else { Ring::None },
+                        holds_focus: selected,
+                    };
+                    tile
+                })
+                .collect();
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.pose(&pose(&rest), &tiles);
+            tree.hold(depth);
+            plays_exactly(&tree);
+            let picture = |tree: &Tree, window: WindowId| tree.tile_layers[&window].picture.clone();
+            let alpha = |layer: &CALayer| {
+                objc2_core_graphics::CGColor::alpha(layer.borderColor().as_deref())
+            };
+            let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+            for window in [w(1), w(2), w(3)] {
+                assert_eq!(
+                    alpha(&picture(&tree, window)),
+                    0.0,
+                    "{window:?} none at frame zero"
+                );
+            }
+
+            let slide = Motion::Slide { seconds: 0.35 };
+            let zoomed =
+                |tree: &mut Tree, score: &Score, edits: Vec<Edit>, (from, to): (f64, f64)| {
+                    let mut score = score.clone();
+                    for edit in &edits {
+                        score.apply(edit);
+                    }
+                    tree.play(&edits, &tiles);
+                    plays_exactly(tree);
+                    let zoom = score.track(Node::Strip, Channel::Base).expect("a zoom").clone();
+                    let scale = |unit: f64| match score
+                        .sample(Node::Strip, zoom.begin() + zoom.seconds() * unit)
+                    {
+                        Some(Value::Zoom(zoom)) => zoom.scale,
+                        other => panic!("{other:?}"),
+                    };
+                    for window in [w(1), w(3)] {
+                        let edge = picture(tree, window);
+                        let widths = installed(&edge, card::EDGE_WIDTH_KEY, number_in);
+                        assert_eq!(key_path(&edge, card::EDGE_WIDTH_KEY), "borderWidth");
+                        assert!(
+                            widths
+                                .keys
+                                .iter()
+                                .all(|(unit, width)| close(width * scale(*unit), EDGE_WIDTH)),
+                            "{window:?} as wide on screen through the zoom: {:?}",
+                            widths.keys
+                        );
+                        let alphas = installed(&edge, card::EDGE_COLOUR_KEY, alpha_in);
+                        assert_eq!(key_path(&edge, card::EDGE_COLOUR_KEY), "borderColor");
+                        let (first, last) =
+                            (alphas.keys[0].1, alphas.keys[alphas.keys.len() - 1].1);
+                        assert!(close(first, EDGE_ALPHA * from) && close(last, EDGE_ALPHA * to));
+                    }
+                    let selected = rini_keys(&picture(tree, w(2)));
+                    assert!(
+                        !selected.iter().any(|key| key.starts_with("rini.card.edge")),
+                        "the selected one plays no edge: {selected:?}"
+                    );
+                    score
+                };
+
+            let out = zoomed(
+                &mut tree,
+                &pose(&rest),
+                toward(&pose(&rest), &held(&scene), 100.0, slide),
+                (0.0, 1.0),
+            );
+            for window in [w(1), w(3)] {
+                let edge = picture(&tree, window);
+                assert!(close(edge.borderWidth() * depth, EDGE_WIDTH), "{window:?}");
+                assert!(close(alpha(&edge), EDGE_ALPHA), "{window:?} edged held");
+            }
+            assert_eq!(alpha(&picture(&tree, w(2))), 0.0, "the selected one unedged");
+            let ringed = tree.tile_layers[&w(2)].decorations.bands.ring.as_ref().expect("ringed");
+            assert!(ringed.layer.borderWidth() > 0.0, "ringed instead");
+
+            let edits = toward(&out, &at_rest(&scene, &shown), 101.0, slide);
+            zoomed(&mut tree, &out, edits, (1.0, 0.0));
+            for window in [w(1), w(2), w(3)] {
+                assert_eq!(
+                    alpha(&picture(&tree, window)),
+                    0.0,
+                    "{window:?} none at the landing"
+                );
             }
         }
 

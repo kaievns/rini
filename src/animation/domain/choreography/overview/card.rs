@@ -1,7 +1,8 @@
 //! A thumb of the overview drawn as the switcher's card (`chrome::domain::card`): rounded to the
 //! card's corner on screen, or to a wider corner its picture keeps, its bands round that corner, and
 //! the selected one ringed at the card's selection over the card's wash, as the switcher draws its
-//! selected card (`specs/overview.md`, "What it shows").
+//! selected card, and every other wearing the card's faint edge, as the switcher edges its cards
+//! (`specs/overview.md`, "What it shows").
 //!
 //! Every value is eased on screen from the window's own to the card's by how far the overview is
 //! held (`Node::Held`), then divided by the zoom it is drawn under: at rest a thumb is its window,
@@ -31,11 +32,20 @@ pub struct Wash {
     pub corner: f64,
 }
 
-/// A thumb as it is drawn: its pieces and bands laid, and the wash under it.
+/// The card's edge over a thumb's picture, in the strip's points: how wide it is drawn, and how
+/// much of its `EDGE_ALPHA` shows, from none to all.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Edge {
+    pub width: f64,
+    pub share: f64,
+}
+
+/// A thumb as it is drawn: its pieces and bands laid, the wash under it and the edge over it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Dress {
     pub laying: Laying,
     pub wash: Wash,
+    pub edge: Edge,
 }
 
 /// A thumb as its window has it: how the window lays it on screen, whether its picture keeps the
@@ -52,7 +62,9 @@ pub struct Thumb {
 /// border as wide as the window's, and the ring as wide as the window's on any other thumb; on the
 /// selected one the ring at least the card's ring and laid on the card's selection, its outer edge
 /// `SELECTION_OUTSET` out at `SELECTION_CORNER` as far past the thumb's corner as the card's is
-/// past `CORNER`, over the card's wash reaching as far as the ring's outer edge.
+/// past `CORNER`, over the card's wash reaching as far as the ring's outer edge; on every other
+/// thumb the card's `EDGE` over its picture, `EDGE_WIDTH` wide on screen, showing as far as it is
+/// held, as the switcher edges its unselected cards.
 pub fn dress(thumb: Thumb, held: f64, zoom: f64) -> Dress {
     let Thumb { own, keeps_corner, selected } = thumb;
     let share = held.clamp(0.0, 1.0);
@@ -102,6 +114,10 @@ pub fn dress(thumb: Thumb, held: f64, zoom: f64) -> Dress {
             share: if selected { share } else { 0.0 },
             out: ease(0.0, card::SELECTION_OUTSET),
             corner: ease(own.corner, selection_corner),
+        },
+        edge: Edge {
+            width: card::EDGE_WIDTH / zoom,
+            share: if selected { 0.0 } else { share },
         },
     }
 }
@@ -282,6 +298,24 @@ mod tests {
             assert_eq!(held.laying.ring.out, 0.0);
             assert_eq!(held.wash.share, 0.0);
         }
+    }
+
+    /// At rest no thumb shows the card's edge, so frame zero and the landing are the screen; held
+    /// at any depth every thumb but the selected one shows all of it, `EDGE_WIDTH` wide on screen,
+    /// and the selected one none, wearing its ring and wash instead.
+    #[test]
+    fn held_every_unselected_thumb_wears_the_card_s_edge_on_screen() {
+        for selected in [false, true] {
+            assert_eq!(dress(thumb(own(), selected), 0.0, 1.0).edge.share, 0.0);
+        }
+        for zoom in [0.22, 0.3, 0.5] {
+            let edge = dress(thumb(own(), false), 1.0, zoom).edge;
+            assert!(close(edge.width * zoom, card::EDGE_WIDTH), "{zoom}");
+            assert_eq!(edge.share, 1.0);
+            assert_eq!(dress(thumb(own(), true), 1.0, zoom).edge.share, 0.0);
+        }
+        let halfway = dress(thumb(own(), false), 0.5, 0.6).edge;
+        assert!(close(halfway.width * 0.6, card::EDGE_WIDTH) && halfway.share == 0.5);
     }
 
     /// Held, the selected thumb is ringed as the switcher rings its selected card: the ring at

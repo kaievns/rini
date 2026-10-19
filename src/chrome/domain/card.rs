@@ -1,13 +1,14 @@
-//! The card: a picture of a window drawn as a thing of its own, as the switcher draws one per row of
-//! its popup and the overview one per thumb, the ring the selected one wears, the stack a run of them
-//! collapses into, and what darkens whatever is behind them. One record for both features, so their
-//! look cannot drift (`specs/switcher.md`, "The popup"; `specs/overview.md`, "What it shows").
+//! The card: a picture of a window drawn as a thing of its own, as the switcher draws one per row
+//! of its popup and the overview one per thumb, the ring the selected one wears, the stack a run of
+//! them collapses into, the faint edge each wears, and what darkens whatever is behind them. One
+//! record for both features, so their look cannot drift (`specs/switcher.md`, "The popup";
+//! `specs/overview.md`, "What it shows").
 //!
 //! In points on screen: the overview, which draws under a zoom, divides by it.
 
 use rini_geometry::space::{Point, Rect, Size};
 
-use super::palette::{Colour, EMBER_SOFT, N0};
+use super::palette::{Colour, EMBER_SOFT, N0, N11};
 
 /// A card's corner radius, and a departure from the design system: `--radius-control` is 5px, a
 /// button's radius. A card is a picture of a window, and macOS rounds every window, so a
@@ -53,6 +54,17 @@ pub const DESKTOP_ALPHA: f64 = 0.60;
 /// enough to keep the shape of what is behind, as the switcher's clear glass does. A judgement, and
 /// a first value for Kai to tune.
 pub const DESKTOP_BLUR: f64 = 6.0;
+
+/// The faint edge every card wears over its picture, the selected one's under its ring: `--n11`,
+/// light rather than `--line`, because the cards are mostly dark windows and a hairline darker than
+/// them disappears.
+pub const EDGE: Colour = N11;
+
+/// How much of `EDGE` shows: faint enough to read as the window's edge rather than as a frame.
+pub const EDGE_ALPHA: f64 = 0.16;
+
+/// How wide `EDGE` is drawn.
+pub const EDGE_WIDTH: f64 = 1.0;
 
 /// A stack of cards: its top card, and the cards behind it each a step further the way the stack
 /// goes and shorter across it.
