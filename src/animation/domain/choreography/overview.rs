@@ -3,7 +3,9 @@
 //! the screen as it is and back in onto the real layout, and every press inside it, played Slide's
 //! way at a press's pace, each node from where it is drawn to where the new scene has it; every
 //! thumb lifted off the overlay while it is held, the selected one furthest, and the desktop behind
-//! them darkened; and the push at an end bounced on screen as far as a flight's.
+//! them darkened; the shown workspace's floating windows where the screen has them, outside the
+//! zoom, faded out as the desktop darkens; and the push at an end bounced on screen as far as a
+//! flight's.
 //!
 //! Not a `Look`, nor in `Look::ALL`: the overview is a view the presses inside it change, and its
 //! moves are the same under every look (`specs/overview.md`, "How it moves").
@@ -70,15 +72,24 @@ fn key(row: usize, part: Part) -> GroupKey {
 /// The strip container of `row`.
 pub fn strip_of(row: usize) -> GroupKey { key(row, Part::Strip) }
 
+/// A floating window of the shown workspace as the screen has it: where it is on the overlay, and
+/// whether the window server has it in front of the strip's windows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Floating {
+    pub window: WindowId,
+    pub frame: OverlayRect,
+    pub in_front: bool,
+}
+
 /// Where every node of the overview is drawn once its tracks end: the strip's zoom, each
-/// container's place, each thumb's container and frame in it and how far it is lifted, and each
-/// empty workspace's outline.
+/// container's place, each tile's container and frame in it and how far a thumb is lifted, and
+/// each empty workspace's outline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Places {
     pub zoom: Zoom,
     pub containers: Vec<(GroupKey, OverlayPoint)>,
     pub tiles: Vec<(WindowId, GroupKey, GroupRect)>,
-    /// Each thumb's lift, from 0 to 1, in `tiles`' order.
+    /// Each thumb's lift, from 0 to 1, in `tiles`' order; a floating window casts none.
     pub lifts: Vec<(WindowId, f64)>,
     /// How far the desktop behind is darkened, from 0 to 1 of the card's backdrop: all the way
     /// while held, none at rest.
@@ -106,6 +117,9 @@ impl Places {
         let (_, key, frame) = self.tiles.iter().find(|(w, ..)| *w == window)?;
         let at = self.container(*key)?;
         let laid = crate::animation::domain::motion::plan::overlay_of(*frame, at);
+        if *key == GroupKey::Floating {
+            return Some(laid);
+        }
         Some(OverlayRect::new(
             self.zoom.draw(laid.origin),
             laid.size * self.zoom.scale,
@@ -276,6 +290,27 @@ pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
             *frame = group_relative(rest, container);
         }
     }
+    places
+}
+
+/// `places` with the shown workspace's floating windows, front to back as `floating` lists them,
+/// each riding the floating container where the screen has it, outside the zoom: in front of the
+/// strip where the window server has it there, the strip moved back a band for it as a flight
+/// moves it for a floating focus, and behind it otherwise. The renderer draws that container at the
+/// opposite of the tint, so each is on screen at rest and gone once the desktop is darkened.
+pub fn with_floating(mut places: Places, floating: &[Floating]) -> Places {
+    if floating.is_empty() {
+        return places;
+    }
+    places.containers.push((GroupKey::Floating, Point::origin()));
+    for (depth, window) in floating.iter().enumerate() {
+        let frame = group_relative(window.frame, Point::origin());
+        places.tiles.push((window.window, GroupKey::Floating, frame));
+        places.banding.within.insert(window.window, depth);
+    }
+    let in_front = floating.iter().filter(|window| window.in_front);
+    places.banding.lifted = in_front.map(|window| window.window).collect();
+    places.banding.focus_off_strip = !places.banding.lifted.is_empty();
     places
 }
 
@@ -710,6 +745,58 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The shown workspace's floating windows, w20 over the strip and w21 behind it, the tint
+    /// played from the screen to the scene held and back: each window drawn where the screen has
+    /// it the whole way, outside the zoom, on the floating container the renderer fades as the tint
+    /// darkens, so on screen at rest and gone held; w20 in front of the strip, which moves back a
+    /// band for it, and w21 behind.
+    #[test]
+    fn the_floating_windows_stay_where_the_screen_has_them_as_the_tint_comes_and_goes() {
+        let scene = scene(&STRIP, 3);
+        let shown = shown(&STRIP, 3);
+        let floating = [
+            Floating {
+                window: w(20),
+                frame: OverlayRect::new(Point::new(300.0, 200.0), Size::new(600.0, 400.0)),
+                in_front: true,
+            },
+            Floating {
+                window: w(21),
+                frame: OverlayRect::new(Point::new(900.0, 500.0), Size::new(400.0, 300.0)),
+                in_front: false,
+            },
+        ];
+        let rest = with_floating(at_rest(&scene, &shown), &floating);
+        let hold = with_floating(held(&scene), &floating);
+        let mut score = pose(&rest);
+        for (places, tint) in [(&rest, 0.0), (&hold, 1.0)] {
+            assert_eq!(places.tint, tint);
+            for window in floating {
+                assert!(places.drawn(window.window).unwrap().is_within(1e-6, window.frame));
+                assert_eq!(score.parent(window.window), Some(GroupKey::Floating));
+            }
+            assert_eq!(places.banding.lifted, vec![w(20)]);
+            assert!(places.banding.focus_off_strip);
+            assert_eq!(places.banding.within[&w(20)], 0);
+            assert_eq!(places.banding.within[&w(21)], 1);
+            let lifted = |window: WindowId| places.lifts.iter().any(|(w, _)| *w == window);
+            assert!(!lifted(w(20)) && !lifted(w(21)), "no shadow");
+        }
+        let edits = toward(&score, &hold, 0.0, Motion::Slide { seconds: PRESS });
+        for edit in &edits {
+            score.apply(edit);
+        }
+        for at in [0.0, PRESS / 2.0, PRESS + 0.01] {
+            for window in floating {
+                let drawn = score.drawn(window.window, at).unwrap();
+                assert!(drawn.is_within(1e-6, window.frame), "{at}: {drawn:?}");
+            }
+        }
+        assert_eq!(score.sample(Node::Tint, PRESS + 0.01), Some(Value::Number(1.0)));
+        let none = with_floating(held(&scene), &[]);
+        assert_eq!(none, held(&scene), "nothing floating adds nothing");
     }
 
     /// The zoom out runs as a focus press pans the strip, on Slide's curve over a press's length,

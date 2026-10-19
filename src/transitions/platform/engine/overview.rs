@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use rini_core::ids::WindowId;
+use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{OverlayRect, Respace, ScreenRect};
 use rini_geometry::to_overlay_space;
 use rini_runloop::run_loop::RepeatingTimer;
@@ -17,7 +17,8 @@ use super::asks::on_screen;
 use super::tiles::{Stacking, frames_of};
 use super::{Event, FlightEngine};
 use crate::animation::domain::choreography::overview::{
-    Motion, Outline, Places, Press, accented, at_rest, held, pose, pushes, screen_wide, toward,
+    Floating, Motion, Outline, Places, Press, accented, at_rest, held, pose, pushes, screen_wide,
+    toward, with_floating,
 };
 use crate::animation::domain::motion::plan::on_overlay;
 #[cfg(test)]
@@ -231,19 +232,27 @@ impl FlightEngine {
         }
     }
 
-    /// Frame zero of the strip's windows the display shows, each wholly on it.
+    /// Frame zero of the windows the display shows, each wholly on it: the strip's, and the
+    /// floating ones as the background behind it.
     fn ask_overview_frame_zero(&mut self, generation: Generation) {
         let (Some(view), Some((display, _))) = (&self.shown_overview.view, self.display) else {
             return;
         };
         let on = |frame: ScreenRect| frame_zero_pictures(frame, false, display);
         let strip: Vec<_> = view.shown.iter().copied().filter(|(_, frame)| on(*frame)).collect();
+        let background: Vec<_> = view
+            .floating
+            .iter()
+            .map(|window| (window.window, window.frame))
+            .filter(|(_, frame)| on(*frame))
+            .collect();
+        let behind: Vec<WindowId> = background.iter().map(|(window, _)| *window).collect();
         self.pictures.ask_on_screen(on_screen(
             self.tag(generation),
             Moment::FrameZero,
             &strip,
-            &[],
-            &[],
+            &background,
+            &behind,
         ));
     }
 
@@ -453,11 +462,12 @@ impl FlightEngine {
         }
     }
 
-    /// Where `target` has every node, from the latest view: none with no view or no display.
+    /// Where `target` has every node, from the latest view, the floating windows where the screen
+    /// has them either way: none with no view or no display.
     fn overview_places(&self, target: Target) -> Option<Places> {
         let view = self.shown_overview.view.as_ref()?;
         let (display, _) = self.display?;
-        Some(match target {
+        let places = match target {
             Target::Held => held(&view.scene),
             Target::AtRest => {
                 let shown: Vec<(WindowId, OverlayRect)> = view
@@ -467,78 +477,109 @@ impl FlightEngine {
                     .collect();
                 at_rest(&view.scene, &shown)
             }
-        })
+        };
+        Some(with_floating(places, &self.overview_floating(view, display)))
     }
 
-    /// A thumb for every window `places` draws, made on the picture frame zero took, else the
-    /// cache's, else the stand-in, and kept for one it drew already; the selected window's wearing
-    /// the active ring and drawn focused, every other one dressed as on a workspace not shown.
+    /// The shown workspace's floating windows on the overlay, front to back as the window server
+    /// stacks them, each in front of the strip where it has it in front of every strip window.
+    fn overview_floating(&self, view: &OverviewView, display: ScreenRect) -> Vec<Floating> {
+        if view.floating.is_empty() {
+            return Vec::new();
+        }
+        let depths = self.window_server.front_to_back_depths();
+        let depth = |id: WindowServerId| depths.get(&id.as_u32()).copied();
+        let strip_front = view
+            .windows
+            .iter()
+            .filter(|info| view.shown.iter().any(|(window, _)| *window == info.window))
+            .filter_map(|info| depth(info.server_id))
+            .min();
+        let mut floating: Vec<(Option<usize>, Floating)> = view
+            .floating
+            .iter()
+            .map(|window| {
+                let order = depth(window.server_id);
+                let in_front = order.zip(strip_front).is_some_and(|(order, front)| order < front);
+                let frame = to_overlay_space(window.frame, display);
+                (order, Floating {
+                    window: window.window,
+                    frame,
+                    in_front,
+                })
+            })
+            .collect();
+        floating.sort_by_key(|(order, _)| order.unwrap_or(usize::MAX));
+        floating.into_iter().map(|(_, window)| window).collect()
+    }
+
+    /// A tile for every window `places` draws, made on the picture frame zero took, else the
+    /// cache's, else the stand-in, and kept for one it drew already: the selected thumb wearing the
+    /// active ring and drawn focused, every other thumb dressed as on a workspace not shown, and a
+    /// floating window dressed and drawn as the screen has it.
     fn wear_overview(&mut self, places: &Places) {
         let Some(view) = self.shown_overview.view.as_ref() else {
             return;
         };
         let selected = view.scene.selected.window;
-        let new: Vec<_> = places
-            .tiles
-            .iter()
-            .filter(|(window, ..)| !self.shown_overview.tiles.iter().any(|t| t.window == *window))
-            .filter_map(|(window, _, frame)| {
-                let info = view.windows.iter().find(|info| info.window == *window)?;
-                Some((*info, *frame))
-            })
-            .collect();
-        let ids: Vec<_> = new.iter().map(|(info, _)| info.server_id).collect();
-        let stacking = Stacking::read(&*self.window_server, &ids);
-        let mut made = Vec::new();
-        for (info, frame) in new {
-            let rect = on_overlay(frame);
-            let picture = self
-                .shown_overview
-                .frame_zero
-                .get(&info.window)
-                .cloned()
-                .or_else(|| self.pictures.usable(info.window))
-                .or_else(|| self.pictures.stand_in(rect.size.respace()));
-            let Some(snapshot) = picture else { continue };
-            let on = selected == Some(info.window);
-            let decoration = self.shown_overview.dressed(info.decoration, view.scene.scale, on);
-            let worn = Worn::beside(decoration);
-            let tile = stacking.tile_of(info.window, info.server_id, false, worn);
-            let clipped = snapshot.source.clips();
-            made.push(tile.flying((rect, rect), Drawn { snapshot, clipped }, false));
-        }
-        let dressed: HashMap<WindowId, Decoration> = view
+        let mut dress: HashMap<WindowId, (WindowServerId, Worn, bool)> = view
             .windows
             .iter()
             .map(|info| {
                 let on = selected == Some(info.window);
                 let decoration = self.shown_overview.dressed(info.decoration, view.scene.scale, on);
-                (info.window, decoration)
+                (info.window, (info.server_id, thumb_worn(decoration, on), on))
             })
             .collect();
+        let floats: Vec<WindowId> = view.floating.iter().map(|info| info.window).collect();
+        dress.extend(
+            view.floating
+                .iter()
+                .map(|info| (info.window, (info.server_id, info.worn, info.worn.holds_focus))),
+        );
+        let new: Vec<_> = places
+            .tiles
+            .iter()
+            .filter(|(window, ..)| !self.shown_overview.tiles.iter().any(|t| t.window == *window))
+            .filter_map(|(window, _, frame)| Some((*window, *dress.get(window)?, *frame)))
+            .collect();
+        let ids: Vec<_> = new.iter().map(|(_, (server_id, ..), _)| *server_id).collect();
+        let stacking = Stacking::read(&*self.window_server, &ids);
+        let mut made = Vec::new();
+        for (window, (server_id, worn, focused), frame) in new {
+            let rect = on_overlay(frame);
+            let picture = self
+                .shown_overview
+                .frame_zero
+                .get(&window)
+                .cloned()
+                .or_else(|| self.pictures.usable(window))
+                .or_else(|| self.pictures.stand_in(rect.size.respace()));
+            let Some(snapshot) = picture else { continue };
+            let tile = stacking.tile_of(window, server_id, floats.contains(&window), worn);
+            let clipped = snapshot.source.clips();
+            made.push(tile.flying((rect, rect), Drawn { snapshot, clipped }, focused));
+        }
         let shown = &mut self.shown_overview;
         shown
             .tiles
             .retain(|tile| places.tiles.iter().any(|(window, ..)| *window == tile.window));
         shown.tiles.extend(made);
         for tile in &mut shown.tiles {
-            let on = selected == Some(tile.window);
-            let decoration = dressed.get(&tile.window).copied().unwrap_or(tile.worn.decoration);
-            tile.focused = on;
-            tile.worn = if on {
-                Worn {
-                    decoration,
-                    wears_ring: Ring::Active,
-                    holds_focus: true,
+            let (worn, focused) = match dress.get(&tile.window) {
+                Some(&(_, worn, focused)) => (worn, focused),
+                None => {
+                    let on = selected == Some(tile.window);
+                    (thumb_worn(tile.worn.decoration, on), on)
                 }
-            } else {
-                Worn::beside(decoration)
             };
+            tile.worn = worn;
+            tile.focused = focused;
         }
     }
 
-    /// The overlay holed over each window the overview lands on, and over the band it wears there,
-    /// so each keeps painting under it.
+    /// The overlay holed over each window the overview lands on and each floating window, and over
+    /// the band it wears there, so each keeps painting under it.
     fn hole_overview(&mut self) {
         let (Some(view), Some((display, scale))) = (&self.shown_overview.view, self.display) else {
             return;
@@ -557,6 +598,10 @@ impl FlightEngine {
                 let band = outset(&decoration, selected == Some(*window), scale);
                 (to_overlay_space(*frame, display), band)
             })
+            .chain(view.floating.iter().map(|info| {
+                let band = outset(&info.worn.decoration, info.worn.wears_ring.worn(), scale);
+                (to_overlay_space(info.frame, display), band)
+            }))
             .collect();
         self.render(Render::Holes(holes));
     }
@@ -659,6 +704,20 @@ impl Shown {
 enum Target {
     Held,
     AtRest,
+}
+
+/// What a thumb wears dressed in `decoration`: the active ring and focus if it is the selected
+/// one, `on`, and nothing of either otherwise.
+fn thumb_worn(decoration: Decoration, on: bool) -> Worn {
+    if on {
+        Worn {
+            decoration,
+            wears_ring: Ring::Active,
+            holds_focus: true,
+        }
+    } else {
+        Worn::beside(decoration)
+    }
 }
 
 /// Slide's curve over `length`, a cut with none.

@@ -149,11 +149,13 @@ Every workspace of one display at once, zoomed out, while its key is held.
 - A row with nothing on its strip, a workspace holding only floating windows included, MUST be drawn
   as its tiling area's outline in the focus ring's inactive paint, and in its active paint while
   selected.
-- Only the windows tiled on a workspace's strip MUST be drawn, on every row, the shown one's and the
-  hidden ones' alike. A floating window MUST NOT be drawn, as a thumb or in an edge stack, and
-  neither MUST a window rini does not tile: a panel, a window rini leaves unmanaged, a window of an
+- Only the windows tiled on a workspace's strip MUST be thumbs, on every row, the shown one's and
+  the hidden ones' alike. A floating window MUST NOT be a thumb or in an edge stack, and neither
+  MUST a window rini does not tile: a panel, a window rini leaves unmanaged, a window of an
   application it does not manage. Kai asked for the overview to hold the strip's windows only: a
-  floating window over a row covers the thumbs under it and is on no axis a press moves along.
+  floating window over a row covers the thumbs under it and is on no axis a press moves along. The
+  shown workspace's floating windows are drawn only as the screen has them, fading out as it zooms
+  out and back in as it zooms in ("How it moves"), and not at all while it is held.
 
 > **Reported 2026-10-19.** "oh and i forgot there is a zoom window on the overview and it shouldn't
 > be there. the overview is only for the on-strip windows". Zoom is the video-call application. The
@@ -265,11 +267,18 @@ Every workspace of one display at once, zoomed out, while its key is held.
 ## How it moves
 
 - It MUST zoom out from the screen as it is, under every look: frame zero draws every window of the
-  shown strip where it is on screen. A floating window MUST NOT be drawn from the show to the lift,
-  and MUST NOT be moved, hidden or written to: the overlay covers it while it is up, and at the lift
-  it shows again where it was, as a window no flight carried shows after a flight. Every open MUST
-  draw afresh, after one the renderer had no overlay for as well: thumbs kept from that one would
-  carry its pictures and its widened bands, a 1pt ring drawn near 4.5pt wide.
+  shown workspace where it is on screen, its floating windows included, each in front of the strip
+  or behind it as the window server stacks it. Each floating window MUST stay where the screen has
+  it, outside the zoom, fading out as the desktop darkens until it is gone while held, and back in
+  as the desktop lightens on the zoom in, so it is on screen at the lift as at the show, wearing
+  what it wears there. It MUST NOT be moved, hidden or written to. Every open MUST draw afresh,
+  after one the renderer had no overlay for as well: thumbs kept from that one would carry its
+  pictures and its widened bands, a 1pt ring drawn near 4.5pt wide.
+
+> **Found 2026-10-19, not reported.** Review of the change for Kai's 2026-10-19 report above found
+> the floating windows drawn nowhere from the show to the lift. The overlay draws the desktop under
+> its tiles, so it cut each out: a Zoom call focused as the overview opened vanished at the show and
+> came back at the lift, the focused window popping in at the hand-off.
 
 > **Found 2026-10-18, not reported.** Review of the lifecycle showed an overview the renderer could
 > not draw dropped its phase without letting go of its thumbs, which only its lift did.
@@ -277,8 +286,8 @@ Every workspace of one display at once, zoomed out, while its key is held.
   selected window on its workspace, and hand over to the real windows as a flight does: lifted only
   once the windows it lands on are where it draws them, or its patience has run out. Closed with a
   floating window still focused, no press having taken focus from it, that window MUST keep focus,
-  and no thumb MUST wear the active ring as it zooms back in: the ring is that window's, which shows
-  again at the lift. A thumb ringed until the lift would hand the ring over as the overlay lifts.
+  and no thumb MUST wear the active ring as it zooms back in: the ring is that window's, which fades
+  back in on it. A thumb ringed until the lift would hand the ring over as the overlay lifts.
 - The zoom out, the zoom back in and every press inside it MUST run at the pace a focus press pans
   the strip: on the same curve, over the same length, 0.35s at slowdown 1. Kai asked them to match
   the navigation transitions; on half the zoom look's arc the zoom out started at rest and was 97%
@@ -335,7 +344,8 @@ chord a key inside it is looked up as, `src/input/domain/router.rs` the lookup, 
 `src/app/reactor/overview.rs` the reactor's: the scene's input read off the layout and handed to the
 flight engine, focus taken off a floating window ahead of a press, the flights held and their frames
 placed, the warps held, and the close. How it moves
-is `src/animation/domain/choreography/overview.rs`, an empty workspace's outline
+is `src/animation/domain/choreography/overview.rs`, the floating windows' fade
+`src/animation/platform/overlay/tint.rs`, an empty workspace's outline
 `src/animation/platform/overlay/outline.rs`, its lifecycle on the overlay
 `src/transitions/domain/lifecycle/overview.rs`, and the engine's side of it
 `src/transitions/platform/engine/overview.rs`. `src/overview/docs/README.md` explains the feature.

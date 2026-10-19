@@ -3,8 +3,9 @@
 //! every batch while it is open and handed to the flight engine, which draws it, every flight a
 //! press inside it asks for held back with its frames placed at once and its press handed on with
 //! the scene, and the mouse kept from moving focus or the pointer until it closes
-//! (`specs/overview.md`). It draws only the strips: a floating window is in no row, and a press
-//! inside it acts on the strip.
+//! (`specs/overview.md`). Its rows are the strips alone: a floating window is in no row, the shown
+//! workspace's handed on beside the scene for the zoom out and back in, and a press inside it acts
+//! on the strip.
 
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::{SpaceId, WindowId};
@@ -18,7 +19,7 @@ use crate::animation::domain::choreography::Cue;
 use crate::animation::domain::choreography::overview::Press;
 use crate::input::domain::switch_session::{OverviewSignal, SessionId};
 use crate::overview::domain::scene::{ColumnInput, Laid, OverviewInput, RowInput, lay_out};
-use crate::transitions::domain::request::{OverviewView, OverviewWindow};
+use crate::transitions::domain::request::{OverviewFloating, OverviewView, OverviewWindow};
 use crate::transitions::platform::engine::Event as Flight;
 use crate::workspaces::VirtualWorkspaceId;
 
@@ -130,7 +131,7 @@ impl Reactor {
     /// Closes the overview, the engine zooming back in onto the real layout as it is now, and
     /// carries out the last warp asked for while it was open. Focus is where its last press left
     /// it, which is what the scene selected, or a floating window no press took it from: then no
-    /// thumb is ringed as it lands, since the ring is that window's, which shows again at the lift.
+    /// thumb is ringed as it lands, since the ring is that window's, which fades back in on it.
     fn close_overview(&mut self) {
         let Some(live) = self.overview.live.take() else {
             return;
@@ -316,13 +317,24 @@ impl Reactor {
         if !self.is_space_active(space) {
             return None;
         }
-        let input = self.overview_input(space, scroll)?;
+        let (input, floating) = self.overview_input(space, scroll)?;
         let scene = lay_out(&input);
         let shown = input.rows.get(input.active).map_or_else(Vec::new, |row| {
             let tiled = row.columns.iter().flat_map(|column| &column.windows);
             tiled.map(|laid| (laid.window, laid.frame)).collect()
         });
         let rings = self.layout_rings();
+        let floating = floating
+            .into_iter()
+            .filter_map(|laid| {
+                Some(OverviewFloating {
+                    window: laid.window,
+                    server_id: self.state.windows.window(laid.window)?.info.sys_id?,
+                    frame: laid.frame,
+                    worn: self.worn(laid.window, &rings),
+                })
+            })
+            .collect();
         let windows = scene
             .rows
             .iter()
@@ -341,13 +353,24 @@ impl Reactor {
             Default::default(),
         )
         .ring;
-        Some(OverviewView { scene, windows, shown, outline })
+        Some(OverviewView {
+            scene,
+            windows,
+            shown,
+            floating,
+            outline,
+        })
     }
 
     /// What `space`'s scene is laid out from: a row per workspace in the stack's order, each its
     /// strip's columns where the layout has them, aligned on the strip's window focus is on, else on
-    /// the strip's window a switch to the workspace focuses. No floating window is in it.
-    fn overview_input(&mut self, space: SpaceId, scroll: f64) -> Option<OverviewInput> {
+    /// the strip's window a switch to the workspace focuses. No floating window is in it; the shown
+    /// workspace's come beside it, where the layout has them.
+    fn overview_input(
+        &mut self,
+        space: SpaceId,
+        scroll: f64,
+    ) -> Option<(OverviewInput, Vec<Laid>)> {
         let screen = self.space_state.screen_by_space(space)?.clone();
         let gaps = self
             .config
@@ -358,11 +381,12 @@ impl Reactor {
         let workspaces = self.layout_engine.virtual_workspace_manager_mut().list_workspaces(space);
         let shown = self.layout_engine.active_workspace(space)?;
         let active = workspaces.iter().position(|(workspace, _)| *workspace == shown)?;
-        let rows = workspaces
+        let (rows, floating): (Vec<RowInput>, Vec<Vec<Laid>>) = workspaces
             .iter()
             .map(|(workspace, _)| self.overview_row(space, *workspace, &screen, &gaps))
-            .collect();
-        Some(OverviewInput {
+            .unzip();
+        let floating = floating.into_iter().nth(active).unwrap_or_default();
+        let input = OverviewInput {
             rows,
             active,
             display: ScreenRect::from_cg(screen.bounds),
@@ -372,7 +396,8 @@ impl Reactor {
                 &gaps,
             )),
             scroll,
-        })
+        };
+        Some((input, floating))
     }
 
     fn overview_row(
@@ -381,7 +406,7 @@ impl Reactor {
         workspace: VirtualWorkspaceId,
         screen: &ScreenInfo,
         gaps: &crate::layout::settings::Gaps,
-    ) -> RowInput {
+    ) -> (RowInput, Vec<Laid>) {
         let engine = &self.layout_engine;
         let windows = &self.state.windows;
         let frames: HashMap<WindowId, CGRect> = engine
@@ -402,6 +427,13 @@ impl Reactor {
             })
             .filter(|column| !column.windows.is_empty())
             .collect();
+        let mut floating: Vec<Laid> = frames
+            .keys()
+            .copied()
+            .filter(|window| engine.is_window_floating(*window))
+            .filter_map(laid)
+            .collect();
+        floating.sort_by_key(|laid| laid.window);
         let on_strip = |window: &WindowId| {
             !engine.is_window_floating(*window)
                 && engine.virtual_workspace_manager().workspace_for_window(windows, space, *window)
@@ -411,7 +443,7 @@ impl Reactor {
             .focused_window()
             .filter(on_strip)
             .or_else(|| engine.active_strip_window(windows, space, workspace));
-        RowInput { columns, current }
+        (RowInput { columns, current }, floating)
     }
 
     /// The scene the open overview was last laid out as.

@@ -11,7 +11,7 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 
 | | |
 |---|---|
-| **The port** | `domain/request.rs` — `AnimationRequest`, one window of a layout pass, `SurfaceWindow`, one window of a strip movement, `OverviewView`, the overview's scene with what each thumb is drawn from and where its shown windows are, and `Cause`, the press a request answers; what the reactor builds and the engine carries out |
+| **The port** | `domain/request.rs` — `AnimationRequest`, one window of a layout pass, `SurfaceWindow`, one window of a strip movement, `OverviewView`, the overview's scene with what each thumb is drawn from and where its shown windows are, its floating ones among them (`OverviewFloating`), and `Cause`, the press a request answers; what the reactor builds and the engine carries out |
 | **A layout pass, sorted** | `domain/pass.rs` — `plan`: which windows move, which stay and are still drawn, which are warmed; `place_on_strip`: each tiled window's place on the strip before and after the pass |
 | **Where a tile starts and ends** | `domain/travel.rs` — the window server's frame against the request's, a park's way in and out along its own place on the strip, what is worth flying |
 | **A move along the strip, staged** | `domain/strip_move.rs` — where the moved column and the columns it passed start (`move_starts`), and the look's staging of the press put on the strip surface (`stage_move`); which columns are held and whether the strip steps are the look's |

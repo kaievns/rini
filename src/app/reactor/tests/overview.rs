@@ -1280,9 +1280,10 @@ fn floating_desk() -> (Apps, Reactor) {
     (apps, reactor)
 }
 
-/// The overview draws only the strips: neither floating window is a thumb on any row, the shown
-/// workspace's nor the hidden one's, nor among the windows the engine draws or zooms out from, and
-/// the first row aligns on its strip's selection though a floating window had focus there last: a
+/// The overview's rows are the strips alone: neither floating window is a thumb on any row, the
+/// shown workspace's nor the hidden one's, nor among the strip windows the engine zooms out from;
+/// the shown workspace's w7 alone is handed on beside them, for the show and the lift; and the
+/// first row aligns on its strip's selection though a floating window had focus there last: a
 /// switch there would focus w8, and a focus press off w8 lands on w2.
 #[test]
 fn no_floating_window_is_drawn_in_the_overview_on_any_row() {
@@ -1315,6 +1316,12 @@ fn no_floating_window_is_drawn_in_the_overview_on_any_row() {
             _ => None,
         })
         .expect("the engine is told");
+    let beside: Vec<WindowId> = view.floating.iter().map(|window| window.window).collect();
+    assert_eq!(
+        beside,
+        vec![w(7)],
+        "the shown workspace's, for the show and the lift alone"
+    );
     for floating in [w(7), w(8)] {
         assert!(
             view.windows.iter().all(|window| window.window != floating),
@@ -1385,6 +1392,15 @@ fn closed_with_no_press_the_floating_window_is_focused_and_shows_as_it_was() {
     assert_eq!(view.scene.selected.row, 1);
     assert_eq!(view.scene.selected.window, None, "no thumb ringed as it lands");
     assert!(view.shown.iter().all(|(window, _)| *window != w(7)));
+    let [floating] = view.floating[..] else {
+        panic!("w7 alone floats over the shown workspace: {:?}", view.floating);
+    };
+    assert_eq!(floating.window, w(7));
+    assert_eq!(floating.frame, ScreenRect::from_cg(frame), "where it is");
+    assert!(
+        floating.worn.holds_focus && floating.worn.wears_ring.worn(),
+        "wearing the ring as it lands"
+    );
 
     assert_eq!(reactor.layout().focused_window(), Some(w(7)));
     assert!(reactor.layout().is_window_floating(w(7)));

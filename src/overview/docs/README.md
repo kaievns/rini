@@ -3,7 +3,8 @@
 The overview zooms one display out to every one of its workspaces, a row each, stacked top to
 bottom in the stack's order. Each row is its strip at one depth, aligned on the strip's window a
 switch to that workspace focuses. Only the strips' windows are in it: a floating window is in no
-row, and the reactor leaves it out of the input. The requirements are `specs/overview.md`.
+row, and the reactor leaves it out of the input, handing the shown workspace's to the flight engine
+beside the scene for the zoom out and back in. The requirements are `specs/overview.md`.
 
 This feature is the scene and nothing else: pure geometry over `rini-core`'s ids in rini-geometry's
 `Overlay` space. It names no other feature but `chrome`, whose card its stacks are, and has no
@@ -43,7 +44,8 @@ card's 14pt gap about its centre (`apart`): at depth 0.3 the strip's own gap is 
 run of terminals drew as one slab. Narrowed with its proportions kept, a short wide window took a
 sliver off its height, so a column's windows stayed a slab. Narrowing rather than spreading the row
 keeps every place, the axis and every pan as the strip has them. At rest the shown row's thumbs are
-drawn at their windows' frames, so frame zero is still the screen.
+drawn at their windows' frames, and the flight engine draws the shown workspace's floating windows
+where they are beside the scene, so frame zero is still the screen.
 
 **Stacks are the switcher's turned on their side.** Both draw `chrome`'s card stack
 (`src/chrome/domain/card.rs`): the step, the inset and the three cards drawn are one record, and
@@ -72,7 +74,8 @@ to share.
 card's backdrop, `--n0` at 0.40, the switcher's own darkening (`BACKDROP`, `BACKDROP_ALPHA` in
 `src/chrome/domain/card.rs`). It is a node of the score (`Node::Tint`, drawn by
 `src/animation/platform/overlay/tint.rs`), so it darkens and clears on the zoom's curve and clock and
-turns back with it, rather than on a fade of its own beside it.
+turns back with it, rather than on a fade of its own beside it. The shown workspace's floating
+windows fade the other way on the same node, so they leave and come back with it.
 
 **A pan is read off one window on the strip in both scenes.** The window the row is aligned on
 after, else the one it was aligned on before, else any window in both. A move along the strip keeps

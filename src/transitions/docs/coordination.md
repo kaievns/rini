@@ -1095,8 +1095,13 @@ those holes in and zooms out again from where everything is drawn. Opened again 
 display, the overlay's move there held, it lands and lifts first, and the open waits with the move,
 the scenes and the close after it, so it opens afresh on that display. It writes no frame: every
 press inside it placed the real windows as it ran (`src/app/reactor/overview.rs`,
-`hold_for_overview`). It draws no floating window: the overlay covers each from the show to the
-lift, frame zero pictures none and the landing waits on none, and the lift shows each where it was.
+`hold_for_overview`). It draws the shown workspace's floating windows in no row: frame zero
+pictures each as the background behind the strip, as a flight's does, and it rides the floating
+container where the screen has it, outside the zoom, in front of the strip or behind it as the
+window server stacks it. The renderer draws that container at the opposite of the tint
+(`src/animation/platform/overlay/tint.rs`), so each fades out with the zoom out, is gone while
+held, and fades back in with the zoom in; the close holes it as it holes the windows it lands on,
+and the landing waits on none of them, since none moves.
 
 It takes a generation the coordinator reserves for it, so a picture asked for a flight is never
 taken for the overview's, nor the reverse. From its open to its lift it holds the overlay: a flight
