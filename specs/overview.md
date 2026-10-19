@@ -74,12 +74,20 @@ Every workspace of one display at once, zoomed out, while its key is held.
   MUST NOT stack. The thumb beside a stack MUST stay in its row and be drawn over the stack's top
   card, the current column among them, and the top card MUST move in from the edge where it would
   otherwise reach less than 24pt under that thumb: no gap may open between a row and its stacks.
+  The top card MUST reach no further in than that thumb's inner edge, out past the display's edge
+  if it must, and so move with that thumb as the row pans: a wide card beside a narrow thumb would
+  otherwise show in the gap inside it, which is there to tell the windows apart.
   A card not drawn MUST NOT hold a picture.
 
 > **Reported 2026-10-19.** "there are gaps between stacks on the sides and next thumbs, leth the
 > strip thumbs overlap the stacks instead so there were no gaps". A column the top card overlapped
 > joined the stack as its top card, leaving a gap as wide as that column between the row and the
 > stack.
+
+> **Found 2026-10-19, not reported.** Review of the stacks showed a full-width column stacked
+> beside a half-width thumb at depth 0.3 on 1728pt reach 166pt past that thumb's inner edge, into
+> the card's gap inside it.
+
 - Two tiled thumbs side by side MUST be at least the card's gap apart, 14pt on screen, each its
   window's place narrowed about its centre with its proportions kept, and a column's windows drawn
   clear of each other with it: at the overview's depth the strip's own gap is under a point, and

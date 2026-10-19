@@ -6,7 +6,8 @@
 //! `EDGE_INSET` inside the edge, and the thumb beside it still in the row is drawn over it rather
 //! than joining it, the pivot among them: a column that joined left a gap as wide as itself between
 //! the row and its stack. Where that thumb would leave a gap even so, the card moves in to reach
-//! `TUCK` under it. Each card behind is as wide as it, a step further out and shorter at top and
+//! `TUCK` under it; where the card would reach past that thumb's inner edge, it moves out to it, so
+//! it never shows in the gap inside that thumb. Each card behind is as wide as it, a step further out and shorter at top and
 //! bottom, and only the stack's cards are drawn. The pivot never stacks.
 
 use rini_geometry::space::{OverlayRect, Point};
@@ -112,12 +113,17 @@ fn stack(columns: &[OverlayRect], pivot: usize, edges: Edges, side: Side) -> Vec
 }
 
 /// The top card: `column` at its own size, its outer edge `EDGE_INSET` inside the edge, moved in
-/// where that would leave less than `TUCK` of it under `nearest`, the thumb beside it in the row.
+/// where that would leave less than `TUCK` of it under `nearest`, the thumb beside it in the row,
+/// and out where its inner edge would reach past `nearest`'s, past the edge if it must.
 fn top_card(column: OverlayRect, nearest: OverlayRect, edges: Edges, side: Side) -> OverlayRect {
     let tuck = TUCK.min(column.width() / 2.0);
     let x = match side {
-        Side::Left => (edges.left + EDGE_INSET).max(nearest.min_x() + tuck - column.width()),
-        Side::Right => (edges.right - EDGE_INSET - column.width()).min(nearest.max_x() - tuck),
+        Side::Left => (edges.left + EDGE_INSET)
+            .max(nearest.min_x() + tuck - column.width())
+            .min(nearest.max_x() - column.width()),
+        Side::Right => (edges.right - EDGE_INSET - column.width())
+            .min(nearest.max_x() - tuck)
+            .max(nearest.min_x()),
     };
     OverlayRect::new(Point::new(x, column.min_y()), column.size)
 }
@@ -226,6 +232,38 @@ mod tests {
             left.frame.min_x() > EDGES.left + EDGE_INSET,
             "moved in from the edge"
         );
+    }
+
+    /// A wide column stacked beside a narrow thumb sits no further in than that thumb's inner
+    /// edge, past the display's edge if it must, so it never shows in the gap inside the thumb, and
+    /// still reaches under it; on either side. Depth 0.3 on 1728pt: a half-width thumb beside a
+    /// full-width column.
+    #[test]
+    fn a_wide_top_card_reaches_no_further_in_than_the_narrow_thumb_beside_it() {
+        let columns = vec![
+            column(-418.0, 518.0),
+            column(105.0, 259.0),
+            column(378.0, 236.0),
+            column(628.0, 472.0),
+            column(1114.0, 236.0),
+            column(1364.0, 259.0),
+            column(1628.0, 518.0),
+        ];
+        let stacks = edge_stacks(&columns, 3, EDGES);
+        let (left, right) = (stacks.left[0], stacks.right[0]);
+        assert_eq!((left.column, right.column), (0, 6));
+        let (near_left, near_right) = (columns[1], columns[5]);
+        assert!(
+            right.frame.min_x() >= near_right.min_x() - 1e-9,
+            "{right:?} shows left of {near_right:?}"
+        );
+        assert!(
+            left.frame.max_x() <= near_left.max_x() + 1e-9,
+            "{left:?} shows right of {near_left:?}"
+        );
+        assert!(near_right.max_x() - right.frame.min_x() >= TUCK, "{right:?}");
+        assert!(left.frame.max_x() - near_left.min_x() >= TUCK, "{left:?}");
+        assert_eq!(right.frame.size, columns[6].size, "the top card keeps its size");
     }
 
     #[test]

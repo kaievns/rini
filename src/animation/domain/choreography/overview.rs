@@ -857,28 +857,45 @@ mod tests {
         assert!(drawn(&score, 4, 0.0).is_within(1e-6, before.find(w(4)).unwrap().1.frame));
     }
 
-    /// A card that stays in its stack through a pan stays where it is drawn at the edge, however the
-    /// strip moves beside it; one leaving the stack is carried out of it from where it was drawn.
+    /// A card that stays in its stack through a pan stays where it is drawn at the edge while the
+    /// edge holds it, however the strip moves beside it, and is carried from where its stack had it
+    /// to where it has it where the thumb beside it held it out past the edge; one leaving the
+    /// stack is carried out of it from where it was drawn.
     #[test]
     fn a_stacked_card_stays_at_the_edge_while_its_row_pans() {
-        let panned = |from: u32, to: u32| {
-            let (before, after) = (scene(&STRIP, from), scene(&STRIP, to));
+        const ODD_FIRST: [u32; 6] = [1, 3, 7, 9, 2, 4];
+        let panned = |order: &[u32], (from, to): (u32, u32), card: u32| {
+            let (before, after) = (scene(order, from), scene(order, to));
             let score = pose(&held(&before));
             let edits = toward(&score, &held(&after), 0.0, Motion::Slide { seconds: PRESS });
-            let still = !tracks(&edits).iter().any(|track| track.node() == Node::Tile(w(10)));
+            let still = !tracks(&edits).iter().any(|track| track.node() == Node::Tile(w(card)));
             (played(&score, &edits), before, (after, still))
         };
-        let (score, before, (after, still)) = panned(6, 7);
+        let (score, before, (after, still)) = panned(&ODD_FIRST, (3, 7), 4);
         assert!(still, "its stack holds it still: nothing moves it");
-        let stays = before.find(w(10)).unwrap().1.holder;
+        let stays = before.find(w(4)).unwrap().1.holder;
         assert!(matches!(stays, Holder::Stack { side: Side::Right, depth: 0 }));
-        assert_eq!(after.find(w(10)).unwrap().1.holder, stays);
-        let at = |t: f64| drawn(&score, 10, t);
+        assert_eq!(after.find(w(4)).unwrap().1.holder, stays);
+        let at = |t: f64| drawn(&score, 4, t);
         for t in [0.0, 0.05, PRESS / 2.0, PRESS - 0.01, PRESS + 0.01] {
             assert!(at(t).is_within(1e-6, at(0.0)), "{t}: {:?}", at(t));
         }
 
-        let (score, before, (after, _)) = panned(4, 5);
+        let (score, before, (after, _)) = panned(&STRIP, (6, 7), 10);
+        let stays = before.find(w(10)).unwrap().1.holder;
+        assert!(matches!(stays, Holder::Stack { side: Side::Right, depth: 0 }));
+        assert_eq!(after.find(w(10)).unwrap().1.holder, stays);
+        let held_out = before.find(w(10)).unwrap().1.frame;
+        let beside = before.find(w(9)).unwrap().1.frame;
+        assert!(
+            (held_out.min_x() - beside.min_x()).abs() < 1e-6,
+            "held out to the thumb beside it: {held_out:?}"
+        );
+        assert!(drawn(&score, 10, 0.0).is_within(1e-6, held_out));
+        let at_edge = after.find(w(10)).unwrap().1.frame;
+        assert!(drawn(&score, 10, PRESS + 0.01).is_within(1e-6, at_edge));
+
+        let (score, before, (after, _)) = panned(&STRIP, (4, 5), 7);
         assert!(matches!(before.find(w(7)).unwrap().1.holder, Holder::Stack {
             side: Side::Right,
             ..

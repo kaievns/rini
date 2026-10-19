@@ -50,7 +50,9 @@ its stacks, so that thumb covers the top card where it reaches over it and nothi
 pivot. A column the top card overlapped used to join the stack as its top card, which left a gap as
 wide as that column between the row and the stack (reported 2026-10-19). A top card at its edge
 always reaches under the thumb beside it unless the gap between the two is wider than the inset;
-then it moves in to reach `TUCK` under it.
+then it moves in to reach `TUCK` under it. A wide top card beside a narrow thumb would reach past
+that thumb's inner edge and show in the card's gap inside it, so it moves out to that edge instead,
+past the display's edge if it must, and rides that thumb as the row pans rather than holding still.
 
 **Thumbs float on a flight's lift.** Held, every thumb casts the shadow a window carried in a
 flight casts (`LIFT_SHADOW`, `Node::Lift`), the selected one all of it and the rest 0.4 of it
