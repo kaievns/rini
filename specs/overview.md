@@ -89,6 +89,15 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > luped together and hard to see which one which, for example the rainbow terminals on ws3 is a
 > mess". Kai's 3pt gap is 0.9pt on screen at depth 0.3.
 
+- The desktop behind the thumbs MUST be darkened while the overview is held, so it reads as a mode
+  and its wallpaper is quieter under them: the card's backdrop, `--n0` at 0.40, the switcher's
+  darkening of what is behind its popup. It MUST darken with the zoom out from none at frame zero and
+  clear with the zoom in, and a flight MUST never be drawn darkened. The bar MUST NOT be darkened:
+  it is drawn over every thumb, as at rest.
+
+> **Reported 2026-10-19.** "tint/darken the background image a bit to distinct that we're in the
+> overview mode and so it would be less visually noisy".
+
 - Every thumb MUST cast a shadow while the overview is held, so it floats over what is behind it,
   and the selected one a stronger one to accent it: the lift a carried window takes in a flight,
   all of it for the selected thumb and 0.4 of it for every other. Frame zero and the landing MUST
@@ -100,7 +109,7 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > window's own shadow is a fifth of its size and reads as none.
 
 - Its look MUST be the switcher's, from one record both draw from: the stacks' step, inset and
-  three cards drawn, and the gap between cards. Kai asked for one visual style across the two, reusing components where they
+  three cards drawn, the gap between cards, and the darkening of what is behind. Kai asked for one visual style across the two, reusing components where they
   apply; two copies of a value drift.
 
 > **Reported 2026-10-19.** "overall visual style must mutch the main app switcher, both should be

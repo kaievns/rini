@@ -54,6 +54,7 @@ use crate::pictures::platform::picture::Picture;
 
 mod lift;
 mod outline;
+mod tint;
 
 use lift::Lift;
 
@@ -87,6 +88,9 @@ const BAR_Z: f64 = 10_000.0;
 /// `src/animation/docs/animation-smoothness.md`.
 const BACKDROP_Z: f64 =
     -((crate::animation::domain::motion::z_group::MAX_TILE_DEPTH + 1024) as f64);
+
+/// Over the desktop and under every container, so under every tile.
+const TINT_Z: f64 = BACKDROP_Z + 1.0;
 
 /// One key per tile movement, so a retarget replaces the animation in flight instead of stacking.
 const TILE_ANIMATION_KEY: &str = "rini.tile.move";
@@ -710,6 +714,8 @@ struct Tree {
     crops: Crops,
     /// The overview's outlines of its empty workspaces.
     outlines: outline::Outlines,
+    /// The overview's darkening of the desktop.
+    tint: tint::Tint,
 }
 
 pub struct TileOverlay {
@@ -935,6 +941,7 @@ impl TileOverlay {
         self.top_band = top_band;
         self.tree.size = frame.size;
         self.tree.scale = scale;
+        self.tree.tint.layer().setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
         if let Some(view) = self.window.contentView() {
             view.setFrame(CGRect::new(
                 CGPoint::new(0.0, 0.0),
@@ -1111,6 +1118,7 @@ impl Tree {
         backdrop.setContentsScale(scale);
         backdrop.setZPosition(BACKDROP_Z);
         root.addSublayer(&backdrop);
+        let tint = tint::Tint::new(&root, size, TINT_Z);
         let strip = new_container(&root);
         strip.setPosition(CGPoint::new(0.0, 0.0));
         Tree {
@@ -1125,6 +1133,7 @@ impl Tree {
             replica: Score::default(),
             crops: Crops::default(),
             outlines: outline::Outlines::default(),
+            tint,
         }
     }
 
@@ -1182,7 +1191,12 @@ impl Tree {
                 None => self.drop_node(Node::Lift(window)),
             }
         }
-        let tracks: Vec<Track> = std::iter::once(Node::Strip)
+        self.tint.clear();
+        if let Some(tinted) = score.model(Node::Tint) {
+            self.tint.set(as_number(tinted));
+        }
+        let tracks: Vec<Track> = [Node::Strip, Node::Tint]
+            .into_iter()
             .chain(score.containers().map(Node::Container))
             .chain(score.tiles().map(|(window, _)| Node::Tile(window)))
             .chain(score.tiles().map(|(window, _)| Node::Lift(window)))
@@ -1213,6 +1227,7 @@ impl Tree {
                 Edit::Place(Node::Lift(window), value) => {
                     self.place_lift(*window, as_number(*value))
                 }
+                Edit::Place(Node::Tint, value) => self.tint.set(as_number(*value)),
                 Edit::Add(track) => self.install(track, tiles, new_leg),
                 Edit::Cut(node, channel) => self.cut(*node, *channel),
                 Edit::Ride(window, key) => self.ride(*window, *key, tiles),
@@ -1371,6 +1386,14 @@ impl Tree {
                 let opacity = |value| number_object(lift::opacity(as_number(value)));
                 lift.play(&animation(track, "shadowOpacity", opacity));
             }
+            Node::Tint => {
+                if track.seconds() <= 0.0 {
+                    self.tint.cut();
+                    return;
+                }
+                let opacity = |value| number_object(tint::opacity(as_number(value)));
+                self.tint.play(&animation(track, "opacity", opacity));
+            }
         }
     }
 
@@ -1402,6 +1425,7 @@ impl Tree {
                     lift.cut();
                 }
             }
+            Node::Tint => self.tint.cut(),
         }
     }
 
@@ -1420,6 +1444,7 @@ impl Tree {
                     lift.layer().removeFromSuperlayer();
                 }
             }
+            Node::Tint => self.tint.clear(),
             Node::Container(key) => {
                 for layer in self.layers_of(key) {
                     layer.removeFromSuperlayer();
@@ -1542,6 +1567,7 @@ impl Tree {
     /// Every tile, container and the desktop let go of, and the replica with them.
     fn release(&mut self) {
         self.outlines.clear();
+        self.tint.clear();
         clear_contents(&self.backdrop);
         self.backdrop.setHidden(true);
         for (_, entry) in self.tile_layers.drain() {
@@ -3732,6 +3758,7 @@ mod tests {
         fn plays_exactly(tree: &Tree) {
             let replica = &tree.replica;
             plays_its_zoom(tree);
+            plays_its_tint(tree);
             let mut containers: Vec<String> =
                 tree.containers.keys().map(|key| format!("{key:?}")).collect();
             let mut placed: Vec<String> =
@@ -3832,6 +3859,33 @@ mod tests {
                 }
             }
             plays_its_lifts(tree);
+        }
+
+        /// The tint lies over the desktop and under every container at the replica's share of the
+        /// backdrop's opacity, none where the replica has no tint, its track installed as itself on
+        /// `opacity` unless it has no length.
+        fn plays_its_tint(tree: &Tree) {
+            let layer = tree.tint.layer();
+            assert!(TINT_Z > BACKDROP_Z && TINT_Z < BAR_Z && layer.zPosition() == TINT_Z);
+            for container in tree.containers.values().chain([&tree.strip]) {
+                assert!(
+                    layer.zPosition() < container.zPosition(),
+                    "under every container"
+                );
+            }
+            let model = tree.replica.model(Node::Tint).map_or(0.0, as_number);
+            assert_eq!(f64::from(layer.opacity()), tint::opacity(model) as f32 as f64);
+            match tree.replica.track(Node::Tint, Channel::Base) {
+                Some(track) if track.seconds() > 0.0 => {
+                    let opacity = |value: Value| tint::opacity(as_number(value));
+                    assert_eq!(
+                        installed(layer, tint::TINT_KEY, number_in),
+                        expected(track, opacity)
+                    );
+                    assert_eq!(key_path(layer, tint::TINT_KEY), "opacity");
+                }
+                _ => assert!(!rini_keys(layer).contains(&tint::TINT_KEY.to_string())),
+            }
         }
 
         /// Every tile the replica lifts casts the lift's shadow and no other does: its caster under
@@ -4337,6 +4391,50 @@ mod tests {
             let places = at_rest(&moved, &landing);
             let edits = toward(&score, &places, 103.0, Motion::Slide { seconds: 0.35 });
             play(&mut score, edits, wear(&places));
+        }
+
+        /// Held, the overview darkens the desktop behind its thumbs with the card's backdrop at its
+        /// opacity, between the desktop and every tile; posed at rest, and once let go, not at all.
+        #[test]
+        fn the_overview_darkens_the_desktop_behind_its_thumbs() {
+            use crate::animation::domain::choreography::overview::{at_rest, held, pose};
+            use crate::chrome::domain::card::{BACKDROP, BACKDROP_ALPHA};
+            use crate::overview::domain::fixture::{Col, overview, row, strip};
+            use crate::overview::domain::scene::lay_out;
+
+            let _core_animation = hold_core_animation();
+            let columns = [Col { width: 800.0, windows: &[1] }];
+            let scene = lay_out(&overview(vec![row(strip(&columns, 0.0), Some(1))], 0));
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            let layer = objc2::Message::retain(tree.tint.layer());
+            assert!(layer.zPosition() > tree.backdrop.zPosition(), "over the desktop");
+            let (red, green, blue) = BACKDROP.rgb();
+            let colour = objc2_core_graphics::CGColor::new_srgb(red, green, blue, 1.0);
+            assert!(objc2_core_graphics::CGColor::equal_to_color(
+                layer.backgroundColor().as_deref(),
+                Some(&colour)
+            ));
+            let tiles = |places: &crate::animation::domain::choreography::overview::Places| {
+                let tiles: Vec<OverlayTile> = places
+                    .tiles
+                    .iter()
+                    .map(|(window, _, frame)| {
+                        let rect = crate::animation::domain::motion::plan::on_overlay(*frame);
+                        overlay_tile(*window, rect, rect, false)
+                    })
+                    .collect();
+                tiles
+            };
+            let (held, rest) = (held(&scene), at_rest(&scene, &[]));
+            tree.pose(&pose(&held), &tiles(&held));
+            plays_exactly(&tree);
+            assert_eq!(f64::from(layer.opacity()), BACKDROP_ALPHA as f32 as f64);
+            tree.pose(&pose(&rest), &tiles(&rest));
+            plays_exactly(&tree);
+            assert_eq!(layer.opacity(), 0.0);
+            tree.pose(&pose(&held), &tiles(&held));
+            tree.release();
+            assert_eq!(layer.opacity(), 0.0, "a lift takes it away");
         }
 
         /// Held, every thumb of the overview casts the lift's shadow, the selected one's at its

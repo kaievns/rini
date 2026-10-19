@@ -4615,6 +4615,10 @@ mod tests {
                     "on the curve a focus press pans on"
                 );
                 assert!((zoom.seconds() - LENGTH.as_secs_f64()).abs() < 1e-9);
+                let darkens = super::super::overview::played(&batch.commands)
+                    .into_iter()
+                    .any(|edit| matches!(edit, Edit::Add(track) if track.node() == Node::Tint));
+                assert!(darkens, "the desktop darkens with the zoom out");
                 h.commit(batch.seq);
                 let mut swept = h.engine.overview_score().clone();
                 h.advance(LENGTH);

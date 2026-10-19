@@ -2,8 +2,8 @@
 //! stacks and its floating windows a container each, all under the strip's zoom; the zoom out from
 //! the screen as it is and back in onto the real layout, and every press inside it, played Slide's
 //! way at a press's pace, each node from where it is drawn to where the new scene has it; every
-//! thumb lifted off the overlay while it is held, the selected one furthest; and the push at an end
-//! bounced on screen as far as a flight's.
+//! thumb lifted off the overlay while it is held, the selected one furthest, and the desktop behind
+//! them darkened; and the push at an end bounced on screen as far as a flight's.
 //!
 //! Not a `Look`, nor in `Look::ALL`: the overview is a view the presses inside it change, and its
 //! moves are the same under every look (`specs/overview.md`, "How it moves").
@@ -82,6 +82,9 @@ pub struct Places {
     pub tiles: Vec<(WindowId, GroupKey, GroupRect)>,
     /// Each thumb's lift, from 0 to 1, in `tiles`' order.
     pub lifts: Vec<(WindowId, f64)>,
+    /// How far the desktop behind is darkened, from 0 to 1 of the card's backdrop: all the way
+    /// while held, none at rest.
+    pub tint: f64,
     pub banding: Banding,
     pub outlines: Vec<Outline>,
 }
@@ -165,7 +168,7 @@ fn held_containers(scene: &Scene) -> Vec<(GroupKey, OverlayPoint)> {
 
 /// The scene as it is held: every row at its depth, each drawn thumb in its holder's container at
 /// where the scene draws it and lifted, the selected window furthest, the selected window and its
-/// row in front.
+/// row in front, over the desktop darkened.
 pub fn held(scene: &Scene) -> Places {
     let s = scene.scale;
     let containers = held_containers(scene);
@@ -215,6 +218,7 @@ pub fn held(scene: &Scene) -> Places {
         containers,
         tiles,
         lifts,
+        tint: 1.0,
         banding: banding(scene),
         outlines,
     }
@@ -222,10 +226,11 @@ pub fn held(scene: &Scene) -> Places {
 
 /// The scene as the display shows it at rest: the zoom at 1, its active row's windows each at its
 /// frame in `shown`, its strip about where its thumbs' centres put it, every other row where the
-/// stack has it, off the display above and below, and no thumb lifted.
+/// stack has it, off the display above and below, no thumb lifted and nothing darkened.
 /// What the overview zooms out from as it opens, and back into as it closes.
 pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     let mut places = held(scene);
+    places.tint = 0.0;
     for (_, lift) in &mut places.lifts {
         *lift = 0.0;
     }
@@ -325,7 +330,10 @@ pub fn pose(places: &Places) -> Score {
 
 /// Every node of `places` placed where it is drawn, each tile riding its container.
 fn placed(places: &Places) -> Vec<Edit> {
-    let mut edits = vec![Edit::Place(Node::Strip, Value::Zoom(places.zoom))];
+    let mut edits = vec![
+        Edit::Place(Node::Strip, Value::Zoom(places.zoom)),
+        Edit::Place(Node::Tint, Value::Number(places.tint)),
+    ];
     for (key, at) in &places.containers {
         edits.push(Edit::Place(Node::Container(*key), Value::Point(*at)));
     }
@@ -382,6 +390,8 @@ pub fn toward(playing: &Score, places: &Places, at: f64, motion: Motion) -> Vec<
     edits.extend(gone.into_iter().map(|window| Edit::Drop(Node::Tile(window))));
     let zoom = Value::Zoom(places.zoom);
     edits.extend(leg(playing, Node::Strip, None, zoom, at, shape));
+    let tint = Value::Number(places.tint);
+    edits.extend(leg(playing, Node::Tint, None, tint, at, shape));
     for (key, to) in &places.containers {
         let node = Node::Container(*key);
         if playing.model(node).is_none() {
@@ -767,6 +777,27 @@ mod tests {
         assert_eq!(lift(0.0), 0.0, "frame zero casts no lift");
         assert!(lift(PRESS / 4.0) > 0.0 && lift(PRESS / 4.0) < SELECTED_LIFT);
         assert!((lift(PRESS + 0.01) - SELECTED_LIFT).abs() < 1e-9);
+    }
+
+    /// The desktop behind is darkened all the way while held and not at all at rest, and the zoom
+    /// out darkens it on the zoom's own curve and length, from none at frame zero.
+    #[test]
+    fn the_desktop_darkens_with_the_zoom_out_from_none_at_frame_zero() {
+        let scene = scene(&STRIP, 3);
+        let (places, rest) = (held(&scene), at_rest(&scene, &shown(&STRIP, 3)));
+        assert_eq!((places.tint, rest.tint), (1.0, 0.0));
+        let start = pose(&rest);
+        assert_eq!(start.model(Node::Tint), Some(Value::Number(0.0)));
+        let edits = toward(&start, &places, 0.0, Motion::Slide { seconds: PRESS });
+        let darkens = tracks(&edits)
+            .into_iter()
+            .find(|track| track.node() == Node::Tint)
+            .expect("the desktop darkens");
+        assert_eq!(darkens.curves(), [Curve::Bezier(MOTION_CURVE)]);
+        assert!((darkens.seconds() - PRESS).abs() < 1e-9);
+        let score = played(&start, &edits);
+        assert_eq!(score.sample(Node::Tint, 0.0), Some(Value::Number(0.0)));
+        assert_eq!(score.sample(Node::Tint, PRESS + 0.01), Some(Value::Number(1.0)));
     }
 
     /// A step right pans the row on Slide's curve over the plain length, as one piece: its strip's

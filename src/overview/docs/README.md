@@ -58,6 +58,12 @@ flight casts (`LIFT_SHADOW`, `Node::Lift`), the selected one all of it and the r
 rises and falls with the zoom on the score rather than being a layer of its own. The switcher's cards
 cast none: its panel's window casts the shadow there, so there is no card shadow to share.
 
+**The desktop darkens on the score too.** Held, the desktop behind the thumbs is darkened by the
+card's backdrop, `--n0` at 0.40, the switcher's own darkening (`BACKDROP`, `BACKDROP_ALPHA` in
+`src/chrome/domain/card.rs`). It is a node of the score (`Node::Tint`, drawn by
+`src/animation/platform/overlay/tint.rs`), so it darkens and clears on the zoom's curve and clock and
+turns back with it, rather than on a fade of its own beside it.
+
 **A pan is read off one window on the strip in both scenes.** The window the row is aligned on
 after, else the one it was aligned on before, else any window in both. A move along the strip keeps
 the moved window on the axis, so it pans nothing; the columns it passes change places beneath it.
