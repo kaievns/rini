@@ -991,7 +991,7 @@ fn every_scene_and_the_close_are_handed_to_the_engine() {
     )]);
 }
 
-/// Kai's binds for the sixteen keys he named, as his config writes them.
+/// Kai's binds for the sixteen keys he named and the two folds, as his config writes them.
 const KAIS_BINDS: &str = "binds {
     Mod+J { focus-column-left; }
     Mod+L { focus-column-right; }
@@ -1009,6 +1009,8 @@ const KAIS_BINDS: &str = "binds {
     Mod+Semicolon { focus-workspace-down; }
     Mod+Shift+P { move-window-to-workspace-up; }
     Mod+Shift+Semicolon { move-window-to-workspace-down; }
+    Mod+Comma { toggle-fold-left; }
+    Mod+Period { toggle-fold-right; }
 }
 ";
 
@@ -1036,10 +1038,11 @@ enum Kept {
     Still,
 }
 
-/// Each of Kai's sixteen binds pressed inside the overview, lowered as his config's binds are, runs
+/// Each of Kai's eighteen binds pressed inside the overview, lowered as his config's binds are, runs
 /// on the real layout with nothing flying, is kept for the scene as the press it was, a push where
 /// it ran into an end, and leaves the scene selecting the window focus is on, on the workspace
-/// shown, the row each step names; a move keeps the moved window focused and on the axis. `Mod+I`
+/// shown, the row each step names; a move or a fold keeps the window focused and on the axis, the
+/// folds taking it out of its column and back in with either key. `Mod+I`
 /// and `Mod+K`, with Shift or without, go on to the workspace that way where the column ends, and
 /// the display forms the shipped config binds, pressed beside them, stay on the workspace there.
 #[test]
@@ -1067,6 +1070,10 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
 
     use Kept::*;
     let steps = [
+        ("Mod+Comma", Moved, 1),
+        ("Mod+Period", Moved, 1),
+        ("Mod+Period", Moved, 1),
+        ("Mod+Comma", Moved, 1),
         ("Mod+Ctrl+I", Slid, 1),
         ("Mod+Ctrl+I", Still, 1),
         ("Mod+Ctrl+K", Slid, 1),
@@ -1102,6 +1109,7 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
         ("Mod+Shift+P", PushedAtStackEnd, 0),
     ];
     let mut pressed = std::collections::BTreeSet::new();
+    let mut folds = Vec::new();
     for (key, kept, row) in steps {
         let action = (kais.binds.iter().chain(&display_forms.binds))
             .find(|bind| bind.key == key)
@@ -1118,8 +1126,10 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
                     | LayoutCommand::MoveNodeToEnd(_)
                     | LayoutCommand::MoveNodeOrToWorkspace(_)
                     | LayoutCommand::MoveWindowToWorkspace { .. }
+                    | LayoutCommand::ToggleFold(_)
             )
         );
+        let folding = matches!(command, Command::Layout(LayoutCommand::ToggleFold(_)));
         let before = reactor.layout().focused_window();
         let scene_before = reactor.overview_scene().cloned();
         batch(&mut apps, &mut reactor, vec![Event::Command(command)]);
@@ -1169,6 +1179,10 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
             (row, focused),
             "{key}: the selection is the real focus"
         );
+        if folding {
+            let x = |window| scene.find(window).map(|(_, tile)| tile.frame.center().x);
+            folds.push((x(w(4)) == x(w(3)), x(w(4)) == x(w(5))));
+        }
         if moving {
             assert_eq!(focused, before, "{key}: the moved window keeps focus");
             let moved = before.and_then(|window| scene.find(window)).expect("its thumb");
@@ -1180,8 +1194,13 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
         pressed.insert(key);
     }
     assert_eq!(
+        folds,
+        [(false, false), (false, true), (false, false), (true, false)],
+        "w4 out of w3's column, into w5's, out and back into w3's"
+    );
+    assert_eq!(
         pressed.len(),
-        20,
+        22,
         "every one of Kai's binds and the four display forms"
     );
 }
