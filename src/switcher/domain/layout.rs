@@ -15,6 +15,7 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_geometry::space::{FromCg, Point, Rect, Size, ToCg};
 
 use crate::chrome::domain::card::{self, Stack, Toward};
+use crate::chrome::domain::palette::Colour;
 
 /// The panel's own points, top-left at its top-left corner.
 pub enum Panel {}
@@ -44,6 +45,12 @@ pub struct Metrics {
     pub tile_corner: f64,
     /// Between rows: as far apart as the overview's thumbs.
     pub gap: f64,
+    /// The width of the ring around the selected row: the card's.
+    pub ring: f64,
+    /// What darkens the panel's ground behind the rows, and how much: the card's backdrop, as the
+    /// overview darkens the desktop behind its thumbs.
+    pub backdrop: Colour,
+    pub backdrop_alpha: f64,
     /// Inside the panel's edge, at the sides and above the strip.
     pub padding: f64,
     /// Below the captions, and SMALLER than `padding` on purpose.
@@ -76,6 +83,9 @@ impl Default for Metrics {
             stack: card::STACK,
             tile_corner: card::CORNER,
             gap: card::GAP,
+            ring: card::RING,
+            backdrop: card::BACKDROP,
+            backdrop_alpha: card::BACKDROP_ALPHA,
             padding: 22.0,
             bottom_padding: 9.0,
             caption: 27.0,
@@ -365,16 +375,18 @@ mod tests {
         assert_eq!(row.size.width, m.card_width(wide().size, 0));
     }
 
-    /// A card behind sits under the top card's rounded corner. Inset by less than the radius, it shows
-    /// through the curve.
     /// The switcher draws the card the overview draws its thumbs as: one corner, one gap between
-    /// cards, one stack (`chrome::domain::card`).
+    /// cards, one stack, one ring around the selected one and one darkening behind them
+    /// (`chrome::domain::card`).
     #[test]
     fn the_switcher_s_cards_are_the_chrome_card() {
         let m = Metrics::default();
         assert_eq!(m.stack, card::STACK);
         assert_eq!(m.tile_corner, card::CORNER);
         assert_eq!(m.gap, card::GAP);
+        assert_eq!(m.ring, card::RING);
+        assert_eq!(m.backdrop, card::BACKDROP);
+        assert_eq!(m.backdrop_alpha, card::BACKDROP_ALPHA);
         assert_eq!(crate::switcher::domain::entries::BEHIND + 1, card::STACK.cards);
     }
 

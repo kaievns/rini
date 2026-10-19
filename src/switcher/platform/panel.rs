@@ -34,7 +34,7 @@ use rini_runloop::turns;
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
-use crate::chrome::domain::{card, palette};
+use crate::chrome::domain::palette;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::platform::layer::{clear_contents, set_contents, set_layer_contents};
@@ -314,7 +314,7 @@ impl SwitcherPanel {
         root.setCornerRadius(CORNER);
         root.setMasksToBounds(true);
         // No hairline of its own: the glass draws its edge.
-        root.setBackgroundColor(Some(&token(card::BACKDROP.rgb(), card::BACKDROP_ALPHA)));
+        root.setBackgroundColor(Some(&token(metrics.backdrop.rgb(), metrics.backdrop_alpha)));
 
         // Under the tiles, so a tile's picture is never hidden by its own highlight.
         let highlight = CALayer::layer();
@@ -337,7 +337,7 @@ impl SwitcherPanel {
         ring.setHidden(true);
         // The ember's remit covers "focused borders" as well as active bars, and a switcher row is
         // a focus target rather than a list row.
-        ring.setBorderWidth(card::RING);
+        ring.setBorderWidth(metrics.ring);
         ring.setBorderColor(Some(&token(EMBER, 1.0)));
         root.addSublayer(&ring);
 
