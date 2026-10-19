@@ -306,13 +306,13 @@ impl Tree {
 
     /// `window`'s tile, riding the floating container, drawn as its window lays it rather than as
     /// a card: a card it wore as a thumb taken off, its picture clipped as it was given, and its own
-    /// resize, while one plays, laid again so.
+    /// resize, where its track has one, laid again so, its frame's resize left playing.
     fn undress_card(&mut self, window: WindowId) {
         let model = self.replica.model(Node::Tile(window)).map(as_frame);
-        let live = self
+        let resize = self
             .replica
             .track(Node::Tile(window), Channel::Base)
-            .filter(|track| track.seconds() > 0.0 && resizes(track) && track.ends() > self.now);
+            .filter(|track| track.seconds() > 0.0 && resizes(track));
         let Some(entry) = self.tile_layers.get_mut(&window) else {
             return;
         };
@@ -322,9 +322,9 @@ impl Tree {
         card.layer().removeFromSuperlayer();
         entry.decorations.lay(None);
         clip_corners(entry, entry.clipped);
-        remove_resize(entry);
-        if let Some(track) = live {
-            install_tile_resize(entry, track);
+        match resize {
+            Some(track) => install_tile_resize(entry, track),
+            None => remove_resize(entry),
         }
         if let Some(frame) = model {
             self.place_tile(window, frame);

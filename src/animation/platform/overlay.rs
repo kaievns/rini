@@ -5055,15 +5055,32 @@ mod tests {
             for (window, key, frame) in &mut turned.tiles {
                 if *window == w(1) {
                     *key = GroupKey::Floating;
-                    *frame =
-                        GroupRect::new(rini_geometry::space::Point::new(100.0, 100.0), frame.size);
+                    *frame = GroupRect::new(
+                        rini_geometry::space::Point::new(100.0, 100.0),
+                        rini_geometry::space::Size::new(700.0, 500.0),
+                    );
                 }
             }
             turned.lifts.retain(|(window, _)| *window != w(1));
-            let turn = toward(&tree.replica, &turned, 0.5, Motion::Slide { seconds: 0.0 });
+            let turn = toward(&tree.replica, &turned, 0.5, Motion::Slide { seconds: 0.35 });
             tree.play(&turn, &tiles(&turned));
             plays_exactly(&tree);
             as_on_screen(&tree, w(1));
+            let resize = tree.replica.track(Node::Tile(w(1)), Channel::Base).expect("its turn");
+            assert!(resizes(resize) && resize.ends() > tree.now, "turned mid-resize");
+            let size = |v: Value| -> TileSize { as_frame(v).size.respace() };
+            assert_eq!(
+                installed(
+                    &tree.tile_layers[&w(1)].decorations.shadow,
+                    "rini.tile.shadow.path",
+                    path_of
+                ),
+                expected(resize, |v| silhouette_path(
+                    size(v),
+                    shape::radius(Some(10.0), size(v))
+                )),
+                "its resize laid as its window lays it"
+            );
             let back = toward(&tree.replica, &rest, 1.0, Motion::Slide { seconds: 0.35 });
             tree.play(&back, &tiles(&rest));
             plays_exactly(&tree);
