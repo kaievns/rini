@@ -1,6 +1,6 @@
 //! The tint the overview lays over the desktop behind its thumbs: the card's backdrop
 //! (`chrome::domain::card::BACKDROP`) across the whole overlay, between the desktop and every tile,
-//! at the score's `Node::Tint` share of `BACKDROP_ALPHA`. None between overviews.
+//! at the score's `Node::Held` share of `BACKDROP_ALPHA`. None between overviews.
 
 use objc2::rc::Retained;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};

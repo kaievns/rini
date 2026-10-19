@@ -83,9 +83,8 @@ pub struct Places {
     pub tiles: Vec<(WindowId, GroupKey, GroupRect)>,
     /// Each thumb's lift, from 0 to 1, in `tiles`' order.
     pub lifts: Vec<(WindowId, f64)>,
-    /// How far the desktop behind is darkened, from 0 to 1 of the card's backdrop: all the way
-    /// while held, none at rest.
-    pub tint: f64,
+    /// How far the overview is held (`Node::Held`): all the way while held, none at rest.
+    pub held: f64,
     pub banding: Banding,
     pub outlines: Vec<Outline>,
 }
@@ -231,7 +230,7 @@ pub fn held(scene: &Scene) -> Places {
         containers,
         tiles,
         lifts,
-        tint: 1.0,
+        held: 1.0,
         banding: banding(scene),
         outlines,
     }
@@ -243,7 +242,7 @@ pub fn held(scene: &Scene) -> Places {
 /// What the overview zooms out from as it opens, and back into as it closes.
 pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     let mut places = held(scene);
-    places.tint = 0.0;
+    places.held = 0.0;
     for (_, lift) in &mut places.lifts {
         *lift = 0.0;
     }
@@ -345,7 +344,7 @@ pub fn pose(places: &Places) -> Score {
 fn placed(places: &Places) -> Vec<Edit> {
     let mut edits = vec![
         Edit::Place(Node::Strip, Value::Zoom(places.zoom)),
-        Edit::Place(Node::Tint, Value::Number(places.tint)),
+        Edit::Place(Node::Held, Value::Number(places.held)),
     ];
     for (key, at) in &places.containers {
         edits.push(Edit::Place(Node::Container(*key), Value::Point(*at)));
@@ -403,8 +402,8 @@ pub fn toward(playing: &Score, places: &Places, at: f64, motion: Motion) -> Vec<
     edits.extend(gone.into_iter().map(|window| Edit::Drop(Node::Tile(window))));
     let zoom = Value::Zoom(places.zoom);
     edits.extend(leg(playing, Node::Strip, None, zoom, at, shape));
-    let tint = Value::Number(places.tint);
-    edits.extend(leg(playing, Node::Tint, None, tint, at, shape));
+    let share = Value::Number(places.held);
+    edits.extend(leg(playing, Node::Held, None, share, at, shape));
     for (key, to) in &places.containers {
         let node = Node::Container(*key);
         if playing.model(node).is_none() {
@@ -818,19 +817,19 @@ mod tests {
     fn the_desktop_darkens_with_the_zoom_out_from_none_at_frame_zero() {
         let scene = scene(&STRIP, 3);
         let (places, rest) = (held(&scene), at_rest(&scene, &shown(&STRIP, 3)));
-        assert_eq!((places.tint, rest.tint), (1.0, 0.0));
+        assert_eq!((places.held, rest.held), (1.0, 0.0));
         let start = pose(&rest);
-        assert_eq!(start.model(Node::Tint), Some(Value::Number(0.0)));
+        assert_eq!(start.model(Node::Held), Some(Value::Number(0.0)));
         let edits = toward(&start, &places, 0.0, Motion::Slide { seconds: PRESS });
         let darkens = tracks(&edits)
             .into_iter()
-            .find(|track| track.node() == Node::Tint)
+            .find(|track| track.node() == Node::Held)
             .expect("the desktop darkens");
         assert_eq!(darkens.curves(), [Curve::Bezier(MOTION_CURVE)]);
         assert!((darkens.seconds() - PRESS).abs() < 1e-9);
         let score = played(&start, &edits);
-        assert_eq!(score.sample(Node::Tint, 0.0), Some(Value::Number(0.0)));
-        assert_eq!(score.sample(Node::Tint, PRESS + 0.01), Some(Value::Number(1.0)));
+        assert_eq!(score.sample(Node::Held, 0.0), Some(Value::Number(0.0)));
+        assert_eq!(score.sample(Node::Held, PRESS + 0.01), Some(Value::Number(1.0)));
     }
 
     /// A step right pans the row on Slide's curve over the plain length, as one piece: its strip's

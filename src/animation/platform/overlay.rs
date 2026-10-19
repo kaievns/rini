@@ -1199,10 +1199,10 @@ impl Tree {
             }
         }
         self.tint.clear();
-        if let Some(tinted) = score.model(Node::Tint) {
+        if let Some(tinted) = score.model(Node::Held) {
             self.tint.set(as_number(tinted));
         }
-        let tracks: Vec<Track> = [Node::Strip, Node::Tint]
+        let tracks: Vec<Track> = [Node::Strip, Node::Held]
             .into_iter()
             .chain(score.containers().map(Node::Container))
             .chain(score.tiles().map(|(window, _)| Node::Tile(window)))
@@ -1234,7 +1234,7 @@ impl Tree {
                 Edit::Place(Node::Lift(window), value) => {
                     self.place_lift(*window, as_number(*value))
                 }
-                Edit::Place(Node::Tint, value) => self.tint.set(as_number(*value)),
+                Edit::Place(Node::Held, value) => self.tint.set(as_number(*value)),
                 Edit::Add(track) => self.install(track, tiles, new_leg),
                 Edit::Cut(node, channel) => self.cut(*node, *channel),
                 Edit::Ride(window, key) => self.ride(*window, *key, tiles),
@@ -1403,7 +1403,7 @@ impl Tree {
                 let opacity = |value| number_object(lift::opacity(as_number(value)));
                 lift.play(&animation(track, "shadowOpacity", opacity));
             }
-            Node::Tint => {
+            Node::Held => {
                 if track.seconds() <= 0.0 {
                     self.tint.cut();
                     return;
@@ -1442,7 +1442,7 @@ impl Tree {
                     lift.cut();
                 }
             }
-            Node::Tint => self.tint.cut(),
+            Node::Held => self.tint.cut(),
         }
     }
 
@@ -1461,7 +1461,7 @@ impl Tree {
                     lift.layer().removeFromSuperlayer();
                 }
             }
-            Node::Tint => self.tint.clear(),
+            Node::Held => self.tint.clear(),
             Node::Container(key) => {
                 for layer in self.layers_of(key) {
                     layer.removeFromSuperlayer();
@@ -3901,9 +3901,9 @@ mod tests {
                     "under every container"
                 );
             }
-            let model = tree.replica.model(Node::Tint).map_or(0.0, as_number);
+            let model = tree.replica.model(Node::Held).map_or(0.0, as_number);
             assert_eq!(f64::from(layer.opacity()), tint::opacity(model) as f32 as f64);
-            match tree.replica.track(Node::Tint, Channel::Base) {
+            match tree.replica.track(Node::Held, Channel::Base) {
                 Some(track) if track.seconds() > 0.0 => {
                     let opacity = |value: Value| tint::opacity(as_number(value));
                     assert_eq!(

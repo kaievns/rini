@@ -67,9 +67,9 @@ to share.
 
 **The desktop darkens on the score too.** Held, the desktop behind the thumbs is darkened by the
 card's backdrop, `--n0` at 0.40, the switcher's own darkening (`BACKDROP`, `BACKDROP_ALPHA` in
-`src/chrome/domain/card.rs`). It is a node of the score (`Node::Tint`, drawn by
-`src/animation/platform/overlay/tint.rs`), so it darkens and clears on the zoom's curve and clock and
-turns back with it, rather than on a fade of its own beside it.
+`src/chrome/domain/card.rs`), at the share of the way the overview is held, a node of the score
+(`Node::Held`, drawn by `src/animation/platform/overlay/tint.rs`), so it darkens and clears on the
+zoom's curve and clock and turns back with it, rather than on a fade of its own beside it.
 
 **A pan is read off one window on the strip in both scenes.** The window the row is aligned on
 after, else the one it was aligned on before, else any window in both. A move along the strip keeps
