@@ -4345,22 +4345,17 @@ mod tests {
                     });
                 }
                 let first_current = if below { ids[0] } else { current };
-                let mut input = overview(
+                let input = overview(
                     vec![
                         row(strip(&columns, 0.0), Some(first_current)),
                         row(strip(&second, 0.0), Some(if below { current } else { 11 })),
                     ],
                     usize::from(below),
                 );
-                input.rows[0].floating.push(crate::overview::domain::scene::Laid {
-                    window: w(20),
-                    frame: typed(300.0, 200.0, 600.0, 400.0),
-                });
                 let shown = input.rows[input.active]
                     .columns
                     .iter()
                     .flat_map(|column| &column.windows)
-                    .chain(&input.rows[input.active].floating)
                     .map(|laid| (laid.window, to_overlay_space(laid.frame, DISPLAY)))
                     .collect();
                 (lay_out(&input), shown)

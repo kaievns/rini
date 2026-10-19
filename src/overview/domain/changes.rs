@@ -131,12 +131,8 @@ pub fn changes(before: &Scene, after: &Scene) -> Changes {
 /// How far `is`'s strip sits from `was`'s, read off one window on the strip in both: the one it is
 /// aligned on now, else the one it was aligned on, else any.
 fn pan(was: &RowScene, is: &RowScene) -> Option<f64> {
-    let tiled = |row: &RowScene, window: WindowId| {
-        row.tile(window)
-            .filter(|tile| tile.holder != Holder::Floating)
-            .map(|tile| tile.in_row)
-    };
-    let both = |window: WindowId| Some((tiled(was, window)?, tiled(is, window)?));
+    let in_row = |row: &RowScene, window: WindowId| row.tile(window).map(|tile| tile.in_row);
+    let both = |window: WindowId| Some((in_row(was, window)?, in_row(is, window)?));
     let (from, to) = is
         .aligned_on
         .and_then(both)

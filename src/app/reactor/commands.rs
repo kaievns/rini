@@ -102,6 +102,7 @@ impl Reactor {
         &mut self,
         command: LayoutCommand,
     ) -> anyhow::Result<EventOutcome> {
+        self.resume_overview_on_strip();
         let command_space = self.command_context_space();
         self.on_layout_command_in(command, command_space)
     }

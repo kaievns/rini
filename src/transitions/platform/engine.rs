@@ -4453,7 +4453,6 @@ mod tests {
                             window: w(idx),
                             server_id: WindowServerId::new(idx),
                             decoration: ringed(),
-                            floating: false,
                         })
                         .collect(),
                     shown,

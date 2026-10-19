@@ -1085,9 +1085,9 @@ measured yet.*
 The overview (`specs/overview.md`) is drawn on the same overlay by the same engine, but it is a view
 the presses inside it change, held as long as its key is, rather than a movement with an end. It
 runs a lifecycle of its own beside the flights' (`domain/lifecycle/overview.rs`): frame zero of the
-shown workspace, the overlay up and the zoom out; held, with no clock running and nothing holding
-the pictures service, so the warm captures of the workspaces not shown run and each picture the
-cache takes goes onto its thumb (`Event::Taken`); every scene the reactor lays out after a batch
+shown workspace's strip, the overlay up and the zoom out; held, with no clock running and nothing
+holding the pictures service, so the warm captures of the workspaces not shown run and each picture
+the cache takes goes onto its thumb (`Event::Taken`); every scene the reactor lays out after a batch
 played from where everything is drawn; and on its close the zoom back in onto the real layout, the
 overlay holed over the windows it lands on, a tick reading those windows where their thumbs end,
 what rests placed a tick ahead, the lift and the quiet. Opened again before that lift, it fills
@@ -1095,7 +1095,8 @@ those holes in and zooms out again from where everything is drawn. Opened again 
 display, the overlay's move there held, it lands and lifts first, and the open waits with the move,
 the scenes and the close after it, so it opens afresh on that display. It writes no frame: every
 press inside it placed the real windows as it ran (`src/app/reactor/overview.rs`,
-`hold_for_overview`).
+`hold_for_overview`). It draws no floating window: the overlay covers each from the show to the
+lift, frame zero pictures none and the landing waits on none, and the lift shows each where it was.
 
 It takes a generation the coordinator reserves for it, so a picture asked for a flight is never
 taken for the overview's, nor the reverse. From its open to its lift it holds the overlay: a flight

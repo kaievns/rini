@@ -6,9 +6,9 @@
 //! window is centred on one vertical axis, the tiling area's centre; with no tiled current window
 //! the strip stays where it shows. Each tiled thumb is drawn a card's gap narrower than its place,
 //! about its centre, so two side by side are that gap apart however close the strip packs them.
-//! Columns past either edge collapse into the row's edge stacks (`stacks`). Floating windows keep
-//! their place on the display, scaled into their row, over its tiles. An empty workspace keeps its
-//! row as an outline of its tiling area.
+//! Columns past either edge collapse into the row's edge stacks (`stacks`). Only the strip's windows
+//! are drawn: a floating window is in no row. A workspace with nothing on its strip keeps its row as
+//! an outline of its tiling area.
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayPoint, OverlayRect, Point, ScreenRect, Size};
@@ -31,13 +31,14 @@ pub struct ColumnInput {
     pub windows: Vec<Laid>,
 }
 
-/// One workspace of the display.
+/// One workspace of the display: its strip, and nothing that floats over it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowInput {
     /// The strip's columns, left to right.
     pub columns: Vec<ColumnInput>,
-    pub floating: Vec<Laid>,
-    /// The window a switch to this workspace focuses; on the active workspace, the focused window.
+    /// The strip's window a switch to this workspace focuses, or with a floating window there the
+    /// one a focus press off it returns to; on the active workspace, the focused window when it is
+    /// on the strip.
     pub current: Option<WindowId>,
 }
 
@@ -65,8 +66,6 @@ pub enum Holder {
     Row,
     /// An edge stack, `depth` cards behind its top one.
     Stack { side: Side, depth: usize },
-    /// Its place on the display, over the row's tiles.
-    Floating,
 }
 
 /// A window's thumb.
@@ -86,7 +85,7 @@ impl SceneTile {
     pub fn drawn(&self) -> bool {
         match self.holder {
             Holder::Stack { depth, .. } => depth < STACK.cards,
-            Holder::Row | Holder::Floating => true,
+            Holder::Row => true,
         }
     }
 }
@@ -100,14 +99,13 @@ pub struct RowScene {
     /// thumb is its window's place on the strip at the scene's depth from here, `apart`, before any
     /// column stacks, so a press that only pans the row moves this and no thumb within it.
     pub strip: OverlayPoint,
-    /// Where the display's top-left is drawn for the row's floating thumbs, each its window's frame
-    /// on the display at the scene's depth from here.
-    pub floating_origin: OverlayPoint,
+    /// Where the display's top-left is drawn in the row: what the zoom in lands the shown row on.
+    pub display_origin: OverlayPoint,
     /// The tiled window centred on the axis.
     pub aligned_on: Option<WindowId>,
-    /// The tiling area's outline at the scene's depth, for a workspace with no windows.
+    /// The tiling area's outline at the scene's depth, for a workspace with nothing on its strip.
     pub outline: Option<OverlayRect>,
-    /// The tiled thumbs column by column, top to bottom, then the floating ones.
+    /// The thumbs column by column, top to bottom.
     pub tiles: Vec<SceneTile>,
 }
 
@@ -283,24 +281,14 @@ fn lay_out_row(
             });
         }
     }
-    for laid in &row.floating {
-        let placed = space.place(space.overlay(laid.frame), display_anchor);
-        tiles.push(SceneTile {
-            window: laid.window,
-            frame: placed,
-            in_row: placed,
-            holder: Holder::Floating,
-        });
-    }
-    let empty =
-        row.columns.iter().all(|column| column.windows.is_empty()) && row.floating.is_empty();
+    let empty = row.columns.iter().all(|column| column.windows.is_empty());
     RowScene {
         band: space.place(usable, display_anchor),
         strip: Point::new(
             places.first().map_or(space.origin(anchor).x, |first| span_of(first).min_x()),
             space.origin(anchor).y,
         ),
-        floating_origin: space.origin(display_anchor),
+        display_origin: space.origin(display_anchor),
         aligned_on: current.map(|(_, laid)| laid.window),
         outline: empty.then(|| space.place(tiling, display_anchor)),
         tiles,
@@ -360,7 +348,7 @@ mod tests {
     use rini_geometry::IsWithin;
 
     use super::super::depth::{MARGIN, ROW_GAP};
-    use super::super::fixture::{Col, GAP, display, overview, rect, row, strip, tiling, usable, w};
+    use super::super::fixture::{Col, GAP, display, overview, row, strip, tiling, usable, w};
     use super::*;
     use crate::chrome::domain::card;
 
@@ -489,55 +477,13 @@ mod tests {
         assert!(scene.rows.iter().enumerate().all(|(i, row)| (i == 2) == row.outline.is_some()));
     }
 
-    #[test]
-    fn floating_windows_keep_their_display_place_in_their_row() {
-        let mut input = four_rows();
-        let place = rect(300.0, 200.0, 600.0, 400.0);
-        input.rows[0].floating.push(Laid { window: w(20), frame: place });
-        input.rows[1].floating.push(Laid { window: w(21), frame: place });
-        let scene = lay_out(&input);
-        for (row, window) in [(0, 20), (1, 21)] {
-            let scene_row = &scene.rows[row];
-            let tile = scene_row.tile(w(window)).unwrap();
-            assert_eq!(tile.holder, Holder::Floating);
-            let band = scene_row.band;
-            let expected = OverlayRect::new(
-                Point::new(
-                    band.min_x() + place.min_x() * scene.scale,
-                    band.min_y() + (place.min_y() - usable().min_y()) * scene.scale,
-                ),
-                Size::new(place.width() * scene.scale, place.height() * scene.scale),
-            );
-            assert!(
-                tile.frame.is_within(1e-9, expected),
-                "{tile:?} against {expected:?}"
-            );
-            assert_eq!(
-                scene_row.tiles.last().unwrap().window,
-                w(window),
-                "drawn over the tiles"
-            );
-        }
-
-        input.rows[1].current = Some(w(6));
-        let panned = lay_out(&input);
-        assert_eq!(
-            panned.rows[1].tile(w(21)),
-            scene.rows[1].tile(w(21)),
-            "a floating thumb stays still while its row pans"
-        );
-    }
-
-    /// Every tiled thumb is its window's place on the strip at the scene's depth from its row's
-    /// strip, and every floating one its frame on the display from its floating origin: what the
-    /// overlay draws a row from as one piece, the strip's own scroll moving neither.
+    /// Every thumb is its window's place on the strip at the scene's depth from its row's strip,
+    /// and its row's band the usable frame at that depth from where the row draws the display's
+    /// top-left: what the overlay draws a row from as one piece, the strip's own scroll moving
+    /// neither.
     #[test]
     fn every_thumb_is_its_place_at_the_scenes_depth_from_its_rows_strip() {
-        let mut input = four_rows();
-        input.rows[1].floating.push(Laid {
-            window: w(21),
-            frame: rect(300.0, 200.0, 600.0, 400.0),
-        });
+        let input = four_rows();
         let scene = lay_out(&input);
         let at_depth = |origin: OverlayPoint, frame: OverlayRect, left: f64| {
             OverlayRect::new(
@@ -561,27 +507,24 @@ mod tests {
                 );
                 seen += 1;
             }
-            for laid in &row.floating {
-                let expected = at_depth(scene_row.floating_origin, on(laid), 0.0);
-                let tile = scene_row.tile(laid.window).unwrap();
-                assert!(
-                    tile.in_row.is_within(1e-9, expected),
-                    "{tile:?} against {expected:?}"
-                );
-                seen += 1;
-            }
+            let band = at_depth(
+                scene_row.display_origin,
+                to_overlay_space(usable(), display()),
+                0.0,
+            );
+            assert!(
+                scene_row.band.is_within(1e-9, band),
+                "{:?} against {band:?}",
+                scene_row.band
+            );
         }
-        assert_eq!(seen, 8);
+        assert_eq!(seen, 7);
     }
 
     #[test]
-    fn a_row_whose_current_window_floats_keeps_its_strip_where_it_shows() {
+    fn a_row_with_no_current_window_keeps_its_strip_where_it_shows() {
         let mut input = four_rows();
-        input.rows[0].floating.push(Laid {
-            window: w(20),
-            frame: rect(300.0, 200.0, 600.0, 400.0),
-        });
-        input.rows[0].current = Some(w(20));
+        input.rows[0].current = None;
         let scene = lay_out(&input);
         assert_eq!(scene.rows[0].aligned_on, None);
         let band = scene.rows[0].band;

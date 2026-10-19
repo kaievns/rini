@@ -44,6 +44,14 @@ pub fn preferred(c: &FocusCandidates) -> Option<WindowId> {
         .or(c.first_floating)
 }
 
+/// The window on the strip a switch to the workspace focuses, or with a floating window the one it
+/// would focus, the strip's own selection: where a focus press off a floating window returns to.
+/// None with nothing on the strip. A floating window is in no tree, so only the last focused window
+/// can be one.
+pub fn on_strip(c: &FocusCandidates, floats: impl Fn(WindowId) -> bool) -> Option<WindowId> {
+    c.last_focused.filter(|wid| !floats(*wid)).or(c.selected).or(c.first_visible)
+}
+
 /// Which way a cycle step moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cycle {
@@ -122,6 +130,35 @@ mod tests {
             assert_ne!(preferred(&c), Some(window(8)), "{tiled} must win");
             assert_ne!(preferred(&c), Some(window(9)), "{tiled} must win");
         }
+    }
+
+    /// On the strip, a floating window last focused gives way to the strip's selection, and a
+    /// tiled one keeps its place; a strip with nobody offers none, the floating windows aside.
+    #[test]
+    fn the_strip_s_window_passes_over_a_floating_one_focused_last() {
+        let floats = |wid: WindowId| wid == window(8);
+        let c = FocusCandidates {
+            last_focused: Some(window(8)),
+            selected: Some(window(3)),
+            first_visible: Some(window(4)),
+            last_floating: Some(window(8)),
+            ..FocusCandidates::default()
+        };
+        assert_eq!(on_strip(&c, floats), Some(window(3)));
+        let tiled = FocusCandidates {
+            last_focused: Some(window(2)),
+            ..c
+        };
+        assert_eq!(on_strip(&tiled, floats), Some(window(2)));
+        let no_selection = FocusCandidates { selected: None, ..c };
+        assert_eq!(on_strip(&no_selection, floats), Some(window(4)));
+        let nobody = FocusCandidates {
+            last_focused: Some(window(8)),
+            last_floating: Some(window(8)),
+            first_floating: Some(window(9)),
+            ..FocusCandidates::default()
+        };
+        assert_eq!(on_strip(&nobody, floats), None);
     }
 
     #[test]

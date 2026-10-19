@@ -231,29 +231,19 @@ impl FlightEngine {
         }
     }
 
-    /// Frame zero of the windows the display shows, each wholly on it: the strip's, and the
-    /// floating ones as the background behind it.
+    /// Frame zero of the strip's windows the display shows, each wholly on it.
     fn ask_overview_frame_zero(&mut self, generation: Generation) {
         let (Some(view), Some((display, _))) = (&self.shown_overview.view, self.display) else {
             return;
         };
-        let floats = |window: WindowId| {
-            view.windows.iter().any(|info| info.window == window && info.floating)
-        };
         let on = |frame: ScreenRect| frame_zero_pictures(frame, false, display);
-        let (background, strip): (Vec<_>, Vec<_>) = view
-            .shown
-            .iter()
-            .copied()
-            .filter(|(_, frame)| on(*frame))
-            .partition(|(window, _)| floats(*window));
-        let behind: Vec<WindowId> = background.iter().map(|(window, _)| *window).collect();
+        let strip: Vec<_> = view.shown.iter().copied().filter(|(_, frame)| on(*frame)).collect();
         self.pictures.ask_on_screen(on_screen(
             self.tag(generation),
             Moment::FrameZero,
             &strip,
-            &background,
-            &behind,
+            &[],
+            &[],
         ));
     }
 
@@ -513,7 +503,7 @@ impl FlightEngine {
             let on = selected == Some(info.window);
             let decoration = self.shown_overview.dressed(info.decoration, view.scene.scale, on);
             let worn = Worn::beside(decoration);
-            let tile = stacking.tile_of(info.window, info.server_id, info.floating, worn);
+            let tile = stacking.tile_of(info.window, info.server_id, false, worn);
             let clipped = snapshot.source.clips();
             made.push(tile.flying((rect, rect), Drawn { snapshot, clipped }, false));
         }

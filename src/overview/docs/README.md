@@ -1,8 +1,9 @@
 # `overview` — every workspace of a display at once, while its key is held
 
 The overview zooms one display out to every one of its workspaces, a row each, stacked top to
-bottom in the stack's order. Each row is its strip at one depth, aligned on the window a switch to
-that workspace focuses. The requirements are `specs/overview.md`.
+bottom in the stack's order. Each row is its strip at one depth, aligned on the strip's window a
+switch to that workspace focuses. Only the strips' windows are in it: a floating window is in no
+row, and the reactor leaves it out of the input. The requirements are `specs/overview.md`.
 
 This feature is the scene and nothing else: pure geometry over `rini-core`'s ids in rini-geometry's
 `Overlay` space. It names no other feature but `chrome`, whose card its stacks are, and has no
@@ -16,7 +17,7 @@ score, and `transitions`' engine plays that on its own lifecycle
 
 | | |
 |---|---|
-| `domain/scene.rs` | `OverviewInput` in, `Scene` out (`lay_out`): one `RowScene` per workspace, its band, where its strip starts and where the display's top-left is drawn for its floating windows, the window it is aligned on, an empty one's outline, and a `SceneTile` per window with where it is drawn, where its row lays it out (`in_row`, a tiled one `apart` from its neighbours) and its `Holder`; the `Selection` the active ring is on |
+| `domain/scene.rs` | `OverviewInput` in, `Scene` out (`lay_out`): one `RowScene` per workspace, its band, where its strip starts and where the display's top-left is drawn, the window it is aligned on, an empty strip's outline, and a `SceneTile` per window with where it is drawn, where its row lays it out (`in_row`, a tiled one `apart` from its neighbours) and its `Holder`; the `Selection` the active ring is on |
 | `domain/depth.rs` | The depth every row is drawn at (`depth`, between `DEEPEST` and `SHALLOWEST`) and each row's top down the display, centred when the stack fits and scrolled the least that keeps the selected row in view when it does not (`row_tops`) |
 | `domain/stacks.rs` | The columns that collapse into a stack at either edge (`edge_stacks`): the walk out from the pivot column, the top card's place, the cards behind it, and how many are drawn |
 | `domain/changes.rs` | What changed between two scenes (`changes`): each thumb that moved, changed holder or changed row, each row's pan, the stack's scroll, and the selection's move; the flight engine logs each scene it plays by it |
@@ -27,20 +28,22 @@ score, and `transitions`' engine plays that on its own lifecycle
 **One axis.** Every row's current window is centred on the tiling area's centre x. The centre is
 the one place every row can put its current window whatever its strip's scroll, and it keeps the
 selection still while a press pans its row under it. A row reads its anchor off the current
-window's frame, so the real strip's own scroll moves no thumb. A row whose current window floats,
-or that has none, keeps its strip where it shows.
+window's frame, so the real strip's own scroll moves no thumb. The current window is always the
+strip's: where the window a switch focuses floats, it is the strip's own selection, the one a focus
+press off that window returns to (`on_strip` in `src/workspaces/domain/workspace_focus.rs`). A row
+with none keeps its strip where it shows.
 
-**A row is the usable frame at the scene's depth.** Tiles, floating windows and an empty row's
-outline all map through the same transform, so a floating window keeps its place on the display
-and a stacked column is drawn as the strip draws it. A row's `strip` is where its first column
-starts: every tiled thumb sits at its window's place on the strip from there, so the overlay draws
-a row as one container that a press along it moves, and no thumb in it, and the real strip's own
-scroll moves neither. Each tiled thumb is that place narrowed and shortened by the card's 14pt gap
-about its centre (`apart`): at depth 0.3 the strip's own gap is under a point, and a run of
-terminals drew as one slab. Narrowed with its proportions kept, a short wide window took a sliver
-off its height, so a column's windows stayed a slab. Narrowing rather than spreading the row keeps every place, the axis
-and every pan as the strip has them. At rest the shown row's thumbs are drawn at their windows'
-frames, so frame zero is still the screen.
+**A row is the usable frame at the scene's depth.** Tiles and an empty row's outline map through the
+same transform, so a stacked column is drawn as the strip draws it, and the row's `display_origin`
+is where the display's top-left lands, which the zoom in lands the shown row on. A row's `strip` is
+where its first column starts: every tiled thumb sits at its window's place on the strip from there,
+so the overlay draws a row as one container that a press along it moves, and no thumb in it, and the
+real strip's own scroll moves neither. Each tiled thumb is that place narrowed and shortened by the
+card's 14pt gap about its centre (`apart`): at depth 0.3 the strip's own gap is under a point, and a
+run of terminals drew as one slab. Narrowed with its proportions kept, a short wide window took a
+sliver off its height, so a column's windows stayed a slab. Narrowing rather than spreading the row
+keeps every place, the axis and every pan as the strip has them. At rest the shown row's thumbs are
+drawn at their windows' frames, so frame zero is still the screen.
 
 **Stacks are the switcher's turned on their side.** Both draw `chrome`'s card stack
 (`src/chrome/domain/card.rs`): the step, the inset and the three cards drawn are one record, and

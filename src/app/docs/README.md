@@ -23,6 +23,7 @@ knows the features and converts what they emit.
 | `reactor/drag_swap.rs` | A window being dragged: the drag session, and the swap with the window it is dragged over |
 | `reactor/switcher.rs` | The window switcher's session: the list snapshotted at open, the cursor over it, the popup, and the commit that focuses the chosen window wherever it is |
 | `reactor/overview.rs` | The overview's session, opened and closed by the tap's hold: its scene laid out after every batch and handed to the flight engine (`OverviewOpen`, `OverviewScene`, `OverviewClose`), each flight a press inside it asks for held, its frames placed at once (`hold_for_overview`), a flight already on its way kept from putting back what a press placed, the warps held for its close, the pointer ignored, and its close once focus or rini's management leaves its display |
+| `reactor/overview.rs`, continued | focus taken off a floating window to the scene's selection ahead of a layout press (`resume_overview_on_strip`), the scene laid out from the strips alone, and no thumb ringed as it closes on a floating window's focus |
 | `reactor/command_space.rs` | Which space and screen a command acts on: the command space, the active display's space, the focused or main window's, and the screen a display selector names |
 | `reactor/autosave.rs` | The layout file written: debounced after a layout change, at once before exit |
 | `reactor/state.rs` | `RiniState` |

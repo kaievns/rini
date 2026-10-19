@@ -302,6 +302,21 @@ impl LayoutEngine {
         workspace_id: VirtualWorkspaceId,
         preferred_focus_window: Option<WindowId>,
     ) -> Option<WindowId> {
+        workspace_focus::preferred(&self.focus_candidates(
+            window_store,
+            space,
+            workspace_id,
+            preferred_focus_window,
+        ))
+    }
+
+    fn focus_candidates(
+        &self,
+        window_store: &WindowStore,
+        space: SpaceId,
+        workspace_id: VirtualWorkspaceId,
+        preferred_focus_window: Option<WindowId>,
+    ) -> workspace_focus::FocusCandidates {
         let in_workspace = |wid: &WindowId| {
             self.virtual_workspace_manager.workspace_for_window(window_store, space, *wid)
                 == Some(workspace_id)
@@ -309,7 +324,7 @@ impl LayoutEngine {
         let layout = self.workspace_layouts.active(space, workspace_id);
         let floating = self.active_floating_windows_in_workspace(window_store, space);
 
-        workspace_focus::preferred(&workspace_focus::FocusCandidates {
+        workspace_focus::FocusCandidates {
             requested: preferred_focus_window.filter(in_workspace),
             last_focused: self
                 .virtual_workspace_manager
@@ -326,7 +341,7 @@ impl LayoutEngine {
             }),
             last_floating: self.floating.last_focus().filter(|wid| floating.contains(wid)),
             first_floating: floating.first().copied(),
-        })
+        }
     }
 
     /// A workspace's active window, as niri has one: the window focus lands on when the workspace
@@ -338,6 +353,18 @@ impl LayoutEngine {
         workspace_id: VirtualWorkspaceId,
     ) -> Option<WindowId> {
         self.preferred_focus_for_workspace(window_store, space, workspace_id, None)
+    }
+
+    /// A workspace's window on its strip that focus lands on: its active window when that is on the
+    /// strip, else the strip's own selection, which a focus press off a floating window returns to.
+    pub fn active_strip_window(
+        &self,
+        window_store: &WindowStore,
+        space: SpaceId,
+        workspace_id: VirtualWorkspaceId,
+    ) -> Option<WindowId> {
+        let candidates = self.focus_candidates(window_store, space, workspace_id, None);
+        workspace_focus::on_strip(&candidates, |wid| self.floating.is_floating(wid))
     }
 
     pub fn commit_workspace_focus(

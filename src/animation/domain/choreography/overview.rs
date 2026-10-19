@@ -1,5 +1,5 @@
-//! How the overview moves on the overlay: every row of its scene one strip container, its edge
-//! stacks and its floating windows a container each, all under the strip's zoom; the zoom out from
+//! How the overview moves on the overlay: every row of its scene one strip container and its edge
+//! stacks another, all under the strip's zoom; the zoom out from
 //! the screen as it is and back in onto the real layout, and every press inside it, played Slide's
 //! way at a press's pace, each node from where it is drawn to where the new scene has it; every
 //! thumb lifted off the overlay while it is held, the selected one furthest, and the desktop behind
@@ -52,22 +52,19 @@ pub const SELECTED_LIFT: f64 = 1.0;
 /// destination by then, so its last sample lands on it.
 const SPRING_RUNS: f64 = 12.0;
 
-/// The containers a row's thumbs ride, three to a row: its strip, its edge stacks behind it and its
-/// floating windows in front.
+/// The containers a row's thumbs ride, two to a row: its strip, and its edge stacks behind it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Part {
     Strip,
     Stacks,
-    Floating,
 }
 
 fn key(row: usize, part: Part) -> GroupKey {
     let part = match part {
         Part::Strip => 1,
         Part::Stacks => 2,
-        Part::Floating => 3,
     };
-    GroupKey::Rigid((3 * row + part) as u16)
+    GroupKey::Rigid((2 * row + part) as u16)
 }
 
 /// The strip container of `row`.
@@ -157,8 +154,7 @@ fn unzoomed_point(point: OverlayPoint, scale: f64) -> OverlayPoint {
 }
 
 /// Every container of `scene`'s rows where it is held: a row's strip at where it starts, its
-/// stacks at its top and the display's left, its floating windows at the display's top-left, all
-/// under the zoom by the scene's depth.
+/// stacks at its top and the display's left, all under the zoom by the scene's depth.
 fn held_containers(scene: &Scene) -> Vec<(GroupKey, OverlayPoint)> {
     let s = scene.scale;
     scene
@@ -170,10 +166,6 @@ fn held_containers(scene: &Scene) -> Vec<(GroupKey, OverlayPoint)> {
             [
                 (key(row, Part::Strip), strip),
                 (key(row, Part::Stacks), Point::new(0.0, strip.y)),
-                (
-                    key(row, Part::Floating),
-                    unzoomed_point(scene_row.floating_origin, s),
-                ),
             ]
         })
         .collect()
@@ -252,7 +244,7 @@ pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     let Some(row) = scene.rows.get(active) else {
         return places;
     };
-    let display = unzoomed_point(row.floating_origin, s);
+    let display = unzoomed_point(row.display_origin, s);
     places.zoom = Zoom {
         scale: 1.0,
         shift: -display.to_vector(),
@@ -291,23 +283,21 @@ fn part_of(holder: Holder) -> Part {
     match holder {
         Holder::Row => Part::Strip,
         Holder::Stack { .. } => Part::Stacks,
-        Holder::Floating => Part::Floating,
     }
 }
 
-/// Front to back: the selected row's containers first, its floating windows over its strip over
-/// its stacks; in a strip the selected window first, in a stack its top card first.
+/// Front to back: the selected row's containers first, its strip over its stacks; in a strip the
+/// selected window first, in a stack its top card first.
 fn banding(scene: &Scene) -> Banding {
     let mut rows: Vec<usize> = (0..scene.rows.len()).collect();
     rows.sort_by_key(|row| *row != scene.selected.row);
     let group_order = rows
         .iter()
-        .flat_map(|row| [Part::Floating, Part::Strip, Part::Stacks].map(|part| key(*row, part)))
+        .flat_map(|row| [Part::Strip, Part::Stacks].map(|part| key(*row, part)))
         .collect();
     let mut within = HashMap::new();
     for scene_row in &scene.rows {
         let mut strip_depth = 1;
-        let mut floating_depth = 0;
         for tile in &scene_row.tiles {
             let depth = match tile.holder {
                 Holder::Row if scene.selected.window == Some(tile.window) => 0,
@@ -316,10 +306,6 @@ fn banding(scene: &Scene) -> Banding {
                     strip_depth - 1
                 }
                 Holder::Stack { depth, .. } => depth,
-                Holder::Floating => {
-                    floating_depth += 1;
-                    floating_depth - 1
-                }
             };
             within.insert(tile.window, depth);
         }
@@ -589,9 +575,7 @@ pub fn pushes(
         let wall = OverlayVector::new(overshoot.x / s, overshoot.y / s);
         let keys: Vec<GroupKey> = match press {
             Cue::Switch => (0..scene.rows.len())
-                .flat_map(|row| {
-                    [Part::Strip, Part::Stacks, Part::Floating].map(|part| key(row, part))
-                })
+                .flat_map(|row| [Part::Strip, Part::Stacks].map(|part| key(row, part)))
                 .collect(),
             Cue::Plain | Cue::Move { .. } | Cue::Focus { .. } => {
                 vec![key(scene.selected.row, Part::Strip)]
@@ -621,7 +605,7 @@ mod tests {
     use super::*;
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
     use crate::animation::domain::motion::score::Form;
-    use crate::overview::domain::fixture::{Col, display, overview, rect, row, strip, w};
+    use crate::overview::domain::fixture::{Col, display, overview, row, strip, w};
     use crate::overview::domain::scene::{Laid, OverviewInput, lay_out};
     use crate::overview::domain::stacks::Side;
 
@@ -631,9 +615,8 @@ mod tests {
 
     static IDS: [u32; 11] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-    /// Ten columns on the first workspace, the fifth a stack of two, a floating window over it, two
-    /// columns on the second, none on the third and one on the fourth: the first shows, on
-    /// `current`.
+    /// Ten columns on the first workspace, the fifth a stack of two, two columns on the second, none
+    /// on the third and one on the fourth: the first shows, on `current`.
     fn input(order: &[u32], current: u32) -> OverviewInput {
         let columns: Vec<Col> = order
             .iter()
@@ -649,11 +632,7 @@ mod tests {
             width: NARROW,
             windows: &[12],
         }];
-        let mut first = row(strip(&columns, 0.0), Some(current));
-        first.floating.push(Laid {
-            window: w(20),
-            frame: rect(300.0, 200.0, 600.0, 400.0),
-        });
+        let first = row(strip(&columns, 0.0), Some(current));
         let fourth = [Col { width: WIDE, windows: &[13] }];
         overview(
             vec![
@@ -671,7 +650,7 @@ mod tests {
     fn scene(order: &[u32], current: u32) -> Scene { lay_out(&input(order, current)) }
 
     /// Where the display has the shown workspace's windows: the strip scrolled to show `current`,
-    /// as the layout scrolls it, and the floating window where it floats.
+    /// as the layout scrolls it.
     fn shown(order: &[u32], current: u32) -> Vec<(WindowId, OverlayRect)> {
         let input = input(order, current);
         let laid: Vec<&Laid> =
@@ -684,7 +663,6 @@ mod tests {
                 let frame = on(laid.frame);
                 (laid.window, frame.translate(OverlayVector::new(-scroll, 0.0)))
             })
-            .chain(input.rows[0].floating.iter().map(|laid| (laid.window, on(laid.frame))))
             .collect()
     }
 
@@ -711,7 +689,7 @@ mod tests {
     }
 
     /// Frame zero is the screen: every window of the shown workspace drawn where the display has
-    /// it, one its row stacks at an edge, the floating one and the selected one alike.
+    /// it, one its row stacks at an edge and the selected one alike.
     #[test]
     fn the_overview_s_frame_zero_is_the_screen() {
         let scene = scene(&STRIP, 3);
@@ -1083,7 +1061,7 @@ mod tests {
         };
         let edits = pushes(&score, &scene, &[stack], PRESS, 0.0);
         let bounced = played(&score, &edits);
-        for window in [1, 11, 20] {
+        for window in [1, 11, 13] {
             let out = drawn(&bounced, window, turn).min_y() - drawn(&score, window, turn).min_y();
             assert!((out - EDGE_BOUNCE_OVERSHOOT).abs() < 1e-6, "w{window}: {out}");
         }

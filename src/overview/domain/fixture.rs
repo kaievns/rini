@@ -54,11 +54,10 @@ pub fn strip(columns: &[Col], scroll: f64) -> Vec<ColumnInput> {
         .collect()
 }
 
-/// A row of `columns` with no floating windows, aligned on `current`.
+/// A row of `columns`, aligned on `current`.
 pub fn row(columns: Vec<ColumnInput>, current: Option<u32>) -> RowInput {
     RowInput {
         columns,
-        floating: Vec::new(),
         current: current.map(w),
     }
 }
