@@ -119,9 +119,11 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > window's own shadow is a fifth of its size and reads as none.
 
 - Its look MUST be the switcher's, from one record both draw from: the stacks' step, inset and
-  three cards drawn, the gap between cards, the selected card's ring width, and the darkening of
-  what is behind. Kai asked for one visual style across the two, reusing components where they
-  apply; two copies of a value drift.
+  three cards drawn, the gap between cards, the selected card's ring width, the darkening of what
+  is behind, the card's 11pt corner and the `--ember-soft` wash under the selected card. Kai asked
+  for one visual style across the two, reusing components where they apply; two copies of a value
+  drift. Not yet met: every thumb keeps its window's own corner at the zoom's scale, 3pt on screen
+  for a 10pt corner at depth 0.3, and the selected thumb wears the ring without the wash.
 
 > **Reported 2026-10-19.** "overall visual style must mutch the main app switcher, both should be
 > consistent with each other and reuse components where applicable". The stacks' values were the

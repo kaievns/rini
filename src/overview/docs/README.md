@@ -88,6 +88,12 @@ held they read at their width, but they thicken at once as the zoom out lands an
 the zoom in begins. Keeping them at their width through the zoom needs each band's width to follow
 the zoom's track.
 
+**Its thumbs keep their windows' corners, and no wash.** The switcher's card has an 11pt `CORNER`
+and an `--ember-soft` wash under the selected one; the overview draws neither yet. A thumb's
+corner is its window's at the zoom's scale, 3pt on screen for a 10pt corner at depth 0.3. Rounding
+it to the card's means clipping every picture to it, since a picture not clipped carries its
+window's own corner, and the ring would then round past it.
+
 **A scroll reaches the window under the overview.** Every mouse button's press inside it is
 swallowed (`KeyRouter::on_click`), but the tap asks for no scroll event, so a scroll scrolls the
 hidden window under the pointer.
