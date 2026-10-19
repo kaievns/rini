@@ -1,9 +1,11 @@
-//! How the overview moves on the overlay: every row of its scene one strip container, its edge
-//! stacks and its floating windows a container each, all under the strip's zoom; the zoom out from
+//! How the overview moves on the overlay: every row of its scene one strip container and its edge
+//! stacks another, all under the strip's zoom; the zoom out from
 //! the screen as it is and back in onto the real layout, and every press inside it, played Slide's
 //! way at a press's pace, each node from where it is drawn to where the new scene has it; every
 //! thumb lifted off the overlay while it is held, the selected one furthest, and the desktop behind
-//! them darkened; and the push at an end bounced on screen as far as a flight's.
+//! them darkened; the shown workspace's floating windows where the screen has them, outside the
+//! zoom, faded out as the desktop darkens; and the push at an end bounced on screen as far as a
+//! flight's.
 //!
 //! Not a `Look`, nor in `Look::ALL`: the overview is a view the presses inside it change, and its
 //! moves are the same under every look (`specs/overview.md`, "How it moves").
@@ -52,36 +54,42 @@ pub const SELECTED_LIFT: f64 = 1.0;
 /// destination by then, so its last sample lands on it.
 const SPRING_RUNS: f64 = 12.0;
 
-/// The containers a row's thumbs ride, three to a row: its strip, its edge stacks behind it and its
-/// floating windows in front.
+/// The containers a row's thumbs ride, two to a row: its strip, and its edge stacks behind it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Part {
     Strip,
     Stacks,
-    Floating,
 }
 
 fn key(row: usize, part: Part) -> GroupKey {
     let part = match part {
         Part::Strip => 1,
         Part::Stacks => 2,
-        Part::Floating => 3,
     };
-    GroupKey::Rigid((3 * row + part) as u16)
+    GroupKey::Rigid((2 * row + part) as u16)
 }
 
 /// The strip container of `row`.
 pub fn strip_of(row: usize) -> GroupKey { key(row, Part::Strip) }
 
+/// A floating window of the shown workspace as the screen has it: where it is on the overlay, and
+/// whether the window server has it in front of the strip's windows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Floating {
+    pub window: WindowId,
+    pub frame: OverlayRect,
+    pub in_front: bool,
+}
+
 /// Where every node of the overview is drawn once its tracks end: the strip's zoom, each
-/// container's place, each thumb's container and frame in it and how far it is lifted, and each
-/// empty workspace's outline.
+/// container's place, each tile's container and frame in it and how far a thumb is lifted, and
+/// each empty workspace's outline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Places {
     pub zoom: Zoom,
     pub containers: Vec<(GroupKey, OverlayPoint)>,
     pub tiles: Vec<(WindowId, GroupKey, GroupRect)>,
-    /// Each thumb's lift, from 0 to 1, in `tiles`' order.
+    /// Each thumb's lift, from 0 to 1, in `tiles`' order; a floating window casts none.
     pub lifts: Vec<(WindowId, f64)>,
     /// How far the overview is held (`Node::Held`): all the way while held, none at rest.
     pub held: f64,
@@ -108,6 +116,9 @@ impl Places {
         let (_, key, frame) = self.tiles.iter().find(|(w, ..)| *w == window)?;
         let at = self.container(*key)?;
         let laid = crate::animation::domain::motion::plan::overlay_of(*frame, at);
+        if *key == GroupKey::Floating {
+            return Some(laid);
+        }
         Some(OverlayRect::new(
             self.zoom.draw(laid.origin),
             laid.size * self.zoom.scale,
@@ -128,8 +139,7 @@ fn unzoomed_point(point: OverlayPoint, scale: f64) -> OverlayPoint {
 }
 
 /// Every container of `scene`'s rows where it is held: a row's strip at where it starts, its
-/// stacks at its top and the display's left, its floating windows at the display's top-left, all
-/// under the zoom by the scene's depth.
+/// stacks at its top and the display's left, all under the zoom by the scene's depth.
 fn held_containers(scene: &Scene) -> Vec<(GroupKey, OverlayPoint)> {
     let s = scene.scale;
     scene
@@ -141,10 +151,6 @@ fn held_containers(scene: &Scene) -> Vec<(GroupKey, OverlayPoint)> {
             [
                 (key(row, Part::Strip), strip),
                 (key(row, Part::Stacks), Point::new(0.0, strip.y)),
-                (
-                    key(row, Part::Floating),
-                    unzoomed_point(scene_row.floating_origin, s),
-                ),
             ]
         })
         .collect()
@@ -223,7 +229,7 @@ pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     let Some(row) = scene.rows.get(active) else {
         return places;
     };
-    let display = unzoomed_point(row.floating_origin, s);
+    let display = unzoomed_point(row.display_origin, s);
     places.zoom = Zoom {
         scale: 1.0,
         shift: -display.to_vector(),
@@ -258,27 +264,46 @@ pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     places
 }
 
+/// `places` with the shown workspace's floating windows, front to back as `floating` lists them,
+/// each riding the floating container where the screen has it, outside the zoom: in front of the
+/// strip where the window server has it there, the strip moved back a band for it as a flight
+/// moves it for a floating focus, and behind it otherwise. The renderer draws that container at the
+/// opposite of the tint, so each is on screen at rest and gone once the desktop is darkened.
+pub fn with_floating(mut places: Places, floating: &[Floating]) -> Places {
+    if floating.is_empty() {
+        return places;
+    }
+    places.containers.push((GroupKey::Floating, Point::origin()));
+    for (depth, window) in floating.iter().enumerate() {
+        let frame = group_relative(window.frame, Point::origin());
+        places.tiles.push((window.window, GroupKey::Floating, frame));
+        places.banding.within.insert(window.window, depth);
+    }
+    let in_front = floating.iter().filter(|window| window.in_front);
+    places.banding.lifted = in_front.map(|window| window.window).collect();
+    places.banding.focus_off_strip = !places.banding.lifted.is_empty();
+    places
+}
+
 fn part_of(holder: Holder) -> Part {
     match holder {
         Holder::Row => Part::Strip,
         Holder::Stack { .. } => Part::Stacks,
-        Holder::Floating => Part::Floating,
     }
 }
 
-/// Front to back: the selected row's containers first, its floating windows over its strip over
-/// its stacks; in a strip the selected window first, in a stack its top card first.
+/// Front to back: the selected row's containers first, its strip over its stacks; in a strip the
+/// selected window first, in a stack its top card first.
 fn banding(scene: &Scene) -> Banding {
     let mut rows: Vec<usize> = (0..scene.rows.len()).collect();
     rows.sort_by_key(|row| *row != scene.selected.row);
     let group_order = rows
         .iter()
-        .flat_map(|row| [Part::Floating, Part::Strip, Part::Stacks].map(|part| key(*row, part)))
+        .flat_map(|row| [Part::Strip, Part::Stacks].map(|part| key(*row, part)))
         .collect();
     let mut within = HashMap::new();
     for scene_row in &scene.rows {
         let mut strip_depth = 1;
-        let mut floating_depth = 0;
         for tile in &scene_row.tiles {
             let depth = match tile.holder {
                 Holder::Row if scene.selected.window == Some(tile.window) => 0,
@@ -287,10 +312,6 @@ fn banding(scene: &Scene) -> Banding {
                     strip_depth - 1
                 }
                 Holder::Stack { depth, .. } => depth,
-                Holder::Floating => {
-                    floating_depth += 1;
-                    floating_depth - 1
-                }
             };
             within.insert(tile.window, depth);
         }
@@ -560,9 +581,7 @@ pub fn pushes(
         let wall = OverlayVector::new(overshoot.x / s, overshoot.y / s);
         let keys: Vec<GroupKey> = match press {
             Cue::Switch => (0..scene.rows.len())
-                .flat_map(|row| {
-                    [Part::Strip, Part::Stacks, Part::Floating].map(|part| key(row, part))
-                })
+                .flat_map(|row| [Part::Strip, Part::Stacks].map(|part| key(row, part)))
                 .collect(),
             Cue::Plain | Cue::Move { .. } | Cue::Focus { .. } => {
                 vec![key(scene.selected.row, Part::Strip)]
@@ -592,7 +611,7 @@ mod tests {
     use super::*;
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
     use crate::animation::domain::motion::score::Form;
-    use crate::overview::domain::fixture::{Col, display, overview, rect, row, strip, w};
+    use crate::overview::domain::fixture::{Col, display, overview, row, strip, w};
     use crate::overview::domain::scene::{Laid, OverviewInput, lay_out};
     use crate::overview::domain::stacks::Side;
 
@@ -602,9 +621,8 @@ mod tests {
 
     static IDS: [u32; 11] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-    /// Ten columns on the first workspace, the fifth a stack of two, a floating window over it, two
-    /// columns on the second, none on the third and one on the fourth: the first shows, on
-    /// `current`.
+    /// Ten columns on the first workspace, the fifth a stack of two, two columns on the second, none
+    /// on the third and one on the fourth: the first shows, on `current`.
     fn input(order: &[u32], current: u32) -> OverviewInput {
         let columns: Vec<Col> = order
             .iter()
@@ -620,11 +638,7 @@ mod tests {
             width: NARROW,
             windows: &[12],
         }];
-        let mut first = row(strip(&columns, 0.0), Some(current));
-        first.floating.push(Laid {
-            window: w(20),
-            frame: rect(300.0, 200.0, 600.0, 400.0),
-        });
+        let first = row(strip(&columns, 0.0), Some(current));
         let fourth = [Col { width: WIDE, windows: &[13] }];
         overview(
             vec![
@@ -642,7 +656,7 @@ mod tests {
     fn scene(order: &[u32], current: u32) -> Scene { lay_out(&input(order, current)) }
 
     /// Where the display has the shown workspace's windows: the strip scrolled to show `current`,
-    /// as the layout scrolls it, and the floating window where it floats.
+    /// as the layout scrolls it.
     fn shown(order: &[u32], current: u32) -> Vec<(WindowId, OverlayRect)> {
         let input = input(order, current);
         let laid: Vec<&Laid> =
@@ -655,7 +669,6 @@ mod tests {
                 let frame = on(laid.frame);
                 (laid.window, frame.translate(OverlayVector::new(-scroll, 0.0)))
             })
-            .chain(input.rows[0].floating.iter().map(|laid| (laid.window, on(laid.frame))))
             .collect()
     }
 
@@ -682,7 +695,7 @@ mod tests {
     }
 
     /// Frame zero is the screen: every window of the shown workspace drawn where the display has
-    /// it, one its row stacks at an edge, the floating one and the selected one alike.
+    /// it, one its row stacks at an edge and the selected one alike.
     #[test]
     fn the_overview_s_frame_zero_is_the_screen() {
         let scene = scene(&STRIP, 3);
@@ -703,6 +716,58 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The shown workspace's floating windows, w20 over the strip and w21 behind it, the tint
+    /// played from the screen to the scene held and back: each window drawn where the screen has
+    /// it the whole way, outside the zoom, on the floating container the renderer fades as the tint
+    /// darkens, so on screen at rest and gone held; w20 in front of the strip, which moves back a
+    /// band for it, and w21 behind.
+    #[test]
+    fn the_floating_windows_stay_where_the_screen_has_them_as_the_tint_comes_and_goes() {
+        let scene = scene(&STRIP, 3);
+        let shown = shown(&STRIP, 3);
+        let floating = [
+            Floating {
+                window: w(20),
+                frame: OverlayRect::new(Point::new(300.0, 200.0), Size::new(600.0, 400.0)),
+                in_front: true,
+            },
+            Floating {
+                window: w(21),
+                frame: OverlayRect::new(Point::new(900.0, 500.0), Size::new(400.0, 300.0)),
+                in_front: false,
+            },
+        ];
+        let rest = with_floating(at_rest(&scene, &shown), &floating);
+        let hold = with_floating(held(&scene), &floating);
+        let mut score = pose(&rest);
+        for (places, tint) in [(&rest, 0.0), (&hold, 1.0)] {
+            assert_eq!(places.held, tint);
+            for window in floating {
+                assert!(places.drawn(window.window).unwrap().is_within(1e-6, window.frame));
+                assert_eq!(score.parent(window.window), Some(GroupKey::Floating));
+            }
+            assert_eq!(places.banding.lifted, vec![w(20)]);
+            assert!(places.banding.focus_off_strip);
+            assert_eq!(places.banding.within[&w(20)], 0);
+            assert_eq!(places.banding.within[&w(21)], 1);
+            let lifted = |window: WindowId| places.lifts.iter().any(|(w, _)| *w == window);
+            assert!(!lifted(w(20)) && !lifted(w(21)), "no shadow");
+        }
+        let edits = toward(&score, &hold, 0.0, Motion::Slide { seconds: PRESS });
+        for edit in &edits {
+            score.apply(edit);
+        }
+        for at in [0.0, PRESS / 2.0, PRESS + 0.01] {
+            for window in floating {
+                let drawn = score.drawn(window.window, at).unwrap();
+                assert!(drawn.is_within(1e-6, window.frame), "{at}: {drawn:?}");
+            }
+        }
+        assert_eq!(score.sample(Node::Held, PRESS + 0.01), Some(Value::Number(1.0)));
+        let none = with_floating(held(&scene), &[]);
+        assert_eq!(none, held(&scene), "nothing floating adds nothing");
     }
 
     /// The zoom out runs as a focus press pans the strip, on Slide's curve over a press's length,
@@ -1034,7 +1099,7 @@ mod tests {
         };
         let edits = pushes(&score, &scene, &[stack], PRESS, 0.0);
         let bounced = played(&score, &edits);
-        for window in [1, 11, 20] {
+        for window in [1, 11, 13] {
             let out = drawn(&bounced, window, turn).min_y() - drawn(&score, window, turn).min_y();
             assert!((out - EDGE_BOUNCE_OVERSHOOT).abs() < 1e-6, "w{window}: {out}");
         }

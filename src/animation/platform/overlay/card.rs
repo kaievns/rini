@@ -1,8 +1,8 @@
 //! The overview's thumbs drawn as the card (`choreography::overview::card`): while the overview
-//! holds the overlay every tile is laid as its card dress has it, its picture clipped to that
-//! corner, the selected one's wash drawn under it in the card's `WASH`. Along the zoom each piece
-//! plays its dress at every frame, and once the zoom ends the dress its models give; the outlines
-//! of empty workspaces keep their width on screen with the zoom.
+//! holds the overlay every tile but a floating window's is laid as its card dress has it, its
+//! picture clipped to that corner, the selected one's wash drawn under it in the card's `WASH`.
+//! Along the zoom each piece plays its dress at every frame, and once the zoom ends the dress its
+//! models give; the outlines of empty workspaces keep their width on screen with the zoom.
 
 use std::cell::Cell;
 
@@ -18,10 +18,13 @@ use super::resize::{
     Sampled, changing, install_pieces, install_tile_resize, keyframes, remove_resize, resizes,
     ride_as,
 };
-use super::{TILE_SIZE_KEY, Tile, Tree, as_frame, number_object, point_object, rect_object};
+use super::{
+    TILE_SIZE_KEY, Tile, Tree, as_frame, clip_corners, number_object, point_object, rect_object,
+};
 use crate::animation::domain::choreography::overview::card::{
     self, Dress, Thumb, Wash, Zoomed, dressed, dressed_over, dressing,
 };
+use crate::animation::domain::motion::plan::GroupKey;
 use crate::animation::domain::motion::score::{Channel, Node};
 use crate::chrome::domain::card::WASH;
 use crate::decorations::domain::shape::{Fit, Laying, Widths};
@@ -240,6 +243,10 @@ impl Tree {
     /// while its own track resizes it, that resize laid again as it is laid now, its lift and its
     /// wash with it; and else nothing riding any of it.
     fn dress_card(&mut self, window: WindowId) {
+        if self.replica.parent(window) == Some(GroupKey::Floating) {
+            self.undress_card(window);
+            return;
+        }
         let Some(entry) = self.tile_layers.get_mut(&window) else {
             return;
         };
@@ -294,6 +301,33 @@ impl Tree {
         };
         if let Some(end) = until {
             self.dressed_until = Some(self.dressed_until.map_or(end, |until| until.max(end)));
+        }
+    }
+
+    /// `window`'s tile, riding the floating container, drawn as its window lays it rather than as
+    /// a card: a card it wore as a thumb taken off, its picture clipped as it was given, and its own
+    /// resize, while one plays, laid again so.
+    fn undress_card(&mut self, window: WindowId) {
+        let model = self.replica.model(Node::Tile(window)).map(as_frame);
+        let live = self
+            .replica
+            .track(Node::Tile(window), Channel::Base)
+            .filter(|track| track.seconds() > 0.0 && resizes(track) && track.ends() > self.now);
+        let Some(entry) = self.tile_layers.get_mut(&window) else {
+            return;
+        };
+        let Some(card) = entry.card.take() else {
+            return;
+        };
+        card.layer().removeFromSuperlayer();
+        entry.decorations.lay(None);
+        clip_corners(entry, entry.clipped);
+        remove_resize(entry);
+        if let Some(track) = live {
+            install_tile_resize(entry, track);
+        }
+        if let Some(frame) = model {
+            self.place_tile(window, frame);
         }
     }
 

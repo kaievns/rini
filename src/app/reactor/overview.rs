@@ -3,7 +3,9 @@
 //! every batch while it is open and handed to the flight engine, which draws it, every flight a
 //! press inside it asks for held back with its frames placed at once and its press handed on with
 //! the scene, and the mouse kept from moving focus or the pointer until it closes
-//! (`specs/overview.md`).
+//! (`specs/overview.md`). Its rows are the strips alone: a floating window is in no row, the shown
+//! workspace's handed on beside the scene for the zoom out and back in, and a press inside it acts
+//! on the strip.
 
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::{SpaceId, WindowId};
@@ -16,8 +18,8 @@ use super::{Reactor, ScreenInfo};
 use crate::animation::domain::choreography::Cue;
 use crate::animation::domain::choreography::overview::Press;
 use crate::input::domain::switch_session::{OverviewSignal, SessionId};
-use crate::overview::domain::scene::{ColumnInput, Holder, Laid, OverviewInput, RowInput, lay_out};
-use crate::transitions::domain::request::{OverviewView, OverviewWindow};
+use crate::overview::domain::scene::{ColumnInput, Laid, OverviewInput, RowInput, lay_out};
+use crate::transitions::domain::request::{OverviewFloating, OverviewView, OverviewWindow};
 use crate::transitions::platform::engine::Event as Flight;
 use crate::workspaces::VirtualWorkspaceId;
 
@@ -128,12 +130,17 @@ impl Reactor {
 
     /// Closes the overview, the engine zooming back in onto the real layout as it is now, and
     /// carries out the last warp asked for while it was open. Focus is where its last press left
-    /// it, which is what the scene selected.
+    /// it, which is what the scene selected, or a floating window no press took it from: then no
+    /// thumb is ringed as it lands, since the ring is that window's, which fades back in on it.
     fn close_overview(&mut self) {
         let Some(live) = self.overview.live.take() else {
             return;
         };
-        let view = self.lay_out_overview(live.space, live.view.scene.scroll).unwrap_or(live.view);
+        let mut view =
+            self.lay_out_overview(live.space, live.view.scene.scroll).unwrap_or(live.view);
+        if self.focus_floats() {
+            view.scene.selected.window = None;
+        }
         self.tell_overview(Flight::OverviewClose { view });
         let point = match live.warp {
             Some(Warp::To(point)) => Some(point),
@@ -226,6 +233,45 @@ impl Reactor {
         true
     }
 
+    /// With the overview open and focus on a floating window, focus taken to the strip's window its
+    /// scene selects, as a focus press off a floating window returns there, so the press about to
+    /// run acts on the strip it shows. Ahead of every layout command but the one that turns focus
+    /// between the floating windows and the strip, which from a floating window lands there itself,
+    /// and of a move to another display that names no window.
+    pub(super) fn resume_overview_on_strip(&mut self) {
+        let Some(live) = &self.overview.live else { return };
+        let (space, Some(window)) = (live.space, live.view.scene.selected.window) else {
+            return;
+        };
+        if !self.focus_floats() {
+            return;
+        }
+        info!(?window, "overview: focus off a floating window to the strip");
+        self.send_layout_event(crate::workspaces::LayoutEvent::WindowFocused(space, window));
+        self.handle_layout_response(
+            crate::workspaces::EventResponse {
+                focus_window: Some(window),
+                ..Default::default()
+            },
+            None,
+        );
+    }
+
+    /// The window a press inside the open overview that names none acts on: the layout's focus,
+    /// taken off a floating window to the strip first. Not the key window macOS reports, which
+    /// follows the raise only once the application answers it.
+    pub(super) fn overview_press_window(&mut self) -> Option<WindowId> {
+        self.resume_overview_on_strip();
+        self.layout_engine.focused_window()
+    }
+
+    /// Whether the layout's focus is on a floating window.
+    fn focus_floats(&self) -> bool {
+        self.layout_engine
+            .focused_window()
+            .is_some_and(|window| self.layout_engine.is_window_floating(window))
+    }
+
     /// Whether the overview is open, the windows under the pointer hidden behind it.
     pub(super) fn overview_covers_the_pointer(&self) -> bool { self.overview.live.is_some() }
 
@@ -271,13 +317,24 @@ impl Reactor {
         if !self.is_space_active(space) {
             return None;
         }
-        let input = self.overview_input(space, scroll)?;
+        let (input, floating) = self.overview_input(space, scroll)?;
         let scene = lay_out(&input);
         let shown = input.rows.get(input.active).map_or_else(Vec::new, |row| {
             let tiled = row.columns.iter().flat_map(|column| &column.windows);
-            tiled.chain(&row.floating).map(|laid| (laid.window, laid.frame)).collect()
+            tiled.map(|laid| (laid.window, laid.frame)).collect()
         });
         let rings = self.layout_rings();
+        let floating = floating
+            .into_iter()
+            .filter_map(|laid| {
+                Some(OverviewFloating {
+                    window: laid.window,
+                    server_id: self.state.windows.window(laid.window)?.info.sys_id?,
+                    frame: laid.frame,
+                    worn: self.worn(laid.window, &rings),
+                })
+            })
+            .collect();
         let windows = scene
             .rows
             .iter()
@@ -288,7 +345,6 @@ impl Reactor {
                     window: tile.window,
                     server_id,
                     decoration: self.decoration_of(tile.window, &rings),
-                    floating: tile.holder == Holder::Floating,
                 })
             })
             .collect();
@@ -297,13 +353,24 @@ impl Reactor {
             Default::default(),
         )
         .ring;
-        Some(OverviewView { scene, windows, shown, outline })
+        Some(OverviewView {
+            scene,
+            windows,
+            shown,
+            floating,
+            outline,
+        })
     }
 
     /// What `space`'s scene is laid out from: a row per workspace in the stack's order, each its
-    /// strip's columns and floating windows where the layout has them, aligned on the window focus
-    /// is on, else on the one a switch to the workspace focuses.
-    fn overview_input(&mut self, space: SpaceId, scroll: f64) -> Option<OverviewInput> {
+    /// strip's columns where the layout has them, aligned on the strip's window focus is on, else on
+    /// the strip's window a switch to the workspace focuses. No floating window is in it; the shown
+    /// workspace's come beside it, where the layout has them.
+    fn overview_input(
+        &mut self,
+        space: SpaceId,
+        scroll: f64,
+    ) -> Option<(OverviewInput, Vec<Laid>)> {
         let screen = self.space_state.screen_by_space(space)?.clone();
         let gaps = self
             .config
@@ -314,11 +381,12 @@ impl Reactor {
         let workspaces = self.layout_engine.virtual_workspace_manager_mut().list_workspaces(space);
         let shown = self.layout_engine.active_workspace(space)?;
         let active = workspaces.iter().position(|(workspace, _)| *workspace == shown)?;
-        let rows = workspaces
+        let (rows, floating): (Vec<RowInput>, Vec<Vec<Laid>>) = workspaces
             .iter()
             .map(|(workspace, _)| self.overview_row(space, *workspace, &screen, &gaps))
-            .collect();
-        Some(OverviewInput {
+            .unzip();
+        let floating = floating.into_iter().nth(active).unwrap_or_default();
+        let input = OverviewInput {
             rows,
             active,
             display: ScreenRect::from_cg(screen.bounds),
@@ -328,7 +396,8 @@ impl Reactor {
                 &gaps,
             )),
             scroll,
-        })
+        };
+        Some((input, floating))
     }
 
     fn overview_row(
@@ -337,7 +406,7 @@ impl Reactor {
         workspace: VirtualWorkspaceId,
         screen: &ScreenInfo,
         gaps: &crate::layout::settings::Gaps,
-    ) -> RowInput {
+    ) -> (RowInput, Vec<Laid>) {
         let engine = &self.layout_engine;
         let windows = &self.state.windows;
         let frames: HashMap<WindowId, CGRect> = engine
@@ -365,15 +434,16 @@ impl Reactor {
             .filter_map(laid)
             .collect();
         floating.sort_by_key(|laid| laid.window);
-        let in_workspace = |window: &WindowId| {
-            engine.virtual_workspace_manager().workspace_for_window(windows, space, *window)
-                == Some(workspace)
+        let on_strip = |window: &WindowId| {
+            !engine.is_window_floating(*window)
+                && engine.virtual_workspace_manager().workspace_for_window(windows, space, *window)
+                    == Some(workspace)
         };
         let current = engine
             .focused_window()
-            .filter(in_workspace)
-            .or_else(|| engine.active_window(windows, space, workspace));
-        RowInput { columns, floating, current }
+            .filter(on_strip)
+            .or_else(|| engine.active_strip_window(windows, space, workspace));
+        (RowInput { columns, current }, floating)
     }
 
     /// The scene the open overview was last laid out as.

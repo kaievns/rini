@@ -1085,9 +1085,9 @@ measured yet.*
 The overview (`specs/overview.md`) is drawn on the same overlay by the same engine, but it is a view
 the presses inside it change, held as long as its key is, rather than a movement with an end. It
 runs a lifecycle of its own beside the flights' (`domain/lifecycle/overview.rs`): frame zero of the
-shown workspace, the overlay up and the zoom out; held, with no clock running and nothing holding
-the pictures service, so the warm captures of the workspaces not shown run and each picture the
-cache takes goes onto its thumb (`Event::Taken`); every scene the reactor lays out after a batch
+shown workspace's strip, the overlay up and the zoom out; held, with no clock running and nothing
+holding the pictures service, so the warm captures of the workspaces not shown run and each picture
+the cache takes goes onto its thumb (`Event::Taken`); every scene the reactor lays out after a batch
 played from where everything is drawn; and on its close the zoom back in onto the real layout, the
 overlay holed over the windows it lands on, a tick reading those windows where their thumbs end,
 what rests placed a tick ahead, the lift and the quiet. Opened again before that lift, it fills
@@ -1095,7 +1095,13 @@ those holes in and zooms out again from where everything is drawn. Opened again 
 display, the overlay's move there held, it lands and lifts first, and the open waits with the move,
 the scenes and the close after it, so it opens afresh on that display. It writes no frame: every
 press inside it placed the real windows as it ran (`src/app/reactor/overview.rs`,
-`hold_for_overview`).
+`hold_for_overview`). It draws the shown workspace's floating windows in no row: frame zero
+pictures each as the background behind the strip, as a flight's does, and it rides the floating
+container where the screen has it, outside the zoom, in front of the strip or behind it as the
+window server stacks it. The renderer draws that container at the opposite of the tint
+(`src/animation/platform/overlay/tint.rs`), so each fades out with the zoom out, is gone while
+held, and fades back in with the zoom in; the close holes it as it holes the windows it lands on,
+and the landing waits on none of them, since none moves.
 
 It takes a generation the coordinator reserves for it, so a picture asked for a flight is never
 taken for the overview's, nor the reverse. From its open to its lift it holds the overlay: a flight
@@ -1114,14 +1120,14 @@ read slower than a press although it ended sooner. Kai asked for the navigation'
 2026-10-19. The zoom back in ends 0.093s later than it did, and the lift with it.
 
 From its open to its lift the overview holds the overlay under the held scene's zoom
-(`Render::Hold`), ahead of the play that zooms out: its thumbs' lifts are cast under that zoom
-while nothing is lifted and kept to the lift, where nothing is, since casting them as the zoom out
-lands would turn a shadow at full strength; and every thumb is drawn as the switcher's card, its
-corner, ring, border and the selected one's wash dressed by the overlay from how far it is held and
-the zoom, along the zoom at every sample (`src/overview/docs/README.md`, "Thumbs are the switcher's
-cards"). The engine sends each thumb in its window's own decoration, dressed again only when that
-changes (`Render::Rewear`); the selection moving turns the ring (`Render::Wear`). A held scene of
-another depth holds the overlay again at once.
+(`Render::Hold`), ahead of the play that zooms out: its thumbs' lifts are cast under that zoom while
+nothing is lifted and kept to the lift, where nothing is, since casting them as the zoom out lands
+would turn a shadow at full strength; and every thumb, no floating window, is drawn as the
+switcher's card, its corner, ring, border and the selected one's wash dressed by the overlay from
+how far it is held and the zoom, along the zoom at every sample (`src/overview/docs/README.md`,
+"Thumbs are the switcher's cards"). The engine sends each thumb in its window's own decoration,
+dressed again only when that changes (`Render::Rewear`); the selection moving turns the ring
+(`Render::Wear`). A held scene of another depth holds the overlay again at once.
 
 ## Structural findings
 

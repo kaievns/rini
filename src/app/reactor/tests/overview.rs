@@ -1244,3 +1244,233 @@ fn the_overview_closes_when_its_display_shows_no_space_rini_manages() {
         );
     }
 }
+
+/// The desk with a floating window on each of the first two workspaces, each its strip's last column
+/// until it floated: w8 over the first, focused there last, its strip selecting w2 as it left, and
+/// w7 over the second, which it shows focused, its strip selecting w5.
+fn floating_desk() -> (Apps, Reactor) {
+    let mut reactor = test_reactor_with_workspace_count(4);
+    reactor.reads_mut().display_bounds = |_| display();
+    let mut apps = Apps::new();
+    let mut screens = make_screen_snapshots(vec![usable()], vec![Some(space())]);
+    screens[0].bounds = display();
+    reactor.handle_event(space_state_event_from_screens(screens));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(8));
+    for (window, workspace) in [(3, 1), (4, 1), (5, 1), (7, 1), (6, 3)] {
+        reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
+            workspace: WorkspaceSelector::Index(workspace),
+            follow: false,
+            window_id: Some(window),
+        });
+        apps.simulate_until_quiet(&mut reactor);
+    }
+    focus(&mut apps, &mut reactor, w(1));
+    focus(&mut apps, &mut reactor, w(8));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    apps.simulate_until_quiet(&mut reactor);
+    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(1));
+    apps.simulate_until_quiet(&mut reactor);
+    focus(&mut apps, &mut reactor, w(3));
+    focus(&mut apps, &mut reactor, w(7));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    apps.simulate_until_quiet(&mut reactor);
+    for window in [w(7), w(8)] {
+        assert!(reactor.layout().is_window_floating(window), "{window:?}");
+    }
+    (apps, reactor)
+}
+
+/// The overview's rows are the strips alone: neither floating window is a thumb on any row, the
+/// shown workspace's nor the hidden one's, nor among the strip windows the engine zooms out from;
+/// the shown workspace's w7 alone is handed on beside them, for the show and the lift; and the
+/// first row aligns on its strip's selection though a floating window had focus there last: a
+/// switch there would focus w8, and a focus press off w8 lands on w2.
+#[test]
+fn no_floating_window_is_drawn_in_the_overview_on_any_row() {
+    let (mut apps, mut reactor) = floating_desk();
+    focus(&mut apps, &mut reactor, w(3));
+    reactor.settings_mut().animate = true;
+    let mut rx = reactor.connect_test_transitions();
+    open(&mut apps, &mut reactor);
+    let scene = reactor.overview_scene().unwrap().clone();
+    let rows: Vec<Vec<WindowId>> = scene
+        .rows
+        .iter()
+        .map(|row| {
+            let mut windows: Vec<WindowId> = row.tiles.iter().map(|tile| tile.window).collect();
+            windows.sort();
+            windows
+        })
+        .collect();
+    assert_eq!(rows, vec![
+        vec![w(1), w(2)],
+        vec![w(3), w(4), w(5)],
+        vec![],
+        vec![w(6)]
+    ]);
+    assert_eq!(scene.rows[0].aligned_on, Some(w(2)), "the strip's, not w8");
+    let view = sent(&mut rx)
+        .into_iter()
+        .find_map(|event| match event {
+            Engine::OverviewOpen { view, .. } => Some(view),
+            _ => None,
+        })
+        .expect("the engine is told");
+    let beside: Vec<WindowId> = view.floating.iter().map(|window| window.window).collect();
+    assert_eq!(
+        beside,
+        vec![w(7)],
+        "the shown workspace's, for the show and the lift alone"
+    );
+    for floating in [w(7), w(8)] {
+        assert!(
+            view.windows.iter().all(|window| window.window != floating),
+            "{floating:?} drawn"
+        );
+        assert!(
+            view.shown.iter().all(|(window, _)| *window != floating),
+            "{floating:?} zoomed out from"
+        );
+    }
+}
+
+/// Opened with a floating window focused, the overview selects the strip's window a focus press off
+/// it returns to and moves no focus; a press inside acts on the strip from there, a step left
+/// landing on the window left of the selection, not on the selection itself, and a press that
+/// focuses the floating window again leaves the selection on the strip for the next.
+#[test]
+fn opened_on_a_floating_window_s_focus_its_presses_act_on_the_strip() {
+    let (mut apps, mut reactor) = floating_desk();
+    let opened = reactor.dispatch_test_switch(Signal::Overview(OverviewSignal::Open(SessionId(1))));
+    assert!(opened.raise_requests.is_empty() && opened.focused_window.is_none());
+    assert_eq!(reactor.layout().focused_window(), Some(w(7)));
+    assert_eq!(selected(&reactor), (1, Some(w(5))));
+    apps.simulate_until_quiet(&mut reactor);
+
+    press(
+        &mut apps,
+        &mut reactor,
+        LayoutCommand::MoveFocus(Direction::Left),
+    );
+    assert_eq!(reactor.layout().focused_window(), Some(w(4)));
+    assert_eq!(selected(&reactor), (1, Some(w(4))));
+
+    press(&mut apps, &mut reactor, LayoutCommand::ToggleFocusFloating);
+    assert_eq!(reactor.layout().focused_window(), Some(w(7)));
+    assert_eq!(
+        selected(&reactor),
+        (1, Some(w(4))),
+        "the selection stays on the strip"
+    );
+    press(
+        &mut apps,
+        &mut reactor,
+        LayoutCommand::MoveFocus(Direction::Left),
+    );
+    assert_eq!(reactor.layout().focused_window(), Some(w(3)));
+    batch(&mut apps, &mut reactor, vec![overview(OverviewSignal::Close)]);
+    assert_eq!(reactor.layout().focused_window(), Some(w(3)));
+}
+
+/// Closed with no press, the overview leaves the floating window focused, floating, where it was and
+/// never written to: the zoom in lands on the strip with no thumb ringed, the ring being that
+/// window's, and the lift shows it as it is.
+#[test]
+fn closed_with_no_press_the_floating_window_is_focused_and_shows_as_it_was() {
+    let (mut apps, mut reactor) = floating_desk();
+    reactor.settings_mut().animate = true;
+    let frame = reactor.test_frame(w(7));
+    apps.requests();
+    let mut rx = reactor.connect_test_transitions();
+    open(&mut apps, &mut reactor);
+    batch(&mut apps, &mut reactor, vec![overview(OverviewSignal::Close)]);
+    let closed = sent(&mut rx).into_iter().find_map(|event| match event {
+        Engine::OverviewClose { view } => Some(view),
+        _ => None,
+    });
+    let view = closed.expect("the close is handed on");
+    assert_eq!(view.scene.selected.row, 1);
+    assert_eq!(view.scene.selected.window, None, "no thumb ringed as it lands");
+    assert!(view.shown.iter().all(|(window, _)| *window != w(7)));
+    let [floating] = view.floating[..] else {
+        panic!("w7 alone floats over the shown workspace: {:?}", view.floating);
+    };
+    assert_eq!(floating.window, w(7));
+    assert_eq!(floating.frame, ScreenRect::from_cg(frame), "where it is");
+    assert!(
+        floating.worn.holds_focus && floating.worn.wears_ring.worn(),
+        "wearing the ring as it lands"
+    );
+
+    assert_eq!(reactor.layout().focused_window(), Some(w(7)));
+    assert!(reactor.layout().is_window_floating(w(7)));
+    assert_eq!(reactor.test_frame(w(7)), frame);
+    assert!(!reactor.affinity().is_window_parked_offscreen(w(7)));
+    let written = apps.requests().into_iter().any(|request| match request {
+        Request::SetWindowFrame { window, .. } => window == w(7),
+        Request::SetBatchWindowFrame(frames, _) => frames.iter().any(|(window, _)| *window == w(7)),
+        _ => false,
+    });
+    assert!(!written, "nothing moves the floating window");
+}
+
+/// Turning focus to the strip as the first press from a floating window's focus lands on the
+/// selection the ring is on: no hand-off runs ahead of it, which would take focus there and turn it
+/// back to the floating window.
+#[test]
+fn turning_focus_to_the_strip_first_from_a_floating_window_lands_on_the_selection() {
+    let (mut apps, mut reactor) = floating_desk();
+    open(&mut apps, &mut reactor);
+    assert_eq!(reactor.layout().focused_window(), Some(w(7)));
+    assert_eq!(selected(&reactor), (1, Some(w(5))));
+
+    press(&mut apps, &mut reactor, LayoutCommand::ToggleFocusFloating);
+    assert_eq!(reactor.layout().focused_window(), Some(w(5)));
+    assert_eq!(selected(&reactor), (1, Some(w(5))));
+}
+
+/// Two displays side by side: w1 and w3 on the left one's strip with w2 floating over it, focused
+/// and the key window, and w4 on the right one's.
+fn floating_beside_another_display() -> (Apps, Reactor, SpaceId) {
+    let mut reactor = test_reactor();
+    let mut apps = Apps::new();
+    let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let right = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let other = SpaceId::new(2);
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(space()),
+        Some(other),
+    ]));
+    let mut windows = make_windows(4);
+    windows[3].frame.origin.x += 1440.;
+    apps.make_app_and_settle(&mut reactor, 1, windows);
+    focus(&mut apps, &mut reactor, w(2));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    apps.simulate_until_quiet(&mut reactor);
+    assert!(reactor.layout().is_window_floating(w(2)));
+    assert_eq!(reactor.layout().focused_window(), Some(w(2)));
+    (apps, reactor, other)
+}
+
+/// A move to another display that names no window, pressed inside the overview from a floating
+/// window's focus, moves the strip's selected window, not the hidden floating one.
+#[test]
+fn a_move_to_another_display_from_a_floating_window_s_focus_moves_the_selection() {
+    let (mut apps, mut reactor, other) = floating_beside_another_display();
+    open(&mut apps, &mut reactor);
+    let (_, Some(selection)) = selected(&reactor) else {
+        panic!("the strip selects a window");
+    };
+    assert_ne!(selection, w(2));
+
+    let to_the_right = ReactorCommand::MoveWindowToDisplay {
+        selector: rini_ipc::protocol::DisplaySelector::Index(1),
+        window_id: None,
+    };
+    batch(&mut apps, &mut reactor, vec![Event::Command(Command::Reactor(
+        to_the_right,
+    ))]);
+    let on = |window| reactor.affinity().assigned_space_for_window_id(window);
+    assert_eq!(on(selection), Some(other), "the selection moves");
+    assert_eq!(on(w(2)), Some(space()), "the floating window stays");
+}

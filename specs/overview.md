@@ -75,10 +75,12 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 - Every workspace of the display MUST be a row, in the stack's order, top to bottom, an empty one
   included: up and down step through every workspace, and the selection needs somewhere to land.
-- Each row's current window, the one a switch to that workspace focuses, MUST sit on one vertical
-  axis at the tiling area's centre: Kai asked them aligned by that window, and the centre keeps the
-  selection still while a row pans under it. A row whose current window floats, or that has none,
-  MUST keep its strip where it shows, since no tiled window is the one to align.
+- Each row's current window MUST sit on one vertical axis at the tiling area's centre: Kai asked
+  them aligned by that window, and the centre keeps the selection still while a row pans under it.
+  A row's current window MUST be on its strip: the window a switch to that workspace focuses, or,
+  where that one floats, the strip's own selection, which a focus press off the floating window
+  returns to; on the shown workspace, the focused window while it is on the strip. A row with no
+  current window MUST keep its strip where it shows.
 - Every row MUST fit the area below the bar at a depth between 0.2 and 0.5, 24pt between rows and
   at the edges; with more rows than fit at 0.2, the stack MUST scroll the least that keeps the
   selected row in view. First values for Kai to tune.
@@ -151,16 +153,29 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > consistent with each other and reuse components where applicable". The stacks' values were the
 > overview's own copies of the switcher's.
 
-- An empty row MUST be drawn as its tiling area's outline in the focus ring's inactive paint, and in
-  its active paint while selected.
-- Floating windows MUST be drawn on their row at their place on the display, over its tiles, never
-  stacked, and MUST NOT move while the row pans.
+- A row with nothing on its strip, a workspace holding only floating windows included, MUST be drawn
+  as its tiling area's outline in the focus ring's inactive paint, and in its active paint while
+  selected.
+- Only the windows tiled on a workspace's strip MUST be thumbs, on every row, the shown one's and
+  the hidden ones' alike. A floating window MUST NOT be a thumb or in an edge stack, and neither
+  MUST a window rini does not tile: a panel, a window rini leaves unmanaged, a window of an
+  application it does not manage. Kai asked for the overview to hold the strip's windows only: a
+  floating window over a row covers the thumbs under it and is on no axis a press moves along. The
+  shown workspace's floating windows are drawn only as the screen has them, fading out as it zooms
+  out and back in as it zooms in ("How it moves"), and not at all while it is held.
+
+> **Reported 2026-10-19.** "oh and i forgot there is a zoom window on the overview and it shouldn't
+> be there. the overview is only for the on-strip windows". Zoom is the video-call application. The
+> overview drew every floating window on its row at its place on the display, over the tiles, never
+> stacked and still while the row panned, as the 2026-10-18 report's "presents an overview of all
+> windows thumbs" had been read.
 - Thumbs MUST be the windows' pictures; one with none MUST be the stand-in until one lands, and
   MUST NOT hold the overview back. Pictures MUST keep being taken while it is open: every workspace
   of the display is asked to be pictured as it opens, nothing holds the pictures service once it
   has zoomed out, and each picture taken goes onto its thumb at once.
-- Only the selected window MUST wear the active ring; every other window MUST be dressed as on a
-  workspace not shown, as Kai reported of the strips beside on 2026-10-17.
+- Only the selected window MUST wear the active ring, and none as it closes on a floating window's
+  focus ("How it moves"); every other window MUST be dressed as on a workspace not shown, as Kai
+  reported of the strips beside on 2026-10-17.
 - Every thumb's ring and border MUST be drawn as wide on screen as at rest, through the zoom as
   well as held, and an empty workspace's outline its ring: drawn at its width under the zoom, a 1pt
   ring is 0.22pt on screen at depth 0.22, and the ring Kai asked to see move does not read. The
@@ -211,6 +226,27 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > opens within the flight's 0.35s, a press inside places a window again, and the first flight,
 > landing, would put that window back where it was taking it.
 
+- Opened with a floating window focused, it MUST move no focus: the selection starts on the shown
+  row's current window, the strip's, and nothing changes until a press. A press of a layout action
+  inside, every focus, move, fold, resize and workspace action among them, and a move to another
+  display that names no window, MUST act on the strip from the selection: while a floating window
+  holds focus, focus MUST go to the selected window first, raised as a focus press off a floating
+  window raises it, and the press then runs from there. Run from the hidden floating window, a focus
+  press would land on the selection the ring is already on, a press seen to do nothing, and a move
+  press would move that window unseen. `switch-focus-between-floating-and-tiling` MUST NOT be
+  handed off first: from a floating window it lands on the selection itself, and handed off it
+  would turn focus back to the floating window, a press seen to do nothing. A press MUST NOT select
+  a floating window: the selection is always the row's current window, so a press that focuses one
+  leaves the selection on the strip. A row with nothing on its strip selects no window, so there a
+  press runs from the floating window as it does outside. Not yet met: `close-window` closes the
+  window macOS reports focused, so it closes the floating window, unseen.
+
+> **Found 2026-10-19, not reported.** Taking floating windows out of the overview for Kai's report
+> above showed it opened on a floating window's focus: by the layout's own rules, a focus press from
+> that window lands on the strip's selection, which the ring was already on, and Kai's
+> `Mod+Shift+K` moves that window to the workspace below. Read off the layout's rules and its tests,
+> not tried live. Review of that change found Kai's `Mod+Ctrl+A` handed off first turned focus back
+> to the floating window, and `Mod+M` sent the floating window to the other display, unseen.
 - A key with no bind, looked up as above, MUST be swallowed, its key-up passed as a bound key's is.
   Passed, it reaches the hidden application with the hold still down: Cmd+Q would quit it and Cmd+W
   close its window, unseen. This cannot leave a dead keyboard, since a key whose flags show the hold
@@ -236,15 +272,30 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 ## How it moves
 
-- It MUST zoom out from the screen as it is, under every look: frame zero draws every window where
-  it is on screen. Every open MUST draw afresh, after one the renderer had no overlay for as well:
-  thumbs kept from that one would carry its pictures.
+- It MUST zoom out from the screen as it is, under every look: frame zero draws every window of the
+  shown workspace where it is on screen, its floating windows included, each in front of the strip
+  or behind it as the window server stacks it. Each floating window MUST stay where the screen has
+  it, outside the zoom, fading out as the desktop darkens until it is gone while held, and back in
+  as the desktop lightens on the zoom in, so it is on screen at the lift as at the show, wearing
+  what it wears there and never a thumb's card dress. It MUST NOT be moved, hidden or written to.
+  Every open MUST draw afresh, after one the renderer had no overlay for as well: thumbs kept from
+  that one would carry its pictures.
+
+> **Found 2026-10-19, not reported.** Review of the change for Kai's 2026-10-19 report above found
+> the floating windows drawn nowhere from the show to the lift. The overlay draws the desktop under
+> its tiles, so it cut each out: a Zoom call focused as the overview opened vanished at the show and
+> came back at the lift, the focused window popping in at the hand-off. Merging that with the
+> thumbs' card dress showed the overlay dressing every tile it held, those floating windows too: the
+> focused one, ringed active, faded out and in through the card's corner and the selection's wash.
 
 > **Found 2026-10-18, not reported.** Review of the lifecycle showed an overview the renderer could
 > not draw dropped its phase without letting go of its thumbs, which only its lift did.
-- On close it MUST zoom back in onto the real layout, the selected window focused on its workspace,
-  and hand over to the real windows as a flight does: lifted only once the windows it lands on are
-  where it draws them, or its patience has run out.
+- On close it MUST zoom back in onto the real layout, focus where the last press left it, the
+  selected window on its workspace, and hand over to the real windows as a flight does: lifted only
+  once the windows it lands on are where it draws them, or its patience has run out. Closed with a
+  floating window still focused, no press having taken focus from it, that window MUST keep focus,
+  and no thumb MUST wear the active ring as it zooms back in: the ring is that window's, which fades
+  back in on it. A thumb ringed until the lift would hand the ring over as the overlay lifts.
 - The zoom out, the zoom back in and every press inside it MUST run at the pace a focus press pans
   the strip: on the same curve, over the same length, 0.35s at slowdown 1. Kai asked them to match
   the navigation transitions; on half the zoom look's arc the zoom out started at rest and was 97%
@@ -295,11 +346,15 @@ Every workspace of one display at once, zoomed out, while its key is held.
 `src/overview/domain/` is the scene: `scene.rs` lays it out, `depth.rs` sets its depth and its
 rows' tops, `stacks.rs` its edge stacks, and `changes.rs` finds what changed between two scenes.
 The card it shares with the switcher is `src/chrome/domain/card.rs`.
+A row's current window on its strip is `on_strip` in `src/workspaces/domain/workspace_focus.rs`.
 `src/input/domain/switch_session.rs` is the tap's side, the hold that opens and closes it and the
 chord a key inside it is looked up as, `src/input/domain/router.rs` the lookup, and
 `src/app/reactor/overview.rs` the reactor's: the scene's input read off the layout and handed to the
-flight engine, the flights held and their frames placed, the warps held, and the close. How it moves
-is `src/animation/domain/choreography/overview.rs`, an empty workspace's outline
+flight engine, focus taken off a floating window ahead of a press, the flights held and their frames
+placed, the warps held, and the close. How it moves is
+`src/animation/domain/choreography/overview.rs`, the thumbs' card dress
+`src/animation/domain/choreography/overview/card.rs`, the floating windows' fade
+`src/animation/platform/overlay/tint.rs`, an empty workspace's outline
 `src/animation/platform/overlay/outline.rs`, its lifecycle on the overlay
 `src/transitions/domain/lifecycle/overview.rs`, and the engine's side of it
 `src/transitions/platform/engine/overview.rs`. `src/overview/docs/README.md` explains the feature.

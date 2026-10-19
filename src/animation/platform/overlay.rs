@@ -1167,7 +1167,12 @@ impl Tree {
         let windows: Vec<WindowId> = self.tile_layers.keys().copied().collect();
         self.dress_cards(&windows);
         self.dress_outlines();
+        self.fade_floating();
     }
+
+    /// The floating container and its twin faded the other way to how far the replica holds the
+    /// overview.
+    fn fade_floating(&self) { tint::fade(&self.replica, &self.layers_of(GroupKey::Floating)) }
 
     /// Folds each edit into the replica and carries it out.
     fn play(&mut self, edits: &[Edit], tiles: &[OverlayTile]) {
@@ -1213,6 +1218,9 @@ impl Tree {
             self.dress_outlines();
         }
         self.dress_cards(&moved);
+        if edits.iter().any(tint::fades) {
+            self.fade_floating();
+        }
     }
 
     /// The container for `key` and, for the floating container, its twin, made covering the overlay
@@ -3789,6 +3797,7 @@ mod tests {
             let replica = &tree.replica;
             plays_its_zoom(tree);
             plays_its_tint(tree);
+            plays_its_fade(tree);
             let mut containers: Vec<String> =
                 tree.containers.keys().map(|key| format!("{key:?}")).collect();
             let mut placed: Vec<String> =
@@ -3852,6 +3861,9 @@ mod tests {
                 }
                 let mut wanted: Vec<String> =
                     replica.tracks(node).map(|t| container_key(t.channel()).to_string()).collect();
+                if key == GroupKey::Floating && fading(replica).is_some() {
+                    wanted.push(tint::FADE_KEY.to_string());
+                }
                 wanted.sort();
                 assert_eq!(rini_keys(layer), wanted, "{key:?}");
             }
@@ -3919,9 +3931,13 @@ mod tests {
         );
         type Dresses = Vec<Dressed>;
 
-        /// `window`'s tile's dress at each frame along the zoom, while the overview holds the tree.
+        /// `window`'s tile's dress at each frame along the zoom, while the overview holds the tree;
+        /// none for a floating window's, which no card dresses.
         fn card_dresses(tree: &Tree, window: WindowId) -> Option<((f64, f64), Dresses)> {
             use crate::animation::domain::choreography::overview::card::{dressed_over, dressing};
+            if tree.replica.parent(window) == Some(GroupKey::Floating) {
+                return None;
+            }
             let entry = &tree.tile_layers[&window];
             let span = dressing(&tree.replica, window, tree.now)?;
             let frames = dressed_over(&tree.replica, window, entry.thumb(), span);
@@ -3931,10 +3947,14 @@ mod tests {
         /// While the overview holds the tree, every tile is the card: its picture clipped and
         /// rounded, its wash showing, as its dress has them once the replica's tracks end, the
         /// selected one alone washed, and along the zoom its picture's corner and its wash at its
-        /// dress at every frame. A flight's tiles carry no card.
+        /// dress at every frame. A flight's tiles carry no card, nor a floating window's.
         fn plays_its_cards(tree: &Tree) {
             use crate::animation::domain::choreography::overview::card::dressed;
             for (window, entry) in &tree.tile_layers {
+                if tree.replica.parent(*window) == Some(GroupKey::Floating) {
+                    assert!(entry.card.is_none(), "{window:?} floating, a card");
+                    continue;
+                }
                 let Some(card) = &entry.card else {
                     assert!(tree.held.is_none(), "{window:?} held, a card");
                     continue;
@@ -4010,6 +4030,32 @@ mod tests {
                         mask.contains(&"rini.tile.lift.mask.path".to_string()),
                         "{mask:?}"
                     );
+                }
+            }
+        }
+
+        /// The track on how far the overview is held, where it has a length to play.
+        fn fading(replica: &Score) -> Option<&Track> {
+            replica.track(Node::Held, Channel::Base).filter(|track| track.seconds() > 0.0)
+        }
+
+        /// The floating container and its twin at the opposite of how far the replica holds the
+        /// overview, whole where it is not held, its track installed on each as its opposite on
+        /// `opacity`.
+        fn plays_its_fade(tree: &Tree) {
+            let model = tree.replica.model(Node::Held).map_or(0.0, as_number);
+            for layer in tree.layers_of(GroupKey::Floating) {
+                assert_eq!(f64::from(layer.opacity()), tint::faded(model) as f32 as f64);
+                match fading(&tree.replica) {
+                    Some(track) => {
+                        let faded = |value: Value| tint::faded(as_number(value));
+                        assert_eq!(
+                            installed(&layer, tint::FADE_KEY, number_in),
+                            expected(track, faded)
+                        );
+                        assert_eq!(key_path(&layer, tint::FADE_KEY), "opacity");
+                    }
+                    None => assert!(!rini_keys(&layer).contains(&tint::FADE_KEY.to_string())),
                 }
             }
         }
@@ -4532,22 +4578,17 @@ mod tests {
                     });
                 }
                 let first_current = if below { ids[0] } else { current };
-                let mut input = overview(
+                let input = overview(
                     vec![
                         row(strip(&columns, 0.0), Some(first_current)),
                         row(strip(&second, 0.0), Some(if below { current } else { 11 })),
                     ],
                     usize::from(below),
                 );
-                input.rows[0].floating.push(crate::overview::domain::scene::Laid {
-                    window: w(20),
-                    frame: typed(300.0, 200.0, 600.0, 400.0),
-                });
                 let shown = input.rows[input.active]
                     .columns
                     .iter()
                     .flat_map(|column| &column.windows)
-                    .chain(&input.rows[input.active].floating)
                     .map(|laid| (laid.window, to_overlay_space(laid.frame, DISPLAY)))
                     .collect();
                 (lay_out(&input), shown)
@@ -4933,6 +4974,109 @@ mod tests {
             plays_exactly(&tree);
             assert!(close(corner(&tree, w(1)), CORNER));
             assert!(close(corner(&tree, w(2)), 26.0 * depth));
+        }
+
+        /// The overview's floating windows ride the floating container, which fades the other way
+        /// to the tint: whole at rest, gone held, and played back in as the tint lightens, the twin
+        /// carrying the one in front of the strip with it. Each wears what it wears on screen the
+        /// whole way, the focused one's active ring included, and never the card's dress, which a
+        /// thumb turned floating while held takes off.
+        #[test]
+        fn the_overview_s_floating_windows_fade_out_as_the_desktop_darkens() {
+            use crate::animation::domain::choreography::overview::{
+                Floating, Motion, at_rest, held, pose, toward, with_floating,
+            };
+            use crate::decorations::domain::style::Ring;
+            use crate::overview::domain::fixture::{Col, overview, row, strip, w};
+            use crate::overview::domain::scene::lay_out;
+
+            let _core_animation = hold_core_animation();
+            let columns = [Col { width: 800.0, windows: &[1] }];
+            let scene = lay_out(&overview(vec![row(strip(&columns, 0.0), Some(1))], 0));
+            let floating = [
+                Floating {
+                    window: w(20),
+                    frame: typed(300.0, 200.0, 600.0, 400.0),
+                    in_front: true,
+                },
+                Floating {
+                    window: w(21),
+                    frame: typed(900.0, 500.0, 400.0, 300.0),
+                    in_front: false,
+                },
+            ];
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            let tiles = |places: &crate::animation::domain::choreography::overview::Places| {
+                let tiles: Vec<OverlayTile> = places
+                    .tiles
+                    .iter()
+                    .map(|(window, key, frame)| {
+                        let rect = crate::animation::domain::motion::plan::on_overlay(*frame);
+                        let mut tile =
+                            overlay_tile(*window, rect, rect, *key == GroupKey::Floating);
+                        tile.radius = Some(10.0);
+                        if *window == w(20) {
+                            tile.worn = Worn {
+                                decoration: ringed(1.0),
+                                wears_ring: Ring::Active,
+                                holds_focus: true,
+                            };
+                        }
+                        tile
+                    })
+                    .collect();
+                tiles
+            };
+            let rest = with_floating(at_rest(&scene, &[]), &floating);
+            let hold = with_floating(held(&scene), &floating);
+            let opacity = |tree: &Tree| -> Vec<f32> {
+                tree.layers_of(GroupKey::Floating).iter().map(|layer| layer.opacity()).collect()
+            };
+            let as_on_screen = |tree: &Tree, window: WindowId| {
+                let entry = &tree.tile_layers[&window];
+                assert!(entry.card.is_none(), "{window:?} no card");
+                assert!(!entry.picture.masksToBounds(), "{window:?} as it was given");
+                assert_eq!(entry.picture.cornerRadius(), 10.0, "{window:?} its own corner");
+                assert!(!rini_keys(&entry.picture).contains(&PICTURE_CORNER_KEY.to_string()));
+            };
+            tree.pose(&pose(&rest), &tiles(&rest));
+            tree.hold(scene.scale);
+            plays_exactly(&tree);
+            assert_eq!(opacity(&tree), [1.0, 1.0], "on screen at rest, the twin with it");
+            let out = toward(&tree.replica, &hold, 0.0, Motion::Slide { seconds: 0.35 });
+            tree.play(&out, &tiles(&hold));
+            plays_exactly(&tree);
+            assert_eq!(opacity(&tree), [0.0, 0.0], "gone once darkened");
+            for window in [w(20), w(21)] {
+                as_on_screen(&tree, window);
+            }
+            assert!(tree.tile_layers[&w(1)].card.is_some(), "the thumb a card");
+            let mut turned = hold.clone();
+            for (window, key, frame) in &mut turned.tiles {
+                if *window == w(1) {
+                    *key = GroupKey::Floating;
+                    *frame =
+                        GroupRect::new(rini_geometry::space::Point::new(100.0, 100.0), frame.size);
+                }
+            }
+            turned.lifts.retain(|(window, _)| *window != w(1));
+            let turn = toward(&tree.replica, &turned, 0.5, Motion::Slide { seconds: 0.0 });
+            tree.play(&turn, &tiles(&turned));
+            plays_exactly(&tree);
+            as_on_screen(&tree, w(1));
+            let back = toward(&tree.replica, &rest, 1.0, Motion::Slide { seconds: 0.35 });
+            tree.play(&back, &tiles(&rest));
+            plays_exactly(&tree);
+            assert_eq!(opacity(&tree), [1.0, 1.0], "back as it lightens");
+            for window in [w(20), w(21)] {
+                as_on_screen(&tree, window);
+            }
+            tree.pose(&pose(&hold), &tiles(&hold));
+            plays_exactly(&tree);
+            assert_eq!(opacity(&tree), [0.0, 0.0], "posed held, gone");
+            for window in [w(20), w(21)] {
+                as_on_screen(&tree, window);
+            }
         }
 
         /// Held, every thumb of the overview casts the lift's shadow, the selected one's at its

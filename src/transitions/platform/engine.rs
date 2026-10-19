@@ -4415,12 +4415,15 @@ mod tests {
             use super::*;
             use crate::animation::domain::choreography::overview::{at_rest, held};
             use crate::animation::domain::motion::easing::MOTION_CURVE;
-            use crate::animation::domain::motion::score::Curve;
+            use crate::animation::domain::motion::plan::GroupKey;
+            use crate::animation::domain::motion::score::{Curve, Value};
             use crate::overview::domain::fixture::{Col, overview, row, strip, w};
             use crate::overview::domain::scene::lay_out;
             use crate::pictures::domain::route::Route;
             use crate::transitions::domain::lifecycle::overview::Overview;
-            use crate::transitions::domain::request::{OverviewView, OverviewWindow};
+            use crate::transitions::domain::request::{
+                OverviewFloating, OverviewView, OverviewWindow,
+            };
 
             const LENGTH: Duration = Duration::from_millis(350);
 
@@ -4453,12 +4456,120 @@ mod tests {
                             window: w(idx),
                             server_id: WindowServerId::new(idx),
                             decoration: ringed(),
-                            floating: false,
                         })
                         .collect(),
                     shown,
+                    floating: Vec::new(),
                     outline: None,
                 }
+            }
+
+            /// `view(1)` with w9 floating over the shown workspace, focused and wearing the ring.
+            fn floating_view() -> OverviewView {
+                let mut view = view(1);
+                view.floating.push(OverviewFloating {
+                    window: w(9),
+                    server_id: WindowServerId::new(9),
+                    frame: rect(300.0, 200.0, 600.0, 400.0),
+                    worn: Worn {
+                        decoration: ringed(),
+                        wears_ring: Ring::Active,
+                        holds_focus: true,
+                    },
+                });
+                view
+            }
+
+            /// A floating window of the shown workspace is pictured at frame zero as the background
+            /// behind the strip and drawn where the screen has it, outside the zoom, wearing its
+            /// ring and focused, at no tint: on screen as the overview shows. Held, it is where it
+            /// was at the full tint, which the renderer fades it out at, and every scene leaves it
+            /// there; closed, it zooms back in to no tint where it is, holed as the windows it
+            /// lands on are, so it is on screen at the lift. In front of the strip or behind it as
+            /// the window server stacks it then.
+            #[test]
+            fn a_floating_window_is_on_screen_at_the_show_and_the_lift_and_faded_while_held() {
+                let mut h = harness();
+                h.engine.pictures.insert(w(9), test_picture(ScreenSize::new(600.0, 400.0)));
+                let stacked = |h: &Harness, ids: [u32; 3]| {
+                    let listed = ids.map(|idx| crate::windows::platform::window_server::Listed {
+                        id: WindowServerId::new(idx),
+                        level: 0,
+                        pid: 1,
+                        bounds: objc2_core_foundation::CGRect::ZERO,
+                        title: None,
+                    });
+                    h.ws.set_on_screen_windows(listed.to_vec());
+                };
+                stacked(&h, [9, 1, 2]);
+                let frame = floating_view().floating[0].frame;
+                let sent = h.step(Event::OverviewOpen {
+                    view: floating_view(),
+                    length: LENGTH,
+                    cause: h.cause(),
+                });
+                let background: Vec<WindowId> = sent
+                    .iter()
+                    .filter_map(|sent| match sent {
+                        Sent::Asked(Asked::AskOnScreen(ask)) if ask.moment == Moment::FrameZero => {
+                            Some(ask.background.iter().map(|(target, _)| target.window))
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect();
+                assert_eq!(background, vec![w(9)], "pictured behind the strip");
+                assert_eq!(asked_frame_zero(&sent), vec![w(1), w(2)]);
+
+                let frame_zero = frame_zero(&h);
+                let sent = h.step(frame_zero);
+                let batch = only_batch(&sent);
+                let Render::Stage { score, tiles } = &batch.commands[1] else {
+                    unreachable!()
+                };
+                let at = h.media.at(h.at());
+                assert_eq!(score.parent(w(9)), Some(GroupKey::Floating));
+                assert!(score.drawn(w(9), at).unwrap().is_within(1e-6, on(frame)));
+                assert_eq!(score.model(Node::Held), Some(Value::Number(0.0)));
+                assert_eq!(
+                    score.banding().lifted,
+                    vec![w(9)],
+                    "in front, as the server has it"
+                );
+                let tile = tiles.iter().find(|tile| tile.window == w(9)).unwrap();
+                assert!(tile.floating && tile.focused, "drawn as the screen has it");
+                assert_eq!(tile.worn.wears_ring, Ring::Active);
+                assert_eq!(tile.worn.decoration.ring.unwrap().width, 1.0, "at its own width");
+                h.commit(batch.seq);
+                h.advance(LENGTH);
+                h.step(Event::Tick);
+                let mut scene = floating_view();
+                scene.scene = view(2).scene;
+                h.step(Event::OverviewScene {
+                    view: scene,
+                    presses: Vec::new(),
+                });
+                let score = h.engine.overview_score().clone();
+                let held_at = h.media.at(h.at() + LENGTH * 2);
+                assert_eq!(score.sample(Node::Held, held_at), Some(Value::Number(1.0)));
+                assert!(score.drawn(w(9), held_at).unwrap().is_within(1e-6, on(frame)));
+
+                stacked(&h, [1, 2, 9]);
+                let sent = h.step(Event::OverviewClose { view: floating_view() });
+                let batch = only_batch(&sent);
+                let holed = batch.commands.iter().any(|command| {
+                    matches!(command, Render::Holes(holes)
+                        if holes.iter().any(|(hole, _)| hole.is_within(1e-6, on(frame))))
+                });
+                assert!(holed, "holed where it is");
+                let ended = h.media.at(h.at() + LENGTH * 2);
+                let score = h.engine.overview_score();
+                assert!(
+                    score.banding().lifted.is_empty(),
+                    "behind, where the server has it now"
+                );
+                assert_eq!(score.sample(Node::Held, ended), Some(Value::Number(0.0)));
+                assert!(score.drawn(w(9), ended).unwrap().is_within(1e-6, on(frame)));
             }
 
             /// A focus ring 1pt wide, as Kai wears it.

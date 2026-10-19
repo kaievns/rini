@@ -83,10 +83,13 @@ impl SurfaceGeometry for SurfaceWindow {
 pub struct OverviewView {
     pub scene: Scene,
     pub windows: Vec<OverviewWindow>,
-    /// The shown workspace's windows where its layout has them on the display, one it parks off
-    /// the display at its place on the strip: what it zooms out from as it opens, and back into as
-    /// it closes.
+    /// The shown workspace's strip windows where its layout has them on the display, one it parks
+    /// off the display at its place on the strip: what it zooms out from as it opens, and back into
+    /// as it closes.
     pub shown: Vec<(WindowId, ScreenRect)>,
+    /// The shown workspace's floating windows, which no row draws: on screen with `shown` as it
+    /// zooms out and back in, and gone while it is held.
+    pub floating: Vec<OverviewFloating>,
     /// What an empty workspace's outline is painted with: the focus ring's band, if one is drawn.
     pub outline: Option<Band>,
 }
@@ -98,5 +101,14 @@ pub struct OverviewWindow {
     pub server_id: WindowServerId,
     /// What it wears; the ring only the selected window's thumb wears.
     pub decoration: Decoration,
-    pub floating: bool,
+}
+
+/// A floating window of the shown workspace: where the display has it and what it wears there, so
+/// the overview draws it as the screen has it at its show and at its lift.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OverviewFloating {
+    pub window: WindowId,
+    pub server_id: WindowServerId,
+    pub frame: ScreenRect,
+    pub worn: Worn,
 }
