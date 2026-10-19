@@ -649,7 +649,7 @@ struct Tree {
     crops: Crops,
     /// The overview's outlines of its empty workspaces.
     outlines: outline::Outlines,
-    /// The overview's darkening of the desktop.
+    /// The overview's darkening and blur of the desktop.
     tint: tint::Tint,
     /// The zoom the overview holds the overlay under, every lift cast under it and every tile drawn
     /// as the card (`card`); none for a flight, whose lifts are cast under no zoom.
@@ -1072,7 +1072,7 @@ impl Tree {
         backdrop.setContentsScale(scale);
         backdrop.setZPosition(BACKDROP_Z);
         root.addSublayer(&backdrop);
-        let tint = tint::Tint::new(&root, size, TINT_Z);
+        let tint = tint::Tint::new(&root, &backdrop, size, TINT_Z);
         let strip = new_container(&root);
         strip.setPosition(CGPoint::new(0.0, 0.0));
         Tree {
@@ -1382,8 +1382,7 @@ impl Tree {
                     self.tint.cut();
                     return;
                 }
-                let opacity = |value| number_object(tint::opacity(as_number(value)));
-                self.tint.play(&animation(track, "opacity", opacity));
+                self.tint.play(track);
             }
         }
     }
@@ -4061,9 +4060,12 @@ mod tests {
         }
 
         /// The tint lies over the desktop and under every container at the replica's share of the
-        /// backdrop's opacity, none where the replica has no tint, its track installed as itself on
-        /// `opacity` unless it has no length.
+        /// desktop's darkening, none where the replica has no tint, its track installed as itself
+        /// on `opacity` unless it has no length; the desktop is blurred at that share of the blur,
+        /// its track installed as itself on the filter's radius, and carries no filter where the
+        /// replica has no tint.
         fn plays_its_tint(tree: &Tree) {
+            plays_its_blur(tree);
             let layer = tree.tint.layer();
             assert!(TINT_Z > BACKDROP_Z && TINT_Z < BAR_Z && layer.zPosition() == TINT_Z);
             for container in tree.containers.values().chain([&tree.strip]) {
@@ -4084,6 +4086,29 @@ mod tests {
                     assert_eq!(key_path(layer, tint::TINT_KEY), "opacity");
                 }
                 _ => assert!(!rini_keys(layer).contains(&tint::TINT_KEY.to_string())),
+            }
+        }
+
+        fn plays_its_blur(tree: &Tree) {
+            let desktop = &tree.backdrop;
+            let Some(model) = tree.replica.model(Node::Held).map(as_number) else {
+                assert!(desktop.filters().is_none(), "no blur between overviews");
+                assert!(rini_keys(desktop).is_empty());
+                return;
+            };
+            let radius = tint::blurred(desktop);
+            assert!((radius - tint::radius(model)).abs() < 1e-6, "{model}: {radius}");
+            match tree.replica.track(Node::Held, Channel::Base) {
+                Some(track) if track.seconds() > 0.0 => {
+                    let radius = |value: Value| tint::radius(as_number(value));
+                    assert_eq!(
+                        installed(desktop, tint::BLUR_KEY, number_in),
+                        expected(track, radius)
+                    );
+                    assert_eq!(key_path(desktop, tint::BLUR_KEY), tint::BLUR_RADIUS);
+                    assert_eq!(rini_keys(desktop), sorted([tint::BLUR_KEY]));
+                }
+                _ => assert!(rini_keys(desktop).is_empty()),
             }
         }
 
@@ -4665,12 +4690,13 @@ mod tests {
             play(&mut score, edits, wear(&places));
         }
 
-        /// Held, the overview darkens the desktop behind its thumbs with the card's backdrop at its
-        /// opacity, between the desktop and every tile; posed at rest, and once let go, not at all.
+        /// Held, the overview darkens the desktop behind its thumbs with the card's backdrop at the
+        /// desktop's darkening, between the desktop and every tile, and blurs the desktop; posed at
+        /// rest, and once let go, neither, the lift taking the blur's filter off the desktop.
         #[test]
-        fn the_overview_darkens_the_desktop_behind_its_thumbs() {
+        fn the_overview_darkens_and_blurs_the_desktop_behind_its_thumbs() {
             use crate::animation::domain::choreography::overview::{at_rest, held, pose};
-            use crate::chrome::domain::card::{BACKDROP, BACKDROP_ALPHA};
+            use crate::chrome::domain::card::{BACKDROP, DESKTOP_ALPHA, DESKTOP_BLUR};
             use crate::overview::domain::fixture::{Col, overview, row, strip};
             use crate::overview::domain::scene::lay_out;
 
@@ -4700,13 +4726,83 @@ mod tests {
             let (held, rest) = (held(&scene), at_rest(&scene, &[]));
             tree.pose(&pose(&held), &tiles(&held));
             plays_exactly(&tree);
-            assert_eq!(f64::from(layer.opacity()), BACKDROP_ALPHA as f32 as f64);
+            assert_eq!(f64::from(layer.opacity()), DESKTOP_ALPHA as f32 as f64);
+            assert!((tint::blurred(&tree.backdrop) - DESKTOP_BLUR).abs() < 1e-6);
             tree.pose(&pose(&rest), &tiles(&rest));
             plays_exactly(&tree);
             assert_eq!(layer.opacity(), 0.0);
+            assert_eq!(tint::blurred(&tree.backdrop), 0.0);
             tree.pose(&pose(&held), &tiles(&held));
             tree.release();
             assert_eq!(layer.opacity(), 0.0, "a lift takes it away");
+            assert!(tree.backdrop.filters().is_none(), "and the blur with it");
+        }
+
+        /// The zoom out darkens and blurs the desktop from none at frame zero to the desktop's
+        /// darkening and blur held, on the zoom's own clock, and the zoom back in clears both to
+        /// none at the lift, so neither hand-over to the real desktop jumps.
+        #[test]
+        fn the_desktop_dims_and_blurs_with_the_zoom_from_none_at_frame_zero_to_none_at_the_lift() {
+            use crate::animation::domain::choreography::overview::{
+                Motion, at_rest, held, pose, toward,
+            };
+            use crate::chrome::domain::card::{DESKTOP_ALPHA, DESKTOP_BLUR};
+            use crate::overview::domain::fixture::{Col, overview, row, strip};
+            use crate::overview::domain::scene::lay_out;
+
+            let _core_animation = hold_core_animation();
+            let columns = [Col { width: 800.0, windows: &[1] }];
+            let scene = lay_out(&overview(vec![row(strip(&columns, 0.0), Some(1))], 0));
+            let rest = at_rest(&scene, &[]);
+            let tiles: Vec<OverlayTile> = rest
+                .tiles
+                .iter()
+                .map(|(window, _, frame)| {
+                    let rect = crate::animation::domain::motion::plan::on_overlay(*frame);
+                    overlay_tile(*window, rect, rect, false)
+                })
+                .collect();
+            let score = pose(&rest);
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.pose(&score, &tiles);
+            tree.hold(scene.scale);
+            let slide = Motion::Slide { seconds: 0.35 };
+            let play = |tree: &mut Tree, score: &Score, edits: Vec<Edit>| {
+                let mut score = score.clone();
+                for edit in &edits {
+                    score.apply(edit);
+                }
+                tree.play(&edits, &tiles);
+                plays_exactly(tree);
+                score
+            };
+            let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+            let ends = |tree: &Tree, zoom: &Track| {
+                let tint = installed(tree.tint.layer(), tint::TINT_KEY, number_in);
+                let blur = installed(&tree.backdrop, tint::BLUR_KEY, number_in);
+                for played in [&tint, &blur] {
+                    assert_eq!((played.begin, played.seconds), (zoom.begin(), zoom.seconds()));
+                }
+                let first = |played: &Installed<f64>| played.keys[0].1;
+                let last = |played: &Installed<f64>| played.keys[played.keys.len() - 1].1;
+                ((first(&tint), last(&tint)), (first(&blur), last(&blur)))
+            };
+
+            let out = play(&mut tree, &score, toward(&score, &held(&scene), 100.0, slide));
+            let zoom = out.track(Node::Strip, Channel::Base).expect("a zoom").clone();
+            let ((dark_from, dark_to), (blur_from, blur_to)) = ends(&tree, &zoom);
+            assert!(
+                dark_from == 0.0 && blur_from == 0.0,
+                "frame zero is the plain desktop"
+            );
+            assert!(close(dark_to, DESKTOP_ALPHA) && close(blur_to, DESKTOP_BLUR));
+
+            let edits = toward(&out, &at_rest(&scene, &[]), 101.0, slide);
+            let back = play(&mut tree, &out, edits);
+            let zoom = back.track(Node::Strip, Channel::Base).expect("a zoom").clone();
+            let ((dark_from, dark_to), (blur_from, blur_to)) = ends(&tree, &zoom);
+            assert!(close(dark_from, DESKTOP_ALPHA) && close(blur_from, DESKTOP_BLUR));
+            assert!(dark_to == 0.0 && blur_to == 0.0, "the lift is the plain desktop");
         }
 
         /// The overview's thumbs, read back off the tree: frame zero is the screen, every thumb at

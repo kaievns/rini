@@ -32,8 +32,8 @@ pub enum Node {
     /// that deep. Dropped with its tile.
     Lift(WindowId),
     /// How far the overview is held, from 0 at rest to 1 zoomed out, on its zoom's curve and clock:
-    /// the desktop behind every tile is darkened that share of the card's backdrop
-    /// (`chrome::domain::card::BACKDROP_ALPHA`).
+    /// the desktop behind every tile is darkened that share of the card's `DESKTOP_ALPHA` and
+    /// blurred that share of its `DESKTOP_BLUR` (`chrome::domain::card`).
     Held,
 }
 

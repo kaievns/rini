@@ -37,10 +37,22 @@ pub const WASH: Colour = EMBER_SOFT;
 /// plane, because the cards float over content rather than being content.
 pub const BACKDROP: Colour = N0;
 
-/// How much `BACKDROP` darkens. The one value here that is a judgement rather than a token: the
-/// system has none for an overlay's translucency. Chosen against screenshots of 0.35, 0.50 and 0.65
-/// over one desktop as "the native switcher, a step darker" (`src/switcher/docs/README.md`).
+/// How much `BACKDROP` darkens the switcher's glass. A judgement rather than a token, as
+/// `DESKTOP_ALPHA` is: the system has none for an overlay's translucency. Chosen against
+/// screenshots of 0.35, 0.50 and 0.65 over one desktop as "the native switcher, a step darker"
+/// (`src/switcher/docs/README.md`).
 pub const BACKDROP_ALPHA: f64 = 0.40;
+
+/// How much `BACKDROP` darkens the desktop behind the overview's thumbs: deeper than
+/// `BACKDROP_ALPHA`, which darkens the switcher's glass, a blur that already quiets what is behind
+/// it, where this lies on the desktop itself. A first value for Kai to tune (`specs/overview.md`,
+/// "What it shows").
+pub const DESKTOP_ALPHA: f64 = 0.60;
+
+/// How far the overview blurs the desktop behind its thumbs, a Gaussian radius in points: light
+/// enough to keep the shape of what is behind, as the switcher's clear glass does. A judgement, and
+/// a first value for Kai to tune.
+pub const DESKTOP_BLUR: f64 = 6.0;
 
 /// A stack of cards: its top card, and the cards behind it each a step further the way the stack
 /// goes and shorter across it.
@@ -145,4 +157,10 @@ mod tests {
     /// A card behind narrower than the corner would show through the front card's rounded corner.
     #[test]
     fn the_inset_is_wider_than_the_corner() { const { assert!(STACK.inset > CORNER) }; }
+
+    /// Kai asked for the overview's desktop dimmer than it was at the switcher's darkening.
+    #[test]
+    fn the_overview_darkens_the_desktop_deeper_than_the_switcher_darkens_its_glass() {
+        const { assert!(DESKTOP_ALPHA > BACKDROP_ALPHA && DESKTOP_ALPHA < 1.0) };
+    }
 }

@@ -3,9 +3,9 @@
 //! the screen as it is and back in onto the real layout, and every press inside it, played Slide's
 //! way at a press's pace, each node from where it is drawn to where the new scene has it; every
 //! thumb lifted off the overlay while it is held, the selected one furthest, and the desktop behind
-//! them darkened; the shown workspace's floating windows where the screen has them, outside the
-//! zoom, faded out as the desktop darkens; and the push at an end bounced on screen as far as a
-//! flight's.
+//! them darkened and blurred; the shown workspace's floating windows where the screen has them,
+//! outside the zoom, faded out as the desktop darkens; and the push at an end bounced on screen as
+//! far as a flight's.
 //!
 //! Not a `Look`, nor in `Look::ALL`: the overview is a view the presses inside it change, and its
 //! moves are the same under every look (`specs/overview.md`, "How it moves").
@@ -158,7 +158,7 @@ fn held_containers(scene: &Scene) -> Vec<(GroupKey, OverlayPoint)> {
 
 /// The scene as it is held: every row at its depth, each drawn thumb in its holder's container at
 /// where the scene draws it and lifted, the selected window furthest, the selected window and its
-/// row in front, over the desktop darkened.
+/// row in front, over the desktop darkened and blurred.
 pub fn held(scene: &Scene) -> Places {
     let s = scene.scale;
     let containers = held_containers(scene);
@@ -216,7 +216,7 @@ pub fn held(scene: &Scene) -> Places {
 
 /// The scene as the display shows it at rest: the zoom at 1, its active row's windows each at its
 /// frame in `shown`, its strip about where its thumbs' centres put it, every other row where the
-/// stack has it, off the display above and below, no thumb lifted and nothing darkened.
+/// stack has it, off the display above and below, no thumb lifted and nothing darkened or blurred.
 /// What the overview zooms out from as it opens, and back into as it closes.
 pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     let mut places = held(scene);

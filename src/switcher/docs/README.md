@@ -128,7 +128,8 @@ description of what that looks like. The native switcher barely blurs: text behi
 readable. Clear glass keeps that shape.
 
 **The darkening is a layer inside the glass.** The card's `BACKDROP`, `--n0`, at `BACKDROP_ALPHA`
-(`src/chrome/domain/card.rs`) on the view the glass hosts, the overview's darkening too. Not
+(`src/chrome/domain/card.rs`) on the view the glass hosts; the overview darkens the bare desktop
+with the same colour at its own, deeper `DESKTOP_ALPHA`, since no glass quiets it first. Not
 the glass's `tintColor`, which on clear glass shifts hue and barely touches brightness — three tints
 from 0.45 to 0.75 rendered almost the same. 0.40 was picked from screenshots of 0.35, 0.50 and 0.65 over
 this desktop as the native switcher a step darker. The appearance is pinned dark so a light-mode

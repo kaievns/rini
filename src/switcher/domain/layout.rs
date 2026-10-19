@@ -52,8 +52,8 @@ pub struct Metrics {
     pub selection_outset: f64,
     pub selection_corner: f64,
     pub wash: Colour,
-    /// What darkens the panel's ground behind the rows, and how much: the card's backdrop, as the
-    /// overview darkens the desktop behind its thumbs.
+    /// What darkens the panel's ground behind the rows, and how much: the card's backdrop, the
+    /// colour the overview darkens the desktop behind its thumbs with, deeper.
     pub backdrop: Colour,
     pub backdrop_alpha: f64,
     /// Inside the panel's edge, at the sides and above the strip.

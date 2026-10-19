@@ -114,14 +114,26 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > luped together and hard to see which one which, for example the rainbow terminals on ws3 is a
 > mess". Kai's 3pt gap is 0.9pt on screen at depth 0.3.
 
-- The desktop behind the thumbs MUST be darkened while the overview is held, so it reads as a mode
-  and its wallpaper is quieter under them: the card's backdrop, `--n0` at 0.40, the switcher's
-  darkening of what is behind its popup. It MUST darken with the zoom out from none at frame zero
-  and clear with the zoom in, and a flight MUST never be drawn darkened. The bar MUST NOT be
-  darkened: it is drawn over every thumb, as at rest.
+- The desktop behind the thumbs MUST be darkened and blurred while the overview is held, so it
+  reads as a mode and its wallpaper is quieter under them: the card's backdrop, `--n0`, the colour
+  the switcher darkens what is behind its popup with, at 0.60, and a Gaussian blur of 6pt, light
+  enough to keep the shape of what is behind as the switcher's clear glass does. Both are first
+  values for Kai to tune. The switcher's 0.40 darkens a glass that already quiets what is behind
+  it; the overview's lies on the desktop itself. Each MUST rise with the zoom out from none at frame
+  zero and fall with the zoom in to none at the lift, so neither hand-over to the real desktop
+  jumps, and a flight MUST never be drawn darkened or blurred. The bar MUST NOT be darkened or
+  blurred: it is drawn over every thumb, as at rest. The blur MUST NOT drop a frame of the zoom or
+  hold its first frame back, so it is Core Animation's own Gaussian filter played on the desktop
+  with the zoom: a `CIFilter` adds three times as much to a frame, and a picture blurred as it
+  opens costs about 30ms before frame zero (`src/overview/docs/README.md`, "The desktop darkens and
+  blurs on the score too").
 
 > **Reported 2026-10-19.** "tint/darken the background image a bit to distinct that we're in the
 > overview mode and so it would be less visually noisy".
+
+> **Reported 2026-10-19.** "much better. make the background dimmer (blur maybe a little?) and add
+> grey outlines to the inactive windows same way as the app switcher does". The desktop was
+> darkened at the switcher's 0.40 and not blurred.
 
 - Every thumb MUST cast a shadow while the overview is held, so it floats over what is behind it,
   and the selected one a stronger one to accent it: the lift a carried window takes in a flight,
@@ -135,8 +147,8 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > appear a bit floating, more so for the currently selected window to accent it". Under the zoom a
 > window's own shadow is a fifth of its size and reads as none.
 
-- Its look MUST be the switcher's, from one record both draw from: the stacks' step, inset and
-  three cards drawn, the gap between cards, the selected card's ring width, the darkening of what
+- Its look MUST be the switcher's, from one record both draw from: the stacks' step, inset and three
+  cards drawn, the gap between cards, the selected card's ring width, the colour that darkens what
   is behind, the card's 11pt corner and the `--ember-soft` wash under the selected card. Kai asked
   for one visual style across the two, reusing components where they apply; two copies of a value
   drift. Held, every thumb MUST round to the card's corner on screen at any depth (at its window's
@@ -353,8 +365,8 @@ chord a key inside it is looked up as, `src/input/domain/router.rs` the lookup, 
 flight engine, focus taken off a floating window ahead of a press, the flights held and their frames
 placed, the warps held, and the close. How it moves is
 `src/animation/domain/choreography/overview.rs`, the thumbs' card dress
-`src/animation/domain/choreography/overview/card.rs`, the floating windows' fade
-`src/animation/platform/overlay/tint.rs`, an empty workspace's outline
+`src/animation/domain/choreography/overview/card.rs`, the desktop's tint and blur and the floating
+windows' fade `src/animation/platform/overlay/tint.rs`, an empty workspace's outline
 `src/animation/platform/overlay/outline.rs`, its lifecycle on the overlay
 `src/transitions/domain/lifecycle/overview.rs`, and the engine's side of it
 `src/transitions/platform/engine/overview.rs`. `src/overview/docs/README.md` explains the feature.

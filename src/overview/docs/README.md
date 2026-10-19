@@ -105,13 +105,27 @@ to 1.6ms undressed, most of it the paths of the casters' shadows and masks at ev
 wash's reach and the ring's outer edge are sampled at the same moments and the wash is inside at
 each, so Core Animation's line between two keeps it inside.
 
-**The desktop darkens on the score too.** Held, the desktop behind the thumbs is darkened by the
-card's backdrop, `--n0` at 0.40, the switcher's own darkening (`BACKDROP`, `BACKDROP_ALPHA` in
-`src/chrome/domain/card.rs`), at the share of the way the overview is held, a node of the score
-(`Node::Held`, drawn by `src/animation/platform/overlay/tint.rs`), so it darkens and clears on the
-zoom's curve and clock and turns back with it, rather than on a fade of its own beside it. The shown
-workspace's floating windows fade the other way on the same node, so they leave and come back with
-it.
+**The desktop darkens and blurs on the score too.** Held, the desktop behind the thumbs is
+darkened by the card's backdrop, `--n0`, the switcher's darkening colour, at 0.60 (`BACKDROP`,
+`DESKTOP_ALPHA` in `src/chrome/domain/card.rs`), deeper than the switcher's `BACKDROP_ALPHA`, 0.40,
+since no glass quiets the desktop first, and the desktop picture is blurred 6pt (`DESKTOP_BLUR`).
+Both play at the share of the way the overview is held, a node of the score (`Node::Held`, drawn by
+`src/animation/platform/overlay/tint.rs`), so they rise and clear on the zoom's curve and clock and
+turn back with it, rather than on a fade of their own beside it. The shown workspace's floating
+windows fade the other way on the same node, so they leave and come back with it.
+
+The blur is Core Animation's own Gaussian, `CAFilter`'s `gaussianBlur`, a class the SDK does not
+publish, laid on the desktop's layer while the overview holds the overlay and taken off at its lift,
+its radius played on `filters.gaussianBlur.inputRadius`, its edges normalised, since without that
+the black beyond the display's edge is blurred in and darkens the desktop's own. Where macOS has no
+such class the desktop is darkened alone. Measured 2026-10-19 off screen, through `CARenderer` at
+the built-in display's 3456 by 2234 pixels on an M3 Pro, the desktop under 32 thumbs, the tint and
+blur changing every frame (`docs/data/2026-10-19-overview-blur/`): a frame took 1.34 to 1.51ms at
+its median unblurred, 2.20ms blurred 6pt by the `CAFilter` (2.61ms at the 95th percentile), 4.06 to
+4.10ms by a `CIFilter`'s Gaussian (6.58ms), and 1.46ms with a picture blurred once faded in over the
+sharp one, but that picture took 28.5 to 33.0ms to blur, before frame zero. The `CAFilter` keeps the
+frame inside 120Hz's 8.3ms, adds nothing before the first, and blurs by radius rather than fading
+between two pictures. Not checked on screen.
 
 **A pan is read off one window on the strip in both scenes.** The window the row is aligned on
 after, else the one it was aligned on before, else any window in both. A move along the strip keeps
