@@ -269,17 +269,17 @@ A config reload that turns either band on, in `layout` or a rule, sends the next
 
 ## The corner
 
-Every piece a tile wears rounds to one corner, `DecorationLayers::corner_at` over `shape::radius`:
-the hairline, the outline, the shadow's silhouette, its mask's hole and a clipped picture, and a
-resize carries that corner on each. The radius is the window server's, read for every tile in one
-query as the flight composes (`windows::domain::info::reported_radius`, the largest of the four
-above 0), else `FALLBACK_RADIUS`, 16pt; a rule's `geometry-corner-radius` goes ahead of it for the
-ring and the border alone. Every piece rounds on the continuous curve, the paths through
-`shape::rounded_rect` (`every_path_follows_core_animation_s_corner_at_every_size`), and every corner
-is clamped to half the tile's shorter side, since Core Animation does not clamp it. The overview
-lays its thumbs in place of their windows' (`DecorationLayers::lay`): every piece at the switcher's
-card's corner, eased with its zoom (`src/overview/docs/README.md`). The reads, the fits and the
-data: [`corner.md`](corner.md).
+Every piece a tile wears rounds to one corner, `DecorationLayers::corner_at`, clamped as
+`shape::radius` clamps: the hairline, the outline, the shadow's silhouette, its mask's hole and a
+clipped picture, and a resize carries that corner on each. The radius is the window server's, read
+for every tile in one query as the flight composes (`windows::domain::info::reported_radius`, the
+largest of the four above 0), else `FALLBACK_RADIUS`, 16pt; a rule's `geometry-corner-radius` goes
+ahead of it for the ring and the border alone. Every piece rounds on the continuous curve, the paths
+through `shape::rounded_rect` (`every_path_follows_core_animation_s_corner_at_every_size`), and
+every corner is clamped to half the tile's shorter side, since Core Animation does not clamp it. The
+overview lays its thumbs in place of their windows' (`DecorationLayers::lay`): every piece at the
+switcher's card's corner, eased with its zoom (`src/overview/docs/README.md`). The reads, the fits
+and the data: [`corner.md`](corner.md).
 
 ## Reading order
 

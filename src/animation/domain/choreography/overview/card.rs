@@ -4,20 +4,22 @@
 //! "What it shows").
 //!
 //! Every value is eased on screen from the window's own to the card's by how far the overview is
-//! held (`Node::Held`), then divided by the zoom it is drawn under: at rest a thumb is its window, so
-//! frame zero and the landing are the screen, and held it is the card at every depth.
+//! held (`Node::Held`), then divided by the zoom it is drawn under: at rest a thumb is its window,
+//! so frame zero and the landing are the screen, and held it is the card at every depth.
 
 use rini_core::ids::WindowId;
-use rini_geometry::space::{Respace, TileSize};
+use rini_geometry::space::{Respace, Size, TileSize};
+use rini_geometry::stretch::is_a_resize;
 
 use crate::animation::domain::motion::plan::GroupKey;
-use crate::animation::domain::motion::score::{Channel, Node, Score, Value};
+use crate::animation::domain::motion::score::{Channel, Node, SAMPLE_STEP, Score, Value};
 use crate::chrome::domain::card;
 use crate::decorations::domain::shape::{Lay, Laying};
 
 /// How far apart a thumb's dress is sampled along the zoom: two 120Hz frames, Core Animation's
-/// straight line between two within a tenth of a point of the dress on screen
-/// (`src/overview/docs/README.md`, "Thumbs are the switcher's cards").
+/// straight line between two within a tenth of a point of the dress on screen; one a thumb's own
+/// track resizes is sampled every frame (`SAMPLE_STEP`), so its pieces keep to the frame that track
+/// plays (`src/overview/docs/README.md`, "Thumbs are the switcher's cards").
 pub const DRESS_STEP: f64 = 1.0 / 60.0;
 
 /// The card's wash under the selected thumb, in the strip's points: how much of it shows, from none
@@ -36,11 +38,11 @@ pub struct Dress {
     pub wash: Wash,
 }
 
-/// How a thumb whose window lays it `own` on screen is dressed `held` of the way into the card under
-/// a zoom by `zoom`: every corner but the selection's the card's, the border as wide as the window's,
-/// and the ring as wide as the window's on any other thumb; on the `selected` one the ring at least
-/// the card's ring and laid on the card's selection, its outer edge `SELECTION_OUTSET` out at
-/// `SELECTION_CORNER`, over the card's wash.
+/// How a thumb whose window lays it `own` on screen is dressed `held` of the way into the card
+/// under a zoom by `zoom`: every corner but the selection's the card's, the border as wide as the
+/// window's, and the ring as wide as the window's on any other thumb; on the `selected` one the
+/// ring at least the card's ring and laid on the card's selection, its outer edge
+/// `SELECTION_OUTSET` out at `SELECTION_CORNER`, over the card's wash.
 pub fn dress(own: Laying, selected: bool, held: f64, zoom: f64) -> Dress {
     let share = held.clamp(0.0, 1.0);
     let zoom = if zoom.is_finite() && zoom > 0.0 {
@@ -87,17 +89,18 @@ pub fn dress(own: Laying, selected: bool, held: f64, zoom: f64) -> Dress {
     }
 }
 
-/// When `window`'s thumb dresses along the overview's zoom on `score`: from the first begin to the
-/// last end of the tracks on the zoom, on how far it is held and on the thumb itself that still play
-/// as the latest of them begins, if the zoom or the held share is among them. None when neither
-/// plays then: the thumb is dressed as their models have it.
-pub fn dressing(score: &Score, window: WindowId) -> Option<(f64, f64)> {
+/// When `window`'s thumb dresses along the overview's zoom on `score` at media time `now`: from the
+/// first begin to the last end of the tracks on the zoom, on how far it is held and on the thumb
+/// itself that still play at `now`, or as the latest of them begins if that is later, if the zoom
+/// or the held share is among them. None when neither plays then: the thumb is dressed as their
+/// models have it.
+pub fn dressing(score: &Score, window: WindowId, now: f64) -> Option<(f64, f64)> {
     let tracks: Vec<_> = [Node::Strip, Node::Held, Node::Tile(window)]
         .into_iter()
         .filter_map(|node| score.track(node, Channel::Base))
         .filter(|track| track.seconds() > 0.0)
         .collect();
-    let latest = tracks.iter().map(|track| track.begin()).fold(f64::NEG_INFINITY, f64::max);
+    let latest = tracks.iter().map(|track| track.begin()).fold(now, f64::max);
     let playing: Vec<_> = tracks.into_iter().filter(|track| track.ends() > latest).collect();
     if !playing.iter().any(|track| track.node() != Node::Tile(window)) {
         return None;
@@ -107,9 +110,10 @@ pub fn dressing(score: &Score, window: WindowId) -> Option<(f64, f64)> {
     Some((begin, end))
 }
 
-/// `window`'s thumb dressed `DRESS_STEP` apart from `begin` to `end` on `score`, the last at `end`: its
-/// size there, and its dress at how far the overview is held and the zoom it is drawn under then.
-/// None for a thumb `score` has not placed.
+/// `window`'s thumb dressed `DRESS_STEP` apart from `begin` to `end` on `score`, `SAMPLE_STEP`
+/// apart while its own track resizes it, the last at `end`: its size there, and its dress at how
+/// far the overview is held and the zoom it is drawn under then. None for a thumb `score` has not
+/// placed.
 pub fn dressed_over(
     score: &Score,
     window: WindowId,
@@ -118,7 +122,20 @@ pub fn dressed_over(
     (begin, end): (f64, f64),
 ) -> Vec<(TileSize, Dress)> {
     let floats = floats(score, window);
-    frames((begin, end))
+    let resizes = score.track(Node::Tile(window), Channel::Base).is_some_and(|track| {
+        let size = |value: Value| match value {
+            Value::Rect(frame) => frame.size,
+            _ => Size::zero(),
+        };
+        let overlaps = track.begin() < end && track.ends() > begin;
+        overlaps
+            && track
+                .keys()
+                .windows(2)
+                .any(|pair| is_a_resize(size(pair[0].1), size(pair[1].1)))
+    });
+    let step = if resizes { SAMPLE_STEP } else { DRESS_STEP };
+    frames((begin, end), step)
         .map(|at| {
             let Some(Value::Rect(frame)) = score.sample(Node::Tile(window), at) else {
                 return None;
@@ -150,8 +167,9 @@ pub fn outlined(score: &Score, width: f64) -> (f64, Option<Zoomed>) {
         .filter(|track| track.seconds() > 0.0)
         .map(|track| {
             let (begin, end) = (track.begin(), track.ends());
-            let widths =
-                frames((begin, end)).map(|at| under(score.sample(Node::Strip, at))).collect();
+            let widths = frames((begin, end), DRESS_STEP)
+                .map(|at| under(score.sample(Node::Strip, at)))
+                .collect();
             Zoomed { begin, end, widths }
         });
     (under(score.model(Node::Strip)), zoomed)
@@ -165,9 +183,9 @@ pub struct Zoomed {
     pub widths: Vec<f64>,
 }
 
-/// Each moment from `begin` to `end` `DRESS_STEP` apart, evenly, the last at `end`.
-fn frames((begin, end): (f64, f64)) -> impl Iterator<Item = f64> {
-    let frames = ((end - begin) / DRESS_STEP).ceil().max(1.0) as usize;
+/// Each moment from `begin` to `end` at most `step` apart, evenly, the last at `end`.
+fn frames((begin, end): (f64, f64), step: f64) -> impl Iterator<Item = f64> {
+    let frames = ((end - begin) / step).ceil().max(1.0) as usize;
     (0..=frames).map(move |frame| begin + (end - begin) * frame as f64 / frames as f64)
 }
 
@@ -241,9 +259,9 @@ mod tests {
         }
     }
 
-    /// Held, the selected thumb is ringed as the switcher rings its selected card: the ring at least
-    /// the card's ring wide, its outer edge the selection's outset out at the selection's corner,
-    /// over the card's wash reaching as far; a ring wider than that outset hugs the thumb.
+    /// Held, the selected thumb is ringed as the switcher rings its selected card: the ring at
+    /// least the card's ring wide, its outer edge the selection's outset out at the selection's
+    /// corner, over the card's wash reaching as far; a ring wider than that outset hugs the thumb.
     #[test]
     fn held_the_selected_thumb_wears_the_card_s_selection() {
         let zoom = 0.3;
@@ -319,14 +337,14 @@ mod tests {
     fn the_corner_and_the_wash_ease_with_the_zoom_from_the_window_to_the_card_and_back() {
         let (out, back, depth) = zooms();
         for (score, from, to) in [(&out, 0.0, 1.0), (&back, 1.0, 0.0)] {
-            let span = dressing(score, w(2)).expect("dressed along the zoom");
+            let span = dressing(score, w(2), 0.0).expect("dressed along the zoom");
             let zoom = score.track(Node::Strip, Channel::Base).expect("a zoom");
             assert_eq!(span, (zoom.begin(), zoom.ends()));
             let frames = dressed_over(score, w(2), own(), true, span);
             assert_eq!(
                 frames.len(),
-                (PRESS / DRESS_STEP).ceil() as usize + 1,
-                "two frames apart"
+                (PRESS / SAMPLE_STEP).ceil() as usize + 1,
+                "a frame apart, as its own track resizes it"
             );
             let scale = |at: f64| match score.sample(Node::Strip, at) {
                 Some(Value::Zoom(zoom)) => zoom.scale,
@@ -361,7 +379,8 @@ mod tests {
     }
 
     /// A press while the zoom plays dresses its thumb from the zoom's begin to the later of their
-    /// ends; once the zoom has ended a press on a thumb dresses nothing along it.
+    /// ends, two frames apart while its size holds; once the zoom has ended, by a press's begin or
+    /// by the time given, nothing dresses along it.
     #[test]
     fn a_thumb_dresses_along_the_zoom_only_while_the_zoom_plays() {
         let (out, _, _) = zooms();
@@ -378,10 +397,25 @@ mod tests {
                 PRESS,
                 crate::animation::domain::motion::score::Curve::Linear,
             )));
-            dressing(&score, w(1))
+            score
         };
-        assert_eq!(pressed(100.1), Some((zoom.begin(), 100.1 + PRESS)));
-        assert_eq!(pressed(zoom.ends() + 0.5), None);
-        assert_eq!(dressing(&Score::default(), w(1)), None);
+        let still = pressed(100.1);
+        let span = dressing(&still, w(1), 0.0);
+        assert_eq!(span, Some((zoom.begin(), 100.1 + PRESS)));
+        let frames = dressed_over(&still, w(1), own(), false, span.expect("dressed"));
+        let apart = ((100.1 + PRESS - zoom.begin()) / DRESS_STEP).ceil() as usize + 1;
+        assert_eq!(
+            frames.len(),
+            apart,
+            "two frames apart, as its own track holds its size"
+        );
+        assert_eq!(dressing(&pressed(zoom.ends() + 0.5), w(1), 0.0), None);
+        assert_eq!(dressing(&Score::default(), w(1), 0.0), None);
+        assert_eq!(dressing(&out, w(1), 100.1), Some((zoom.begin(), zoom.ends())));
+        assert_eq!(
+            dressing(&out, w(1), zoom.ends()),
+            None,
+            "the zoom has ended by then"
+        );
     }
 }

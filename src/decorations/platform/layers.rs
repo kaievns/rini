@@ -195,7 +195,8 @@ impl DecorationLayers {
     /// none.
     pub fn lay(&mut self, laying: Option<Laying>) { self.laying = laying; }
 
-    /// How a tile of `size` is laid: as it was given, else as its window lays it, clamped to `size`.
+    /// How a tile of `size` is laid: as it was given, else as its window lays it, clamped to
+    /// `size`.
     pub fn fit_at(&self, size: TileSize) -> Fit {
         self.laying.unwrap_or_else(|| self.own()).fit(size)
     }
@@ -484,11 +485,11 @@ impl Band {
         }
     }
 
-    /// Carries the band through `resize`, laid as `lay` takes it from each fit: its bounds at
-    /// every fit, its corner, its width and its position while each changes, the mask's bounds,
-    /// corner and width with them while a gradient has it attached, and a gradient's axis while it
-    /// moves with the size. A gradient painted mid-resize at another angle keeps the axis of the size
-    /// the band is laid at until the next.
+    /// Carries the band through `resize`, laid as `lay` takes it from each fit: its bounds at every
+    /// fit, its corner, its width and its position while each changes, the mask's bounds, corner
+    /// and width with them while a gradient has it attached, and a gradient's axis while it moves
+    /// with the size. A gradient painted mid-resize at another angle keeps the axis of the size the
+    /// band is laid at until the next.
     fn install_resize(&self, resize: &impl Resize, lay: impl Fn(&Fit) -> Lay) {
         let band = |fit: &Fit| shape::band_at(fit.size, lay(fit));
         let bounds = resize.rect("bounds", |fit| {

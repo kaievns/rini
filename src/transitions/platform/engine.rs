@@ -4494,8 +4494,7 @@ mod tests {
             /// dressing it as the card under the zoom: none is dressed again as it zooms out, as
             /// the selection moves or as it zooms back in, and the ring moves with the selection.
             #[test]
-            fn the_thumbs_are_sent_as_their_windows_wear_them_and_the_ring_moves_with_the_selection()
-             {
+            fn each_thumb_is_sent_as_its_window_wears_it_and_the_ring_moves_with_the_selection() {
                 let mut h = harness();
                 let held = held_open(&mut h);
                 assert!(rewidths(&held).is_empty(), "{:?}", rewidths(&held));
@@ -4786,8 +4785,8 @@ mod tests {
 
             /// Held when the renderer reports it has nothing to draw on, the overview lets go of
             /// what it drew: opened again, frame zero is dressed afresh, each thumb on the picture
-            /// there is now and its ring at its own width, and the overlay drawn then held under its
-            /// zoom again.
+            /// there is now and its ring at its own width, and the overlay drawn then held under
+            /// its zoom again.
             #[test]
             fn an_overview_the_renderer_cannot_draw_opens_afresh() {
                 let mut h = harness();

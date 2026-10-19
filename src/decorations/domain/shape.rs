@@ -22,8 +22,12 @@ pub const LIFT_REACH: f64 = 100.0;
 /// A tile's corner radius: its window's, as the window server reports it, else `FALLBACK_RADIUS`,
 /// clamped to half the shorter side, since Core Animation draws a corner past it as given.
 pub fn radius(reported: Option<f64>, size: TileSize) -> f64 {
-    let shorter = size.width.min(size.height);
-    reported.unwrap_or(FALLBACK_RADIUS).min(shorter / 2.0).max(0.0)
+    clamped(reported.unwrap_or(FALLBACK_RADIUS), size)
+}
+
+/// `corner` clamped to half the shorter side of `size`, and never below none.
+fn clamped(corner: f64, size: TileSize) -> f64 {
+    corner.min(size.width.min(size.height) / 2.0).max(0.0)
 }
 
 /// The outline's rounded rect around a window of `size` with corners of `corner`, and that rect's
@@ -173,17 +177,17 @@ impl Laying {
     }
 
     pub fn fit(self, size: TileSize) -> Fit {
-        let clamp = |corner: f64, out: f64| {
-            let shorter = (size.width.min(size.height) + 2.0 * out.max(0.0)) / 2.0;
-            corner.min(shorter).max(0.0)
-        };
-        let lay = |lay: Lay| Lay {
-            corner: clamp(lay.corner, lay.out),
-            ..lay
+        let lay = |lay: Lay| {
+            let out = 2.0 * lay.out.max(0.0);
+            let contour = TileSize::new(size.width + out, size.height + out);
+            Lay {
+                corner: clamped(lay.corner, contour),
+                ..lay
+            }
         };
         Fit {
             size,
-            corner: clamp(self.corner, 0.0),
+            corner: clamped(self.corner, size),
             ring: lay(self.ring),
             border: lay(self.border),
         }

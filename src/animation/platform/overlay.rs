@@ -59,7 +59,7 @@ mod resize;
 mod tint;
 
 use lift::Lift;
-use resize::{install_tile_resize, resizes};
+use resize::{install_tile_resize, remove_resize, resizes};
 
 /// Above every managed window (CG layer 0), below utility panels and notification banners (19+).
 /// See "Level and coverage" in `src/animation/docs/capture-overlay-research.md`.
@@ -445,26 +445,6 @@ fn install_tile_track(tile: &mut Tile, track: &Track, corner: Option<Corner>) ->
     install_crop_grid(tile, track, corner)
 }
 
-/// Takes away every animation only a resize installs on a tile.
-fn remove_resize(tile: &Tile) {
-    for layer in tile.layers() {
-        remove_under(layer, &[TILE_SIZE_KEY]);
-    }
-    remove_under(&tile.picture, &[PICTURE_CORNER_KEY]);
-    tile.decorations.remove_resize();
-    if let Some(grid) = &tile.crop_grid {
-        for layer in grid.layers() {
-            remove_under(layer, &[
-                PIECE_MOVE_KEY,
-                PIECE_SIZE_KEY,
-                PIECE_CONTENTS_KEY,
-                PIECE_PICTURE_KEY,
-                GROUND_COLOUR_KEY,
-            ]);
-        }
-    }
-}
-
 /// The two pictures a tile's leg in two steps flies: `before` up to its corner, the picture the tile
 /// starts with, and `after` from it, its repaint.
 #[derive(Clone, Copy)]
@@ -671,6 +651,11 @@ struct Tree {
     /// The zoom the overview holds the overlay under, every lift cast under it and every tile drawn
     /// as the card (`card`); none for a flight, whose lifts are cast under no zoom.
     held: Option<f64>,
+    /// The latest media time it was handed, by the overlay as it is drawn, a track's begin or a
+    /// picture's swap: what a dress along the zoom is judged playing at (`card::dressing`).
+    now: f64,
+    /// When the last dress along the zoom installed ends, while one may still play.
+    dressed_until: Option<f64>,
 }
 
 pub struct TileOverlay {
@@ -909,11 +894,11 @@ impl TileOverlay {
 
     /// Frame zero: the tree rebuilt as `score` has it, every tile dressed from `tiles`, and the
     /// replica `score`. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
-    pub fn pose(&mut self, score: &Score, tiles: &[OverlayTile]) { self.tree.pose(score, tiles); }
+    pub fn pose(&mut self, score: &Score, tiles: &[OverlayTile]) { self.now().pose(score, tiles); }
 
     /// Plays `edits`: each folded into the replica, then carried out on the layers. A tile first seen
     /// is made and dressed from `tiles`.
-    pub fn play(&mut self, edits: &[Edit], tiles: &[OverlayTile]) { self.tree.play(edits, tiles); }
+    pub fn play(&mut self, edits: &[Edit], tiles: &[OverlayTile]) { self.now().play(edits, tiles); }
 
     /// Swaps a fresh picture into a tile mid-flight, `clipped` to its corner or whole, leaving its
     /// movement alone: a crop-drawn tile on a track of its own has its grid re-keyed along that
@@ -935,14 +920,20 @@ impl TileOverlay {
 
     /// Paints a tile's ring and border as `worn` has them where the flight now ends, a hard cut, on
     /// the bands it was dressed with. For a merge moving focus mid-flight.
-    pub fn set_tile_worn(&mut self, window: WindowId, worn: Worn) { self.tree.wear(window, worn); }
+    pub fn set_tile_worn(&mut self, window: WindowId, worn: Worn) { self.now().wear(window, worn); }
 
     /// `window`'s tile dressed again in `worn`'s decoration, its bands laid at their widths.
-    pub fn rewear_tile(&mut self, window: WindowId, worn: Worn) { self.tree.rewear(window, worn); }
+    pub fn rewear_tile(&mut self, window: WindowId, worn: Worn) { self.now().rewear(window, worn); }
 
     /// The overview holds the overlay under a zoom by `under` until it lets its tiles go: every
     /// lift cast as wide on screen as at rest under it, and every tile drawn as the card.
-    pub fn hold(&mut self, under: f64) { self.tree.hold(under); }
+    pub fn hold(&mut self, under: f64) { self.now().hold(under); }
+
+    /// The tree, told the media time it is drawn from now.
+    fn now(&mut self) -> &mut Tree {
+        self.tree.now = self.tree.now.max(media_now());
+        &mut self.tree
+    }
 
     /// The overview's outlines of its empty workspaces, ringed as `ring` is, in place of those
     /// before.
@@ -1095,6 +1086,8 @@ impl Tree {
             outlines: outline::Outlines::default(),
             tint,
             held: None,
+            now: f64::NEG_INFINITY,
+            dressed_until: None,
         }
     }
 
@@ -1164,6 +1157,7 @@ impl Tree {
             .flat_map(|node| score.tracks(node).cloned().collect::<Vec<_>>())
             .collect();
         for track in &tracks {
+            self.now = self.now.max(track.begin());
             self.install(track, tiles, true);
         }
         self.rebank();
@@ -1179,8 +1173,13 @@ impl Tree {
         for edit in edits {
             match edit.node() {
                 Some(Node::Strip | Node::Held) => zoomed = true,
-                Some(Node::Tile(window)) if !moved.contains(&window) => moved.push(window),
+                Some(Node::Tile(window) | Node::Lift(window)) if !moved.contains(&window) => {
+                    moved.push(window)
+                }
                 _ => {}
+            }
+            if let Edit::Add(track) = edit {
+                self.now = self.now.max(track.begin());
             }
             let new_leg = !matches!(edit, Edit::Add(track) if self.moves_only_the_end(track));
             self.replica.apply(edit);
@@ -1513,6 +1512,7 @@ impl Tree {
     /// `picture` onto `window`'s tile, `clipped` or whole, re-keyed along the tile's own track while
     /// it plays at `at`.
     fn swap(&mut self, window: WindowId, picture: &Picture, clipped: bool, at: f64) {
+        self.now = self.now.max(at);
         let node = Node::Tile(window);
         let Some(entry) = self.tile_layers.get_mut(&window) else {
             return;
@@ -1553,6 +1553,7 @@ impl Tree {
         self.outlines.clear();
         self.tint.clear();
         self.held = None;
+        self.dressed_until = None;
         clear_contents(&self.backdrop);
         self.backdrop.setHidden(true);
         for (_, entry) in self.tile_layers.drain() {
@@ -1725,6 +1726,7 @@ impl Tile {
             lift.layer().setFrame(frame);
             lift.shape(size, decorations.corner_at(size));
             lift.stack(picture.zPosition());
+            resize::ride_as(lift.layer(), picture);
             lift
         })
     }
@@ -1756,7 +1758,7 @@ impl Tile {
         self.picture.removeAllAnimations();
         self.decorations.remove_animations();
         if let Some(lift) = &self.lift {
-            lift.layer().removeAllAnimations();
+            lift.remove_animations();
         }
         if let Some(card) = &self.card {
             card.remove_animations();
@@ -3853,7 +3855,9 @@ mod tests {
                 let track = replica.track(Node::Tile(window), Channel::Base);
                 let lift = replica.track(Node::Lift(window), Channel::Base);
                 let lifting = lift.is_some_and(|track| track.seconds() > 0.0);
-                let resizing = track.is_some_and(resizes);
+                let carded = entry.card.is_some();
+                let resizing = track
+                    .is_some_and(|track| resizes(track) && (!carded || track.ends() > tree.now));
                 let sampled = tree.held.and_then(|_| card_frames(tree, window));
                 let turns = sampled
                     .as_ref()
@@ -3862,8 +3866,12 @@ mod tests {
                 for (index, layer) in entry.layers().into_iter().enumerate() {
                     let caster = index == 1;
                     let mut keys = Vec::new();
-                    if lift_layer == Some(layer as *const CALayer) && lifting {
+                    let is_lift = lift_layer == Some(layer as *const CALayer);
+                    if is_lift && lifting {
                         keys.push(lift::LIFT_KEY);
+                    }
+                    if is_lift && (resizing || turns) {
+                        keys.push(lift::LIFT_PATH_KEY);
                     }
                     if let Some(track) = track {
                         assert_eq!(
@@ -3912,7 +3920,7 @@ mod tests {
             let entry = &tree.tile_layers[&window];
             let own = entry.decorations.own();
             let selected = entry.worn.wears_ring == crate::decorations::domain::style::Ring::Active;
-            let span = dressing(&tree.replica, window)?;
+            let span = dressing(&tree.replica, window, tree.now)?;
             let frames = dressed_over(&tree.replica, window, own, selected, span);
             (frames.len() > 1).then_some((span, frames))
         }
@@ -3946,13 +3954,22 @@ mod tests {
                 let out = held.wash.out;
                 let wash = rect(-out, -out, size.width + 2.0 * out, size.height + 2.0 * out);
                 assert_eq!(card.wash().frame(), wash, "{window:?}");
+                let track = tree.replica.track(Node::Tile(*window), Channel::Base);
                 let Some(((begin, end), fits)) = card_frames(tree, *window) else {
-                    assert!(rini_keys(card.wash()).is_empty(), "{window:?} washed still");
+                    let live = |track: &Track| resizes(track) && track.ends() > tree.now;
+                    let rides = held.wash.share > 0.0 && track.is_some_and(live);
+                    let riding = if rides {
+                        vec!["rini.card.wash.size"]
+                    } else {
+                        Vec::new()
+                    };
+                    assert_eq!(rini_keys(card.wash()), sorted(riding), "{window:?} its wash");
                     continue;
                 };
                 let (_, dresses) = card_dresses(tree, *window).expect("dressed along the zoom");
                 let moves = |f: &dyn Fn(&Dressed) -> f64| {
-                    dresses.iter().any(|frame| f(frame) != f(&dresses[0]))
+                    let shows = dresses.iter().any(|(_, dress)| dress.wash.share > 0.0);
+                    shows && dresses.iter().any(|frame| f(frame) != f(&dresses[0]))
                 };
                 let mut washing = Vec::new();
                 if moves(&|(_, dress)| dress.wash.share) {
@@ -3977,6 +3994,23 @@ mod tests {
                 let corners: Vec<(f64, f64)> =
                     fits.iter().enumerate().map(|(k, fit)| (k as f64 / last, fit.corner)).collect();
                 assert_eq!(corner.keys, corners, "{window:?}");
+                if let Some(lift) = &entry.lift {
+                    let shadow =
+                        installed(&entry.decorations.shadow, "rini.tile.shadow.path", path_of);
+                    let cast = installed(lift.layer(), lift::LIFT_PATH_KEY, path_of);
+                    assert_eq!(cast.keys.len(), shadow.keys.len(), "{window:?}");
+                    for ((_, cast), (_, shadow)) in cast.keys.iter().zip(&shadow.keys) {
+                        assert!(
+                            objc2_core_graphics::CGPath::equal_to_path(Some(cast), Some(shadow)),
+                            "{window:?} its lift cut as its own shadow is"
+                        );
+                    }
+                    let mask = rini_keys(lift.mask());
+                    assert!(
+                        mask.contains(&"rini.tile.lift.mask.path".to_string()),
+                        "{mask:?}"
+                    );
+                }
             }
         }
 
@@ -4638,9 +4672,10 @@ mod tests {
         /// its window's corner and ring and no wash; the zoom out eases each, on screen, into the
         /// card's 11pt corner, the selected one's ring into the card's at its selection and its
         /// wash in, with the zoom's own begin and length, from the window's at its first frame;
-        /// held, each is the card; and the zoom back in eases them out again onto the window's at
-        /// its last frame, so neither hand-over to the real windows jumps. A thumb's ring keeps its
-        /// width on screen through the zoom rather than thinning with it.
+        /// held, each is the card, and a selected thumb resizing carries its wash and its lift with
+        /// it; and the zoom back in eases them out again onto the window's at its last frame, so
+        /// neither hand-over to the real windows jumps. A thumb's ring keeps its width on screen
+        /// through the zoom rather than thinning with it.
         #[test]
         fn the_overview_s_thumbs_ease_into_the_card_with_the_zoom_and_out_of_it() {
             use crate::animation::domain::choreography::overview::{
@@ -4791,6 +4826,35 @@ mod tests {
             assert!(close(wash.cornerRadius() * depth, SELECTION_CORNER));
             let (_, _, beside) = entry(&tree, w(1));
             assert_eq!(beside.opacity(), 0.0, "only the selected one");
+
+            let Some(Value::Rect(from)) = score.model(Node::Tile(w(2))) else {
+                panic!("placed")
+            };
+            let to = GroupRect::new(
+                from.origin,
+                from.size + rini_geometry::space::Size::new(300.0, 0.0),
+            );
+            let resize = Track::between(
+                Node::Tile(w(2)),
+                Channel::Base,
+                Value::Rect(from),
+                Value::Rect(to),
+                100.5,
+                0.35,
+                Curve::Bezier(crate::animation::domain::motion::easing::MOTION_CURVE),
+            );
+            let edits = vec![
+                Edit::Place(Node::Tile(w(2)), Value::Rect(to)),
+                Edit::Add(resize),
+            ];
+            play(&mut tree, &mut score, edits);
+            let (_, _, wash) = entry(&tree, w(2));
+            let washed = installed(&wash, "rini.card.wash.size", rect_in);
+            let out = 2.0 * SELECTION_OUTSET / depth;
+            let (first, last) = (washed.keys[0].1.size, washed.keys[washed.keys.len() - 1].1.size);
+            assert!(close(first.width, from.width() + out) && close(last.width, to.width() + out));
+            let lift = tree.tile_layers[&w(2)].lift.as_ref().expect("lifted");
+            assert!(rini_keys(lift.layer()).contains(&lift::LIFT_PATH_KEY.to_string()));
 
             let edits = toward(&score, &at_rest(&scene, &shown), 101.0, slide);
             play(&mut tree, &mut score, edits);

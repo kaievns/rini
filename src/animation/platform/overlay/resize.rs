@@ -7,12 +7,13 @@ use objc2::runtime::AnyObject;
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect};
 use objc2_core_graphics::CGPath;
 use objc2_foundation::{NSArray, NSString};
-use objc2_quartz_core::{CAKeyframeAnimation, CAMediaTiming, CAPropertyAnimation};
+use objc2_quartz_core::{CAKeyframeAnimation, CALayer, CAMediaTiming, CAPropertyAnimation};
 use rini_geometry::space::TileSize;
 
 use super::{
-    PICTURE_CORNER_KEY, Tile, animation, as_frame, cf_object, changes, number_object, point_object,
-    rect_object, size_of,
+    GROUND_COLOUR_KEY, PICTURE_CORNER_KEY, PIECE_CONTENTS_KEY, PIECE_MOVE_KEY, PIECE_PICTURE_KEY,
+    PIECE_SIZE_KEY, TILE_ANIMATION_KEY, TILE_SIZE_KEY, Tile, animation, as_frame, cf_object,
+    changes, number_object, point_object, rect_object, size_of,
 };
 use crate::animation::domain::motion::score::{Track, Value};
 use crate::decorations::domain::shape::Fit;
@@ -65,12 +66,21 @@ pub(super) fn resizes(track: &Track) -> bool {
     })
 }
 
-/// The tile's decorations carried through `track`'s resize as they are laid at each size, and its
-/// picture's corner with them while it changes.
+/// The tile's pieces carried through `track`'s resize as its decorations lay each size: every piece
+/// `install_pieces` carries, and a card's wash.
 pub(super) fn install_tile_resize(tile: &Tile, track: &Track) {
     let decorations = &tile.decorations;
     let resize = TileResize(track, |size| decorations.fit_at(size));
-    decorations.install_resize(&resize);
+    install_pieces(tile, &resize);
+    if let Some(card) = &tile.card {
+        card.ride(&resize);
+    }
+}
+
+/// The tile's decorations carried through `resize`, its picture's corner with them while it
+/// changes, and its lift's shape.
+pub(super) fn install_pieces(tile: &Tile, resize: &impl Resize) {
+    tile.decorations.install_resize(resize);
     let radius = |fit: &Fit| fit.corner;
     if resize.changes(radius) {
         add_under(
@@ -80,6 +90,47 @@ pub(super) fn install_tile_resize(tile: &Tile, track: &Track) {
         );
     } else {
         remove_under(&tile.picture, &[PICTURE_CORNER_KEY]);
+    }
+    if let Some(lift) = &tile.lift {
+        lift.install_resize(resize);
+    }
+}
+
+/// `layer` riding whatever `tile`'s frame plays: its move and its resize, as the tile's picture
+/// plays them.
+pub(super) fn ride_as(layer: &CALayer, tile: &CALayer) {
+    for key in [TILE_ANIMATION_KEY, TILE_SIZE_KEY] {
+        let key = NSString::from_str(key);
+        // SAFETY: a read of the picture's own animation.
+        if let Some(riding) = unsafe { tile.animationForKey(&key) } {
+            layer.addAnimation_forKey(&riding, Some(&key));
+        }
+    }
+}
+
+/// Takes away every animation only a resize installs on a tile.
+pub(super) fn remove_resize(tile: &Tile) {
+    for layer in tile.layers() {
+        remove_under(layer, &[TILE_SIZE_KEY]);
+    }
+    remove_under(&tile.picture, &[PICTURE_CORNER_KEY]);
+    tile.decorations.remove_resize();
+    if let Some(lift) = &tile.lift {
+        lift.remove_resize();
+    }
+    if let Some(card) = &tile.card {
+        card.remove_resize();
+    }
+    if let Some(grid) = &tile.crop_grid {
+        for layer in grid.layers() {
+            remove_under(layer, &[
+                PIECE_MOVE_KEY,
+                PIECE_SIZE_KEY,
+                PIECE_CONTENTS_KEY,
+                PIECE_PICTURE_KEY,
+                GROUND_COLOUR_KEY,
+            ]);
+        }
     }
 }
 

@@ -47,8 +47,8 @@ pub struct Metrics {
     pub gap: f64,
     /// The width of the ring around the selected row: the card's.
     pub ring: f64,
-    /// How far the selected row's wash and ring reach outside its card, the corner they round to and
-    /// the wash's colour: the card's selection, which the overview's selected thumb wears too.
+    /// How far the selected row's wash and ring reach outside its card, the corner they round to
+    /// and the wash's colour: the card's selection, which the overview's selected thumb wears too.
     pub selection_outset: f64,
     pub selection_corner: f64,
     pub wash: Colour,
@@ -411,8 +411,8 @@ mod tests {
         assert_eq!(crate::switcher::domain::entries::BEHIND + 1, card::STACK.cards);
     }
 
-    /// The selection's wash and ring reach the card's selection outset past the selected row's card on
-    /// every side, at the card's height whatever the caption under it.
+    /// The selection's wash and ring reach the card's selection outset past the selected row's card
+    /// on every side, at the card's height whatever the caption under it.
     #[test]
     fn the_selection_reaches_the_card_s_outset_around_the_selected_card() {
         let m = metrics();

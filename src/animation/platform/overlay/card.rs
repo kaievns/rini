@@ -1,23 +1,24 @@
 //! The overview's thumbs drawn as the card (`choreography::overview::card`): while the overview
 //! holds the overlay every tile is laid as its card dress has it, its picture clipped to that
 //! corner, the selected one's wash drawn under it in the card's `WASH`. Along the zoom each piece
-//! plays its dress at every frame, and once the zoom ends the dress its models give; the outlines of
-//! empty workspaces keep their width on screen with the zoom.
+//! plays its dress at every frame, and once the zoom ends the dress its models give; the outlines
+//! of empty workspaces keep their width on screen with the zoom.
+
+use std::cell::Cell;
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::CGColor;
-use objc2_foundation::NSString;
 use objc2_quartz_core::CALayer;
 use rini_core::ids::WindowId;
 use rini_geometry::space::{Respace, TileSize, ToCg};
 
-use super::resize::{Sampled, changing, install_tile_resize, keyframes, resizes};
-use super::{
-    PICTURE_CORNER_KEY, TILE_ANIMATION_KEY, TILE_SIZE_KEY, Tile, Tree, as_frame, number_object,
-    point_object, rect_object, remove_resize,
+use super::resize::{
+    Sampled, changing, install_pieces, install_tile_resize, keyframes, remove_resize, resizes,
+    ride_as,
 };
+use super::{TILE_SIZE_KEY, Tile, Tree, as_frame, number_object, point_object, rect_object};
 use crate::animation::domain::choreography::overview::card::{
     self, Dress, Wash, Zoomed, dressed, dressed_over, dressing,
 };
@@ -47,6 +48,8 @@ const WASH_KEYS: [&str; 4] = [
 pub(super) struct Card {
     holder: Retained<CALayer>,
     wash: Retained<CALayer>,
+    /// The wash as last placed, which a resize of its thumb carries.
+    placed: Cell<Wash>,
 }
 
 impl Card {
@@ -63,7 +66,12 @@ impl Card {
         wash.setOpacity(0.0);
         holder.addSublayer(&wash);
         container.addSublayer(&holder);
-        Card { holder, wash }
+        let placed = Cell::new(Wash {
+            share: 0.0,
+            out: 0.0,
+            corner: 0.0,
+        });
+        Card { holder, wash, placed }
     }
 
     /// The layer that rides the thumb's frame.
@@ -74,13 +82,19 @@ impl Card {
 
     /// The wash as `wash` has it around a thumb of `size`.
     fn place(&self, size: TileSize, wash: Wash) {
+        self.placed.set(wash);
         self.wash.setFrame(wash_frame(size, wash));
         self.wash.setCornerRadius(wash.corner);
         self.wash.setOpacity(wash.share as f32);
     }
 
-    /// The wash through `frames` from `begin` over `seconds`, each piece only while it changes.
+    /// The wash through `frames` from `begin` over `seconds`, each piece only while it changes, and
+    /// none while none of it shows.
     fn install(&self, (begin, seconds): (f64, f64), frames: &[(TileSize, Dress)]) {
+        if frames.iter().all(|(_, dress)| dress.wash.share <= 0.0) {
+            remove_under(&self.wash, &WASH_KEYS);
+            return;
+        }
         let frame = |(size, dress): &(TileSize, Dress)| wash_frame(*size, dress.wash);
         let pieces: [(&str, &str, Vec<Retained<AnyObject>>); 4] = [
             (
@@ -126,6 +140,24 @@ impl Card {
         }
     }
 
+    /// The wash as last placed riding `resize` of its thumb, its size at each fit; none of it riding
+    /// anything while none of it shows.
+    pub(super) fn ride(&self, resize: &impl Resize) {
+        remove_under(&self.wash, &[WASH_OPACITY_KEY, WASH_MOVE_KEY, WASH_CORNER_KEY]);
+        let wash = self.placed.get();
+        if wash.share <= 0.0 {
+            remove_under(&self.wash, &[WASH_SIZE_KEY]);
+            return;
+        }
+        let bounds = resize.rect("bounds", |fit| {
+            CGRect::new(CGPoint::new(0.0, 0.0), wash_frame(fit.size, wash).size)
+        });
+        add_under(&self.wash, &bounds, WASH_SIZE_KEY);
+    }
+
+    /// Takes away whatever its wash rides.
+    pub(super) fn remove_resize(&self) { remove_under(&self.wash, &WASH_KEYS); }
+
     pub(super) fn remove_animations(&self) {
         self.holder.removeAllAnimations();
         self.wash.removeAllAnimations();
@@ -156,13 +188,7 @@ impl Tile {
             let container = picture.superlayer().unwrap_or_else(|| picture.clone());
             let card = Card::new(&container, picture.frame());
             card.stack(picture.zPosition());
-            for key in [TILE_ANIMATION_KEY, TILE_SIZE_KEY] {
-                let key = NSString::from_str(key);
-                // SAFETY: a read of the picture's own animation.
-                if let Some(riding) = unsafe { picture.animationForKey(&key) } {
-                    card.layer().addAnimation_forKey(&riding, Some(&key));
-                }
-            }
+            ride_as(card.layer(), picture);
             card
         })
     }
@@ -180,19 +206,29 @@ impl Tree {
         self.dress_cards(&windows);
     }
 
-    /// Each of `windows`' tiles dressed as the card while the overview holds the overlay.
+    /// Each of `windows`' tiles dressed as the card while the overview holds the overlay, and
+    /// every tile once the last dress along a zoom has ended, so none keeps what it played.
     pub(super) fn dress_cards(&mut self, windows: &[WindowId]) {
         if self.held.is_none() {
             return;
         }
+        let windows = match self.dressed_until {
+            Some(end) if end <= self.now => {
+                self.dressed_until = None;
+                self.tile_layers.keys().copied().collect()
+            }
+            _ => windows.to_vec(),
+        };
         for window in windows {
-            self.dress_card(*window);
+            self.dress_card(window);
         }
     }
 
     /// `window`'s tile laid as its card dress has it once the replica's tracks end, its picture
     /// clipped, the wash under it as selected or not, the one wearing the active ring selected;
-    /// along the zoom, its dress at every frame, and otherwise its own track's resize laid again.
+    /// along the zoom while it plays, its dress at every sample, its lift's shape with it; else
+    /// while its own track resizes it, that resize laid again as it is laid now, its lift and its
+    /// wash with it; and else nothing riding any of it.
     fn dress_card(&mut self, window: WindowId) {
         let Some(entry) = self.tile_layers.get_mut(&window) else {
             return;
@@ -214,36 +250,41 @@ impl Tree {
         if let Some(frame) = model {
             card.place(frame.size.respace(), held.wash);
         }
-        let frames = dressing(&self.replica, window)
+        let frames = dressing(&self.replica, window, self.now)
             .map(|span| (span, dressed_over(&self.replica, window, own, selected, span)))
             .filter(|(_, frames)| frames.len() > 1);
-        match frames {
-            Some(((begin, end), frames)) => {
+        let live = self
+            .replica
+            .track(Node::Tile(window), Channel::Base)
+            .filter(|track| track.seconds() > 0.0 && resizes(track) && track.ends() > self.now);
+        let until = match (frames, live) {
+            (Some(((begin, end), frames)), live) => {
                 let fits: Vec<Fit> =
                     frames.iter().map(|(size, dress)| dress.laying.fit(*size)).collect();
-                let sampled = Sampled {
+                install_pieces(entry, &Sampled {
                     begin,
                     seconds: end - begin,
                     fits: &fits,
-                };
-                entry.decorations.install_resize(&sampled);
-                if sampled.changes(|fit| fit.corner) {
-                    let corner = sampled.number("cornerRadius", |fit| fit.corner);
-                    add_under(&entry.picture, &corner, PICTURE_CORNER_KEY);
-                } else {
-                    remove_under(&entry.picture, &[PICTURE_CORNER_KEY]);
-                }
+                });
                 card.install((begin, end - begin), &frames);
-            }
-            None => {
-                remove_under(&card.wash, &WASH_KEYS);
-                match self.replica.track(Node::Tile(window), Channel::Base) {
-                    Some(track) if track.seconds() > 0.0 && resizes(track) => {
-                        install_tile_resize(entry, track)
+                if live.is_none() {
+                    for layer in entry.layers() {
+                        remove_under(layer, &[TILE_SIZE_KEY]);
                     }
-                    _ => remove_resize(entry),
                 }
+                Some(end)
             }
+            (None, Some(track)) => {
+                install_tile_resize(entry, track);
+                Some(track.ends())
+            }
+            (None, None) => {
+                remove_resize(entry);
+                None
+            }
+        };
+        if let Some(end) = until {
+            self.dressed_until = Some(self.dressed_until.map_or(end, |until| until.max(end)));
         }
     }
 

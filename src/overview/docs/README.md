@@ -31,14 +31,14 @@ window's frame, so the real strip's own scroll moves no thumb. A row whose curre
 or that has none, keeps its strip where it shows.
 
 **A row is the usable frame at the scene's depth.** Tiles, floating windows and an empty row's
-outline all map through the same transform, so a floating window keeps its place on the display
-and a stacked column is drawn as the strip draws it. A row's `strip` is where its first column
-starts: every tiled thumb sits at its window's place on the strip from there, so the overlay draws
-a row as one container that a press along it moves, and no thumb in it, and the real strip's own
-scroll moves neither. Each tiled thumb is that place narrowed and shortened by the card's 14pt gap
-about its centre (`apart`): at depth 0.3 the strip's own gap is under a point, and a run of
-terminals drew as one slab. Narrowed with its proportions kept, a short wide window took a sliver
-off its height, so a column's windows stayed a slab. Narrowing rather than spreading the row keeps every place, the axis
+outline all map through the same transform, so a floating window keeps its place on the display and
+a stacked column is drawn as the strip draws it. A row's `strip` is where its first column starts:
+every tiled thumb sits at its window's place on the strip from there, so the overlay draws a row as
+one container that a press along it moves, and no thumb in it, and the real strip's own scroll moves
+neither. Each tiled thumb is that place narrowed and shortened by the card's 14pt gap about its
+centre (`apart`): at depth 0.3 the strip's own gap is under a point, and a run of terminals drew as
+one slab. Narrowed with its proportions kept, a short wide window took a sliver off its height, so a
+column's windows stayed a slab. Narrowing rather than spreading the row keeps every place, the axis
 and every pan as the strip has them. At rest the shown row's thumbs are drawn at their windows'
 frames, so frame zero is still the screen.
 
@@ -65,27 +65,30 @@ lift: the shadow is a flight's on screen, where at the zoom's scale it was a fif
 switcher's cards cast none: its panel's window casts the shadow there, so there is no card shadow
 to share.
 
-**Thumbs are the switcher's cards.** Held, every thumb rounds to the card's 11pt `CORNER` on
-screen, its ring and border round that corner, and the selected one wears the card's selection: the
-`WASH` under it, `SELECTION_OUTSET` out at `SELECTION_CORNER`, and its ring, at least the card's
-`RING`, laid with its outer edge on the wash's, as the switcher draws its selected card
+**Thumbs are the switcher's cards.** Held, every thumb rounds to the card's 11pt `CORNER` on screen,
+its ring and border round that corner, and the selected one wears the card's selection: the `WASH`
+under it, `SELECTION_OUTSET` out at `SELECTION_CORNER`, and its ring, at least the card's `RING`,
+laid with its outer edge on the wash's, as the switcher draws its selected card
 (`src/chrome/domain/card.rs`). Each value is eased on screen from the window's own to the card's by
 the share the overview is held (`Node::Held`) and divided by the zoom
-(`src/animation/domain/choreography/overview/card.rs`, `dress`), so frame zero and the landing
-draw the window's own corner and ring and no wash, and neither hand-over to the real windows jumps.
-While the overview holds the overlay (`Render::Hold`) the overlay lays every piece of a thumb as
-that dress has it (`DecorationLayers::lay`) and clips every picture to it, since a picture not
-clipped carries its window's own corner and the ring would round past it; along the zoom it plays
-the dress sampled `DRESS_STEP` apart (`dressing`, `dressed_over`,
-`src/animation/platform/overlay/card.rs`). Rings and borders keep their width on screen through the
-zoom so, and an empty workspace's outline its ring's (`outlined`); the engine sends every thumb in
-its window's own decoration, again only when that changes.
+(`src/animation/domain/choreography/overview/card.rs`, `dress`), so frame zero and the landing draw
+the window's own corner and ring and no wash, and neither hand-over to the real windows jumps. While
+the overview holds the overlay (`Render::Hold`) the overlay lays every piece of a thumb as that
+dress has it (`DecorationLayers::lay`) and clips every picture to it, since a picture not clipped
+carries its window's own corner and the ring would round past it; along the zoom it plays the dress
+sampled `DRESS_STEP` apart, every frame for a thumb its own track resizes then, its lift's shape with it
+(`dressing`, `dressed_over`, `src/animation/platform/overlay/card.rs`). Held, a thumb's own resize
+carries its wash and its lift as it carries its other pieces. Rings and borders keep their width on
+screen through the zoom so, and an empty workspace's outline its ring's (`outlined`); the engine
+sends every thumb in its window's own decoration, again only when that changes.
 
 Measured 2026-10-19 in a script over the zoom's curve, not on screen: sampled 1/60s apart, Core
 Animation's straight line between two samples lies within 0.084pt on screen of the corner it eases,
 0.017pt of a ring's width and 0.008 of the wash's opacity, at depth 0.22 over the 0.35s zoom; 1/120s
-apart, within 0.023pt. In a release test build the zoom out's play for 32 thumbs took 3.8 to 4.5ms
-dressed, against 0.8 to 1.3ms undressed.
+apart, within 0.023pt, 0.005pt and 0.002, and a resizing thumb's pieces within 0.13pt of its frame
+in the strip's points, where 1/60s left 0.5pt. In a release test build, 4 rows of 8 thumbs, the
+zoom out's play took 4.8 to 6.1ms dressed, against 0.8 to 1.6ms undressed, most of it the paths of
+the casters' shadows and masks at every sample.
 
 **The desktop darkens on the score too.** Held, the desktop behind the thumbs is darkened by the
 card's backdrop, `--n0` at 0.40, the switcher's own darkening (`BACKDROP`, `BACKDROP_ALPHA` in
@@ -102,11 +105,6 @@ the moved window on the axis, so it pans nothing; the columns it passes change p
 `domain/depth.rs` → `domain/stacks.rs` → `domain/scene.rs` → `domain/changes.rs`.
 
 ## Known debt
-
-**A lift is cut to the corner its dress ends on.** A thumb's lift is shaped at its models and not
-along the zoom, so through the zoom back in its shadow is cut to the window's corner while the
-picture still rounds nearer the card's. Not checked on screen; under the lift's blur it is not
-expected to show.
 
 **Frame zero clips every picture.** A thumb's picture is clipped to its window's corner from frame
 zero, where a window's own picture was drawn whole. Not checked on screen; the clip follows the
