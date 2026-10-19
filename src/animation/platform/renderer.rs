@@ -60,11 +60,11 @@ pub enum Render {
     /// `window`'s tile wearing its ring and border as `worn` has them where the flight now ends.
     Wear { window: WindowId, worn: Worn },
     /// `window`'s tile dressed again in `worn`'s decoration as well, each band laid at its width:
-    /// the overview's thumbs, whose bands are drawn at their width on screen while it is held.
+    /// an overview's thumb whose window's decoration changed while it is open.
     Rewear { window: WindowId, worn: Worn },
-    /// Every tile's lift cast under the overview's zoom by `under`, as wide on screen as at rest,
-    /// until the overlay lets its tiles go.
-    CastLifts { under: f64 },
+    /// The overview holds the overlay under a zoom by `under` until it lets its tiles go: every
+    /// lift cast as wide on screen as at rest under it, and every tile drawn as the card.
+    Hold { under: f64 },
     /// The overlay holed over each window ending at one of these, and over the band of the outset
     /// given that it wears at rest, the holes before replaced.
     Holes(Vec<(OverlayRect, f64)>),
@@ -378,7 +378,7 @@ impl Renderer {
             Render::Focus { window, focused } => overlay.set_tile_focused(window, focused),
             Render::Wear { window, worn } => overlay.set_tile_worn(window, worn),
             Render::Rewear { window, worn } => overlay.rewear_tile(window, worn),
-            Render::CastLifts { under } => overlay.cast_lifts(under),
+            Render::Hold { under } => overlay.hold(under),
             Render::Holes(ends) => overlay.set_holes(&ends),
             Render::Outlines { outlines, ring } => overlay.set_outlines(&outlines, ring),
             // Its alpha goes up after the flush; the rest windows are placed before the transaction.

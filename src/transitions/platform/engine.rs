@@ -1924,7 +1924,7 @@ mod tests {
                 Render::Focus { .. } => "focus",
                 Render::Wear { .. } => "wear",
                 Render::Rewear { .. } => "rewear",
-                Render::CastLifts { .. } => "cast_lifts",
+                Render::Hold { .. } => "hold",
                 Render::Holes(_) => "holes",
                 Render::Show => "show",
                 Render::PlaceRest { .. } => "place_rest",
@@ -4490,41 +4490,36 @@ mod tests {
                     .collect()
             }
 
-            /// Held, every thumb's ring is dressed again as wide on screen under the zoom as it is
-            /// at rest, the selected one's as wide as the card's ring, so the selection reads while
-            /// held, the accent moving with it, and narrowed back as the zoom in begins.
+            /// Every thumb is sent wearing its window's own decoration, held or not, the overlay
+            /// dressing it as the card under the zoom: none is dressed again as it zooms out, as
+            /// the selection moves or as it zooms back in, and the ring moves with the selection.
             #[test]
-            fn the_thumbs_rings_are_as_wide_on_screen_as_at_rest_while_held() {
+            fn each_thumb_is_sent_as_its_window_wears_it_and_the_ring_moves_with_the_selection() {
                 let mut h = harness();
                 let held = held_open(&mut h);
-                let scale = view(1).scene.scale;
-                let on_screen = |widths: Vec<(WindowId, f64)>| -> Vec<(WindowId, f64)> {
-                    let mut widths: Vec<(WindowId, f64)> = widths
-                        .into_iter()
-                        .map(|(window, width)| (window, (width * scale * 1e6).round() / 1e6))
-                        .collect();
-                    widths.sort_by_key(|(window, _)| window.idx);
-                    widths
-                };
-                let ring = crate::chrome::domain::card::RING;
-                assert_eq!(on_screen(rewidths(&held)), [
-                    (w(1), ring),
-                    (w(2), 1.0),
-                    (w(3), 1.0)
-                ]);
+                assert!(rewidths(&held).is_empty(), "{:?}", rewidths(&held));
+                for tile in h.engine.overview_tiles() {
+                    assert_eq!(tile.worn.decoration, ringed(), "{:?}", tile.window);
+                }
                 let sent = h.step(Event::OverviewScene {
                     view: view(2),
                     presses: Vec::new(),
                 });
-                assert_eq!(
-                    on_screen(rewidths(&sent)),
-                    [(w(1), 1.0), (w(2), ring)],
-                    "the accent moves with the selection"
+                assert!(rewidths(&sent).is_empty());
+                let worn: Vec<(WindowId, Ring)> = batches(&sent)
+                    .into_iter()
+                    .flat_map(|batch| &batch.commands)
+                    .filter_map(|command| match command {
+                        Render::Wear { window, worn } => Some((*window, worn.wears_ring)),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(
+                    worn.contains(&(w(2), Ring::Active)) && worn.contains(&(w(1), Ring::None)),
+                    "{worn:?}"
                 );
                 let sent = h.step(Event::OverviewClose { view: view(1) });
-                let narrowed = rewidths(&sent);
-                assert_eq!(narrowed.len(), 3);
-                assert!(narrowed.iter().all(|(_, width)| *width == 1.0));
+                assert!(rewidths(&sent).is_empty());
             }
 
             fn harness() -> Harness {
@@ -4608,18 +4603,12 @@ mod tests {
                 let frame_zero = frame_zero(&h);
                 let sent = h.step(frame_zero);
                 let batch = only_batch(&sent);
-                assert_eq!(kinds(batch), vec![
-                    "dress",
-                    "stage",
-                    "show",
-                    "cast_lifts",
-                    "play"
-                ]);
+                assert_eq!(kinds(batch), vec!["dress", "stage", "show", "hold", "play"]);
                 let Render::Stage { score, .. } = &batch.commands[1] else {
                     unreachable!()
                 };
                 assert!(
-                    matches!(batch.commands[3], Render::CastLifts { under }
+                    matches!(batch.commands[3], Render::Hold { under }
                         if under == view(1).scene.scale),
                     "the lifts cast under the held zoom before they rise"
                 );
@@ -4646,7 +4635,7 @@ mod tests {
                 assert!((zoom.seconds() - LENGTH.as_secs_f64()).abs() < 1e-9);
                 let darkens = super::super::overview::played(&batch.commands)
                     .into_iter()
-                    .any(|edit| matches!(edit, Edit::Add(track) if track.node() == Node::Tint));
+                    .any(|edit| matches!(edit, Edit::Add(track) if track.node() == Node::Held));
                 assert!(darkens, "the desktop darkens with the zoom out");
                 h.commit(batch.seq);
                 let mut swept = h.engine.overview_score().clone();
@@ -4761,7 +4750,7 @@ mod tests {
                 let sent = h.step(Event::OverviewClose { view: view(1) });
                 assert_eq!(holds(&sent), vec![Hold::Transition]);
                 let batch = only_batch(&sent);
-                assert_eq!(kinds(batch), vec!["rewear", "rewear", "rewear", "holes", "play"]);
+                assert_eq!(kinds(batch), vec!["holes", "play"]);
                 h.commit(batch.seq);
                 let landing = at_rest(
                     &view(1).scene,
@@ -4796,8 +4785,8 @@ mod tests {
 
             /// Held when the renderer reports it has nothing to draw on, the overview lets go of
             /// what it drew: opened again, frame zero is dressed afresh, each thumb on the picture
-            /// there is now and its ring at its own width, not the widened one it was held with,
-            /// and its lifts cast again on the overlay drawn then.
+            /// there is now and its ring at its own width, and the overlay drawn then held under
+            /// its zoom again.
             #[test]
             fn an_overview_the_renderer_cannot_draw_opens_afresh() {
                 let mut h = harness();
@@ -4810,8 +4799,8 @@ mod tests {
                 let frame_zero = frame_zero(&h);
                 let sent = h.step(frame_zero);
                 assert!(
-                    kinds(only_batch(&sent)).contains(&"cast_lifts"),
-                    "its lifts cast again on the new overlay"
+                    kinds(only_batch(&sent)).contains(&"hold"),
+                    "the new overlay held again"
                 );
                 let Some(Render::Stage { tiles, .. }) = only_batch(&sent)
                     .commands

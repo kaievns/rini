@@ -184,7 +184,12 @@ not been checked on screen; a `--n0` wash on the cards behind is the first thing
 **Two layers for the selection, not one.** The `--ember-soft` wash sits UNDER the tiles, where it tints
 a row whose picture has not arrived; the ring sits OVER them. They cannot be one layer: under the tiles
 the ring is clipped away on every side except the 4pt margin and reads as a glow, and over them the wash
-would hide the picture it is marking.
+would hide the picture it is marking. Both are the card's selection (`SELECTION_OUTSET`,
+`SELECTION_CORNER` and `WASH` in `src/chrome/domain/card.rs`, laid by `Metrics::selection`), which
+the overview's selected thumb wears too. Every card, the wash and the ring round on the continuous
+curve (`round_as_card` in `platform/panel.rs`), the curve macOS draws a window's corner on, which the
+overview's thumbs, their pictures and their rings must follow (`src/decorations/docs/corner.md`), so
+the two draw one corner shape as well as one corner radius.
 
 **The ring travels and the strip scrolls under it.** Two transactions per draw, not one: contents with
 implicit actions off, then geometry with them on. Contents can never animate — that is the cross-fade

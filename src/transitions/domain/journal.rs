@@ -952,7 +952,7 @@ impl Journalled {
 }
 
 /// The mark an overview's command leaves, a flight's where a flight gives the same; none for its
-/// clock, its bands or what it forgets. `read`: what the tick that gave it read, which a lift
+/// clock or what it forgets. `read`: what the tick that gave it read, which a lift
 /// carries.
 fn overview_mark(command: overview::Command, read: Arrived) -> Option<Mark> {
     use overview::Command as Overview;
@@ -973,7 +973,7 @@ fn overview_mark(command: overview::Command, read: Arrived) -> Option<Mark> {
         Overview::Settle => Some(Mark::Settle),
         Overview::ReportUp => Some(Mark::ReportUp),
         Overview::ReportSettled => Some(Mark::ReportSettled),
-        Overview::Clock(_) | Overview::Widen(_) | Overview::Forget => None,
+        Overview::Clock(_) | Overview::Forget => None,
         Overview::Replay => step(OverviewStep::Replay),
     }
 }

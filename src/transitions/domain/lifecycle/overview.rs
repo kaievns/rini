@@ -72,10 +72,6 @@ pub enum Command {
     ReportSettled,
     /// The frame clock started, or stopped: it ticks only while something is to be waited for.
     Clock(bool),
-    /// The thumbs' bands drawn as wide on screen as at rest, or at their own width, which the zoom
-    /// thins: wide only while it is held, so they thicken as the zoom out lands and thin as the zoom
-    /// in begins (`specs/overview.md`, not yet met).
-    Widen(bool),
     /// The flights held while it was up go on, in order.
     Replay,
 }
@@ -198,12 +194,7 @@ impl Overview {
             }
             (Some(Phase::Entering { .. } | Phase::Held), Event::Scene) => out.push(Command::Play),
             (Some(Phase::Entering { .. } | Phase::Held), Event::Close) => {
-                out.extend([
-                    Command::Hold,
-                    Command::Widen(false),
-                    Command::Exit,
-                    Command::Clock(true),
-                ]);
+                out.extend([Command::Hold, Command::Exit, Command::Clock(true)]);
                 self.phase = Some(Phase::Exiting { until: now + self.length });
             }
             (Some(Phase::Exiting { until }), Event::Tick { settled, landed }) if now >= until => {
@@ -252,11 +243,7 @@ impl Overview {
 
     fn hold(&mut self, out: &mut Vec<Command>) {
         self.phase = Some(Phase::Held);
-        out.extend([
-            Command::Widen(true),
-            Command::Release,
-            Command::Clock(false),
-        ]);
+        out.extend([Command::Release, Command::Clock(false)]);
     }
 
     /// Once its windows read landed, or its patience runs out: what rests placed first when
@@ -343,7 +330,6 @@ mod tests {
             "still zooming out"
         );
         assert_eq!(tick(&mut overview, t0 + LENGTH), vec![
-            Command::Widen(true),
             Command::Release,
             Command::Clock(false)
         ]);
@@ -392,7 +378,6 @@ mod tests {
         let closed = t0 + Duration::from_secs(2);
         assert_eq!(overview.on(Event::Close, closed), vec![
             Command::Hold,
-            Command::Widen(false),
             Command::Exit,
             Command::Clock(true)
         ]);
@@ -441,12 +426,7 @@ mod tests {
         let (mut overview, _) = opened(false, t0);
         overview.on(Event::FrameZero(Generation(4)), t0);
         let out = overview.on(Event::Close, t0 + LENGTH / 3);
-        assert_eq!(out, vec![
-            Command::Hold,
-            Command::Widen(false),
-            Command::Exit,
-            Command::Clock(true)
-        ]);
+        assert_eq!(out, vec![Command::Hold, Command::Exit, Command::Clock(true)]);
         assert!(
             tick(&mut overview, t0 + LENGTH).is_empty(),
             "the zoom in runs from the release"
@@ -476,7 +456,6 @@ mod tests {
             "the same overlay, the same generation"
         );
         assert_eq!(tick(&mut overview, t0 + LENGTH / 2 + LENGTH), vec![
-            Command::Widen(true),
             Command::Release,
             Command::Clock(false)
         ]);
@@ -556,7 +535,6 @@ mod tests {
         );
         assert_eq!(overview.on(Event::FrameZero(Generation(1)), t0), vec![
             Command::Show,
-            Command::Widen(true),
             Command::Release,
             Command::Clock(false)
         ]);

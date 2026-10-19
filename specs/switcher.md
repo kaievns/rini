@@ -262,8 +262,9 @@ switcher answers "every window I have, wherever it is".
 - The cards MUST be the overview's, from one record both draw from: the stack's step, inset and three
   cards, the gap between cards, the selected card's ring width, and the darkening of what is behind
   (`specs/overview.md`, "What it shows"). A value changed for one changes for both. The card's
-  corner and the selection's wash are the switcher's alone until the overview draws them, which it
-  marks not yet met.
+  corner and its selection, the wash and the ring at the wash's outer edge, are the overview's too:
+  its thumbs round to that corner on screen, or to a wider one their picture keeps, and its selected
+  thumb wears that selection.
 - Colours MUST come from the Okibi design system's resolved tokens rather than being chosen here.
   Specifically: the panel is a floating surface, so it takes the content plane `--n2` with a 1px
   `--line` hairline and a shadow; a card with no picture takes the raised plane `--n3`; captions take
@@ -293,7 +294,9 @@ switcher answers "every window I have, wherever it is".
   radius. The system tops out at 7px with "corners stay crisp", which is right for a card in a document
   and wrong for a panel that sits beside Spotlight and the volume HUD.
 - A card's corner radius MUST follow the window it is a picture of, not the system's control radius. A
-  square-cornered card reads as a screenshot of a window rather than as a window.
+  square-cornered card reads as a screenshot of a window rather than as a window. Every card, the
+  selection's wash and its ring MUST round on the continuous curve macOS draws a window's corner on,
+  the overview's thumbs' curve, so the two features draw one corner shape as well as one radius.
 - The panel's inset BELOW the captions MUST be tighter than the one above the tiles. The eye measures
   from the tiles, because a tile is a bright slab and a caption is two thin lines that read as part of
   the surrounding space — so equal insets look bottom-heavy however the arithmetic is written.

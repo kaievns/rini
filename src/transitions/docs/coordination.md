@@ -1113,15 +1113,15 @@ Its zoom out, its zoom back in and every press inside it run over `animation_dur
 read slower than a press although it ended sooner. Kai asked for the navigation's pace on
 2026-10-19. The zoom back in ends 0.093s later than it did, and the lift with it.
 
-From the end of its zoom out to the start of its zoom in, its thumbs' rings and borders are dressed
-again as wide on screen as at rest, the selected thumb's ring as wide as the card's and dressed again
-as the selection moves (`Render::Rewear`), and through the zoom at their own width,
-which the zoom thins. So they visibly thicken as the zoom out lands and thin as the zoom in begins:
-keeping them steady through the zoom is what `specs/overview.md` marks not yet met. Its thumbs'
-lifts are cast under the held zoom from the open instead (`Render::CastLifts`), ahead of the play
-that zooms out, while nothing is lifted, and kept to the lift, where nothing is: turning it with
-the bands would turn a shadow at full strength. A held scene of another depth casts them again at
-once, as it dresses the bands again.
+From its open to its lift the overview holds the overlay under the held scene's zoom
+(`Render::Hold`), ahead of the play that zooms out: its thumbs' lifts are cast under that zoom
+while nothing is lifted and kept to the lift, where nothing is, since casting them as the zoom out
+lands would turn a shadow at full strength; and every thumb is drawn as the switcher's card, its
+corner, ring, border and the selected one's wash dressed by the overlay from how far it is held and
+the zoom, along the zoom at every sample (`src/overview/docs/README.md`, "Thumbs are the switcher's
+cards"). The engine sends each thumb in its window's own decoration, dressed again only when that
+changes (`Render::Rewear`); the selection moving turns the ring (`Render::Wear`). A held scene of
+another depth holds the overlay again at once.
 
 ## Structural findings
 

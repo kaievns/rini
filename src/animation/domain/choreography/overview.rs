@@ -24,9 +24,9 @@ use crate::animation::domain::motion::plan::{Banding, GroupKey, group_relative};
 use crate::animation::domain::motion::score::{
     Channel, Curve, Edit, Node, SAMPLE_STEP, Score, Track, Value, Zoom,
 };
-use crate::chrome::domain::card;
-use crate::decorations::domain::style::{Band, Decoration};
 use crate::overview::domain::scene::{Holder, Scene};
+
+pub mod card;
 
 /// A press inside the overview, as the flight it held back named it: what the scene's next change
 /// plays.
@@ -83,9 +83,8 @@ pub struct Places {
     pub tiles: Vec<(WindowId, GroupKey, GroupRect)>,
     /// Each thumb's lift, from 0 to 1, in `tiles`' order.
     pub lifts: Vec<(WindowId, f64)>,
-    /// How far the desktop behind is darkened, from 0 to 1 of the card's backdrop: all the way
-    /// while held, none at rest.
-    pub tint: f64,
+    /// How far the overview is held (`Node::Held`): all the way while held, none at rest.
+    pub held: f64,
     pub banding: Banding,
     pub outlines: Vec<Outline>,
 }
@@ -113,34 +112,6 @@ impl Places {
             self.zoom.draw(laid.origin),
             laid.size * self.zoom.scale,
         ))
-    }
-}
-
-/// `decoration` with its ring and border as wide on screen under a zoom by `scale` as they are
-/// drawn at rest.
-pub fn screen_wide(decoration: Decoration, scale: f64) -> Decoration {
-    let widened = |band: Option<Band>| {
-        band.map(|band| Band {
-            width: band.width / scale,
-            ..band
-        })
-    };
-    Decoration {
-        ring: widened(decoration.ring),
-        border: widened(decoration.border),
-        ..decoration
-    }
-}
-
-/// `decoration` as the selected thumb wears it while held: its ring at least the card's ring wide,
-/// the switcher's selection, in its own paint. With no ring it wears none.
-pub fn accented(decoration: Decoration) -> Decoration {
-    Decoration {
-        ring: decoration.ring.map(|band| Band {
-            width: band.width.max(card::RING),
-            ..band
-        }),
-        ..decoration
     }
 }
 
@@ -231,7 +202,7 @@ pub fn held(scene: &Scene) -> Places {
         containers,
         tiles,
         lifts,
-        tint: 1.0,
+        held: 1.0,
         banding: banding(scene),
         outlines,
     }
@@ -243,7 +214,7 @@ pub fn held(scene: &Scene) -> Places {
 /// What the overview zooms out from as it opens, and back into as it closes.
 pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     let mut places = held(scene);
-    places.tint = 0.0;
+    places.held = 0.0;
     for (_, lift) in &mut places.lifts {
         *lift = 0.0;
     }
@@ -345,7 +316,7 @@ pub fn pose(places: &Places) -> Score {
 fn placed(places: &Places) -> Vec<Edit> {
     let mut edits = vec![
         Edit::Place(Node::Strip, Value::Zoom(places.zoom)),
-        Edit::Place(Node::Tint, Value::Number(places.tint)),
+        Edit::Place(Node::Held, Value::Number(places.held)),
     ];
     for (key, at) in &places.containers {
         edits.push(Edit::Place(Node::Container(*key), Value::Point(*at)));
@@ -403,8 +374,8 @@ pub fn toward(playing: &Score, places: &Places, at: f64, motion: Motion) -> Vec<
     edits.extend(gone.into_iter().map(|window| Edit::Drop(Node::Tile(window))));
     let zoom = Value::Zoom(places.zoom);
     edits.extend(leg(playing, Node::Strip, None, zoom, at, shape));
-    let tint = Value::Number(places.tint);
-    edits.extend(leg(playing, Node::Tint, None, tint, at, shape));
+    let share = Value::Number(places.held);
+    edits.extend(leg(playing, Node::Held, None, share, at, shape));
     for (key, to) in &places.containers {
         let node = Node::Container(*key);
         if playing.model(node).is_none() {
@@ -792,45 +763,25 @@ mod tests {
         assert!((lift(PRESS + 0.01) - SELECTED_LIFT).abs() < 1e-9);
     }
 
-    /// The selected thumb's ring is at least the card's ring wide, a wider one kept, its paint
-    /// kept, and a thumb with no ring wears none.
-    #[test]
-    fn the_selected_thumb_s_ring_is_at_least_the_card_s() {
-        use crate::decorations::domain::paint::{Colour, Paint};
-        let paint = Paint::Solid(Colour::rgb(0xff7c50));
-        let ringed = |width: f64| Decoration {
-            ring: Some(Band {
-                width,
-                active: paint,
-                inactive: paint,
-                urgent: paint,
-            }),
-            ..Decoration::default()
-        };
-        assert_eq!(accented(ringed(1.0)), ringed(card::RING));
-        assert_eq!(accented(ringed(4.0)), ringed(4.0));
-        assert_eq!(accented(Decoration::default()), Decoration::default());
-    }
-
     /// The desktop behind is darkened all the way while held and not at all at rest, and the zoom
     /// out darkens it on the zoom's own curve and length, from none at frame zero.
     #[test]
     fn the_desktop_darkens_with_the_zoom_out_from_none_at_frame_zero() {
         let scene = scene(&STRIP, 3);
         let (places, rest) = (held(&scene), at_rest(&scene, &shown(&STRIP, 3)));
-        assert_eq!((places.tint, rest.tint), (1.0, 0.0));
+        assert_eq!((places.held, rest.held), (1.0, 0.0));
         let start = pose(&rest);
-        assert_eq!(start.model(Node::Tint), Some(Value::Number(0.0)));
+        assert_eq!(start.model(Node::Held), Some(Value::Number(0.0)));
         let edits = toward(&start, &places, 0.0, Motion::Slide { seconds: PRESS });
         let darkens = tracks(&edits)
             .into_iter()
-            .find(|track| track.node() == Node::Tint)
+            .find(|track| track.node() == Node::Held)
             .expect("the desktop darkens");
         assert_eq!(darkens.curves(), [Curve::Bezier(MOTION_CURVE)]);
         assert!((darkens.seconds() - PRESS).abs() < 1e-9);
         let score = played(&start, &edits);
-        assert_eq!(score.sample(Node::Tint, 0.0), Some(Value::Number(0.0)));
-        assert_eq!(score.sample(Node::Tint, PRESS + 0.01), Some(Value::Number(1.0)));
+        assert_eq!(score.sample(Node::Held, 0.0), Some(Value::Number(0.0)));
+        assert_eq!(score.sample(Node::Held, PRESS + 0.01), Some(Value::Number(1.0)));
     }
 
     /// A step right pans the row on Slide's curve over the plain length, as one piece: its strip's

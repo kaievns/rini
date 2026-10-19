@@ -31,14 +31,14 @@ window's frame, so the real strip's own scroll moves no thumb. A row whose curre
 or that has none, keeps its strip where it shows.
 
 **A row is the usable frame at the scene's depth.** Tiles, floating windows and an empty row's
-outline all map through the same transform, so a floating window keeps its place on the display
-and a stacked column is drawn as the strip draws it. A row's `strip` is where its first column
-starts: every tiled thumb sits at its window's place on the strip from there, so the overlay draws
-a row as one container that a press along it moves, and no thumb in it, and the real strip's own
-scroll moves neither. Each tiled thumb is that place narrowed and shortened by the card's 14pt gap
-about its centre (`apart`): at depth 0.3 the strip's own gap is under a point, and a run of
-terminals drew as one slab. Narrowed with its proportions kept, a short wide window took a sliver
-off its height, so a column's windows stayed a slab. Narrowing rather than spreading the row keeps every place, the axis
+outline all map through the same transform, so a floating window keeps its place on the display and
+a stacked column is drawn as the strip draws it. A row's `strip` is where its first column starts:
+every tiled thumb sits at its window's place on the strip from there, so the overlay draws a row as
+one container that a press along it moves, and no thumb in it, and the real strip's own scroll moves
+neither. Each tiled thumb is that place narrowed and shortened by the card's 14pt gap about its
+centre (`apart`): at depth 0.3 the strip's own gap is under a point, and a run of terminals drew as
+one slab. Narrowed with its proportions kept, a short wide window took a sliver off its height, so a
+column's windows stayed a slab. Narrowing rather than spreading the row keeps every place, the axis
 and every pan as the strip has them. At rest the shown row's thumbs are drawn at their windows'
 frames, so frame zero is still the screen.
 
@@ -60,16 +60,50 @@ flight casts (`LIFT_SHADOW`, `Node::Lift`), the selected one all of it and the r
 (`SELECTED_LIFT`, `THUMB_LIFT` in `src/animation/domain/choreography/overview.rs`), so the shadow
 rises and falls with the zoom on the score rather than being a layer of its own. The casters sit
 under the zoom, so the engine has the overlay cast every lift under the held scene's zoom
-(`Render::CastLifts`, `ShadowStyle::under`) from the open, while nothing is lifted yet, to the
+(`Render::Hold`, `ShadowStyle::under`) from the open, while nothing is lifted yet, to the
 lift: the shadow is a flight's on screen, where at the zoom's scale it was a fifth of it. The
 switcher's cards cast none: its panel's window casts the shadow there, so there is no card shadow
 to share.
 
+**Thumbs are the switcher's cards.** Held, every thumb rounds to the card's 11pt `CORNER` on screen,
+its ring and border round that corner, and the selected one wears the card's selection: the `WASH`
+under it, `SELECTION_OUTSET` out at `SELECTION_CORNER`, and its ring, at least the card's `RING`,
+laid with its outer edge on the wash's, as the switcher draws its selected card
+(`src/chrome/domain/card.rs`). A picture that keeps its window's own corner, a SkyLight or
+ScreenCaptureKit capture (`Route::clips`), cannot be clipped tighter than that corner, so where it
+is wider on screen than `CORNER`, a 26pt window's 13pt at depth 0.5, the thumb, its ring and its
+border round to it instead and the selection rounds as far past it as `SELECTION_CORNER` is past
+`CORNER` (`Thumb::keeps_corner`); else the ring would round inside the picture's corner and leave a
+sliver at each corner. Each value is eased on screen from the window's own to the card's by the
+share the overview is held (`Node::Held`) and divided by the zoom
+(`src/animation/domain/choreography/overview/card.rs`, `dress`), so frame zero and the landing draw
+the window's own corner and ring and no wash, and neither hand-over to the real windows jumps. The
+wash's reach eases from none to `SELECTION_OUTSET` with its opacity, so its edge stays at or inside
+the ring's outer edge, which eases from the window's ring width out to `SELECTION_OUTSET`, at every
+frame. While the overview holds the overlay (`Render::Hold`) the overlay lays every piece of a thumb
+as that dress has it (`DecorationLayers::lay`) and clips every picture to it; along the zoom it
+plays the dress sampled `DRESS_STEP` apart, every frame for a thumb its own track resizes then, its
+lift's shape with it (`dressing`, `dressed_over`, `src/animation/platform/overlay/card.rs`). Held, a
+thumb's own resize carries its wash and its lift as it carries its other pieces. Rings and borders
+keep their width on screen through the zoom so, and an empty workspace's outline its ring's
+(`outlined`); the engine sends every thumb in its window's own decoration, again only when that
+changes.
+
+Measured 2026-10-19 in a script over the zoom's curve, not on screen: sampled 1/60s apart, Core
+Animation's straight line between two samples lies within 0.084pt on screen of the corner it eases,
+0.017pt of a ring's width, 0.038pt of the wash's reach and 0.008 of the wash's opacity, at depth
+0.22 over the 0.35s zoom; 1/120s apart, within 0.023pt, 0.005pt, 0.010pt and 0.002, and a resizing
+thumb's pieces within 0.13pt of its frame in the strip's points, where 1/60s left 0.5pt. In a
+release test build, 4 rows of 8 thumbs, the zoom out's play took 4.8 to 6.1ms dressed, against 0.8
+to 1.6ms undressed, most of it the paths of the casters' shadows and masks at every sample. The
+wash's reach and the ring's outer edge are sampled at the same moments and the wash is inside at
+each, so Core Animation's line between two keeps it inside.
+
 **The desktop darkens on the score too.** Held, the desktop behind the thumbs is darkened by the
 card's backdrop, `--n0` at 0.40, the switcher's own darkening (`BACKDROP`, `BACKDROP_ALPHA` in
-`src/chrome/domain/card.rs`). It is a node of the score (`Node::Tint`, drawn by
-`src/animation/platform/overlay/tint.rs`), so it darkens and clears on the zoom's curve and clock and
-turns back with it, rather than on a fade of its own beside it.
+`src/chrome/domain/card.rs`), at the share of the way the overview is held, a node of the score
+(`Node::Held`, drawn by `src/animation/platform/overlay/tint.rs`), so it darkens and clears on the
+zoom's curve and clock and turns back with it, rather than on a fade of its own beside it.
 
 **A pan is read off one window on the strip in both scenes.** The window the row is aligned on
 after, else the one it was aligned on before, else any window in both. A move along the strip keeps
@@ -81,19 +115,9 @@ the moved window on the axis, so it pans nothing; the columns it passes change p
 
 ## Known debt
 
-**The ring thins as the overview zooms.** A thumb's ring and border are drawn at their width in the
-strip's points, so the zoom out draws them thinner as it goes, down to the depth's share of their
-width: a 1pt ring is 0.22pt on screen at depth 0.22. While held they are dressed again as wide on
-screen as at rest (`Command::Widen`), the selected thumb's ring as wide as the card's (`accented`), and narrowed again as the zoom in begins: at rest and while
-held they read at their width, but they thicken at once as the zoom out lands and thin at once as
-the zoom in begins. Keeping them at their width through the zoom needs each band's width to follow
-the zoom's track.
-
-**Its thumbs keep their windows' corners, and no wash.** The switcher's card has an 11pt `CORNER`
-and an `--ember-soft` wash under the selected one; the overview draws neither yet. A thumb's
-corner is its window's at the zoom's scale, 3pt on screen for a 10pt corner at depth 0.3. Rounding
-it to the card's means clipping every picture to it, since a picture not clipped carries its
-window's own corner, and the ring would then round past it.
+**Frame zero clips every picture.** A thumb's picture is clipped to its window's corner from frame
+zero, where a window's own picture was drawn whole. Not checked on screen; the clip follows the
+corner the window server reports, on the curve macOS draws.
 
 **A scroll reaches the window under the overview.** Every mouse button's press inside it is
 swallowed (`KeyRouter::on_click`), but the tap asks for no scroll event, so a scroll scrolls the

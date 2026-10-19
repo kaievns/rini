@@ -28,7 +28,7 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::NSString;
 use objc2_quartz_core::{
     CALayer, CALayerContentsGravity, CAMediaTimingFunction, CATextLayer, CATransaction,
-    kCAMediaTimingFunctionEaseOut,
+    kCACornerCurveContinuous, kCAMediaTimingFunctionEaseOut,
 };
 use rini_runloop::turns;
 use rustc_hash::FxHashMap as HashMap;
@@ -64,8 +64,6 @@ const N11: (f64, f64, f64) = palette::N11.rgb();
 /// `--ember`. Owns selection and active indicators, on a budget of one or two appearances per screen —
 /// here it is exactly one: the selected row.
 const EMBER: (f64, f64, f64) = palette::EMBER.rgb();
-/// `--ember-soft`, the specified fill for an active row.
-const EMBER_SOFT: (f64, f64, f64) = palette::EMBER_SOFT.rgb();
 
 /// The panel's corner radius.
 ///
@@ -316,29 +314,8 @@ impl SwitcherPanel {
         // No hairline of its own: the glass draws its edge.
         root.setBackgroundColor(Some(&token(metrics.backdrop.rgb(), metrics.backdrop_alpha)));
 
-        // Under the tiles, so a tile's picture is never hidden by its own highlight.
-        let highlight = CALayer::layer();
-        highlight.setAnchorPoint(CGPoint::new(0.0, 0.0));
-        highlight.setContentsScale(scale);
-        highlight.setCornerRadius(metrics.tile_corner + 3.0);
-        highlight.setZPosition(0.0);
-        highlight.setHidden(true);
-        highlight.setBackgroundColor(Some(&token(EMBER_SOFT, 1.0)));
+        let (highlight, ring) = selection(&metrics, scale);
         root.addSublayer(&highlight);
-
-        // Over everything: the cards behind are at 0.5 and 0.75, the tiles at 1.0, the badges at 1.5,
-        // the captions at 2.0. A ring drawn under the tiles is clipped away by them on every side except
-        // where the 4pt margin shows, which reads as a glow rather than as an outline.
-        let ring = CALayer::layer();
-        ring.setAnchorPoint(CGPoint::new(0.0, 0.0));
-        ring.setContentsScale(scale);
-        ring.setCornerRadius(metrics.tile_corner + 3.0);
-        ring.setZPosition(3.0);
-        ring.setHidden(true);
-        // The ember's remit covers "focused borders" as well as active bars, and a switcher row is
-        // a focus target rather than a list row.
-        ring.setBorderWidth(metrics.ring);
-        ring.setBorderColor(Some(&token(EMBER, 1.0)));
         root.addSublayer(&ring);
 
         Some(Self {
@@ -535,20 +512,7 @@ impl SwitcherPanel {
     }
 
     /// One card of a row: a picture of a window, or the placeholder until one arrives.
-    fn card(&self, z: f64) -> Retained<CALayer> {
-        let card = CALayer::layer();
-        card.setAnchorPoint(CGPoint::new(0.0, 0.0));
-        card.setContentsScale(self.scale);
-        card.setCornerRadius(self.metrics.tile_corner);
-        card.setMasksToBounds(true);
-        card.setZPosition(z);
-        // The raised plane, so a card with no picture yet reads as a surface rather than as a hole.
-        card.setBackgroundColor(Some(&token(N3, 1.0)));
-        // Drawn over the picture, so every card has an edge whatever its window looks like.
-        card.setBorderWidth(1.0);
-        card.setBorderColor(Some(&token(N11, TILE_EDGE_ALPHA)));
-        card
-    }
+    fn card(&self, z: f64) -> Retained<CALayer> { card(&self.metrics, self.scale, z) }
 
     /// The application's icon, read once and kept.
     ///
@@ -707,10 +671,7 @@ impl SwitcherPanel {
     fn place_highlight(&self, strip: &Strip, selected: usize) {
         match strip.rows.get(selected) {
             Some(rect) => {
-                let frame = CGRect::new(
-                    CGPoint::new(rect.origin.x - 4.0, rect.origin.y - 4.0),
-                    CGSize::new(rect.size.width + 8.0, self.metrics.tile_height + 8.0),
-                );
+                let frame = self.metrics.selection(*rect);
                 self.highlight.setHidden(false);
                 self.highlight.setFrame(frame);
                 self.ring.setHidden(false);
@@ -769,6 +730,56 @@ fn draw_card_behind(
     }
 }
 
+/// The selection's two layers: the wash under the tiles, so a tile's picture is never hidden by its
+/// own highlight, and the ring over everything. The cards behind are at 0.5 and 0.75, the tiles at
+/// 1.0, the badges at 1.5, the captions at 2.0; a ring drawn under the tiles is clipped away by them
+/// on every side except where the 4pt margin shows, which reads as a glow rather than as an outline.
+fn selection(metrics: &Metrics, scale: f64) -> (Retained<CALayer>, Retained<CALayer>) {
+    let highlight = CALayer::layer();
+    highlight.setAnchorPoint(CGPoint::new(0.0, 0.0));
+    highlight.setContentsScale(scale);
+    round_as_card(&highlight, metrics.selection_corner);
+    highlight.setZPosition(0.0);
+    highlight.setHidden(true);
+    highlight.setBackgroundColor(Some(&token(metrics.wash.rgb(), 1.0)));
+
+    let ring = CALayer::layer();
+    ring.setAnchorPoint(CGPoint::new(0.0, 0.0));
+    ring.setContentsScale(scale);
+    round_as_card(&ring, metrics.selection_corner);
+    ring.setZPosition(3.0);
+    ring.setHidden(true);
+    // The ember's remit covers "focused borders" as well as active bars, and a switcher row is
+    // a focus target rather than a list row.
+    ring.setBorderWidth(metrics.ring);
+    ring.setBorderColor(Some(&token(EMBER, 1.0)));
+    (highlight, ring)
+}
+
+/// One card at depth `z`: a picture of a window, or the placeholder until one arrives.
+fn card(metrics: &Metrics, scale: f64, z: f64) -> Retained<CALayer> {
+    let card = CALayer::layer();
+    card.setAnchorPoint(CGPoint::new(0.0, 0.0));
+    card.setContentsScale(scale);
+    round_as_card(&card, metrics.tile_corner);
+    card.setMasksToBounds(true);
+    card.setZPosition(z);
+    // The raised plane, so a card with no picture yet reads as a surface rather than as a hole.
+    card.setBackgroundColor(Some(&token(N3, 1.0)));
+    // Drawn over the picture, so every card has an edge whatever its window looks like.
+    card.setBorderWidth(1.0);
+    card.setBorderColor(Some(&token(N11, TILE_EDGE_ALPHA)));
+    card
+}
+
+/// Rounds `layer` to `corner` on the continuous curve macOS draws a window's corner on, which the
+/// overview's thumbs follow (`src/decorations/docs/corner.md`), so a card rounds as a thumb does.
+fn round_as_card(layer: &CALayer, corner: f64) {
+    layer.setCornerRadius(corner);
+    // SAFETY: Core Animation's constant string, alive for the process.
+    layer.setCornerCurve(unsafe { kCACornerCurveContinuous });
+}
+
 /// The backing scale to draw at.
 ///
 /// 2.0 rather than the display's own: the panel is built once and shown on whichever display a
@@ -793,6 +804,25 @@ mod tests {
             icon: None,
             behind: Vec::new(),
         }
+    }
+
+    /// Every card and the selection's wash and ring round on the continuous curve the overview's
+    /// thumbs, their pictures and their rings round on, at the card's corners.
+    #[test]
+    fn the_cards_and_the_selection_round_on_the_window_s_continuous_curve() {
+        let metrics = Metrics::default();
+        let continuous = |layer: &CALayer| {
+            // SAFETY: Core Animation's constant string, alive for the process.
+            layer.cornerCurve().to_string() == unsafe { kCACornerCurveContinuous }.to_string()
+        };
+        let (highlight, ring) = selection(&metrics, 2.0);
+        let card = card(&metrics, 2.0, 1.0);
+        for layer in [&highlight, &ring] {
+            assert!(continuous(layer));
+            assert_eq!(layer.cornerRadius(), metrics.selection_corner);
+        }
+        assert!(continuous(&card));
+        assert_eq!(card.cornerRadius(), metrics.tile_corner);
     }
 
     /// A card behind shows its window's picture, and one past the row's depth is hidden letting go of

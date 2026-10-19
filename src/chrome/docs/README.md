@@ -11,7 +11,8 @@ sits upstream of all of them (`docs/architecture.md`, "The rules").
 | | |
 |---|---|
 | `domain/palette.rs` | The Okibi 燠火 palette, dark ground: `Colour`, the neutral spine `N0` to `N11`, the one accent `EMBER` and its `EMBER_SOFT` fill, and `ERR` |
-| `domain/card.rs` | The card: its `CORNER`, which only the switcher rounds to while the overview's thumbs keep their windows' (`specs/overview.md`, not yet met), the `GAP` between two side by side, the `RING` the selected one wears, the `BACKDROP` that darkens what is behind them at `BACKDROP_ALPHA`, and the `STACK` a run of them collapses into, each card behind a `step` further the way it goes (`Toward`) and an `inset` shorter across (`Stack::behind`) |
+| `domain/card.rs` | The card: its `CORNER`, which the switcher's cards and the overview's thumbs round to on screen, the `GAP` between two side by side, the `RING` the selected one wears, the `BACKDROP` that darkens what is behind them at `BACKDROP_ALPHA`, and the `STACK` a run of them collapses into, each card behind a `step` further the way it goes (`Toward`) and an `inset` shorter across (`Stack::behind`) |
+| `domain/card.rs`, continued | the selected card's selection, which the switcher's selected card and the overview's selected thumb wear: the `WASH` under it, `SELECTION_OUTSET` out and rounded at `SELECTION_CORNER`, which its ring rounds to too |
 
 ## The shape that matters
 
