@@ -1011,6 +1011,16 @@ const KAIS_BINDS: &str = "binds {
 }
 ";
 
+/// The display forms the shipped config binds up and down, under keys Kai's binds leave free: they
+/// step a column as the workspace forms do, and where it ends cross to a display, not a workspace.
+const DISPLAY_FORMS: &str = "binds {
+    Mod+Ctrl+K { focus-window-or-monitor-down; }
+    Mod+Ctrl+I { focus-window-or-monitor-up; }
+    Mod+Ctrl+Shift+K { move-window-down-or-to-monitor-down; }
+    Mod+Ctrl+Shift+I { move-window-up-or-to-monitor-up; }
+}
+";
+
 /// What the scene a press inside the overview laid out was handed with.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Kept {
@@ -1021,18 +1031,22 @@ enum Kept {
     PushedAlongRow,
     /// A push against an end of the stack.
     PushedAtStackEnd,
+    /// No scene: nothing changed, as at the top of a column with no display above.
+    Still,
 }
 
 /// Each of Kai's sixteen binds pressed inside the overview, lowered as his config's binds are, runs
 /// on the real layout with nothing flying, is kept for the scene as the press it was, a push where
 /// it ran into an end, and leaves the scene selecting the window focus is on, on the workspace
 /// shown, the row each step names; a move keeps the moved window focused and on the axis. `Mod+I`
-/// and `Mod+K`, with Shift or without, go on to the workspace that way where the column ends.
+/// and `Mod+K`, with Shift or without, go on to the workspace that way where the column ends, and
+/// the display forms the shipped config binds, pressed beside them, stay on the workspace there.
 #[test]
 fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() {
     use crate::app::config::Config;
     use crate::app::controller::lower::{Lowered, lower};
-    let config = Config::parse("kai.kdl", KAIS_BINDS).unwrap_or_else(|e| panic!("{}", e.render()));
+    let parse = |name, text| Config::parse(name, text).unwrap_or_else(|e| panic!("{}", e.render()));
+    let (kais, display_forms) = (parse("kai.kdl", KAIS_BINDS), parse("display.kdl", DISPLAY_FORMS));
     let (mut apps, mut reactor) = desk();
     reactor.settings_mut().animate = true;
     let mut rx = reactor.connect_test_transitions();
@@ -1052,6 +1066,9 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
 
     use Kept::*;
     let steps = [
+        ("Mod+Ctrl+I", Slid, 1),
+        ("Mod+Ctrl+I", Still, 1),
+        ("Mod+Ctrl+K", Slid, 1),
         ("Mod+I", Slid, 1),
         ("Mod+K", Slid, 1),
         ("Mod+K", Moved, 2),
@@ -1062,6 +1079,9 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
         ("Mod+O", Moved, 1),
         ("Mod+U", Moved, 1),
         ("Mod+J", PushedAlongRow, 1),
+        ("Mod+Ctrl+Shift+K", Moved, 1),
+        ("Mod+Ctrl+Shift+I", Moved, 1),
+        ("Mod+Ctrl+Shift+I", Still, 1),
         ("Mod+Shift+K", Moved, 1),
         ("Mod+Shift+I", Moved, 1),
         ("Mod+Shift+I", Moved, 0),
@@ -1082,7 +1102,11 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
     ];
     let mut pressed = std::collections::BTreeSet::new();
     for (key, kept, row) in steps {
-        let action = config.binds.iter().find(|bind| bind.key == key).expect(key).action.clone();
+        let action = (kais.binds.iter().chain(&display_forms.binds))
+            .find(|bind| bind.key == key)
+            .expect(key)
+            .action
+            .clone();
         let Lowered::Command(command) = lower(action, &[]) else {
             panic!("{key} lowers to a command");
         };
@@ -1096,6 +1120,7 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
             )
         );
         let before = reactor.layout().focused_window();
+        let scene_before = reactor.overview_scene().cloned();
         batch(&mut apps, &mut reactor, vec![Event::Command(command)]);
         let events = sent(&mut rx);
         assert!(
@@ -1109,6 +1134,13 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
                 _ => None,
             })
             .collect();
+        if kept == Still {
+            assert_eq!(scenes, [], "{key}: no scene");
+            assert_eq!(reactor.overview_scene().cloned(), scene_before, "{key}");
+            assert_eq!(reactor.layout().focused_window(), before, "{key}");
+            pressed.insert(key);
+            continue;
+        }
         let [(scene, presses)] = &scenes[..] else {
             panic!("{key}: one scene, not {scenes:?}");
         };
@@ -1146,7 +1178,11 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
         }
         pressed.insert(key);
     }
-    assert_eq!(pressed.len(), 16, "every one of Kai's binds");
+    assert_eq!(
+        pressed.len(),
+        20,
+        "every one of Kai's binds and the four display forms"
+    );
 }
 
 /// The overview closes, and the tap's session with it, once its display shows no space rini
