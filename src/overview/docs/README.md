@@ -35,9 +35,10 @@ outline all map through the same transform, so a floating window keeps its place
 and a stacked column is drawn as the strip draws it. A row's `strip` is where its first column
 starts: every tiled thumb sits at its window's place on the strip from there, so the overlay draws
 a row as one container that a press along it moves, and no thumb in it, and the real strip's own
-scroll moves neither. Each tiled thumb is that place narrowed by the card's 14pt gap about its
-centre, its proportions kept (`apart`): at depth 0.3 the strip's own gap is under a point, and a run
-of terminals drew as one slab. Narrowing rather than spreading the row keeps every place, the axis
+scroll moves neither. Each tiled thumb is that place narrowed and shortened by the card's 14pt gap
+about its centre (`apart`): at depth 0.3 the strip's own gap is under a point, and a run of
+terminals drew as one slab. Narrowed with its proportions kept, a short wide window took a sliver
+off its height, so a column's windows stayed a slab. Narrowing rather than spreading the row keeps every place, the axis
 and every pan as the strip has them. At rest the shown row's thumbs are drawn at their windows'
 frames, so frame zero is still the screen.
 

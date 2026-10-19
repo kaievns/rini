@@ -307,14 +307,14 @@ fn lay_out_row(
     }
 }
 
-/// `rect` drawn a card's `GAP` narrower about its centre, its proportions kept, so a thumb beside
-/// it is that gap away and one below it clear of it; no smaller than half.
+/// `rect` drawn a card's `GAP` narrower and shorter about its centre, so a thumb beside it or
+/// below it is that gap away; no smaller than half on either axis.
 pub fn apart(rect: OverlayRect) -> OverlayRect {
-    if rect.width() <= 0.0 {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
         return rect;
     }
-    let share = ((rect.width() - GAP) / rect.width()).max(0.5);
-    let size = rect.size * share;
+    let narrowed = |length: f64| (length - GAP).max(length / 2.0);
+    let size = Size::new(narrowed(rect.width()), narrowed(rect.height()));
     OverlayRect::new(rect.center() - size.to_vector() / 2.0, size)
 }
 
@@ -438,7 +438,8 @@ mod tests {
     }
 
     /// Two thumbs side by side are a card's gap apart, the strip's own gap at the scene's depth
-    /// besides, each its window's place narrowed about its centre with its proportions kept.
+    /// besides, and two stacked in a column as far, each its window's place narrowed and shortened
+    /// about its centre by it.
     #[test]
     fn side_by_side_thumbs_are_a_card_gap_apart() {
         let input = four_rows();
@@ -453,11 +454,16 @@ mod tests {
                 "{between}"
             );
         }
-        let on = to_overlay_space(input.rows[1].columns[0].windows[0].frame, display());
+        let below = row.tile(w(5)).unwrap();
+        let between = below.in_row.min_y() - middle.in_row.max_y();
         assert!(
-            (left.frame.width() / left.frame.height() - on.width() / on.height()).abs() < 1e-9,
-            "its proportions kept"
+            (between - (card::GAP + GAP * scene.scale)).abs() < 1e-9,
+            "stacked: {between}"
         );
+        let place = apart(OverlayRect::new(Point::origin(), Size::new(300.0, 100.0)));
+        assert_eq!(place.size, Size::new(300.0 - card::GAP, 100.0 - card::GAP));
+        let tiny = apart(OverlayRect::new(Point::origin(), Size::new(20.0, 10.0)));
+        assert_eq!(tiny.size, Size::new(10.0, 5.0), "no smaller than half");
     }
 
     #[test]

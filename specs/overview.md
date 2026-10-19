@@ -88,10 +88,11 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > beside a half-width thumb at depth 0.3 on 1728pt reach 166pt past that thumb's inner edge, into
 > the card's gap inside it.
 
-- Two tiled thumbs side by side MUST be at least the card's gap apart, 14pt on screen, each its
-  window's place narrowed about its centre with its proportions kept, and a column's windows drawn
-  clear of each other with it: at the overview's depth the strip's own gap is under a point, and
-  neighbouring windows read as one.
+- Two tiled thumbs side by side MUST be at least the card's gap apart, 14pt on screen, and two
+  stacked in a column as far, each its window's place narrowed and shortened by that gap about its
+  centre: at the overview's depth the strip's own gap is under a point, and neighbouring windows
+  read as one. Kai asked for the horizontal gap; a stacked column's windows read as one slab too
+  with less, 2.7pt for a window 518pt wide and 100pt tall with its proportions kept.
 
 > **Reported 2026-10-19.** "add horisontal spacing between windows on the strip, otherwise they're
 > luped together and hard to see which one which, for example the rainbow terminals on ws3 is a
