@@ -5,7 +5,7 @@
 //! and each family's dispatcher matches only its own enum.
 
 use rini_core::ids::WindowId;
-use rini_ipc::protocol::{LayoutCommand, WorkspaceSelector};
+use rini_ipc::protocol::{LayoutCommand, Vertical, WorkspaceSelector};
 
 use super::workspace_focus::Cycle;
 use crate::layout::{Direction, ResizeOrientation, StripEnd};
@@ -18,6 +18,7 @@ pub enum EngineCommand {
     Strip(StripCommand),
     Floating(FloatingCommand),
     Workspace(WorkspaceCommand),
+    Cross(CrossCommand),
 }
 
 /// Moving focus along the strip, and across to the next display when it runs out.
@@ -82,6 +83,54 @@ pub enum WorkspaceCommand {
     },
 }
 
+/// A press up or down that goes on through the workspace stack where its column ends: niri's
+/// `focus-window-or-workspace-*` and `move-window-*-or-to-workspace-*`. It is carried out as the
+/// command it resolves to, so it lands and animates exactly as that command does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrossCommand {
+    Focus(Vertical),
+    Move(Vertical),
+}
+
+/// Whether the selected window's column goes on the way a `CrossCommand` presses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnRoom {
+    /// A window lies that way in the column, or the focused window floats and focus is pressed: the
+    /// press stays here.
+    Within,
+    /// The column ends that way, holds one window, there is no selection, or the focused window
+    /// floats and is moved: on to the workspace.
+    Ended,
+}
+
+impl CrossCommand {
+    pub fn way(self) -> Vertical {
+        match self {
+            Self::Focus(way) | Self::Move(way) => way,
+        }
+    }
+
+    /// The command this press is: within the column, focus or the window moves one row; past its
+    /// end, the display switches to the workspace that way, or the window moves there and focus
+    /// follows, as `focus-workspace-up` and `move-window-to-workspace-up` do.
+    pub fn resolve(self, room: ColumnRoom) -> EngineCommand {
+        match (self, room) {
+            (Self::Focus(way), ColumnRoom::Within) => FocusCommand::Move(way.direction()).into(),
+            (Self::Move(way), ColumnRoom::Within) => {
+                ArrangeCommand::MoveNode(way.direction()).into()
+            }
+            (Self::Focus(Vertical::Up), ColumnRoom::Ended) => WorkspaceCommand::Prev(None).into(),
+            (Self::Focus(Vertical::Down), ColumnRoom::Ended) => WorkspaceCommand::Next(None).into(),
+            (Self::Move(way), ColumnRoom::Ended) => WorkspaceCommand::MoveWindow {
+                workspace: WorkspaceSelector::Relative(way.workspace()),
+                follow: true,
+                window_id: None,
+            }
+            .into(),
+        }
+    }
+}
+
 impl WorkspaceCommand {
     /// Whether the display ends up showing another workspace: every switch, and a move only when
     /// focus follows the window.
@@ -112,6 +161,8 @@ impl From<LayoutCommand> for EngineCommand {
             L::PrevWindow => FocusCommand::Cycle(Cycle::Backward).into(),
             L::MoveFocus(direction) => FocusCommand::Move(direction).into(),
             L::MoveFocusToEnd(end) => FocusCommand::ToEnd(end).into(),
+            L::MoveFocusOrWorkspace(way) => CrossCommand::Focus(way).into(),
+            L::MoveNodeOrToWorkspace(way) => CrossCommand::Move(way).into(),
             L::SwapWindows(a, b) => {
                 let id = |w: rini_ipc::protocol::WindowId| WindowId::new(w.pid, w.idx);
                 ArrangeCommand::Swap(id(a), id(b)).into()
@@ -155,6 +206,7 @@ family! {
     StripCommand => Strip,
     FloatingCommand => Floating,
     WorkspaceCommand => Workspace,
+    CrossCommand => Cross,
 }
 
 #[cfg(test)]
@@ -192,6 +244,14 @@ mod tests {
             (
                 LayoutCommand::MoveFocusToEnd(StripEnd::First),
                 FocusCommand::ToEnd(StripEnd::First).into(),
+            ),
+            (
+                LayoutCommand::MoveFocusOrWorkspace(Vertical::Up),
+                CrossCommand::Focus(Vertical::Up).into(),
+            ),
+            (
+                LayoutCommand::MoveNodeOrToWorkspace(Vertical::Down),
+                CrossCommand::Move(Vertical::Down).into(),
             ),
             (
                 LayoutCommand::SwapWindows(ipc(1, 2), ipc(3, 4)),
@@ -292,6 +352,70 @@ mod tests {
             let workspace = command.workspace().expect("a workspace command");
             assert_eq!(workspace.switches_workspace(), switches, "{wire:?}");
         }
+    }
+
+    /// Within the column a press is the step along it; past its end it is the step through the
+    /// stack, the move following the window, as `focus-workspace-up` and
+    /// `move-window-to-workspace-up` with their defaults are.
+    #[test]
+    fn a_press_through_the_stack_is_the_column_s_step_within_it_and_the_stack_s_past_its_end() {
+        use ColumnRoom::{Ended, Within};
+        use Vertical::{Down, Up};
+        let moved = |relative| WorkspaceCommand::MoveWindow {
+            workspace: WorkspaceSelector::Relative(relative),
+            follow: true,
+            window_id: None,
+        };
+        let table: Vec<(CrossCommand, ColumnRoom, EngineCommand)> = vec![
+            (
+                CrossCommand::Focus(Up),
+                Within,
+                FocusCommand::Move(Direction::Up).into(),
+            ),
+            (
+                CrossCommand::Focus(Down),
+                Within,
+                FocusCommand::Move(Direction::Down).into(),
+            ),
+            (
+                CrossCommand::Move(Up),
+                Within,
+                ArrangeCommand::MoveNode(Direction::Up).into(),
+            ),
+            (
+                CrossCommand::Move(Down),
+                Within,
+                ArrangeCommand::MoveNode(Direction::Down).into(),
+            ),
+            (
+                CrossCommand::Focus(Up),
+                Ended,
+                WorkspaceCommand::Prev(None).into(),
+            ),
+            (
+                CrossCommand::Focus(Down),
+                Ended,
+                WorkspaceCommand::Next(None).into(),
+            ),
+            (
+                CrossCommand::Move(Up),
+                Ended,
+                moved(RelativeWorkspace::Prev).into(),
+            ),
+            (
+                CrossCommand::Move(Down),
+                Ended,
+                moved(RelativeWorkspace::Next).into(),
+            ),
+        ];
+        for (press, room, command) in table {
+            assert_eq!(press.resolve(room), command, "{press:?} {room:?}");
+        }
+        assert_eq!(
+            EngineCommand::from(LayoutCommand::MoveFocusOrWorkspace(Up)).workspace(),
+            None,
+            "unresolved, it is no workspace command yet"
+        );
     }
 
     #[test]

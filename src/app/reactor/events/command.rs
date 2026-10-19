@@ -35,6 +35,7 @@ pub fn handle_command_layout(
         visible_spaces,
         visible_space_centers,
     } = payload;
+    let cmd = layout.resolve_cross(&state.windows, command_space, cmd);
     let workspace_command = cmd.workspace();
     let is_workspace_switch = workspace_command.is_some_and(|command| command.switches_workspace());
     let is_virtual_workspace_command = workspace_command.is_some();

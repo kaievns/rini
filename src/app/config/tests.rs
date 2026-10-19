@@ -1435,6 +1435,45 @@ fn niris_moves_to_an_end_are_refused_for_rinis() {
     }
 }
 
+/// niri's presses that go on through the workspace stack where the column ends are rini's under
+/// niri's names, so a niri config's binds of them read as written and print back the same, and
+/// niri's form that stops at the column's end is refused naming them ("Up and down a column and on
+/// through the stack" in `specs/workspaces.md`).
+#[test]
+fn niris_presses_on_through_the_stack_are_rinis() {
+    let config = parse(
+        "binds {\n    Mod+I { focus-window-or-workspace-up; }\n    \
+         Mod+K { focus-window-or-workspace-down; }\n    \
+         Mod+Shift+I { move-window-up-or-to-workspace-up; }\n    \
+         Mod+Shift+K { move-window-down-or-to-workspace-down; }\n}\n",
+    );
+    let actions: Vec<Action> = config.binds.iter().map(|bind| bind.action.clone()).collect();
+    assert_eq!(actions, [
+        Action::FocusWindowOrWorkspaceUp,
+        Action::FocusWindowOrWorkspaceDown,
+        Action::MoveWindowUpOrToWorkspaceUp,
+        Action::MoveWindowDownOrToWorkspaceDown,
+    ]);
+    assert_prints_and_reads_back(&config);
+    let text = printed(&config);
+    for line in [
+        "Mod+I { focus-window-or-workspace-up; }",
+        "Mod+K { focus-window-or-workspace-down; }",
+        "Mod+Shift+I { move-window-up-or-to-workspace-up; }",
+        "Mod+Shift+K { move-window-down-or-to-workspace-down; }",
+    ] {
+        assert!(text.contains(line), "{line}:\n{text}");
+    }
+    for (niri, rini) in [
+        ("focus-window-up", "`focus-window-or-workspace-down` and `-up`"),
+        ("move-window-up", "`move-window-up-or-to-workspace-up`"),
+    ] {
+        let report = refused(&format!("binds {{\n    Mod+I {{ {niri}; }}\n}}\n"));
+        let (_, help) = report.split_once("help:").expect("a help line");
+        assert!(help.contains(rini), "{niri}: {report}");
+    }
+}
+
 /// niri's `focus-column-first` and `focus-column-last` are rini's actions under niri's names, so
 /// a niri config's binds of them read as written and print back the same, and the shipped binds
 /// put them on `Mod+U` and `Mod+O` ("Focus to an end of the strip" in `specs/strip.md`).
@@ -1916,7 +1955,7 @@ fn every_section() -> String {
             };
             let key = format!(
                 "{}F{}",
-                ["Mod+", "Mod+Ctrl+", "Mod+Shift+"][index / 20],
+                ["Mod+", "Mod+Ctrl+", "Mod+Shift+", "Mod+Alt+"][index / 20],
                 index % 20 + 1
             );
             let repeat = if index % 7 == 0 { " repeat=true" } else { "" };

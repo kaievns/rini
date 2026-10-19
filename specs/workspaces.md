@@ -53,6 +53,41 @@ moves along the strip within one workspace.
   reaches a workspace called "next" as `"Next"`. Binds name a workspace by its place in the config
   and window rules by its name, so a workspace called "next" is reachable from both.
 
+## Up and down a column and on through the stack
+
+- **`focus-window-or-workspace-up` and `-down` MUST move focus up or down the focused window's
+  column, and where the column ends that way, holds one window, or the workspace holds none, MUST
+  switch to the workspace above or below exactly as `focus-workspace-up` and `-down` do**: the same
+  window focused, the same slide under every look, and at the end of the stack the same bounce. One
+  key then walks a column and the stack, as niri's do.
+- `move-window-up-or-to-workspace-up` and `move-window-down-or-to-workspace-down` MUST move the
+  focused window up or down its column, and where the column ends MUST move it to the workspace
+  that way with focus following, as `move-window-to-workspace-up` and `-down` do with `focus=true`.
+- With a floating window focused, the focus forms MUST act as their press within the column does,
+  which takes focus back to the strip, and the move forms MUST move the floating window to the
+  workspace that way with focus following: a floating window is in no column, so a move within one
+  would move the strip's selection, not the window focused, and could carry it to another display.
+  A press of either MUST NOT carry a window to another display.
+- They MUST hold wherever a bind runs, the overview included, since it runs the real actions. The
+  names are niri's, so a niri config's binds of them work as written. `focus-workspace-up` and
+  `-down`, the moves to a workspace and the display forms, `focus-window-or-monitor-up` among them,
+  MUST stay as they are.
+
+> **Reported 2026-10-19.** "i'll need to change the keybindings/navigation logic. and that is
+> globally, not just for the overview. instead of having the dedicated p/; buttons to switch between
+> workspaces, i want to use the i/k buttons that we use for moving up/down in the columns, the new
+> logic will basically combine them, when i'm reaching the top of a column (or there is just one
+> window) the next "i" will move to the upper workspace, "k" for down works similarly. you can keep
+> the p/; around too, i primarily want to change the meta-i/k behaviour." Kai's `Mod` is Alt, and
+> his `Mod+I` and `Mod+K` were `focus-window-or-monitor-up` and `-down`, which cross to the display
+> above or below instead. niri's four actions had been refused as niri's alone. The shipped binds
+> keep `Mod+J` and `Mod+K` on the display forms and write the workspace forms beside them.
+>
+> **Found 2026-10-19, not reported.** Review found that a move with a floating window focused took
+> the column's move, which works on the strip's selection and not the floating window: at its
+> column's end on the lower of two stacked displays it carried that tiled window to the display
+> above. The move forms now move the floating window to the workspace instead.
+
 ## Relaunching an application
 
 - Where an application's windows belong MUST survive the application quitting, keyed so it does not
@@ -66,5 +101,7 @@ workspace a selector names and how names compare, `src/workspaces/domain/launch_
 relaunch records, `src/workspaces/engine/launch.rs` what is recorded in them and the slot a relaunched
 window takes, `src/workspaces/engine/rules.rs` and `src/workspaces/engine/discovery.rs` where it takes
 it, `src/workspaces/engine/affinity.rs` the width it arrives at, `src/workspaces/engine/commands/workspace.rs`
-the switches and moves to a workspace, and `src/workspaces/engine.rs` the orchestration. Measurements are in
-`src/workspaces/docs/launch-memory.md` and `src/workspaces/docs/workspaces-and-displays.md`.
+the switches and moves to a workspace, `src/workspaces/engine/commands/cross.rs` and
+`src/workspaces/domain/command.rs` a press on through the stack, and `src/workspaces/engine.rs` the
+orchestration. Measurements are in `src/workspaces/docs/launch-memory.md` and
+`src/workspaces/docs/workspaces-and-displays.md`.

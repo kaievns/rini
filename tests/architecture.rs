@@ -2188,8 +2188,9 @@ fn a_field_reach_is_found_across_lines_and_a_call_of_the_same_name_is_not() {
 
 /// Each family of `EngineCommand` and the one dispatcher under `src/workspaces/engine/commands/`
 /// that matches it.
-const COMMAND_FAMILIES: [(&str, &str); 6] = [
+const COMMAND_FAMILIES: [(&str, &str); 7] = [
     ("arrange.rs", "ArrangeCommand"),
+    ("cross.rs", "CrossCommand"),
     ("floating.rs", "FloatingCommand"),
     ("focus.rs", "FocusCommand"),
     ("resize.rs", "ResizeCommand"),

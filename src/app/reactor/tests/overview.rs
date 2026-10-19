@@ -996,18 +996,28 @@ const KAIS_BINDS: &str = "binds {
     Mod+L { focus-column-right; }
     Mod+U { focus-column-first; }
     Mod+O { focus-column-last; }
-    Mod+K { focus-window-or-monitor-down; }
-    Mod+I { focus-window-or-monitor-up; }
+    Mod+K { focus-window-or-workspace-down; }
+    Mod+I { focus-window-or-workspace-up; }
     Mod+Shift+J { move-window-left; }
     Mod+Shift+L { move-window-right; }
     Mod+Shift+U { move-window-to-first; }
     Mod+Shift+O { move-window-to-last; }
-    Mod+Shift+K { move-window-down-or-to-monitor-down; }
-    Mod+Shift+I { move-window-up-or-to-monitor-up; }
+    Mod+Shift+K { move-window-down-or-to-workspace-down; }
+    Mod+Shift+I { move-window-up-or-to-workspace-up; }
     Mod+P { focus-workspace-up; }
     Mod+Semicolon { focus-workspace-down; }
     Mod+Shift+P { move-window-to-workspace-up; }
     Mod+Shift+Semicolon { move-window-to-workspace-down; }
+}
+";
+
+/// The display forms the shipped config binds up and down, under keys Kai's binds leave free: they
+/// step a column as the workspace forms do, and where it ends cross to a display, not a workspace.
+const DISPLAY_FORMS: &str = "binds {
+    Mod+Ctrl+K { focus-window-or-monitor-down; }
+    Mod+Ctrl+I { focus-window-or-monitor-up; }
+    Mod+Ctrl+Shift+K { move-window-down-or-to-monitor-down; }
+    Mod+Ctrl+Shift+I { move-window-up-or-to-monitor-up; }
 }
 ";
 
@@ -1021,17 +1031,22 @@ enum Kept {
     PushedAlongRow,
     /// A push against an end of the stack.
     PushedAtStackEnd,
+    /// No scene: nothing changed, as at the top of a column with no display above.
+    Still,
 }
 
 /// Each of Kai's sixteen binds pressed inside the overview, lowered as his config's binds are, runs
 /// on the real layout with nothing flying, is kept for the scene as the press it was, a push where
 /// it ran into an end, and leaves the scene selecting the window focus is on, on the workspace
-/// shown; a move keeps the moved window focused and on the axis.
+/// shown, the row each step names; a move keeps the moved window focused and on the axis. `Mod+I`
+/// and `Mod+K`, with Shift or without, go on to the workspace that way where the column ends, and
+/// the display forms the shipped config binds, pressed beside them, stay on the workspace there.
 #[test]
 fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() {
     use crate::app::config::Config;
     use crate::app::controller::lower::{Lowered, lower};
-    let config = Config::parse("kai.kdl", KAIS_BINDS).unwrap_or_else(|e| panic!("{}", e.render()));
+    let parse = |name, text| Config::parse(name, text).unwrap_or_else(|e| panic!("{}", e.render()));
+    let (kais, display_forms) = (parse("kai.kdl", KAIS_BINDS), parse("display.kdl", DISPLAY_FORMS));
     let (mut apps, mut reactor) = desk();
     reactor.settings_mut().animate = true;
     let mut rx = reactor.connect_test_transitions();
@@ -1051,33 +1066,47 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
 
     use Kept::*;
     let steps = [
-        ("Mod+I", Slid),
-        ("Mod+K", Slid),
-        ("Mod+L", Moved),
-        ("Mod+L", PushedAlongRow),
-        ("Mod+J", Moved),
-        ("Mod+O", Moved),
-        ("Mod+U", Moved),
-        ("Mod+J", PushedAlongRow),
-        ("Mod+Shift+K", Moved),
-        ("Mod+Shift+I", Moved),
-        ("Mod+Shift+L", Moved),
-        ("Mod+Shift+J", Moved),
-        ("Mod+Shift+O", Moved),
-        ("Mod+Shift+O", PushedAlongRow),
-        ("Mod+Shift+U", Moved),
-        ("Mod+Shift+U", PushedAlongRow),
-        ("Mod+Semicolon", Moved),
-        ("Mod+P", Moved),
-        ("Mod+P", Moved),
-        ("Mod+P", PushedAtStackEnd),
-        ("Mod+Shift+Semicolon", Moved),
-        ("Mod+Shift+P", Moved),
-        ("Mod+Shift+P", PushedAtStackEnd),
+        ("Mod+Ctrl+I", Slid, 1),
+        ("Mod+Ctrl+I", Still, 1),
+        ("Mod+Ctrl+K", Slid, 1),
+        ("Mod+I", Slid, 1),
+        ("Mod+K", Slid, 1),
+        ("Mod+K", Moved, 2),
+        ("Mod+I", Moved, 1),
+        ("Mod+L", Moved, 1),
+        ("Mod+L", PushedAlongRow, 1),
+        ("Mod+J", Moved, 1),
+        ("Mod+O", Moved, 1),
+        ("Mod+U", Moved, 1),
+        ("Mod+J", PushedAlongRow, 1),
+        ("Mod+Ctrl+Shift+K", Moved, 1),
+        ("Mod+Ctrl+Shift+I", Moved, 1),
+        ("Mod+Ctrl+Shift+I", Still, 1),
+        ("Mod+Shift+K", Moved, 1),
+        ("Mod+Shift+I", Moved, 1),
+        ("Mod+Shift+I", Moved, 0),
+        ("Mod+Shift+K", Moved, 1),
+        ("Mod+Shift+L", Moved, 1),
+        ("Mod+Shift+J", Moved, 1),
+        ("Mod+Shift+O", Moved, 1),
+        ("Mod+Shift+O", PushedAlongRow, 1),
+        ("Mod+Shift+U", Moved, 1),
+        ("Mod+Shift+U", PushedAlongRow, 1),
+        ("Mod+Semicolon", Moved, 2),
+        ("Mod+P", Moved, 1),
+        ("Mod+P", Moved, 0),
+        ("Mod+P", PushedAtStackEnd, 0),
+        ("Mod+Shift+Semicolon", Moved, 1),
+        ("Mod+Shift+P", Moved, 0),
+        ("Mod+Shift+P", PushedAtStackEnd, 0),
     ];
     let mut pressed = std::collections::BTreeSet::new();
-    for (key, kept) in steps {
-        let action = config.binds.iter().find(|bind| bind.key == key).expect(key).action.clone();
+    for (key, kept, row) in steps {
+        let action = (kais.binds.iter().chain(&display_forms.binds))
+            .find(|bind| bind.key == key)
+            .expect(key)
+            .action
+            .clone();
         let Lowered::Command(command) = lower(action, &[]) else {
             panic!("{key} lowers to a command");
         };
@@ -1086,10 +1115,12 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
             Command::Layout(
                 LayoutCommand::MoveNode(_)
                     | LayoutCommand::MoveNodeToEnd(_)
+                    | LayoutCommand::MoveNodeOrToWorkspace(_)
                     | LayoutCommand::MoveWindowToWorkspace { .. }
             )
         );
         let before = reactor.layout().focused_window();
+        let scene_before = reactor.overview_scene().cloned();
         batch(&mut apps, &mut reactor, vec![Event::Command(command)]);
         let events = sent(&mut rx);
         assert!(
@@ -1103,6 +1134,13 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
                 _ => None,
             })
             .collect();
+        if kept == Still {
+            assert_eq!(scenes, [], "{key}: no scene");
+            assert_eq!(reactor.overview_scene().cloned(), scene_before, "{key}");
+            assert_eq!(reactor.layout().focused_window(), before, "{key}");
+            pressed.insert(key);
+            continue;
+        }
         let [(scene, presses)] = &scenes[..] else {
             panic!("{key}: one scene, not {scenes:?}");
         };
@@ -1120,6 +1158,7 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
             _ => panic!("{key}: {presses:?}"),
         };
         assert_eq!(was, kept, "{key}: {presses:?}");
+        assert_eq!(scene.selected.row, row, "{key}: the workspace it lands on");
         assert_eq!(Some(scene), reactor.overview_scene());
         let focused = reactor.layout().focused_window();
         let shown = reactor.test_active_workspace(space());
@@ -1139,7 +1178,11 @@ fn every_one_of_kais_binds_inside_the_overview_runs_and_is_kept_for_the_scene() 
         }
         pressed.insert(key);
     }
-    assert_eq!(pressed.len(), 16, "every one of Kai's binds");
+    assert_eq!(
+        pressed.len(),
+        20,
+        "every one of Kai's binds and the four display forms"
+    );
 }
 
 /// The overview closes, and the tap's session with it, once its display shows no space rini

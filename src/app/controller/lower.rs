@@ -5,7 +5,9 @@
 //! resolved against the configured names, which are passed in rather than read so the whole thing
 //! stays a function. The config writes workspaces and displays from 1; the wire counts from 0.
 
-use rini_ipc::protocol::{DisplaySelector, RelativeDisplay, RelativeWorkspace, WorkspaceSelector};
+use rini_ipc::protocol::{
+    DisplaySelector, RelativeDisplay, RelativeWorkspace, Vertical, WorkspaceSelector,
+};
 
 use crate::app::reactor;
 use crate::input::domain::binding::{
@@ -49,6 +51,9 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
             window_id: None,
         })
     };
+    let focus_on = |way| layout(LayoutCommand::MoveFocusOrWorkspace(way));
+    let move_on = |way| layout(LayoutCommand::MoveNodeOrToWorkspace(way));
+    let mouse_to = |selector| reactor(R::MoveMouseToDisplay(selector));
     match action {
         Action::FocusColumnLeft => layout(LayoutCommand::MoveFocus(Direction::Left)),
         Action::FocusColumnRight => layout(LayoutCommand::MoveFocus(Direction::Right)),
@@ -56,12 +61,16 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
         Action::FocusColumnLast => layout(LayoutCommand::MoveFocusToEnd(StripEnd::Last)),
         Action::FocusWindowOrMonitorDown => layout(LayoutCommand::MoveFocus(Direction::Down)),
         Action::FocusWindowOrMonitorUp => layout(LayoutCommand::MoveFocus(Direction::Up)),
+        Action::FocusWindowOrWorkspaceDown => focus_on(Vertical::Down),
+        Action::FocusWindowOrWorkspaceUp => focus_on(Vertical::Up),
         Action::MoveWindowLeft => layout(LayoutCommand::MoveNode(Direction::Left)),
         Action::MoveWindowRight => layout(LayoutCommand::MoveNode(Direction::Right)),
         Action::MoveWindowToFirst => layout(LayoutCommand::MoveNodeToEnd(StripEnd::First)),
         Action::MoveWindowToLast => layout(LayoutCommand::MoveNodeToEnd(StripEnd::Last)),
         Action::MoveWindowDownOrToMonitorDown => layout(LayoutCommand::MoveNode(Direction::Down)),
         Action::MoveWindowUpOrToMonitorUp => layout(LayoutCommand::MoveNode(Direction::Up)),
+        Action::MoveWindowDownOrToWorkspaceDown => move_on(Vertical::Down),
+        Action::MoveWindowUpOrToWorkspaceUp => move_on(Vertical::Up),
         Action::ToggleFoldLeft => layout(LayoutCommand::ToggleFold(Direction::Left)),
         Action::ToggleFoldRight => layout(LayoutCommand::ToggleFold(Direction::Right)),
         Action::ExplodeColumn => layout(LayoutCommand::ExplodeColumn),
@@ -107,20 +116,12 @@ pub(crate) fn lower(action: Action, workspace_names: &[String]) -> Lowered {
         Action::MoveWindowToMonitorDown => move_to_display(direction(Direction::Down)),
         Action::MoveWindowToMonitorNext => move_to_display(next()),
         Action::MoveWindowToMonitor(monitor) => move_to_display(monitor_selector(monitor)),
-        Action::MoveMouseToMonitorLeft => {
-            reactor(R::MoveMouseToDisplay(direction(Direction::Left)))
-        }
-        Action::MoveMouseToMonitorRight => {
-            reactor(R::MoveMouseToDisplay(direction(Direction::Right)))
-        }
-        Action::MoveMouseToMonitorUp => reactor(R::MoveMouseToDisplay(direction(Direction::Up))),
-        Action::MoveMouseToMonitorDown => {
-            reactor(R::MoveMouseToDisplay(direction(Direction::Down)))
-        }
-        Action::MoveMouseToMonitorNext => reactor(R::MoveMouseToDisplay(next())),
-        Action::MoveMouseToMonitor(monitor) => {
-            reactor(R::MoveMouseToDisplay(monitor_selector(monitor)))
-        }
+        Action::MoveMouseToMonitorLeft => mouse_to(direction(Direction::Left)),
+        Action::MoveMouseToMonitorRight => mouse_to(direction(Direction::Right)),
+        Action::MoveMouseToMonitorUp => mouse_to(direction(Direction::Up)),
+        Action::MoveMouseToMonitorDown => mouse_to(direction(Direction::Down)),
+        Action::MoveMouseToMonitorNext => mouse_to(next()),
+        Action::MoveMouseToMonitor(monitor) => mouse_to(monitor_selector(monitor)),
         Action::ToggleSpaceActivated => reactor(R::ToggleSpaceActivated),
         // No window server id: a hotkey means the focused window, and the reactor resolves that.
         Action::CloseWindow => reactor(R::CloseWindow { window_server_id: None }),

@@ -55,6 +55,14 @@ fn table() -> Vec<(Action, Lowered)> {
             Action::FocusWindowOrMonitorUp,
             layout(LayoutCommand::MoveFocus(Up)),
         ),
+        (
+            Action::FocusWindowOrWorkspaceDown,
+            layout(LayoutCommand::MoveFocusOrWorkspace(Vertical::Down)),
+        ),
+        (
+            Action::FocusWindowOrWorkspaceUp,
+            layout(LayoutCommand::MoveFocusOrWorkspace(Vertical::Up)),
+        ),
         (Action::MoveWindowLeft, layout(LayoutCommand::MoveNode(Left))),
         (Action::MoveWindowRight, layout(LayoutCommand::MoveNode(Right))),
         (
@@ -72,6 +80,14 @@ fn table() -> Vec<(Action, Lowered)> {
         (
             Action::MoveWindowUpOrToMonitorUp,
             layout(LayoutCommand::MoveNode(Up)),
+        ),
+        (
+            Action::MoveWindowDownOrToWorkspaceDown,
+            layout(LayoutCommand::MoveNodeOrToWorkspace(Vertical::Down)),
+        ),
+        (
+            Action::MoveWindowUpOrToWorkspaceUp,
+            layout(LayoutCommand::MoveNodeOrToWorkspace(Vertical::Up)),
         ),
         (Action::ToggleFoldLeft, layout(LayoutCommand::ToggleFold(Left))),
         (Action::ToggleFoldRight, layout(LayoutCommand::ToggleFold(Right))),
