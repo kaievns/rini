@@ -17,7 +17,7 @@ use super::asks::on_screen;
 use super::tiles::{Stacking, frames_of};
 use super::{Event, FlightEngine};
 use crate::animation::domain::choreography::overview::{
-    Motion, Outline, Places, Press, at_rest, held, pose, pushes, screen_wide, toward,
+    Motion, Outline, Places, Press, accented, at_rest, held, pose, pushes, screen_wide, toward,
 };
 use crate::animation::domain::motion::plan::on_overlay;
 #[cfg(test)]
@@ -45,9 +45,8 @@ use crate::transitions::domain::timing::FRAME_INTERVAL;
 pub(super) struct Shown {
     /// The latest view the reactor laid out.
     view: Option<OverviewView>,
-    /// How long its zoom out and in run, and a press inside it.
-    arc: Duration,
-    press: Duration,
+    /// How long its zoom out and in run, and each press inside it: a focus press's pan.
+    length: Duration,
     /// Its score as the renderer was handed it.
     score: Score,
     tiles: Vec<OverlayTile>,
@@ -59,6 +58,9 @@ pub(super) struct Shown {
     outlines: Vec<Outline>,
     /// Whether its thumbs' bands are drawn as wide on screen as at rest: while it is held.
     widened: bool,
+    /// The zoom its thumbs' lifts are cast under, as wide on screen as at rest: the latest held
+    /// scene's, from its open, which lifts nothing yet, to its lift, which lowers them all.
+    lifts_under: Option<f64>,
     /// The scene it last played, which the next is logged against.
     played: Option<Scene>,
     /// What waits for its lift: every flight asked for and every move of the overlay, and an open
@@ -67,20 +69,14 @@ pub(super) struct Shown {
 }
 
 impl FlightEngine {
-    /// The overview opened, its zoom out over `arc` and each press inside it over `press`: opened
+    /// The overview opened, its zoom out and each press inside it over `length`: opened
     /// under a generation of its own, but for one waiting on a flight to lift, which takes one then,
     /// and one opened again as it closes, which keeps its own. A coordinator in its quiet settles
     /// first: the overview holds the service from here.
-    pub(super) fn open_overview(
-        &mut self,
-        view: OverviewView,
-        (arc, press): (Duration, Duration),
-        cause: Cause,
-    ) {
+    pub(super) fn open_overview(&mut self, view: OverviewView, length: Duration, cause: Cause) {
         self.take_request(cause);
         self.shown_overview.view = Some(view);
-        self.shown_overview.arc = arc;
-        self.shown_overview.press = press;
+        self.shown_overview.length = length;
         let flying = self.flights.coordinator().is_flying();
         let generation = if flying || self.flights.overview().is_landing() {
             self.flights.overview().generation()
@@ -90,7 +86,12 @@ impl FlightEngine {
             self.flights.reserve()
         };
         let rests = self.rests;
-        self.drive_overview(Step::Open { generation, arc, flying, rests });
+        self.drive_overview(Step::Open {
+            generation,
+            length,
+            flying,
+            rests,
+        });
     }
 
     /// The scene laid out again, and what the presses that changed it named.
@@ -202,18 +203,15 @@ impl FlightEngine {
             Command::Release => self.pictures.hold(Hold::Released),
             Command::Play => {
                 let presses = std::mem::take(&mut self.shown_overview.presses);
-                let press = self.shown_overview.press;
-                self.move_overview(Target::Held, slide(press), (&presses, press), now);
+                self.move_overview(Target::Held, &presses, now);
             }
             Command::Exit => {
                 self.hole_overview();
-                let arc = self.shown_overview.arc;
-                self.move_overview(Target::AtRest, arc_motion(arc), (&[], arc), now);
+                self.move_overview(Target::AtRest, &[], now);
             }
             Command::Turn => {
                 self.render(Render::Holes(Vec::new()));
-                let arc = self.shown_overview.arc;
-                self.move_overview(Target::Held, arc_motion(arc), (&[], arc), now);
+                self.move_overview(Target::Held, &[], now);
             }
             Command::PlaceRest => {
                 self.render(Render::PlaceRest { through: self.took });
@@ -327,19 +325,14 @@ impl FlightEngine {
         });
         self.outline_overview(&rest);
         self.shown = self.render(Render::Show);
-        let arc = self.shown_overview.arc;
-        self.move_overview(Target::Held, arc_motion(arc), (&[], arc), now);
+        self.move_overview(Target::Held, &[], now);
     }
 
-    /// Every node from where it is drawn to where `target` has it, as `motion` moves it, the pushes
-    /// among `presses` bounced over `pushing`, each thumb wearing what it wears there.
-    fn move_overview(
-        &mut self,
-        target: Target,
-        motion: Motion,
-        (presses, pushing): (&[Press], Duration),
-        now: Instant,
-    ) {
+    /// Every node from where it is drawn to where `target` has it at a press's pace, the pushes
+    /// among `presses` bounced over a press's length, each thumb wearing what it wears there, its
+    /// lifts cast under the held scene's zoom first.
+    fn move_overview(&mut self, target: Target, presses: &[Press], now: Instant) {
+        let length = self.shown_overview.length;
         let Some(places) = self.overview_places(target) else {
             return;
         };
@@ -366,10 +359,15 @@ impl FlightEngine {
         self.wear_overview(&places);
         let at = self.media.at(now);
         let shown = &mut self.shown_overview;
-        let mut edits = toward(&shown.score, &places, at, motion);
-        edits.extend(pushes(&shown.score, &scene, presses, pushing.as_secs_f64(), at));
+        let mut edits = toward(&shown.score, &places, at, motion(length));
+        edits.extend(pushes(&shown.score, &scene, presses, length.as_secs_f64(), at));
         for edit in &edits {
             shown.score.apply(edit);
+        }
+        let cast = (target == Target::Held && shown.lifts_under != Some(scene.scale))
+            .then(|| Render::CastLifts { under: scene.scale });
+        if cast.is_some() {
+            shown.lifts_under = Some(scene.scale);
         }
         let mut turned = Vec::new();
         for tile in &shown.tiles {
@@ -381,7 +379,12 @@ impl FlightEngine {
                         focused: tile.focused,
                     });
                 }
-                if worn != tile.worn {
+                if worn.decoration != tile.worn.decoration {
+                    turned.push(Render::Rewear {
+                        window: tile.window,
+                        worn: tile.worn,
+                    });
+                } else if worn != tile.worn {
                     turned.push(Render::Wear {
                         window: tile.window,
                         worn: tile.worn,
@@ -389,8 +392,11 @@ impl FlightEngine {
                 }
             }
         }
-        if !edits.is_empty() {
-            let tiles = shown.tiles.clone();
+        let tiles = (!edits.is_empty()).then(|| shown.tiles.clone());
+        if let Some(cast) = cast {
+            self.render(cast);
+        }
+        if let Some(tiles) = tiles {
             self.render(Render::Play { edits, tiles });
         }
         for command in turned {
@@ -416,7 +422,7 @@ impl FlightEngine {
                 ring: Some(view.outline?),
                 ..Decoration::default()
             };
-            shown.dressed(ring, view.scene.scale).ring
+            shown.dressed(ring, view.scene.scale, false).ring
         });
         let outlines = shown.outlines.clone();
         self.render(Render::Outlines { outlines, ring });
@@ -431,20 +437,23 @@ impl FlightEngine {
             return;
         }
         shown.widened = on;
+        let selected = view.scene.selected.window;
+        let dressed: Vec<(WindowId, Decoration)> = shown
+            .tiles
+            .iter()
+            .filter_map(|tile| {
+                let info = view.windows.iter().find(|info| info.window == tile.window)?;
+                let on = selected == Some(tile.window);
+                Some((tile.window, shown.dressed(info.decoration, view.scene.scale, on)))
+            })
+            .collect();
         let mut rewear = Vec::new();
-        for tile in &mut shown.tiles {
-            let Some(info) = view.windows.iter().find(|info| info.window == tile.window) else {
+        for (window, decoration) in dressed {
+            let Some(tile) = shown.tiles.iter_mut().find(|tile| tile.window == window) else {
                 continue;
             };
-            tile.worn.decoration = if on {
-                screen_wide(info.decoration, view.scene.scale)
-            } else {
-                info.decoration
-            };
-            rewear.push(Render::Rewear {
-                window: tile.window,
-                worn: tile.worn,
-            });
+            tile.worn.decoration = decoration;
+            rewear.push(Render::Rewear { window, worn: tile.worn });
         }
         for command in rewear {
             self.render(command);
@@ -501,11 +510,22 @@ impl FlightEngine {
                 .or_else(|| self.pictures.usable(info.window))
                 .or_else(|| self.pictures.stand_in(rect.size.respace()));
             let Some(snapshot) = picture else { continue };
-            let worn = Worn::beside(self.shown_overview.dressed(info.decoration, view.scene.scale));
+            let on = selected == Some(info.window);
+            let decoration = self.shown_overview.dressed(info.decoration, view.scene.scale, on);
+            let worn = Worn::beside(decoration);
             let tile = stacking.tile_of(info.window, info.server_id, info.floating, worn);
             let clipped = snapshot.source.clips();
             made.push(tile.flying((rect, rect), Drawn { snapshot, clipped }, false));
         }
+        let dressed: HashMap<WindowId, Decoration> = view
+            .windows
+            .iter()
+            .map(|info| {
+                let on = selected == Some(info.window);
+                let decoration = self.shown_overview.dressed(info.decoration, view.scene.scale, on);
+                (info.window, decoration)
+            })
+            .collect();
         let shown = &mut self.shown_overview;
         shown
             .tiles
@@ -513,7 +533,7 @@ impl FlightEngine {
         shown.tiles.extend(made);
         for tile in &mut shown.tiles {
             let on = selected == Some(tile.window);
-            let decoration = tile.worn.decoration;
+            let decoration = dressed.get(&tile.window).copied().unwrap_or(tile.worn.decoration);
             tile.focused = on;
             tile.worn = if on {
                 Worn {
@@ -629,15 +649,17 @@ impl Shown {
         self.presses.clear();
         self.outlines.clear();
         self.widened = false;
+        self.lifts_under = None;
         self.played = None;
     }
 
-    /// `decoration` as its thumb wears it now: as wide on screen as at rest while it is held.
-    fn dressed(&self, decoration: Decoration, scale: f64) -> Decoration {
-        if self.widened {
-            screen_wide(decoration, scale)
-        } else {
-            decoration
+    /// `decoration` as its thumb wears it now: as wide on screen as at rest while it is held, the
+    /// `selected` thumb's ring at least the card's ring.
+    fn dressed(&self, decoration: Decoration, scale: f64, selected: bool) -> Decoration {
+        match (self.widened, selected) {
+            (false, _) => decoration,
+            (true, false) => screen_wide(decoration, scale),
+            (true, true) => screen_wide(accented(decoration), scale),
         }
     }
 }
@@ -649,21 +671,12 @@ enum Target {
     AtRest,
 }
 
-/// The zoom out or in over `arc`, a cut with none.
-fn arc_motion(arc: Duration) -> Motion {
-    if arc.is_zero() {
+/// Slide's curve over `length`, a cut with none.
+fn motion(length: Duration) -> Motion {
+    if length.is_zero() {
         Motion::Cut
     } else {
-        Motion::Arc { seconds: arc.as_secs_f64() }
-    }
-}
-
-/// A press over `press`, a cut with none.
-fn slide(press: Duration) -> Motion {
-    if press.is_zero() {
-        Motion::Cut
-    } else {
-        Motion::Slide { seconds: press.as_secs_f64() }
+        Motion::Slide { seconds: length.as_secs_f64() }
     }
 }
 

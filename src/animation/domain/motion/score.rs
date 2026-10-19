@@ -21,7 +21,7 @@ pub const SAMPLE_STEP: f64 = 1.0 / 120.0;
 const RATE_READ: f64 = 1e-4;
 
 /// What a track moves: the strip's zoom, a container's position, a tile's frame inside its
-/// container, or how far a tile is lifted.
+/// container, how far a tile is lifted, or how dark the desktop behind every tile is tinted.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Node {
     /// What every container but the floating one rides, drawn through its zoom.
@@ -31,6 +31,9 @@ pub enum Node {
     /// How far the tile is lifted off the strip, from 0 to 1: a renderer draws a shadow under it
     /// that deep. Dropped with its tile.
     Lift(WindowId),
+    /// How far the desktop behind every tile is darkened, from 0 to 1 of the card's backdrop
+    /// (`chrome::domain::card::BACKDROP_ALPHA`): the overview's, while it is held.
+    Tint,
 }
 
 impl Node {
@@ -41,6 +44,7 @@ impl Node {
                 | (Node::Container(_), Value::Point(_))
                 | (Node::Tile(_), Value::Rect(_))
                 | (Node::Lift(_), Value::Number(_))
+                | (Node::Tint, Value::Number(_))
         )
     }
 }
@@ -384,7 +388,7 @@ impl Score {
     pub fn containers(&self) -> impl Iterator<Item = GroupKey> + '_ {
         self.models.keys().filter_map(|node| match node {
             Node::Container(key) => Some(*key),
-            Node::Strip | Node::Tile(_) | Node::Lift(_) => None,
+            Node::Strip | Node::Tile(_) | Node::Lift(_) | Node::Tint => None,
         })
     }
 
@@ -1536,7 +1540,7 @@ mod tests {
                     self.within(200.0, 1720.0),
                     self.within(200.0, 1081.0),
                 ),
-                Node::Lift(_) => Value::Number(self.next()),
+                Node::Lift(_) | Node::Tint => Value::Number(self.next()),
             }
         }
 

@@ -34,7 +34,7 @@ use rini_runloop::turns;
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
-use crate::bar::domain::palette;
+use crate::chrome::domain::palette;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::platform::layer::{clear_contents, set_contents, set_layer_contents};
@@ -57,11 +57,6 @@ const PANEL_LEVEL: isize = 101;
 // The panel is a floating surface, which the elevation law puts on the content plane with a hairline:
 // "Bars/sidebars on --n1, content on --n2", and "Shadows are for floating things: windows, popovers".
 
-/// `--n0`, the deepest step on the spine.
-///
-/// The darkening inside the glass. Two steps below the content plane on purpose: this panel floats
-/// OVER content rather than being content.
-const N0: (f64, f64, f64) = palette::N0.rgb();
 /// `--n3`, raised. A tile with no picture yet is a surface sitting on the panel.
 const N3: (f64, f64, f64) = palette::N3.rgb();
 /// `--n11`, primary text.
@@ -80,17 +75,6 @@ const EMBER_SOFT: (f64, f64, f64) = palette::EMBER_SOFT.rgb();
 /// floating surfaces — Spotlight, the volume HUD, a popover — are rounded far more than 7px. Matching
 /// the platform reads as correct here in a way that matching the document system does not.
 const CORNER: f64 = 26.0;
-/// The ember ring around the selected row.
-///
-/// The elevation law's default for an active ROW in a list is a soft fill plus a 2px inset bar at its
-/// left edge, which is what this was. A switcher row is not a list row: it is a focus target, and the
-/// ember's own remit covers "focused borders" as well as active bars. A whole outline says "this is
-/// the one" about a tile; an edge bar says "this is the current line" about a list.
-const FOCUS_RING: f64 = 2.0;
-/// How much `--n0` darkens the glass. The one value in the panel that is a judgement rather than a
-/// token: the system has none for an overlay's translucency. Chosen against screenshots of 0.35, 0.50
-/// and 0.65 over the same desktop as "the native switcher, a step darker" (`src/switcher/docs/README.md`).
-const PANEL_ALPHA: f64 = 0.40;
 /// A tile's default hairline: `--n11` faint enough to read as the window's edge rather than as a frame.
 /// Light rather than `--line`, because the tiles are mostly dark windows and a hairline darker than
 /// them disappears.
@@ -330,7 +314,7 @@ impl SwitcherPanel {
         root.setCornerRadius(CORNER);
         root.setMasksToBounds(true);
         // No hairline of its own: the glass draws its edge.
-        root.setBackgroundColor(Some(&token(N0, PANEL_ALPHA)));
+        root.setBackgroundColor(Some(&token(metrics.backdrop.rgb(), metrics.backdrop_alpha)));
 
         // Under the tiles, so a tile's picture is never hidden by its own highlight.
         let highlight = CALayer::layer();
@@ -351,7 +335,9 @@ impl SwitcherPanel {
         ring.setCornerRadius(metrics.tile_corner + 3.0);
         ring.setZPosition(3.0);
         ring.setHidden(true);
-        ring.setBorderWidth(FOCUS_RING);
+        // The ember's remit covers "focused borders" as well as active bars, and a switcher row is
+        // a focus target rather than a list row.
+        ring.setBorderWidth(metrics.ring);
         ring.setBorderColor(Some(&token(EMBER, 1.0)));
         root.addSublayer(&ring);
 

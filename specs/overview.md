@@ -83,10 +83,66 @@ Every workspace of one display at once, zoomed out, while its key is held.
   selected row in view. First values for Kai to tune.
 - Columns past either edge MUST collapse into a stack at that edge: the nearest one on top, its
   outer edge 16pt in, each card behind 8pt further out and 12pt shorter at top and bottom, three
-  cards at most, as the switcher stacks an application's windows, on their side. A column the top
-  card overlaps MUST join the stack as its top card. The current column MUST NOT stack, and the top
-  card MUST NOT cover it: it MUST stay the row's gap clear of the current column, partly past the
-  edge where its 16pt inset would bring it nearer. A card not drawn MUST NOT hold a picture.
+  cards at most, as the switcher stacks an application's windows, on their side. The current column
+  MUST NOT stack. The thumb beside a stack MUST stay in its row and be drawn over the stack's top
+  card, the current column among them, and the top card MUST move in from the edge where it would
+  otherwise reach less than 24pt under that thumb: no gap may open between a row and its stacks.
+  The top card MUST reach no further in than that thumb's inner edge, out past the display's edge
+  if it must, and so move with that thumb as the row pans: a wide card beside a narrow thumb would
+  otherwise show in the gap inside it, which is there to tell the windows apart.
+  A card not drawn MUST NOT hold a picture.
+
+> **Reported 2026-10-19.** "there are gaps between stacks on the sides and next thumbs, leth the
+> strip thumbs overlap the stacks instead so there were no gaps". A column the top card overlapped
+> joined the stack as its top card, leaving a gap as wide as that column between the row and the
+> stack.
+
+> **Found 2026-10-19, not reported.** Review of the stacks showed a full-width column stacked
+> beside a half-width thumb at depth 0.3 on 1728pt reach 166pt past that thumb's inner edge, into
+> the card's gap inside it.
+
+- Two tiled thumbs side by side MUST be at least the card's gap apart, 14pt on screen, and two
+  stacked in a column as far, each its window's place narrowed and shortened by that gap about its
+  centre: at the overview's depth the strip's own gap is under a point, and neighbouring windows
+  read as one. Kai asked for the horizontal gap; a stacked column's windows read as one slab too
+  with less, 2.7pt for a window 518pt wide and 100pt tall with its proportions kept.
+
+> **Reported 2026-10-19.** "add horisontal spacing between windows on the strip, otherwise they're
+> luped together and hard to see which one which, for example the rainbow terminals on ws3 is a
+> mess". Kai's 3pt gap is 0.9pt on screen at depth 0.3.
+
+- The desktop behind the thumbs MUST be darkened while the overview is held, so it reads as a mode
+  and its wallpaper is quieter under them: the card's backdrop, `--n0` at 0.40, the switcher's
+  darkening of what is behind its popup. It MUST darken with the zoom out from none at frame zero and
+  clear with the zoom in, and a flight MUST never be drawn darkened. The bar MUST NOT be darkened:
+  it is drawn over every thumb, as at rest.
+
+> **Reported 2026-10-19.** "tint/darken the background image a bit to distinct that we're in the
+> overview mode and so it would be less visually noisy".
+
+- Every thumb MUST cast a shadow while the overview is held, so it floats over what is behind it,
+  and the selected one a stronger one to accent it: the lift a carried window takes in a flight,
+  all of it for the selected thumb and 0.4 of it for every other, as wide and falling as far on
+  screen held as in a flight, its blur and its fall divided by the zoom. Frame zero and the landing
+  MUST cast none, since the screen at rest has none: the shadows rise with the zoom out, fall with
+  the zoom in, and move with the selection. Cast at its held size from the open, a shadow is drawn
+  wider than that while the zoom is nearer the screen, where it is faint.
+
+> **Reported 2026-10-19.** "add a bit of depth to the thumbs, like shadows or something so they'd
+> appear a bit floating, more so for the currently selected window to accent it". Under the zoom a
+> window's own shadow is a fifth of its size and reads as none.
+
+- Its look MUST be the switcher's, from one record both draw from: the stacks' step, inset and
+  three cards drawn, the gap between cards, the selected card's ring width, the darkening of what
+  is behind, the card's 11pt corner and the `--ember-soft` wash under the selected card. Kai asked
+  for one visual style across the two, reusing components where they apply; two copies of a value
+  drift. Not yet met: every thumb keeps its window's own corner at the zoom's scale, 3pt on screen
+  for a 10pt corner at depth 0.3, and the selected thumb wears the ring without the wash.
+
+> **Reported 2026-10-19.** "overall visual style must mutch the main app switcher, both should be
+> consistent with each other and reuse components where applicable". The stacks' values were the
+> overview's own copies of the switcher's.
+
 - An empty row MUST be drawn as its tiling area's outline in the focus ring's inactive paint, and in
   its active paint while selected.
 - Floating windows MUST be drawn on their row at their place on the display, over its tiles, never
@@ -99,9 +155,10 @@ Every workspace of one display at once, zoomed out, while its key is held.
   workspace not shown, as Kai reported of the strips beside on 2026-10-17.
 - Every thumb's ring and border MUST be drawn as wide on screen as at rest: drawn at its width
   under the zoom, a 1pt ring is 0.22pt on screen at depth 0.22, and the ring Kai asked to see move
-  does not read. Not yet met: while it zooms out and back in they are drawn at their own width,
-  which the zoom thins; from the end of the zoom out to the start of the zoom in they are as wide
-  as at rest.
+  does not read. The selected thumb's ring MUST be at least the card's ring, 2pt on screen, the
+  width the switcher rings its selection with, in the ring's own paint. Not yet met: while it zooms
+  out and back in they are drawn at their own width, which the zoom thins; from the end of the zoom
+  out to the start of the zoom in they are as wide as at rest, the selected ring as the card's.
 
 > **Found 2026-10-18, not reported.** Drawing the overview showed Kai's 1pt focus ring under a
 > fifth of a point at the depth four workspaces take on the laptop.
@@ -160,16 +217,24 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 ## How it moves
 
-- It MUST zoom out from the screen as it is, on the first half of the zoom look's arc, under every
-  look: frame zero draws every window where it is on screen. Every open MUST draw afresh, after one
-  the renderer had no overlay for as well: thumbs kept from that one would carry its pictures and
-  its widened bands, a 1pt ring drawn near 4.5pt wide.
+- It MUST zoom out from the screen as it is, under every look: frame zero draws every window where
+  it is on screen. Every open MUST draw afresh, after one the renderer had no overlay for as well:
+  thumbs kept from that one would carry its pictures and its widened bands, a 1pt ring drawn near
+  4.5pt wide.
 
 > **Found 2026-10-18, not reported.** Review of the lifecycle showed an overview the renderer could
 > not draw dropped its phase without letting go of its thumbs, which only its lift did.
-- On close it MUST zoom back in, on the arc's second half, onto the real layout, the selected window
-  focused on its workspace, and hand over to the real windows as a flight does: lifted only once
-  the windows it lands on are where it draws them, or its patience has run out.
+- On close it MUST zoom back in onto the real layout, the selected window focused on its workspace,
+  and hand over to the real windows as a flight does: lifted only once the windows it lands on are
+  where it draws them, or its patience has run out.
+- The zoom out, the zoom back in and every press inside it MUST run at the pace a focus press pans
+  the strip: on the same curve, over the same length, 0.35s at slowdown 1. Kai asked them to match
+  the navigation transitions; on half the zoom look's arc the zoom out started at rest and was 97%
+  of the way there only at 0.229s, where a pan is at 0.175s.
+
+> **Reported 2026-10-19.** "speed up the animation to match tha navigation transitions". The zoom
+> ran half the zoom look's arc over 0.257s; it now runs as a pan does
+> (`src/transitions/docs/coordination.md`, "The overview").
 - A release while it zooms out MUST turn it back from where it is drawn, without a jump, each
   thing it draws as fast as it was going. Opened again while it zooms back in, it MUST zoom out
   again from where it is drawn: a quick let-go and press again would otherwise lift it and open it
@@ -209,6 +274,7 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 `src/overview/domain/` is the scene: `scene.rs` lays it out, `depth.rs` sets its depth and its
 rows' tops, `stacks.rs` its edge stacks, and `changes.rs` finds what changed between two scenes.
+The card it shares with the switcher is `src/chrome/domain/card.rs`.
 `src/input/domain/switch_session.rs` is the tap's side, the hold that opens and closes it and the
 chord a key inside it is looked up as, `src/input/domain/router.rs` the lookup, and
 `src/app/reactor/overview.rs` the reactor's: the scene's input read off the layout and handed to the

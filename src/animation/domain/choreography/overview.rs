@@ -1,8 +1,9 @@
 //! How the overview moves on the overlay: every row of its scene one strip container, its edge
 //! stacks and its floating windows a container each, all under the strip's zoom; the zoom out from
-//! the screen as it is and back in onto the real layout on the zoom look's arc, each half of it on
-//! its own; every press inside it played Slide's way, each node from where it is drawn to where the
-//! new scene has it; and the push at an end bounced on screen as far as a flight's.
+//! the screen as it is and back in onto the real layout, and every press inside it, played Slide's
+//! way at a press's pace, each node from where it is drawn to where the new scene has it; every
+//! thumb lifted off the overlay while it is held, the selected one furthest, and the desktop behind
+//! them darkened; and the push at an end bounced on screen as far as a flight's.
 //!
 //! Not a `Look`, nor in `Look::ALL`: the overview is a view the presses inside it change, and its
 //! moves are the same under every look (`specs/overview.md`, "How it moves").
@@ -17,12 +18,13 @@ use rini_geometry::space::{
 
 use super::Cue;
 use crate::animation::domain::motion::bounce::Bounce;
-use crate::animation::domain::motion::easing::{MOTION_CURVE, nudge_displacement};
+use crate::animation::domain::motion::easing::MOTION_CURVE;
 use crate::animation::domain::motion::glide::{spring_axis, spring_omega};
 use crate::animation::domain::motion::plan::{Banding, GroupKey, group_relative};
 use crate::animation::domain::motion::score::{
     Channel, Curve, Edit, Node, SAMPLE_STEP, Score, Track, Value, Zoom,
 };
+use crate::chrome::domain::card;
 use crate::decorations::domain::style::{Band, Decoration};
 use crate::overview::domain::scene::{Holder, Scene};
 
@@ -38,6 +40,13 @@ pub enum Press {
         overshoot: OverlayVector,
     },
 }
+
+/// How far every thumb but the selected one is lifted while the overview is held, of the lift a
+/// flight's carried window takes (`LIFT_SHADOW`): enough of a shadow to float it, under the
+/// selected one's, which is lifted all the way.
+pub const THUMB_LIFT: f64 = 0.4;
+/// How far the selected thumb is lifted while the overview is held.
+pub const SELECTED_LIFT: f64 = 1.0;
 
 /// How long a spring a press bends a node on runs, as a share of `1 / omega`: within 0.01% of its
 /// destination by then, so its last sample lands on it.
@@ -65,12 +74,18 @@ fn key(row: usize, part: Part) -> GroupKey {
 pub fn strip_of(row: usize) -> GroupKey { key(row, Part::Strip) }
 
 /// Where every node of the overview is drawn once its tracks end: the strip's zoom, each
-/// container's place, each thumb's container and frame in it, and each empty workspace's outline.
+/// container's place, each thumb's container and frame in it and how far it is lifted, and each
+/// empty workspace's outline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Places {
     pub zoom: Zoom,
     pub containers: Vec<(GroupKey, OverlayPoint)>,
     pub tiles: Vec<(WindowId, GroupKey, GroupRect)>,
+    /// Each thumb's lift, from 0 to 1, in `tiles`' order.
+    pub lifts: Vec<(WindowId, f64)>,
+    /// How far the desktop behind is darkened, from 0 to 1 of the card's backdrop: all the way
+    /// while held, none at rest.
+    pub tint: f64,
     pub banding: Banding,
     pub outlines: Vec<Outline>,
 }
@@ -117,6 +132,18 @@ pub fn screen_wide(decoration: Decoration, scale: f64) -> Decoration {
     }
 }
 
+/// `decoration` as the selected thumb wears it while held: its ring at least the card's ring wide,
+/// the switcher's selection, in its own paint. With no ring it wears none.
+pub fn accented(decoration: Decoration) -> Decoration {
+    Decoration {
+        ring: decoration.ring.map(|band| Band {
+            width: band.width.max(card::RING),
+            ..band
+        }),
+        ..decoration
+    }
+}
+
 /// `rect` as the strip layer has it under a zoom by `scale` with no shift.
 fn unzoomed(rect: OverlayRect, scale: f64) -> OverlayRect {
     OverlayRect::new(
@@ -153,7 +180,8 @@ fn held_containers(scene: &Scene) -> Vec<(GroupKey, OverlayPoint)> {
 }
 
 /// The scene as it is held: every row at its depth, each drawn thumb in its holder's container at
-/// where the scene draws it, the selected window and its row in front.
+/// where the scene draws it and lifted, the selected window furthest, the selected window and its
+/// row in front, over the desktop darkened.
 pub fn held(scene: &Scene) -> Places {
     let s = scene.scale;
     let containers = held_containers(scene);
@@ -184,6 +212,17 @@ pub fn held(scene: &Scene) -> Places {
             });
         }
     }
+    let lifts = tiles
+        .iter()
+        .map(|(window, ..)| {
+            let lift = if scene.selected.window == Some(*window) {
+                SELECTED_LIFT
+            } else {
+                THUMB_LIFT
+            };
+            (*window, lift)
+        })
+        .collect();
     Places {
         zoom: Zoom {
             scale: s,
@@ -191,16 +230,23 @@ pub fn held(scene: &Scene) -> Places {
         },
         containers,
         tiles,
+        lifts,
+        tint: 1.0,
         banding: banding(scene),
         outlines,
     }
 }
 
 /// The scene as the display shows it at rest: the zoom at 1, its active row's windows each at its
-/// frame in `shown`, and every other row where the stack has it, off the display above and below.
+/// frame in `shown`, its strip about where its thumbs' centres put it, every other row where the
+/// stack has it, off the display above and below, no thumb lifted and nothing darkened.
 /// What the overview zooms out from as it opens, and back into as it closes.
 pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     let mut places = held(scene);
+    places.tint = 0.0;
+    for (_, lift) in &mut places.lifts {
+        *lift = 0.0;
+    }
     let s = scene.scale;
     let active = scene.selected.row;
     let Some(row) = scene.rows.get(active) else {
@@ -218,7 +264,7 @@ pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     let strip = key(active, Part::Strip);
     let anchor = row.tiles.iter().find_map(|tile| {
         let laid = places.tiles.iter().find(|(w, k, _)| *w == tile.window && *k == strip)?;
-        Some(to_rest(tile.window)?.origin - laid.2.origin.to_vector().respace())
+        Some(to_rest(tile.window)?.center() - laid.2.center().to_vector().respace())
     });
     if let Some(anchor) = anchor
         && let Some((_, at)) = places.containers.iter_mut().find(|(k, _)| *k == strip)
@@ -226,12 +272,16 @@ pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
         *at = anchor;
     }
     let stacks = key(active, Part::Stacks);
-    let stacks_at = places.container(stacks).unwrap_or(Point::origin());
+    let at = |key: GroupKey| places.container(key).unwrap_or(Point::origin());
+    let (strip_at, stacks_at) = (at(strip), at(stacks));
     for (window, key, frame) in &mut places.tiles {
-        if *key == stacks
-            && let Some(rest) = to_rest(*window)
-        {
-            *frame = group_relative(rest, stacks_at);
+        let container = match *key {
+            k if k == strip => strip_at,
+            k if k == stacks => stacks_at,
+            _ => continue,
+        };
+        if let Some(rest) = to_rest(*window) {
+            *frame = group_relative(rest, container);
         }
     }
     places
@@ -293,13 +343,19 @@ pub fn pose(places: &Places) -> Score {
 
 /// Every node of `places` placed where it is drawn, each tile riding its container.
 fn placed(places: &Places) -> Vec<Edit> {
-    let mut edits = vec![Edit::Place(Node::Strip, Value::Zoom(places.zoom))];
+    let mut edits = vec![
+        Edit::Place(Node::Strip, Value::Zoom(places.zoom)),
+        Edit::Place(Node::Tint, Value::Number(places.tint)),
+    ];
     for (key, at) in &places.containers {
         edits.push(Edit::Place(Node::Container(*key), Value::Point(*at)));
     }
     for (window, key, frame) in &places.tiles {
         edits.push(Edit::Ride(*window, *key));
         edits.push(Edit::Place(Node::Tile(*window), Value::Rect(*frame)));
+    }
+    for (window, lift) in &places.lifts {
+        edits.push(Edit::Place(Node::Lift(*window), Value::Number(*lift)));
     }
     edits.push(Edit::Bank(places.banding.clone()));
     edits
@@ -310,10 +366,8 @@ fn placed(places: &Places) -> Vec<Edit> {
 pub enum Motion {
     /// Straight to where it ends: animation off, or Low Power Mode.
     Cut,
-    /// The zoom out as it opens or in as it closes: one half of the zoom look's arc, over
-    /// `seconds`.
-    Arc { seconds: f64 },
-    /// A press: Slide's curve, over `seconds`.
+    /// Slide's curve over `seconds`, as a press pans the strip: the zoom out as it opens, the zoom
+    /// in as it closes, and every press inside it.
     Slide { seconds: f64 },
 }
 
@@ -321,7 +375,7 @@ impl Motion {
     fn seconds(self) -> f64 {
         match self {
             Motion::Cut => 0.0,
-            Motion::Arc { seconds } | Motion::Slide { seconds } => seconds.max(0.0),
+            Motion::Slide { seconds } => seconds.max(0.0),
         }
     }
 }
@@ -338,11 +392,7 @@ pub fn toward(playing: &Score, places: &Places, at: f64, motion: Motion) -> Vec<
     } else if playing_anything(playing, at) {
         Shape::Spring { omega: spring_omega(seconds) }
     } else {
-        match motion {
-            Motion::Arc { seconds } => Shape::Arc { seconds },
-            Motion::Slide { seconds } => Shape::Slide { seconds },
-            Motion::Cut => Shape::Cut,
-        }
+        Shape::Slide { seconds }
     };
     let mut edits = Vec::new();
     let gone: Vec<WindowId> = playing
@@ -353,6 +403,8 @@ pub fn toward(playing: &Score, places: &Places, at: f64, motion: Motion) -> Vec<
     edits.extend(gone.into_iter().map(|window| Edit::Drop(Node::Tile(window))));
     let zoom = Value::Zoom(places.zoom);
     edits.extend(leg(playing, Node::Strip, None, zoom, at, shape));
+    let tint = Value::Number(places.tint);
+    edits.extend(leg(playing, Node::Tint, None, tint, at, shape));
     for (key, to) in &places.containers {
         let node = Node::Container(*key);
         if playing.model(node).is_none() {
@@ -378,6 +430,10 @@ pub fn toward(playing: &Score, places: &Places, at: f64, motion: Motion) -> Vec<
             }
         }
     }
+    for (window, lift) in &places.lifts {
+        let to = Value::Number(*lift);
+        edits.extend(leg(playing, Node::Lift(*window), None, to, at, shape));
+    }
     let stale: Vec<GroupKey> =
         playing.containers().filter(|key| places.container(*key).is_none()).collect();
     edits.extend(stale.into_iter().map(|key| Edit::Drop(Node::Container(key))));
@@ -389,7 +445,6 @@ pub fn toward(playing: &Score, places: &Places, at: f64, motion: Motion) -> Vec<
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Shape {
     Cut,
-    Arc { seconds: f64 },
     Slide { seconds: f64 },
     Spring { omega: f64 },
 }
@@ -477,14 +532,6 @@ fn leg(
             seconds,
             Curve::Bezier(MOTION_CURVE),
         ),
-        Shape::Arc { seconds } => {
-            let frames = (seconds / SAMPLE_STEP).ceil().max(1.0) as usize;
-            let values = (0..=frames).map(|k| {
-                let share = nudge_displacement(k as f64 / frames as f64 / 2.0);
-                lerp(start, to, share)
-            });
-            Track::samples(node, Channel::Base, values, at, seconds)
-        }
         Shape::Spring { omega } => spring(node, (start, velocity), to, omega, at),
     };
     vec![Edit::Place(node, to), Edit::Add(track)]
@@ -495,11 +542,6 @@ fn leg(
 fn same(a: Value, b: Value) -> bool {
     let (a, b) = (a.parts(), b.parts());
     (0..4).all(|i| (a[i] - b[i]).abs() < 1e-6)
-}
-
-fn lerp(from: Value, to: Value, share: f64) -> Value {
-    let (a, b) = (from.parts(), to.parts());
-    from.with_parts(std::array::from_fn(|i| a[i] + (b[i] - a[i]) * share))
 }
 
 /// A critically damped spring on every part of `node` from `start` going at `velocity` to `to`,
@@ -577,7 +619,6 @@ mod tests {
     use rini_geometry::{IsWithin, to_overlay_space};
 
     use super::*;
-    use crate::animation::domain::choreography::zoom::{ZOOM_STRETCH, arc_scale};
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
     use crate::animation::domain::motion::score::Form;
     use crate::overview::domain::fixture::{Col, display, overview, rect, row, strip, w};
@@ -585,7 +626,6 @@ mod tests {
     use crate::overview::domain::stacks::Side;
 
     const PRESS: f64 = 0.35;
-    const ARC: f64 = PRESS * ZOOM_STRETCH;
     const WIDE: f64 = 1400.0;
     const NARROW: f64 = 800.0;
 
@@ -694,32 +734,103 @@ mod tests {
         }
     }
 
-    /// The zoom out plays the first half of the zoom look's arc over its stretched length, from the
-    /// screen as it is to every thumb where the scene draws it.
+    /// The zoom out runs as a focus press pans the strip, on Slide's curve over a press's length,
+    /// from the screen as it is to every thumb where the scene draws it.
     #[test]
-    fn the_entry_ends_with_every_tile_at_its_scene_place() {
+    fn the_entry_runs_at_a_press_s_pace_to_every_tile_s_scene_place() {
         let scene = scene(&STRIP, 3);
         let shown = shown(&STRIP, 3);
         let rest = pose(&at_rest(&scene, &shown));
-        let edits = toward(&rest, &held(&scene), 0.0, Motion::Arc { seconds: ARC });
+        let edits = toward(&rest, &held(&scene), 0.0, Motion::Slide { seconds: PRESS });
+        let zoom = tracks(&edits)
+            .into_iter()
+            .find(|track| track.node() == Node::Strip)
+            .expect("the strip zooms");
+        assert_eq!(zoom.form(), Form::Between);
+        assert_eq!(zoom.curves(), [Curve::Bezier(MOTION_CURVE)]);
+        assert!((zoom.seconds() - PRESS).abs() < 1e-9);
         let score = played(&rest, &edits);
         for (window, frame) in &shown {
             let Some(at) = score.drawn(*window, 0.0) else { continue };
             assert!(at.is_within(1e-6, *frame), "no jump as it starts: {window:?}");
         }
-        let Some(Value::Zoom(quarter)) = score.sample(Node::Strip, ARC / 4.0) else {
-            panic!("the strip zooms")
-        };
-        assert!(
-            (quarter.scale - arc_scale(scene.scale, 0.125)).abs() < 0.01,
-            "{quarter:?}"
-        );
         for scene_row in &scene.rows {
             for tile in scene_row.tiles.iter().filter(|tile| tile.drawn()) {
-                let at = score.drawn(tile.window, ARC + 0.01).unwrap();
+                let at = score.drawn(tile.window, PRESS + 0.01).unwrap();
                 assert!(at.is_within(1e-6, tile.frame), "{tile:?}: {at:?}");
             }
         }
+    }
+
+    /// Held, every drawn thumb is lifted, the selected one all the way; at rest none is, so frame
+    /// zero is the screen without a shadow, and the zoom out lifts them as it goes.
+    #[test]
+    fn held_thumbs_are_lifted_the_selected_one_highest_and_none_at_rest() {
+        let scene = scene(&STRIP, 3);
+        let places = held(&scene);
+        assert_eq!(places.lifts.len(), places.tiles.len());
+        for (window, lift) in &places.lifts {
+            let expected = if *window == w(3) {
+                SELECTED_LIFT
+            } else {
+                THUMB_LIFT
+            };
+            assert_eq!(*lift, expected, "{window:?}");
+        }
+        const { assert!(SELECTED_LIFT > THUMB_LIFT && THUMB_LIFT > 0.0) };
+        let rest = at_rest(&scene, &shown(&STRIP, 3));
+        assert!(rest.lifts.iter().all(|(_, lift)| *lift == 0.0));
+        let start = pose(&rest);
+        let edits = toward(&start, &places, 0.0, Motion::Slide { seconds: PRESS });
+        let score = played(&start, &edits);
+        let lift = |t: f64| match score.sample(Node::Lift(w(3)), t) {
+            Some(Value::Number(lift)) => lift,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(lift(0.0), 0.0, "frame zero casts no lift");
+        assert!(lift(PRESS / 4.0) > 0.0 && lift(PRESS / 4.0) < SELECTED_LIFT);
+        assert!((lift(PRESS + 0.01) - SELECTED_LIFT).abs() < 1e-9);
+    }
+
+    /// The selected thumb's ring is at least the card's ring wide, a wider one kept, its paint
+    /// kept, and a thumb with no ring wears none.
+    #[test]
+    fn the_selected_thumb_s_ring_is_at_least_the_card_s() {
+        use crate::decorations::domain::paint::{Colour, Paint};
+        let paint = Paint::Solid(Colour::rgb(0xff7c50));
+        let ringed = |width: f64| Decoration {
+            ring: Some(Band {
+                width,
+                active: paint,
+                inactive: paint,
+                urgent: paint,
+            }),
+            ..Decoration::default()
+        };
+        assert_eq!(accented(ringed(1.0)), ringed(card::RING));
+        assert_eq!(accented(ringed(4.0)), ringed(4.0));
+        assert_eq!(accented(Decoration::default()), Decoration::default());
+    }
+
+    /// The desktop behind is darkened all the way while held and not at all at rest, and the zoom
+    /// out darkens it on the zoom's own curve and length, from none at frame zero.
+    #[test]
+    fn the_desktop_darkens_with_the_zoom_out_from_none_at_frame_zero() {
+        let scene = scene(&STRIP, 3);
+        let (places, rest) = (held(&scene), at_rest(&scene, &shown(&STRIP, 3)));
+        assert_eq!((places.tint, rest.tint), (1.0, 0.0));
+        let start = pose(&rest);
+        assert_eq!(start.model(Node::Tint), Some(Value::Number(0.0)));
+        let edits = toward(&start, &places, 0.0, Motion::Slide { seconds: PRESS });
+        let darkens = tracks(&edits)
+            .into_iter()
+            .find(|track| track.node() == Node::Tint)
+            .expect("the desktop darkens");
+        assert_eq!(darkens.curves(), [Curve::Bezier(MOTION_CURVE)]);
+        assert!((darkens.seconds() - PRESS).abs() < 1e-9);
+        let score = played(&start, &edits);
+        assert_eq!(score.sample(Node::Tint, 0.0), Some(Value::Number(0.0)));
+        assert_eq!(score.sample(Node::Tint, PRESS + 0.01), Some(Value::Number(1.0)));
     }
 
     /// A step right pans the row on Slide's curve over the plain length, as one piece: its strip's
@@ -746,28 +857,45 @@ mod tests {
         assert!(drawn(&score, 4, 0.0).is_within(1e-6, before.find(w(4)).unwrap().1.frame));
     }
 
-    /// A card that stays in its stack through a pan stays where it is drawn at the edge, however the
-    /// strip moves beside it; one leaving the stack is carried out of it from where it was drawn.
+    /// A card that stays in its stack through a pan stays where it is drawn at the edge while the
+    /// edge holds it, however the strip moves beside it, and is carried from where its stack had it
+    /// to where it has it where the thumb beside it held it out past the edge; one leaving the
+    /// stack is carried out of it from where it was drawn.
     #[test]
     fn a_stacked_card_stays_at_the_edge_while_its_row_pans() {
-        let panned = |from: u32, to: u32| {
-            let (before, after) = (scene(&STRIP, from), scene(&STRIP, to));
+        const ODD_FIRST: [u32; 6] = [1, 3, 7, 9, 2, 4];
+        let panned = |order: &[u32], (from, to): (u32, u32), card: u32| {
+            let (before, after) = (scene(order, from), scene(order, to));
             let score = pose(&held(&before));
             let edits = toward(&score, &held(&after), 0.0, Motion::Slide { seconds: PRESS });
-            let still = !tracks(&edits).iter().any(|track| track.node() == Node::Tile(w(9)));
+            let still = !tracks(&edits).iter().any(|track| track.node() == Node::Tile(w(card)));
             (played(&score, &edits), before, (after, still))
         };
-        let (score, before, (after, still)) = panned(6, 7);
+        let (score, before, (after, still)) = panned(&ODD_FIRST, (3, 7), 4);
         assert!(still, "its stack holds it still: nothing moves it");
-        let stays = before.find(w(9)).unwrap().1.holder;
+        let stays = before.find(w(4)).unwrap().1.holder;
         assert!(matches!(stays, Holder::Stack { side: Side::Right, depth: 0 }));
-        assert_eq!(after.find(w(9)).unwrap().1.holder, stays);
-        let at = |t: f64| drawn(&score, 9, t);
+        assert_eq!(after.find(w(4)).unwrap().1.holder, stays);
+        let at = |t: f64| drawn(&score, 4, t);
         for t in [0.0, 0.05, PRESS / 2.0, PRESS - 0.01, PRESS + 0.01] {
             assert!(at(t).is_within(1e-6, at(0.0)), "{t}: {:?}", at(t));
         }
 
-        let (score, before, (after, _)) = panned(5, 6);
+        let (score, before, (after, _)) = panned(&STRIP, (6, 7), 10);
+        let stays = before.find(w(10)).unwrap().1.holder;
+        assert!(matches!(stays, Holder::Stack { side: Side::Right, depth: 0 }));
+        assert_eq!(after.find(w(10)).unwrap().1.holder, stays);
+        let held_out = before.find(w(10)).unwrap().1.frame;
+        let beside = before.find(w(9)).unwrap().1.frame;
+        assert!(
+            (held_out.min_x() - beside.min_x()).abs() < 1e-6,
+            "held out to the thumb beside it: {held_out:?}"
+        );
+        assert!(drawn(&score, 10, 0.0).is_within(1e-6, held_out));
+        let at_edge = after.find(w(10)).unwrap().1.frame;
+        assert!(drawn(&score, 10, PRESS + 0.01).is_within(1e-6, at_edge));
+
+        let (score, before, (after, _)) = panned(&STRIP, (4, 5), 7);
         assert!(matches!(before.find(w(7)).unwrap().1.holder, Holder::Stack {
             side: Side::Right,
             ..
@@ -775,6 +903,21 @@ mod tests {
         assert_eq!(after.find(w(7)).unwrap().1.holder, Holder::Row);
         assert!(drawn(&score, 7, 0.0).is_within(1e-6, before.find(w(7)).unwrap().1.frame));
         assert!(drawn(&score, 7, PRESS + 0.01).is_within(1e-6, after.find(w(7)).unwrap().1.frame));
+    }
+
+    /// Every row is drawn over its edge stacks, so the thumb beside a stack, the selected one among
+    /// them, covers the stack's top card where it reaches over it rather than the reverse.
+    #[test]
+    fn every_row_is_drawn_over_its_stacks() {
+        let scene = scene(&STRIP, 3);
+        let order = held(&scene).banding.group_order;
+        let at = |key: GroupKey| order.iter().position(|k| *k == key).unwrap();
+        for row in 0..scene.rows.len() {
+            assert!(
+                at(strip_of(row)) < at(key(row, Part::Stacks)),
+                "row {row}: {order:?}"
+            );
+        }
     }
 
     /// A move keeps the moved window on the axis all the way, the column it passes crossing
@@ -801,16 +944,19 @@ mod tests {
         assert!(within[&w(3)] < within[&w(2)], "the moved window in front");
     }
 
-    /// Closing zooms back in on the arc's second half onto the real layout: the workspace shown
-    /// then, each of its windows landing on its real frame, the selected one as it was scrolled to.
+    /// Closing zooms back in at a press's pace onto the real layout: the workspace shown then, each
+    /// of its windows landing on its real frame, the selected one as it was scrolled to.
     #[test]
     fn the_exit_lands_every_tile_on_its_real_frame() {
         let scene = scene(&STRIP, 8);
         let landing = shown(&STRIP, 8);
         let score = pose(&held(&scene));
-        let edits = toward(&score, &at_rest(&scene, &landing), 0.0, Motion::Arc {
-            seconds: ARC,
+        let edits = toward(&score, &at_rest(&scene, &landing), 0.0, Motion::Slide {
+            seconds: PRESS,
         });
+        let zoom = tracks(&edits).into_iter().find(|track| track.node() == Node::Strip).unwrap();
+        assert_eq!(zoom.curves(), [Curve::Bezier(MOTION_CURVE)]);
+        assert!((zoom.seconds() - PRESS).abs() < 1e-9);
         let score = played(&score, &edits);
         for scene_row in &scene.rows {
             for tile in scene_row.tiles.iter().filter(|tile| tile.drawn()) {
@@ -819,7 +965,7 @@ mod tests {
             }
         }
         for (window, frame) in &landing {
-            let Some(at) = score.drawn(*window, ARC + 0.01) else {
+            let Some(at) = score.drawn(*window, PRESS + 0.01) else {
                 continue;
             };
             assert!(
@@ -827,7 +973,7 @@ mod tests {
                 "{window:?}: {at:?} against {frame:?}"
             );
         }
-        let Some(Value::Zoom(zoom)) = score.sample(Node::Strip, ARC + 0.01) else {
+        let Some(Value::Zoom(zoom)) = score.sample(Node::Strip, PRESS + 0.01) else {
             panic!("the strip is zoomed")
         };
         assert!((zoom.scale - 1.0).abs() < 1e-9);
@@ -843,10 +989,10 @@ mod tests {
         let start = pose(&rest);
         let entering = played(
             &start,
-            &toward(&start, &held(&scene), 0.0, Motion::Arc { seconds: ARC }),
+            &toward(&start, &held(&scene), 0.0, Motion::Slide { seconds: PRESS }),
         );
-        let turn = ARC * 0.4;
-        let edits = toward(&entering, &rest, turn, Motion::Arc { seconds: ARC });
+        let turn = PRESS * 0.2;
+        let edits = toward(&entering, &rest, turn, Motion::Slide { seconds: PRESS });
         assert!(
             tracks(&edits)
                 .iter()

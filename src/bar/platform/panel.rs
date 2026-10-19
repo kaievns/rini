@@ -33,16 +33,17 @@ use rustc_hash::FxHashMap as HashMap;
 use tracing::info;
 
 use crate::bar::domain::extras::Kind;
+use crate::bar::domain::ground::BAR_GROUND_ALPHA;
 use crate::bar::domain::layout::{self, Piece, Scene, Target};
 use crate::bar::domain::model::DisplayBar;
 use crate::bar::domain::motion::{self, FADE_SECONDS, Fade, SLIDE_SECONDS};
-use crate::bar::domain::palette::{self, Colour};
 use crate::bar::domain::pieces::{self, Context};
 use crate::bar::domain::placement::{self, Mark, Reframe};
 use crate::bar::domain::style;
 use crate::bar::platform::ground::Ground;
 use crate::bar::platform::menu_extras::{Extra, Extras};
 use crate::bar::platform::text::{Picture, Text};
+use crate::chrome::domain::palette::{self, Colour};
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::platform::layer::set_contents;
@@ -254,7 +255,7 @@ impl BarPanel {
 
         let root = view.layer()?;
         root.setContentsScale(SCALE);
-        root.setBackgroundColor(Some(&cg_colour(palette::N1, palette::BAR_GROUND_ALPHA)));
+        root.setBackgroundColor(Some(&cg_colour(palette::N1, BAR_GROUND_ALPHA)));
 
         let ground = sublayer(&root);
         let tray = sublayer(&root);

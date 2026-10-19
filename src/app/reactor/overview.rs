@@ -15,7 +15,6 @@ use super::events::EventOutcome;
 use super::{Reactor, ScreenInfo};
 use crate::animation::domain::choreography::Cue;
 use crate::animation::domain::choreography::overview::Press;
-use crate::animation::domain::choreography::zoom::ZOOM_STRETCH;
 use crate::input::domain::switch_session::{OverviewSignal, SessionId};
 use crate::overview::domain::scene::{ColumnInput, Holder, Laid, OverviewInput, RowInput, lay_out};
 use crate::transitions::domain::request::{OverviewView, OverviewWindow};
@@ -93,11 +92,10 @@ impl Reactor {
         let display = self.publish_animation_display_for(Some(space));
         let cause = self.cause;
         self.rest.flight = display.map(|display| (display, cause.at)).or(self.rest.flight);
-        let (arc, press) = self.overview_motion();
+        let length = self.overview_length();
         self.tell_overview(Flight::OverviewOpen {
             view: view.clone(),
-            arc,
-            press,
+            length,
             cause,
         });
         self.overview.live = Some(LiveOverview {
@@ -111,18 +109,14 @@ impl Reactor {
         self.warm_all_workspaces(space);
     }
 
-    /// How long the overview zooms out and in, and how long a press inside it plays: the zoom
-    /// look's stretch of the configured length, and that length, both none with animation off or in
-    /// Low Power Mode, which the engine draws as cuts.
-    fn overview_motion(&self) -> (std::time::Duration, std::time::Duration) {
+    /// How long the overview zooms out and in, and how long a press inside it plays: the length a
+    /// focus press pans the strip over, none with animation off or in Low Power Mode, which the
+    /// engine draws as cuts.
+    fn overview_length(&self) -> std::time::Duration {
         if !self.config.settings.animate || (self.reads.low_power)() {
-            return Default::default();
+            return std::time::Duration::ZERO;
         }
-        let press = self.config.settings.animation_duration.max(0.0);
-        (
-            std::time::Duration::from_secs_f64(press * ZOOM_STRETCH),
-            std::time::Duration::from_secs_f64(press),
-        )
+        std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0))
     }
 
     /// Hands the flight engine what the overview draws.

@@ -1904,7 +1904,7 @@ mod tests {
                 .collect()
         };
         let now = Instant::now();
-        let arc = Duration::from_millis(257);
+        let length = Duration::from_millis(350);
         let mut flights = Journalled::default();
         flights.set_writing(true);
         let generation = flights.reserve();
@@ -1912,7 +1912,7 @@ mod tests {
         let (gave, _) = flights.drive_overview(
             Step::Open {
                 generation,
-                arc,
+                length,
                 flying: false,
                 rests: true,
             },
@@ -1921,12 +1921,12 @@ mod tests {
         assert!(gave.contains(&Gave::Clock(true)));
         flights.drive_overview(Step::FrameZero(generation), now);
         flights.drive_overview(Step::Scene, now);
-        flights.drive_overview(Step::Tick { settled: false, landed: false }, now + arc);
-        flights.drive_overview(Step::Close, now + arc);
+        flights.drive_overview(Step::Tick { settled: false, landed: false }, now + length);
+        flights.drive_overview(Step::Close, now + length);
         let landed = Step::Tick { settled: true, landed: true };
-        flights.drive_overview(landed, now + arc * 2);
-        flights.drive_overview(landed, now + arc * 3);
-        let (_, burst) = flights.drive_overview(Step::Quiet(generation), now + arc * 4);
+        flights.drive_overview(landed, now + length * 2);
+        flights.drive_overview(landed, now + length * 3);
+        let (_, burst) = flights.drive_overview(Step::Quiet(generation), now + length * 4);
         let marks = held(&flights);
         assert_eq!(named(&marks), [
             "press",

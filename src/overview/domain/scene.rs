@@ -4,16 +4,19 @@
 //! One row per workspace, top to bottom in the stack's order, each the usable frame at the depth
 //! `depth::depth` gives. A row's tiled windows are its strip at that depth, placed so its current
 //! window is centred on one vertical axis, the tiling area's centre; with no tiled current window
-//! the strip stays where it shows. Columns past either edge collapse into the row's edge stacks
-//! (`stacks`). Floating windows keep their place on the display, scaled into their row, over its
-//! tiles. An empty workspace keeps its row as an outline of its tiling area.
+//! the strip stays where it shows. Each tiled thumb is drawn a card's gap narrower than its place,
+//! about its centre, so two side by side are that gap apart however close the strip packs them.
+//! Columns past either edge collapse into the row's edge stacks (`stacks`). Floating windows keep
+//! their place on the display, scaled into their row, over its tiles. An empty workspace keeps its
+//! row as an outline of its tiling area.
 
 use rini_core::ids::WindowId;
 use rini_geometry::space::{OverlayPoint, OverlayRect, Point, ScreenRect, Size};
 use rini_geometry::to_overlay_space;
 
 use super::depth::{Span, depth, row_tops};
-use super::stacks::{DRAWN_CARDS, Edges, Side, edge_stacks};
+use super::stacks::{Edges, Side, edge_stacks};
+use crate::chrome::domain::card::{GAP, STACK};
 
 /// A window and the frame it is laid out at when its workspace is shown.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -72,7 +75,8 @@ pub struct SceneTile {
     pub window: WindowId,
     /// Where it is drawn.
     pub frame: OverlayRect,
-    /// Where its row lays it out before any column stacks: `frame` but for a stacked thumb.
+    /// Where its row lays it out before any column stacks: `frame` but for a stacked thumb. A
+    /// tiled one is its place on the strip `apart`, a card's gap narrower about its centre.
     pub in_row: OverlayRect,
     pub holder: Holder,
 }
@@ -81,7 +85,7 @@ impl SceneTile {
     /// Whether it is drawn: every thumb but a card behind a stack's last drawn one.
     pub fn drawn(&self) -> bool {
         match self.holder {
-            Holder::Stack { depth, .. } => depth < DRAWN_CARDS,
+            Holder::Stack { depth, .. } => depth < STACK.cards,
             Holder::Row | Holder::Floating => true,
         }
     }
@@ -93,8 +97,8 @@ pub struct RowScene {
     /// The usable frame at the scene's depth, centred on the axis.
     pub band: OverlayRect,
     /// Where the row's strip starts: its first column's left edge, at the display's top. A tiled
-    /// thumb is its window's place on the strip at the scene's depth from here, before any column
-    /// stacks, so a press that only pans the row moves this and no thumb within it.
+    /// thumb is its window's place on the strip at the scene's depth from here, `apart`, before any
+    /// column stacks, so a press that only pans the row moves this and no thumb within it.
     pub strip: OverlayPoint,
     /// Where the display's top-left is drawn for the row's floating thumbs, each its window's frame
     /// on the display at the scene's depth from here.
@@ -242,7 +246,7 @@ fn lay_out_row(
         })
     });
     let anchor = current.map_or(display_anchor, |(_, laid)| space.overlay(laid.frame).center().x);
-    let in_row: Vec<Vec<OverlayRect>> = row
+    let places: Vec<Vec<OverlayRect>> = row
         .columns
         .iter()
         .map(|column| {
@@ -252,6 +256,10 @@ fn lay_out_row(
                 .map(|laid| space.place(space.overlay(laid.frame), anchor))
                 .collect()
         })
+        .collect();
+    let in_row: Vec<Vec<OverlayRect>> = places
+        .iter()
+        .map(|rects| rects.iter().map(|rect| apart(*rect)).collect())
         .collect();
     let column_rects: Vec<OverlayRect> = in_row.iter().map(|rects| span_of(rects)).collect();
     let pivot = current.map(|(index, _)| index).or_else(|| nearest(&column_rects, space.axis));
@@ -289,7 +297,7 @@ fn lay_out_row(
     RowScene {
         band: space.place(usable, display_anchor),
         strip: Point::new(
-            column_rects.first().map_or(space.origin(anchor).x, |first| first.min_x()),
+            places.first().map_or(space.origin(anchor).x, |first| span_of(first).min_x()),
             space.origin(anchor).y,
         ),
         floating_origin: space.origin(display_anchor),
@@ -297,6 +305,17 @@ fn lay_out_row(
         outline: empty.then(|| space.place(tiling, display_anchor)),
         tiles,
     }
+}
+
+/// `rect` drawn a card's `GAP` narrower and shorter about its centre, so a thumb beside it or
+/// below it is that gap away; no smaller than half on either axis.
+pub fn apart(rect: OverlayRect) -> OverlayRect {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return rect;
+    }
+    let narrowed = |length: f64| (length - GAP).max(length / 2.0);
+    let size = Size::new(narrowed(rect.width()), narrowed(rect.height()));
+    OverlayRect::new(rect.center() - size.to_vector() / 2.0, size)
 }
 
 /// The smallest rect holding every one of `rects`.
@@ -343,6 +362,7 @@ mod tests {
     use super::super::depth::{MARGIN, ROW_GAP};
     use super::super::fixture::{Col, GAP, display, overview, rect, row, strip, tiling, usable, w};
     use super::*;
+    use crate::chrome::domain::card;
 
     const HALF: f64 = 832.0;
 
@@ -408,9 +428,42 @@ mod tests {
         let stacked = scene.rows[1].tile(w(4)).unwrap();
         let below = scene.rows[1].tile(w(5)).unwrap();
         assert!(
-            (below.in_row.min_y() - stacked.in_row.max_y() - GAP * scene.scale).abs() < 1e-9,
+            (below.in_row.center().x - stacked.in_row.center().x).abs() < 1e-9,
             "a stacked column is drawn as the strip draws it"
         );
+        assert!(
+            below.in_row.min_y() - stacked.in_row.max_y() > GAP * scene.scale,
+            "its windows drawn clear of each other"
+        );
+    }
+
+    /// Two thumbs side by side are a card's gap apart, the strip's own gap at the scene's depth
+    /// besides, and two stacked in a column as far, each its window's place narrowed and shortened
+    /// about its centre by it.
+    #[test]
+    fn side_by_side_thumbs_are_a_card_gap_apart() {
+        let input = four_rows();
+        let scene = lay_out(&input);
+        let row = &scene.rows[1];
+        let (left, right) = (row.tile(w(3)).unwrap(), row.tile(w(6)).unwrap());
+        let middle = row.tile(w(4)).unwrap();
+        for (a, b) in [(left, middle), (middle, right)] {
+            let between = b.frame.min_x() - a.frame.max_x();
+            assert!(
+                (between - (card::GAP + GAP * scene.scale)).abs() < 1e-9,
+                "{between}"
+            );
+        }
+        let below = row.tile(w(5)).unwrap();
+        let between = below.in_row.min_y() - middle.in_row.max_y();
+        assert!(
+            (between - (card::GAP + GAP * scene.scale)).abs() < 1e-9,
+            "stacked: {between}"
+        );
+        let place = apart(OverlayRect::new(Point::origin(), Size::new(300.0, 100.0)));
+        assert_eq!(place.size, Size::new(300.0 - card::GAP, 100.0 - card::GAP));
+        let tiny = apart(OverlayRect::new(Point::origin(), Size::new(20.0, 10.0)));
+        assert_eq!(tiny.size, Size::new(10.0, 5.0), "no smaller than half");
     }
 
     #[test]
@@ -500,7 +553,7 @@ mod tests {
         for (row, scene_row) in input.rows.iter().zip(&scene.rows) {
             let left = row.columns.first().map_or(0.0, |column| on(&column.windows[0]).min_x());
             for laid in row.columns.iter().flat_map(|column| &column.windows) {
-                let expected = at_depth(scene_row.strip, on(laid), left);
+                let expected = apart(at_depth(scene_row.strip, on(laid), left));
                 let tile = scene_row.tile(laid.window).unwrap();
                 assert!(
                     tile.in_row.is_within(1e-9, expected),
@@ -535,7 +588,7 @@ mod tests {
         let first = scene.rows[0].tile(w(1)).unwrap();
         let shown = tiling().min_x() * scene.scale;
         assert!(
-            (first.frame.min_x() - (band.min_x() + shown)).abs() < 1e-9,
+            (first.frame.min_x() - (band.min_x() + shown + card::GAP / 2.0)).abs() < 1e-9,
             "{first:?}"
         );
     }

@@ -904,14 +904,15 @@ fn opening_hands_the_engine_its_scene_and_the_screen_it_zooms_out_from() {
         sent[..opened].iter().any(|event| matches!(event, Engine::SetDisplay { .. })),
         "its display first"
     );
-    let Engine::OverviewOpen { view, arc, press, .. } = &sent[opened] else {
+    let Engine::OverviewOpen { view, length, .. } = &sent[opened] else {
         unreachable!()
     };
     assert_eq!(Some(&view.scene), reactor.overview_scene());
     let duration = reactor.settings().animation_duration;
-    assert!((press.as_secs_f64() - duration).abs() < 1e-9);
-    let stretch = crate::animation::domain::choreography::zoom::ZOOM_STRETCH;
-    assert!((arc.as_secs_f64() - duration * stretch).abs() < 1e-9);
+    assert!(
+        (length.as_secs_f64() - duration).abs() < 1e-9,
+        "it zooms and pans over a focus press's length"
+    );
     let mut thumbs: Vec<WindowId> = view.windows.iter().map(|window| window.window).collect();
     thumbs.sort();
     assert_eq!(thumbs, (1..=6).map(w).collect::<Vec<_>>());
@@ -937,10 +938,10 @@ fn with_animation_off_the_overview_opens_as_cuts() {
     let mut rx = reactor.connect_test_transitions();
     open(&mut apps, &mut reactor);
     let opened = sent(&mut rx).into_iter().find_map(|event| match event {
-        Engine::OverviewOpen { arc, press, .. } => Some((arc, press)),
+        Engine::OverviewOpen { length, .. } => Some(length),
         _ => None,
     });
-    assert_eq!(opened, Some(Default::default()));
+    assert_eq!(opened, Some(std::time::Duration::ZERO));
 }
 
 /// Each batch that changes the scene hands the engine the scene with the presses that changed it;

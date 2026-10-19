@@ -127,7 +127,8 @@ and terminals it averages everything to one flat colour, and "the blur doesn't w
 description of what that looks like. The native switcher barely blurs: text behind it stays faintly
 readable. Clear glass keeps that shape.
 
-**The darkening is a layer inside the glass.** `--n0` at `PANEL_ALPHA` on the view the glass hosts. Not
+**The darkening is a layer inside the glass.** The card's `BACKDROP`, `--n0`, at `BACKDROP_ALPHA`
+(`src/chrome/domain/card.rs`) on the view the glass hosts, the overview's darkening too. Not
 the glass's `tintColor`, which on clear glass shifts hue and barely touches brightness — three tints
 from 0.45 to 0.75 rendered almost the same. 0.40 was picked from screenshots of 0.35, 0.50 and 0.65 over
 this desktop as the native switcher a step darker. The appearance is pinned dark so a light-mode
@@ -163,11 +164,12 @@ three-card stack would be 259pt wide around a 234pt picture. Clamped at both end
 proportions in a real strip are extreme.
 
 **A stack is three cards with one silhouette.** The top window and at most two behind it, each card
-behind 8pt higher (`stack_rise`) and 12pt narrower on each side (`stack_inset`). The deepest card's
+behind 8pt higher and 12pt narrower on each side: the card's `STACK` going up (`Stack::behind`,
+`src/chrome/domain/card.rs`), which the overview's edge stacks draw toward their edges. The deepest card's
 top is the row's top and the front card's bottom is the row's bottom whatever the depth, so the ring,
 the hit test and the panel height are what they are for a single tile, and a stack of one is exactly
-one. The inset is wider than the 11pt `tile_corner`, or a card behind would show through the front
-card's rounded corner; `layout.rs` tests that relation. Cards behind are FILLED and cropped rather
+one. The inset is wider than the 11pt `CORNER`, or a card behind would show through the front
+card's rounded corner; `card.rs` tests that relation. Cards behind are FILLED and cropped rather
 than fitted, because only their top 8pt shows, and a fitted picture in a narrower card is centred
 vertically and leaves that strip a band of placeholder. A portrait window behind a landscape one
 shows a middle strip; that is the cost. Cards behind are not dimmed: the rise, the inset and the

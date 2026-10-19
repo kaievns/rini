@@ -12,8 +12,8 @@ use rini_core::ids::DisplayUuid;
 use rini_geometry::space::{FromCg, ScreenRect};
 
 use crate::bar::domain::ground::{self, BLUR};
-use crate::bar::domain::palette::N1;
 use crate::bar::platform::menu_extras::capture;
+use crate::chrome::domain::palette::N1;
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
 use crate::pictures::platform::desktop::desktop_backdrop_windows;
 use crate::windows::platform::window_server::WindowServer;

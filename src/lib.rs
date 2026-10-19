@@ -18,6 +18,7 @@
 //! src/switcher/     the window switcher popup
 //! src/overview/     every workspace of a display at once, while its key is held
 //! src/bar/          the menu bar across the top of every display
+//! src/chrome/       the palette and the card the switcher and the overview share
 //! ```
 //!
 //! The rules this layout is held to, and what enforces each, are in
@@ -27,6 +28,7 @@
 pub mod animation;
 pub mod app;
 pub mod bar;
+pub mod chrome;
 pub mod decorations;
 pub mod displays;
 pub mod input;

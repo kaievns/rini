@@ -54,6 +54,7 @@ use crate::pictures::platform::picture::Picture;
 
 mod lift;
 mod outline;
+mod tint;
 
 use lift::Lift;
 
@@ -87,6 +88,9 @@ const BAR_Z: f64 = 10_000.0;
 /// `src/animation/docs/animation-smoothness.md`.
 const BACKDROP_Z: f64 =
     -((crate::animation::domain::motion::z_group::MAX_TILE_DEPTH + 1024) as f64);
+
+/// Over the desktop and under every container, so under every tile.
+const TINT_Z: f64 = BACKDROP_Z + 1.0;
 
 /// One key per tile movement, so a retarget replaces the animation in flight instead of stacking.
 const TILE_ANIMATION_KEY: &str = "rini.tile.move";
@@ -710,6 +714,10 @@ struct Tree {
     crops: Crops,
     /// The overview's outlines of its empty workspaces.
     outlines: outline::Outlines,
+    /// The overview's darkening of the desktop.
+    tint: tint::Tint,
+    /// The zoom every lift is cast under: the overview's while it holds the overlay, else none.
+    lifts_under: f64,
 }
 
 pub struct TileOverlay {
@@ -935,6 +943,7 @@ impl TileOverlay {
         self.top_band = top_band;
         self.tree.size = frame.size;
         self.tree.scale = scale;
+        self.tree.tint.layer().setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
         if let Some(view) = self.window.contentView() {
             view.setFrame(CGRect::new(
                 CGPoint::new(0.0, 0.0),
@@ -977,6 +986,10 @@ impl TileOverlay {
 
     /// `window`'s tile dressed again in `worn`'s decoration, its bands laid at their widths.
     pub fn rewear_tile(&mut self, window: WindowId, worn: Worn) { self.tree.rewear(window, worn); }
+
+    /// Every tile's lift cast under a zoom by `under`, as wide on screen as at rest under it, until
+    /// the overlay lets its tiles go.
+    pub fn cast_lifts(&mut self, under: f64) { self.tree.cast_lifts(under); }
 
     /// The overview's outlines of its empty workspaces, ringed as `ring` is, in place of those
     /// before.
@@ -1111,6 +1124,7 @@ impl Tree {
         backdrop.setContentsScale(scale);
         backdrop.setZPosition(BACKDROP_Z);
         root.addSublayer(&backdrop);
+        let tint = tint::Tint::new(&root, size, TINT_Z);
         let strip = new_container(&root);
         strip.setPosition(CGPoint::new(0.0, 0.0));
         Tree {
@@ -1125,6 +1139,8 @@ impl Tree {
             replica: Score::default(),
             crops: Crops::default(),
             outlines: outline::Outlines::default(),
+            tint,
+            lifts_under: 1.0,
         }
     }
 
@@ -1182,7 +1198,12 @@ impl Tree {
                 None => self.drop_node(Node::Lift(window)),
             }
         }
-        let tracks: Vec<Track> = std::iter::once(Node::Strip)
+        self.tint.clear();
+        if let Some(tinted) = score.model(Node::Tint) {
+            self.tint.set(as_number(tinted));
+        }
+        let tracks: Vec<Track> = [Node::Strip, Node::Tint]
+            .into_iter()
             .chain(score.containers().map(Node::Container))
             .chain(score.tiles().map(|(window, _)| Node::Tile(window)))
             .chain(score.tiles().map(|(window, _)| Node::Lift(window)))
@@ -1213,6 +1234,7 @@ impl Tree {
                 Edit::Place(Node::Lift(window), value) => {
                     self.place_lift(*window, as_number(*value))
                 }
+                Edit::Place(Node::Tint, value) => self.tint.set(as_number(*value)),
                 Edit::Add(track) => self.install(track, tiles, new_leg),
                 Edit::Cut(node, channel) => self.cut(*node, *channel),
                 Edit::Ride(window, key) => self.ride(*window, *key, tiles),
@@ -1286,8 +1308,17 @@ impl Tree {
 
     /// `window`'s tile lifted `share` of the way once nothing plays on its lift.
     fn place_lift(&mut self, window: WindowId, share: f64) {
+        let under = self.lifts_under;
         if let Some(entry) = self.tile_layers.get_mut(&window) {
-            entry.lift().set(share);
+            entry.lift(under).set(share);
+        }
+    }
+
+    /// Every tile's lift cast under a zoom by `under`, the ones made from here as well.
+    fn cast_lifts(&mut self, under: f64) {
+        self.lifts_under = under;
+        for entry in self.tile_layers.values_mut() {
+            entry.recast_lift(under);
         }
     }
 
@@ -1360,16 +1391,25 @@ impl Tree {
                 self.crops.add(install_tile_track(entry, track, corner));
             }
             Node::Lift(window) => {
+                let under = self.lifts_under;
                 let Some(entry) = self.tile_layers.get_mut(&window) else {
                     return;
                 };
-                let lift = entry.lift();
+                let lift = entry.lift(under);
                 if track.seconds() <= 0.0 {
                     lift.cut();
                     return;
                 }
                 let opacity = |value| number_object(lift::opacity(as_number(value)));
                 lift.play(&animation(track, "shadowOpacity", opacity));
+            }
+            Node::Tint => {
+                if track.seconds() <= 0.0 {
+                    self.tint.cut();
+                    return;
+                }
+                let opacity = |value| number_object(tint::opacity(as_number(value)));
+                self.tint.play(&animation(track, "opacity", opacity));
             }
         }
     }
@@ -1402,6 +1442,7 @@ impl Tree {
                     lift.cut();
                 }
             }
+            Node::Tint => self.tint.cut(),
         }
     }
 
@@ -1420,6 +1461,7 @@ impl Tree {
                     lift.layer().removeFromSuperlayer();
                 }
             }
+            Node::Tint => self.tint.clear(),
             Node::Container(key) => {
                 for layer in self.layers_of(key) {
                     layer.removeFromSuperlayer();
@@ -1542,6 +1584,8 @@ impl Tree {
     /// Every tile, container and the desktop let go of, and the replica with them.
     fn release(&mut self) {
         self.outlines.clear();
+        self.tint.clear();
+        self.lifts_under = 1.0;
         clear_contents(&self.backdrop);
         self.backdrop.setHidden(true);
         for (_, entry) in self.tile_layers.drain() {
@@ -1700,12 +1744,13 @@ impl Tile {
         layers
     }
 
-    /// The lift's caster, made beside the tile's own and laid with it unless it has one.
-    fn lift(&mut self) -> &Lift {
+    /// The lift's caster, made beside the tile's own cast under a zoom by `under` and laid with it
+    /// unless it has one.
+    fn lift(&mut self, under: f64) -> &Lift {
         let (picture, decorations) = (&self.picture, &self.decorations);
         self.lift.get_or_insert_with(|| {
             let container = picture.superlayer().unwrap_or_else(|| picture.clone());
-            let lift = Lift::new(&container);
+            let lift = Lift::new(&container, under);
             let frame = picture.frame();
             let size = TileSize::from_cg(frame.size);
             lift.layer().setFrame(frame);
@@ -1713,6 +1758,15 @@ impl Tile {
             lift.stack(picture.zPosition());
             lift
         })
+    }
+
+    /// Its lift, if it has one, cast under a zoom by `under`.
+    fn recast_lift(&mut self, under: f64) {
+        let size = TileSize::from_cg(self.picture.frame().size);
+        let corner = self.decorations.corner_at(size);
+        if let Some(lift) = &mut self.lift {
+            lift.recast(under, size, corner);
+        }
     }
 
     /// Moves the tile's layers under `container` unless they are already there.
@@ -3732,6 +3786,7 @@ mod tests {
         fn plays_exactly(tree: &Tree) {
             let replica = &tree.replica;
             plays_its_zoom(tree);
+            plays_its_tint(tree);
             let mut containers: Vec<String> =
                 tree.containers.keys().map(|key| format!("{key:?}")).collect();
             let mut placed: Vec<String> =
@@ -3834,14 +3889,43 @@ mod tests {
             plays_its_lifts(tree);
         }
 
+        /// The tint lies over the desktop and under every container at the replica's share of the
+        /// backdrop's opacity, none where the replica has no tint, its track installed as itself on
+        /// `opacity` unless it has no length.
+        fn plays_its_tint(tree: &Tree) {
+            let layer = tree.tint.layer();
+            assert!(TINT_Z > BACKDROP_Z && TINT_Z < BAR_Z && layer.zPosition() == TINT_Z);
+            for container in tree.containers.values().chain([&tree.strip]) {
+                assert!(
+                    layer.zPosition() < container.zPosition(),
+                    "under every container"
+                );
+            }
+            let model = tree.replica.model(Node::Tint).map_or(0.0, as_number);
+            assert_eq!(f64::from(layer.opacity()), tint::opacity(model) as f32 as f64);
+            match tree.replica.track(Node::Tint, Channel::Base) {
+                Some(track) if track.seconds() > 0.0 => {
+                    let opacity = |value: Value| tint::opacity(as_number(value));
+                    assert_eq!(
+                        installed(layer, tint::TINT_KEY, number_in),
+                        expected(track, opacity)
+                    );
+                    assert_eq!(key_path(layer, tint::TINT_KEY), "opacity");
+                }
+                _ => assert!(!rini_keys(layer).contains(&tint::TINT_KEY.to_string())),
+            }
+        }
+
         /// Every tile the replica lifts casts the lift's shadow and no other does: its caster under
         /// the tile's container at the tile's frame, behind its picture as the tile's own caster is,
-        /// shadowed as `LIFT_SHADOW` and shaped and masked for the tile's size `LIFT_REACH` out, at
-        /// the replica's share of the lift's opacity, its track installed as itself on
-        /// `shadowOpacity` unless it has no length.
+        /// shadowed as `LIFT_SHADOW` under the zoom the tree casts lifts under and shaped and masked
+        /// for the tile's size `LIFT_REACH` out, grown with the blur, at the replica's share of the
+        /// lift's opacity, its track installed as itself on `shadowOpacity` unless it has no
+        /// length.
         fn plays_its_lifts(tree: &Tree) {
             use crate::decorations::domain::shape::{LIFT_REACH, mask_frame};
             use crate::decorations::domain::style::LIFT_SHADOW;
+            let cast = LIFT_SHADOW.under(tree.lifts_under);
             let replica = &tree.replica;
             for (window, _) in replica.tiles() {
                 let entry = &tree.tile_layers[&window];
@@ -3855,8 +3939,8 @@ mod tests {
                 assert!(parent.zip(under).is_some_and(|(p, u)| std::ptr::eq(&*p, &*u)));
                 assert_eq!(caster.frame(), entry.picture.frame(), "{window:?}");
                 assert_eq!(caster.zPosition(), entry.picture.zPosition() + SHADOW_Z);
-                assert_eq!(caster.shadowRadius(), LIFT_SHADOW.radius);
-                assert_eq!(caster.shadowOffset(), CGSize::new(0.0, LIFT_SHADOW.offset_y));
+                assert_eq!(caster.shadowRadius(), cast.radius);
+                assert_eq!(caster.shadowOffset(), CGSize::new(0.0, cast.offset_y));
                 let opacity = |value: Value| lift::opacity(as_number(value));
                 assert_eq!(f64::from(caster.shadowOpacity()), opacity(model) as f32 as f64);
                 let size = TileSize::from_cg(entry.picture.frame().size);
@@ -3864,7 +3948,8 @@ mod tests {
                 let bounds = objc2_core_graphics::CGPath::bounding_box(Some(&silhouette));
                 assert_eq!(bounds.size, size.to_cg(), "{window:?}");
                 let mask = caster.mask().expect("masked");
-                assert_eq!(mask.frame(), mask_frame(size, LIFT_REACH).to_cg(), "{window:?}");
+                let reach = LIFT_REACH * cast.radius / LIFT_SHADOW.radius;
+                assert_eq!(mask.frame(), mask_frame(size, reach).to_cg(), "{window:?}");
                 match replica.track(Node::Lift(window), Channel::Base) {
                     Some(track) if track.seconds() > 0.0 => {
                         assert_eq!(
@@ -4307,7 +4392,7 @@ mod tests {
                 plays_exactly(&tree);
             };
             let held_open = held(&opened);
-            let edits = toward(&score, &held_open, 100.0, Motion::Arc { seconds: 0.257 });
+            let edits = toward(&score, &held_open, 100.0, Motion::Slide { seconds: 0.35 });
             play(&mut score, edits, wear(&held_open));
 
             let (stepped, _) = scene(4, false);
@@ -4335,8 +4420,145 @@ mod tests {
             play(&mut score, edits, wear(&places));
 
             let places = at_rest(&moved, &landing);
-            let edits = toward(&score, &places, 103.0, Motion::Arc { seconds: 0.257 });
+            let edits = toward(&score, &places, 103.0, Motion::Slide { seconds: 0.35 });
             play(&mut score, edits, wear(&places));
+        }
+
+        /// Held, the overview darkens the desktop behind its thumbs with the card's backdrop at its
+        /// opacity, between the desktop and every tile; posed at rest, and once let go, not at all.
+        #[test]
+        fn the_overview_darkens_the_desktop_behind_its_thumbs() {
+            use crate::animation::domain::choreography::overview::{at_rest, held, pose};
+            use crate::chrome::domain::card::{BACKDROP, BACKDROP_ALPHA};
+            use crate::overview::domain::fixture::{Col, overview, row, strip};
+            use crate::overview::domain::scene::lay_out;
+
+            let _core_animation = hold_core_animation();
+            let columns = [Col { width: 800.0, windows: &[1] }];
+            let scene = lay_out(&overview(vec![row(strip(&columns, 0.0), Some(1))], 0));
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            let layer = objc2::Message::retain(tree.tint.layer());
+            assert!(layer.zPosition() > tree.backdrop.zPosition(), "over the desktop");
+            let (red, green, blue) = BACKDROP.rgb();
+            let colour = objc2_core_graphics::CGColor::new_srgb(red, green, blue, 1.0);
+            assert!(objc2_core_graphics::CGColor::equal_to_color(
+                layer.backgroundColor().as_deref(),
+                Some(&colour)
+            ));
+            let tiles = |places: &crate::animation::domain::choreography::overview::Places| {
+                let tiles: Vec<OverlayTile> = places
+                    .tiles
+                    .iter()
+                    .map(|(window, _, frame)| {
+                        let rect = crate::animation::domain::motion::plan::on_overlay(*frame);
+                        overlay_tile(*window, rect, rect, false)
+                    })
+                    .collect();
+                tiles
+            };
+            let (held, rest) = (held(&scene), at_rest(&scene, &[]));
+            tree.pose(&pose(&held), &tiles(&held));
+            plays_exactly(&tree);
+            assert_eq!(f64::from(layer.opacity()), BACKDROP_ALPHA as f32 as f64);
+            tree.pose(&pose(&rest), &tiles(&rest));
+            plays_exactly(&tree);
+            assert_eq!(layer.opacity(), 0.0);
+            tree.pose(&pose(&held), &tiles(&held));
+            tree.release();
+            assert_eq!(layer.opacity(), 0.0, "a lift takes it away");
+        }
+
+        /// Held, every thumb of the overview casts the lift's shadow, the selected one's at its
+        /// full opacity and every other's fainter, each as wide and falling as far on screen under
+        /// the zoom as a flight's lift at rest, whether cast before its thumb was lifted or after;
+        /// posed at rest, none casts any; let go, the next lift is cast under no zoom.
+        #[test]
+        fn the_overview_s_thumbs_float_the_selected_one_highest() {
+            use crate::animation::domain::choreography::overview::{
+                SELECTED_LIFT, THUMB_LIFT, at_rest, held, pose,
+            };
+            use crate::animation::domain::motion::plan::on_overlay;
+            use crate::decorations::domain::style::LIFT_SHADOW;
+            use crate::overview::domain::fixture::{Col, overview, row, strip, w};
+            use crate::overview::domain::scene::lay_out;
+
+            let _core_animation = hold_core_animation();
+            let columns = [
+                Col { width: 800.0, windows: &[1] },
+                Col { width: 800.0, windows: &[2] },
+                Col { width: 800.0, windows: &[3] },
+            ];
+            let input = overview(vec![row(strip(&columns, 0.0), Some(2))], 0);
+            let scene = lay_out(&input);
+            let opacity = |tree: &Tree, window: WindowId| {
+                let lift = tree.tile_layers[&window].lift.as_ref().expect("a caster");
+                f64::from(lift.layer().shadowOpacity())
+            };
+            let tiles = |places: &crate::animation::domain::choreography::overview::Places| {
+                places
+                    .tiles
+                    .iter()
+                    .map(|(window, _, frame)| {
+                        let rect = on_overlay(*frame);
+                        overlay_tile(*window, rect, rect, false)
+                    })
+                    .collect::<Vec<OverlayTile>>()
+            };
+            let drawn = |places: &crate::animation::domain::choreography::overview::Places| {
+                let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+                tree.pose(&pose(places), &tiles(places));
+                tree.cast_lifts(scene.scale);
+                plays_exactly(&tree);
+                tree
+            };
+            let on_screen = |tree: &Tree| {
+                for window in [w(1), w(2), w(3)] {
+                    let caster = tree.tile_layers[&window].lift.as_ref().expect("a caster");
+                    let caster = caster.layer();
+                    let radius = caster.shadowRadius() * scene.scale;
+                    let fall = caster.shadowOffset().height * scene.scale;
+                    assert!((radius - LIFT_SHADOW.radius).abs() < 1e-9, "{window:?} {radius}");
+                    assert!((fall - LIFT_SHADOW.offset_y).abs() < 1e-9, "{window:?} {fall}");
+                }
+            };
+            let tree = drawn(&held(&scene));
+            on_screen(&tree);
+            let mut cast_first = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            cast_first.cast_lifts(scene.scale);
+            cast_first.pose(&pose(&held(&scene)), &tiles(&held(&scene)));
+            plays_exactly(&cast_first);
+            on_screen(&cast_first);
+            cast_first.release();
+            cast_first.pose(&pose(&held(&scene)), &tiles(&held(&scene)));
+            plays_exactly(&cast_first);
+            let caster = cast_first.tile_layers[&w(2)].lift.as_ref().expect("a caster");
+            assert_eq!(
+                caster.layer().shadowRadius(),
+                LIFT_SHADOW.radius,
+                "under no zoom"
+            );
+            let full = f64::from(LIFT_SHADOW.opacity);
+            assert!((opacity(&tree, w(2)) - full * SELECTED_LIFT).abs() < 1e-6);
+            for window in [w(1), w(3)] {
+                assert!(
+                    (opacity(&tree, window) - full * THUMB_LIFT).abs() < 1e-6,
+                    "{window:?}"
+                );
+                assert!(
+                    opacity(&tree, window) < opacity(&tree, w(2)),
+                    "the selected one highest"
+                );
+            }
+            let shown: Vec<(WindowId, OverlayRect)> = input.rows[0]
+                .columns
+                .iter()
+                .flat_map(|column| &column.windows)
+                .map(|laid| (laid.window, to_overlay_space(laid.frame, DISPLAY)))
+                .collect();
+            let tree = drawn(&at_rest(&scene, &shown));
+            for window in [w(1), w(2), w(3)] {
+                assert_eq!(opacity(&tree, window), 0.0, "{window:?} flat at rest");
+            }
         }
 
         /// A zoom look's flight on its own arc, two columns swapped and a push waiting, then a pan
