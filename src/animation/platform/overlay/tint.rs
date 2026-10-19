@@ -29,8 +29,8 @@ pub(super) const TINT_KEY: &str = "rini.tint";
 pub(super) const BLUR_KEY: &str = "rini.blur";
 
 /// The blur's filter, by its name on the desktop's `filters`: Core Animation's own Gaussian
-/// (`CAFilter`, not a public class), drawn by its renderer, where a `CIFilter` cost twice as much a
-/// frame (`src/overview/docs/README.md`, "The desktop darkens on the score too").
+/// (`CAFilter`, not a public class), cheaper a frame than a `CIFilter`
+/// (`src/overview/docs/README.md`, "The desktop darkens and blurs on the score too").
 const BLUR_FILTER: &str = "gaussianBlur";
 
 /// The key path the blur's radius plays on.
