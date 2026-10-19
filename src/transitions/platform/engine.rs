@@ -1924,6 +1924,7 @@ mod tests {
                 Render::Focus { .. } => "focus",
                 Render::Wear { .. } => "wear",
                 Render::Rewear { .. } => "rewear",
+                Render::CastLifts { .. } => "cast_lifts",
                 Render::Holes(_) => "holes",
                 Render::Show => "show",
                 Render::PlaceRest { .. } => "place_rest",
@@ -4591,9 +4592,10 @@ mod tests {
             }
 
             /// Opened, the overview holds the service and asks frame zero of the shown workspace's
-            /// windows; frame zero in, it dresses the overlay, poses the screen as it is, shows it
-            /// and zooms out in one batch; held once its zoom out has played, it lets the service
-            /// go and stops its clock, and nothing it hears after lifts it.
+            /// windows; frame zero in, it dresses the overlay, poses the screen as it is, shows it,
+            /// casts its thumbs' lifts under the held zoom and zooms out in one batch; held once
+            /// its zoom out has played, it lets the service go and stops its clock, and nothing it
+            /// hears after lifts it.
             #[test]
             fn the_overview_zooms_out_from_frame_zero_and_holds_without_lifting() {
                 let mut h = harness();
@@ -4606,10 +4608,21 @@ mod tests {
                 let frame_zero = frame_zero(&h);
                 let sent = h.step(frame_zero);
                 let batch = only_batch(&sent);
-                assert_eq!(kinds(batch), vec!["dress", "stage", "show", "play"]);
+                assert_eq!(kinds(batch), vec![
+                    "dress",
+                    "stage",
+                    "show",
+                    "cast_lifts",
+                    "play"
+                ]);
                 let Render::Stage { score, .. } = &batch.commands[1] else {
                     unreachable!()
                 };
+                assert!(
+                    matches!(batch.commands[3], Render::CastLifts { under }
+                        if under == view(1).scene.scale),
+                    "the lifts cast under the held zoom before they rise"
+                );
                 let at = h.media.at(h.at());
                 for (window, frame) in view(1).shown {
                     let drawn = score.drawn(window, at).unwrap();
@@ -4783,7 +4796,8 @@ mod tests {
 
             /// Held when the renderer reports it has nothing to draw on, the overview lets go of
             /// what it drew: opened again, frame zero is dressed afresh, each thumb on the picture
-            /// there is now and its ring at its own width, not the widened one it was held with.
+            /// there is now and its ring at its own width, not the widened one it was held with,
+            /// and its lifts cast again on the overlay drawn then.
             #[test]
             fn an_overview_the_renderer_cannot_draw_opens_afresh() {
                 let mut h = harness();
@@ -4795,6 +4809,10 @@ mod tests {
                 h.step(opened);
                 let frame_zero = frame_zero(&h);
                 let sent = h.step(frame_zero);
+                assert!(
+                    kinds(only_batch(&sent)).contains(&"cast_lifts"),
+                    "its lifts cast again on the new overlay"
+                );
                 let Some(Render::Stage { tiles, .. }) = only_batch(&sent)
                     .commands
                     .iter()

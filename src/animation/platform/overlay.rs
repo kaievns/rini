@@ -716,6 +716,8 @@ struct Tree {
     outlines: outline::Outlines,
     /// The overview's darkening of the desktop.
     tint: tint::Tint,
+    /// The zoom every lift is cast under: the overview's while it holds the overlay, else none.
+    lifts_under: f64,
 }
 
 pub struct TileOverlay {
@@ -985,6 +987,10 @@ impl TileOverlay {
     /// `window`'s tile dressed again in `worn`'s decoration, its bands laid at their widths.
     pub fn rewear_tile(&mut self, window: WindowId, worn: Worn) { self.tree.rewear(window, worn); }
 
+    /// Every tile's lift cast under a zoom by `under`, as wide on screen as at rest under it, until
+    /// the overlay lets its tiles go.
+    pub fn cast_lifts(&mut self, under: f64) { self.tree.cast_lifts(under); }
+
     /// The overview's outlines of its empty workspaces, ringed as `ring` is, in place of those
     /// before.
     pub fn set_outlines(&mut self, outlines: &[Outline], ring: Option<DecorationBand>) {
@@ -1134,6 +1140,7 @@ impl Tree {
             crops: Crops::default(),
             outlines: outline::Outlines::default(),
             tint,
+            lifts_under: 1.0,
         }
     }
 
@@ -1301,8 +1308,17 @@ impl Tree {
 
     /// `window`'s tile lifted `share` of the way once nothing plays on its lift.
     fn place_lift(&mut self, window: WindowId, share: f64) {
+        let under = self.lifts_under;
         if let Some(entry) = self.tile_layers.get_mut(&window) {
-            entry.lift().set(share);
+            entry.lift(under).set(share);
+        }
+    }
+
+    /// Every tile's lift cast under a zoom by `under`, the ones made from here as well.
+    fn cast_lifts(&mut self, under: f64) {
+        self.lifts_under = under;
+        for entry in self.tile_layers.values_mut() {
+            entry.recast_lift(under);
         }
     }
 
@@ -1375,10 +1391,11 @@ impl Tree {
                 self.crops.add(install_tile_track(entry, track, corner));
             }
             Node::Lift(window) => {
+                let under = self.lifts_under;
                 let Some(entry) = self.tile_layers.get_mut(&window) else {
                     return;
                 };
-                let lift = entry.lift();
+                let lift = entry.lift(under);
                 if track.seconds() <= 0.0 {
                     lift.cut();
                     return;
@@ -1568,6 +1585,7 @@ impl Tree {
     fn release(&mut self) {
         self.outlines.clear();
         self.tint.clear();
+        self.lifts_under = 1.0;
         clear_contents(&self.backdrop);
         self.backdrop.setHidden(true);
         for (_, entry) in self.tile_layers.drain() {
@@ -1726,12 +1744,13 @@ impl Tile {
         layers
     }
 
-    /// The lift's caster, made beside the tile's own and laid with it unless it has one.
-    fn lift(&mut self) -> &Lift {
+    /// The lift's caster, made beside the tile's own cast under a zoom by `under` and laid with it
+    /// unless it has one.
+    fn lift(&mut self, under: f64) -> &Lift {
         let (picture, decorations) = (&self.picture, &self.decorations);
         self.lift.get_or_insert_with(|| {
             let container = picture.superlayer().unwrap_or_else(|| picture.clone());
-            let lift = Lift::new(&container);
+            let lift = Lift::new(&container, under);
             let frame = picture.frame();
             let size = TileSize::from_cg(frame.size);
             lift.layer().setFrame(frame);
@@ -1739,6 +1758,15 @@ impl Tile {
             lift.stack(picture.zPosition());
             lift
         })
+    }
+
+    /// Its lift, if it has one, cast under a zoom by `under`.
+    fn recast_lift(&mut self, under: f64) {
+        let size = TileSize::from_cg(self.picture.frame().size);
+        let corner = self.decorations.corner_at(size);
+        if let Some(lift) = &mut self.lift {
+            lift.recast(under, size, corner);
+        }
     }
 
     /// Moves the tile's layers under `container` unless they are already there.
@@ -3890,12 +3918,14 @@ mod tests {
 
         /// Every tile the replica lifts casts the lift's shadow and no other does: its caster under
         /// the tile's container at the tile's frame, behind its picture as the tile's own caster is,
-        /// shadowed as `LIFT_SHADOW` and shaped and masked for the tile's size `LIFT_REACH` out, at
-        /// the replica's share of the lift's opacity, its track installed as itself on
-        /// `shadowOpacity` unless it has no length.
+        /// shadowed as `LIFT_SHADOW` under the zoom the tree casts lifts under and shaped and masked
+        /// for the tile's size `LIFT_REACH` out, grown with the blur, at the replica's share of the
+        /// lift's opacity, its track installed as itself on `shadowOpacity` unless it has no
+        /// length.
         fn plays_its_lifts(tree: &Tree) {
             use crate::decorations::domain::shape::{LIFT_REACH, mask_frame};
             use crate::decorations::domain::style::LIFT_SHADOW;
+            let cast = LIFT_SHADOW.under(tree.lifts_under);
             let replica = &tree.replica;
             for (window, _) in replica.tiles() {
                 let entry = &tree.tile_layers[&window];
@@ -3909,8 +3939,8 @@ mod tests {
                 assert!(parent.zip(under).is_some_and(|(p, u)| std::ptr::eq(&*p, &*u)));
                 assert_eq!(caster.frame(), entry.picture.frame(), "{window:?}");
                 assert_eq!(caster.zPosition(), entry.picture.zPosition() + SHADOW_Z);
-                assert_eq!(caster.shadowRadius(), LIFT_SHADOW.radius);
-                assert_eq!(caster.shadowOffset(), CGSize::new(0.0, LIFT_SHADOW.offset_y));
+                assert_eq!(caster.shadowRadius(), cast.radius);
+                assert_eq!(caster.shadowOffset(), CGSize::new(0.0, cast.offset_y));
                 let opacity = |value: Value| lift::opacity(as_number(value));
                 assert_eq!(f64::from(caster.shadowOpacity()), opacity(model) as f32 as f64);
                 let size = TileSize::from_cg(entry.picture.frame().size);
@@ -3918,7 +3948,8 @@ mod tests {
                 let bounds = objc2_core_graphics::CGPath::bounding_box(Some(&silhouette));
                 assert_eq!(bounds.size, size.to_cg(), "{window:?}");
                 let mask = caster.mask().expect("masked");
-                assert_eq!(mask.frame(), mask_frame(size, LIFT_REACH).to_cg(), "{window:?}");
+                let reach = LIFT_REACH * cast.radius / LIFT_SHADOW.radius;
+                assert_eq!(mask.frame(), mask_frame(size, reach).to_cg(), "{window:?}");
                 match replica.track(Node::Lift(window), Channel::Base) {
                     Some(track) if track.seconds() > 0.0 => {
                         assert_eq!(
@@ -4438,7 +4469,9 @@ mod tests {
         }
 
         /// Held, every thumb of the overview casts the lift's shadow, the selected one's at its
-        /// full opacity and every other's fainter; posed at rest, none casts any.
+        /// full opacity and every other's fainter, each as wide and falling as far on screen under
+        /// the zoom as a flight's lift at rest, whether cast before its thumb was lifted or after;
+        /// posed at rest, none casts any; let go, the next lift is cast under no zoom.
         #[test]
         fn the_overview_s_thumbs_float_the_selected_one_highest() {
             use crate::animation::domain::choreography::overview::{
@@ -4461,21 +4494,49 @@ mod tests {
                 let lift = tree.tile_layers[&window].lift.as_ref().expect("a caster");
                 f64::from(lift.layer().shadowOpacity())
             };
-            let drawn = |places: &crate::animation::domain::choreography::overview::Places| {
-                let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
-                let tiles: Vec<OverlayTile> = places
+            let tiles = |places: &crate::animation::domain::choreography::overview::Places| {
+                places
                     .tiles
                     .iter()
                     .map(|(window, _, frame)| {
                         let rect = on_overlay(*frame);
                         overlay_tile(*window, rect, rect, false)
                     })
-                    .collect();
-                tree.pose(&pose(places), &tiles);
+                    .collect::<Vec<OverlayTile>>()
+            };
+            let drawn = |places: &crate::animation::domain::choreography::overview::Places| {
+                let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+                tree.pose(&pose(places), &tiles(places));
+                tree.cast_lifts(scene.scale);
                 plays_exactly(&tree);
                 tree
             };
+            let on_screen = |tree: &Tree| {
+                for window in [w(1), w(2), w(3)] {
+                    let caster = tree.tile_layers[&window].lift.as_ref().expect("a caster");
+                    let caster = caster.layer();
+                    let radius = caster.shadowRadius() * scene.scale;
+                    let fall = caster.shadowOffset().height * scene.scale;
+                    assert!((radius - LIFT_SHADOW.radius).abs() < 1e-9, "{window:?} {radius}");
+                    assert!((fall - LIFT_SHADOW.offset_y).abs() < 1e-9, "{window:?} {fall}");
+                }
+            };
             let tree = drawn(&held(&scene));
+            on_screen(&tree);
+            let mut cast_first = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            cast_first.cast_lifts(scene.scale);
+            cast_first.pose(&pose(&held(&scene)), &tiles(&held(&scene)));
+            plays_exactly(&cast_first);
+            on_screen(&cast_first);
+            cast_first.release();
+            cast_first.pose(&pose(&held(&scene)), &tiles(&held(&scene)));
+            plays_exactly(&cast_first);
+            let caster = cast_first.tile_layers[&w(2)].lift.as_ref().expect("a caster");
+            assert_eq!(
+                caster.layer().shadowRadius(),
+                LIFT_SHADOW.radius,
+                "under no zoom"
+            );
             let full = f64::from(LIFT_SHADOW.opacity);
             assert!((opacity(&tree, w(2)) - full * SELECTED_LIFT).abs() < 1e-6);
             for window in [w(1), w(3)] {

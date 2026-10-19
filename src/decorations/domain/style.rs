@@ -43,6 +43,22 @@ pub const LIFT_SHADOW: ShadowStyle = ShadowStyle {
     offset_y: 16.0,
 };
 
+impl ShadowStyle {
+    /// Itself as a layer under a zoom by `scale` casts it to be drawn on screen as it is at rest:
+    /// its blur and its fall divided by the zoom, its opacity kept. Itself under no zoom, or under
+    /// one that is no scale.
+    pub fn under(self, scale: f64) -> ShadowStyle {
+        if !scale.is_finite() || scale <= 0.0 {
+            return self;
+        }
+        ShadowStyle {
+            radius: self.radius / scale,
+            offset_y: self.offset_y / scale,
+            ..self
+        }
+    }
+}
+
 /// A band rini draws outside a window, as niri's focus ring and border are: its width in points, and
 /// its paint, a colour or a gradient, on the window holding focus, on a window drawn urgent and on
 /// the others that wear it.
@@ -616,6 +632,18 @@ mod tests {
             assert!(SHADOW_REACH > style.radius * 3.0 + style.offset_y);
         }
         const { assert!(LIFT_REACH > LIFT_SHADOW.radius * 3.0 + LIFT_SHADOW.offset_y) };
+    }
+
+    /// Under the overview's zoom a lift is cast as wide and falls as far on screen as at rest, at
+    /// its own opacity; under no zoom it is itself.
+    #[test]
+    fn a_shadow_under_a_zoom_is_cast_as_on_screen_at_rest() {
+        let under = LIFT_SHADOW.under(0.25);
+        assert_eq!(under.radius * 0.25, LIFT_SHADOW.radius);
+        assert_eq!(under.offset_y * 0.25, LIFT_SHADOW.offset_y);
+        assert_eq!(under.opacity, LIFT_SHADOW.opacity);
+        assert_eq!(LIFT_SHADOW.under(1.0), LIFT_SHADOW);
+        assert_eq!(LIFT_SHADOW.under(0.0), LIFT_SHADOW, "no scale");
     }
 
     #[test]

@@ -21,7 +21,8 @@ look they share lives here rather than in either feature, and the palette with i
 backdrop is `N0`, as the switcher's darkening is.
 
 **On screen.** Every length is in points on screen. The switcher draws at one scale; the overview
-draws under the strip's zoom and divides by it, so a card reads the same in both.
+draws under the strip's zoom and divides by it, so a card reads the same in both. Its thumbs' lift
+shadow is divided the same way (`ShadowStyle::under`).
 
 ## Reading order
 

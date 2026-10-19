@@ -55,8 +55,12 @@ then it moves in to reach `TUCK` under it.
 **Thumbs float on a flight's lift.** Held, every thumb casts the shadow a window carried in a
 flight casts (`LIFT_SHADOW`, `Node::Lift`), the selected one all of it and the rest 0.4 of it
 (`SELECTED_LIFT`, `THUMB_LIFT` in `src/animation/domain/choreography/overview.rs`), so the shadow
-rises and falls with the zoom on the score rather than being a layer of its own. The switcher's cards
-cast none: its panel's window casts the shadow there, so there is no card shadow to share.
+rises and falls with the zoom on the score rather than being a layer of its own. The casters sit
+under the zoom, so the engine has the overlay cast every lift under the held scene's zoom
+(`Render::CastLifts`, `ShadowStyle::under`) from the open, while nothing is lifted yet, to the
+lift: the shadow is a flight's on screen, where at the zoom's scale it was a fifth of it. The
+switcher's cards cast none: its panel's window casts the shadow there, so there is no card shadow
+to share.
 
 **The desktop darkens on the score too.** Held, the desktop behind the thumbs is darkened by the
 card's backdrop, `--n0` at 0.40, the switcher's own darkening (`BACKDROP`, `BACKDROP_ALPHA` in

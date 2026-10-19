@@ -1117,7 +1117,11 @@ From the end of its zoom out to the start of its zoom in, its thumbs' rings and 
 again as wide on screen as at rest, the selected thumb's ring as wide as the card's and dressed again
 as the selection moves (`Render::Rewear`), and through the zoom at their own width,
 which the zoom thins. So they visibly thicken as the zoom out lands and thin as the zoom in begins:
-keeping them steady through the zoom is what `specs/overview.md` marks not yet met.
+keeping them steady through the zoom is what `specs/overview.md` marks not yet met. Its thumbs'
+lifts are cast under the held zoom from the open instead (`Render::CastLifts`), ahead of the play
+that zooms out, while nothing is lifted, and kept to the lift, where nothing is: turning it with
+the bands would turn a shadow at full strength. A held scene of another depth casts them again at
+once, as it dresses the bands again.
 
 ## Structural findings
 

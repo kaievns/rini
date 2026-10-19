@@ -100,9 +100,11 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 - Every thumb MUST cast a shadow while the overview is held, so it floats over what is behind it,
   and the selected one a stronger one to accent it: the lift a carried window takes in a flight,
-  all of it for the selected thumb and 0.4 of it for every other. Frame zero and the landing MUST
-  cast none, since the screen at rest has none: the shadows rise with the zoom out, fall with the
-  zoom in, and move with the selection.
+  all of it for the selected thumb and 0.4 of it for every other, as wide and falling as far on
+  screen held as in a flight, its blur and its fall divided by the zoom. Frame zero and the landing
+  MUST cast none, since the screen at rest has none: the shadows rise with the zoom out, fall with
+  the zoom in, and move with the selection. Cast at its held size from the open, a shadow is drawn
+  wider than that while the zoom is nearer the screen, where it is faint.
 
 > **Reported 2026-10-19.** "add a bit of depth to the thumbs, like shadows or something so they'd
 > appear a bit floating, more so for the currently selected window to accent it". Under the zoom a

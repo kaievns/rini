@@ -58,6 +58,9 @@ pub(super) struct Shown {
     outlines: Vec<Outline>,
     /// Whether its thumbs' bands are drawn as wide on screen as at rest: while it is held.
     widened: bool,
+    /// The zoom its thumbs' lifts are cast under, as wide on screen as at rest: the latest held
+    /// scene's, from its open, which lifts nothing yet, to its lift, which lowers them all.
+    lifts_under: Option<f64>,
     /// The scene it last played, which the next is logged against.
     played: Option<Scene>,
     /// What waits for its lift: every flight asked for and every move of the overlay, and an open
@@ -326,7 +329,8 @@ impl FlightEngine {
     }
 
     /// Every node from where it is drawn to where `target` has it at a press's pace, the pushes
-    /// among `presses` bounced over a press's length, each thumb wearing what it wears there.
+    /// among `presses` bounced over a press's length, each thumb wearing what it wears there, its
+    /// lifts cast under the held scene's zoom first.
     fn move_overview(&mut self, target: Target, presses: &[Press], now: Instant) {
         let length = self.shown_overview.length;
         let Some(places) = self.overview_places(target) else {
@@ -360,6 +364,11 @@ impl FlightEngine {
         for edit in &edits {
             shown.score.apply(edit);
         }
+        let cast = (target == Target::Held && shown.lifts_under != Some(scene.scale))
+            .then(|| Render::CastLifts { under: scene.scale });
+        if cast.is_some() {
+            shown.lifts_under = Some(scene.scale);
+        }
         let mut turned = Vec::new();
         for tile in &shown.tiles {
             let was = worn_before.iter().find(|(window, ..)| *window == tile.window);
@@ -383,8 +392,11 @@ impl FlightEngine {
                 }
             }
         }
-        if !edits.is_empty() {
-            let tiles = shown.tiles.clone();
+        let tiles = (!edits.is_empty()).then(|| shown.tiles.clone());
+        if let Some(cast) = cast {
+            self.render(cast);
+        }
+        if let Some(tiles) = tiles {
             self.render(Render::Play { edits, tiles });
         }
         for command in turned {
@@ -637,6 +649,7 @@ impl Shown {
         self.presses.clear();
         self.outlines.clear();
         self.widened = false;
+        self.lifts_under = None;
         self.played = None;
     }
 
