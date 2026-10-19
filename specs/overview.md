@@ -20,6 +20,19 @@ Every workspace of one display at once, zoomed out, while its key is held.
   held: Kai asked for it "active while im holding". niri's toggles; a niri config's bind still
   opens it. Every `toggle-overview` bind MUST open it, held by that bind's modifiers: a bind the
   config accepts MUST NOT do nothing.
+- Cmd+Caps, which Kai's keyboard layer sends as `Super+F19`, MUST open it held by Cmd as
+  `Mod+Slash` does held by Alt: Kai asked for it in place of the switcher, and for the combination
+  to stay his to move. Both bound at once, each MUST open it, held by its own modifiers.
+
+> **Reported 2026-10-19.** "additionally i want to change the activation logic, and replace cmd-caps
+> from the app switcher to the overview (keep the app switcher around unbinded with an option to
+> bind it somwhere for those who wants it) cmd-caps activates the overview and it's active while i
+> keep holding cmd, while im in the overview i can use normal u/i/o/p/j/k/l/; bindinings without
+> meta- to navigate around and ,/. for folding unfolding, adding shift starts moving windows around
+> as in non-overview mode. this will need to be configureable, if say i want to swap the cmobo back
+> to meta-/ tomorrow it should keep working the same way, wile i'm holding the mod button it lets me
+> navigate and move windows around in the button"
+
 - A `toggle-overview` bind with no modifier MUST be refused with the reason: nothing could close
   it.
 - Releasing the modifier MUST close it, and the release MUST be passed through, or every
@@ -95,6 +108,16 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 ## Keys inside it
 
+- A key pressed inside it MUST run the bind it has with `Mod` in place of the modifiers holding it
+  open, every other modifier held kept: with the hold on Cmd, J alone runs `Mod+J`, Shift+J
+  `Mod+Shift+J` and Comma `Mod+Comma`. With the hold on `Mod` itself the key MUST be looked up as
+  pressed, sides and all, as outside: Alt+J runs `Mod+J`, and a bind on the right Alt alone fires
+  on the right Alt key. Kai asked for the keys "without meta-" while Cmd holds it, and for a hold
+  moved back to `Mod+Slash` to work the same (Reported 2026-10-19, above). A bind on the hold's
+  modifiers and the key MUST NOT run inside: that chord is the hold and the key, so under a Cmd
+  hold a `Super+J` bind is out of reach until it closes. Under a Cmd hold, a chord macOS answers in
+  the window server, Cmd+Tab's application switcher, still reaches macOS, whatever its `Mod` bind
+  does: an event tap cannot take it back.
 - Every bind MUST do what it does outside, on the real layout, and the overview MUST re-lay out from
   what it did: Kai asked for the same keys to work. What a press asks to fly MUST NOT fly while it
   is open, since the overview is what is seen to move; the real windows MUST go straight to where
@@ -112,8 +135,15 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > opens within the flight's 0.35s, a press inside places a window again, and the first flight,
 > landing, would put that window back where it was taking it.
 
-- A key with no bind MUST pass through untouched: swallowing everything is how a live session
-  becomes a dead keyboard. The cost: Alt and a letter reach the hidden application.
+- A key with no bind, looked up as above, MUST be swallowed, its key-up passed as a bound key's is.
+  Passed, it reaches the hidden application with the hold still down: Cmd+Q would quit it and Cmd+W
+  close its window, unseen. This cannot leave a dead keyboard, since a key whose flags show the hold
+  up closes it first and goes on. A key rini has no name for passes, since no bind can name it.
+
+> **Found 2026-10-19, not reported.** Moving the hold to Cmd for Kai's report above showed the old
+> rule, that a key with no bind passes through untouched so a live session never becomes a dead
+> keyboard, would hand Cmd+Q and Cmd+W to the hidden application. The swallow is safe because any
+> event whose flags show the hold up closes the overview before it is read.
 - A switcher's trigger MUST be swallowed while it is open, and the overview's while a switch is:
   one session is live at a time.
 - Focus MUST NOT follow the mouse and the pointer MUST NOT be warped while it is open; the last warp
@@ -179,7 +209,8 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 `src/overview/domain/` is the scene: `scene.rs` lays it out, `depth.rs` sets its depth and its
 rows' tops, `stacks.rs` its edge stacks, and `changes.rs` finds what changed between two scenes.
-`src/input/domain/switch_session.rs` is the tap's side, the hold that opens and closes it, and
+`src/input/domain/switch_session.rs` is the tap's side, the hold that opens and closes it and the
+chord a key inside it is looked up as, `src/input/domain/router.rs` the lookup, and
 `src/app/reactor/overview.rs` the reactor's: the scene's input read off the layout and handed to the
 flight engine, the flights held and their frames placed, the warps held, and the close. How it moves
 is `src/animation/domain/choreography/overview.rs`, an empty workspace's outline

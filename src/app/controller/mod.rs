@@ -11,6 +11,8 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::app::config;
 use crate::input::domain::binding::{Action, Bind};
+use crate::input::domain::key::{Hotkey, ModKey};
+use crate::input::domain::switch_session::{SwitchKeys, overview_keys};
 use crate::windows::platform::app::NSRunningApplicationExt;
 
 pub type Sender = channels::Sender<WmEvent>;
@@ -279,23 +281,9 @@ impl Controller {
 
     fn register_hotkeys(&mut self) {
         debug!("register_hotkeys");
-        let Registration { binds, switcher_binds } = Registration::of(&self.config);
-        // Derived from the same bindings rather than configured separately, so the chord that opens a
-        // switch or the overview and the modifier that holds it open cannot disagree.
-        let parse = |spec: &str| {
-            let hotkey =
-                <crate::input::domain::key::Hotkey as std::str::FromStr>::from_str(spec).ok()?;
-            Some((hotkey.modifiers, hotkey.key_code))
-        };
-        let mut switch_keys =
-            crate::switcher::domain::trigger::switch_keys_from_bindings(&switcher_binds, parse);
-        switch_keys.extend(crate::input::domain::switch_session::overview_keys(
-            &binds, parse,
-        ));
+        let (switch_keys, binds) = Registration::of(&self.config).for_tap();
         self.event_tap_tx.send(input_tap::Request::SetSwitchKeys(switch_keys));
-        self.event_tap_tx.send(input_tap::Request::SetHotkeys(
-            binds.into_iter().chain(switcher_binds).collect(),
-        ));
+        self.event_tap_tx.send(input_tap::Request::SetHotkeys(binds));
     }
 
     fn reload_config(&self) {
@@ -317,11 +305,13 @@ impl Controller {
 }
 
 /// What the tap is given for a config's keys: every bind and switcher bind with `Mod` replaced by
-/// `mod-key`. A config change re-registers exactly when this changes.
+/// `mod-key`, and `mod-key`, which the overview looks its keys up with. A config change
+/// re-registers exactly when this changes.
 #[derive(Debug, PartialEq)]
 struct Registration {
     binds: Vec<Bind>,
     switcher_binds: Vec<Bind>,
+    mod_key: ModKey,
 }
 
 impl Registration {
@@ -339,7 +329,27 @@ impl Registration {
         Registration {
             binds: resolve(&config.binds),
             switcher_binds: resolve(&config.switcher_binds),
+            mod_key,
         }
+    }
+
+    /// The keys each switcher and the overview answer to, and every bind. Derived from the same
+    /// bindings rather than configured separately, so the chord that opens a switch or the overview
+    /// and the modifier that holds it open cannot disagree.
+    fn for_tap(self) -> (Vec<SwitchKeys>, Vec<Bind>) {
+        let parse = |spec: &str| {
+            let hotkey = <Hotkey as std::str::FromStr>::from_str(spec).ok()?;
+            Some((hotkey.modifiers, hotkey.key_code))
+        };
+        let mut switch_keys = crate::switcher::domain::trigger::switch_keys_from_bindings(
+            &self.switcher_binds,
+            parse,
+        );
+        switch_keys.extend(overview_keys(&self.binds, self.mod_key, parse));
+        (
+            switch_keys,
+            self.binds.into_iter().chain(self.switcher_binds).collect(),
+        )
     }
 }
 
@@ -392,6 +402,76 @@ mod tests {
             registration("binds {\n    Alt+J { focus-column-left; }\n}\n"),
             "`Mod+J` under the default mod-key registers what `Alt+J` does"
         );
+    }
+
+    /// Kai's ask: Cmd+Caps, which his keyboard layer sends as Super+F19, bound to
+    /// `toggle-overview` opens the overview held by Cmd, and J pressed with Cmd held runs `Mod+J`,
+    /// Shift adding `Mod+Shift+J`. Bound beside `Mod+Slash`, each opens it held by its own modifier,
+    /// under whichever modifier `mod-key` names.
+    #[test]
+    fn a_super_f19_bind_opens_the_overview_held_by_cmd_with_mod_binds_inside() {
+        use std::str::FromStr;
+        use std::time::Instant;
+
+        use crate::input::domain::key::{KeyCode, modifier_mask_for_key};
+        use crate::input::domain::router::{KeyRouter, Keystroke};
+        use crate::input::domain::switch_session::{
+            KeyEventKind, OverviewSignal, SessionId, Signal,
+        };
+
+        let binds = concat!(
+            "binds {\n    Mod+J { focus-column-left; }\n    Mod+Shift+J { move-window-left; }\n",
+            "    Mod+Slash { toggle-overview; }\n    Super+F19 { toggle-overview; }\n}\n",
+        );
+        let ctrl = "input {\n    mod-key \"Ctrl\"\n}\n";
+        let mask = |key| modifier_mask_for_key(key).expect("a modifier");
+        let shift = mask(KeyCode::ShiftLeft);
+        for (input, trigger, modifier) in [
+            ("", KeyCode::F19, KeyCode::MetaLeft),
+            ("", KeyCode::Slash, KeyCode::AltLeft),
+            (ctrl, KeyCode::F19, KeyCode::MetaLeft),
+            (ctrl, KeyCode::Slash, KeyCode::ControlLeft),
+        ] {
+            let (switch_keys, binds) = registration(&format!("{input}{binds}")).for_tap();
+            let mut router = KeyRouter::default();
+            let unresolved = router.set_binds(binds, |spec| Hotkey::from_str(spec).ok());
+            assert!(unresolved.is_empty(), "{unresolved:?}");
+            assert_eq!(router.set_switch_keys(switch_keys), None);
+            let hold = mask(modifier);
+            let mut press = |kind, key, flags| {
+                router.on_key(Keystroke {
+                    kind,
+                    key: Some(key),
+                    flags,
+                    repeat: false,
+                    synthetic: false,
+                    at: Instant::now(),
+                })
+            };
+            press(KeyEventKind::FlagsChanged, modifier, hold);
+            assert_eq!(
+                press(KeyEventKind::Down, trigger, hold).signal,
+                Some(Signal::Overview(OverviewSignal::Open(SessionId(1)))),
+                "{input}{trigger:?}"
+            );
+            assert_eq!(
+                press(KeyEventKind::Down, KeyCode::KeyJ, hold).action,
+                Some(Action::FocusColumnLeft),
+                "{input}{trigger:?}"
+            );
+            press(KeyEventKind::FlagsChanged, KeyCode::ShiftLeft, hold | shift);
+            assert_eq!(
+                press(KeyEventKind::Down, KeyCode::KeyJ, hold | shift).action,
+                Some(Action::MoveWindowLeft),
+                "{input}{trigger:?}"
+            );
+            press(KeyEventKind::FlagsChanged, KeyCode::ShiftLeft, hold);
+            assert_eq!(
+                press(KeyEventKind::FlagsChanged, modifier, 0).signal,
+                Some(Signal::Overview(OverviewSignal::Close)),
+                "{input}{trigger:?}: let go"
+            );
+        }
     }
 
     #[test]

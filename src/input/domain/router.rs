@@ -11,8 +11,10 @@
 //! 3. **The session before the hotkey table.** The table swallows a held key's repeats unless its
 //!    bind asks for them, because a repeat re-fired commands such as workspace back-and-forth. A
 //!    switch needs repeats to walk the selection and gets them by being asked first, which leaves
-//!    that rule as it is. The overview's session passes every key but its own, so a bind fires as it
-//!    does outside it.
+//!    that rule as it is. The overview's session passes every key but its own and Escape, and the
+//!    table looks each up with `Mod` in place of the overview's hold, so with the hold on Cmd, J
+//!    alone fires `Mod+J`. A key it finds no bind for is swallowed: passed, it would reach the
+//!    hidden application with the hold still down, a Cmd+Q quitting it unseen.
 //! 4. **Only a key-down reaches the table.** A bound key's down is swallowed whether it fires or is a
 //!    repeat; its up goes through.
 //! 5. **A mouse event's flags drop a modifier the edges left stuck**, because macOS drops a key-up or
@@ -136,8 +138,10 @@ impl KeyRouter {
         if switched.swallow || stroke.kind != KeyEventKind::Down {
             return verdict;
         }
-        match self.hotkeys.press(&Hotkey::new(modifiers, key), stroke.repeat) {
-            Press::Unbound => {}
+        let overview = self.switch.overview_chord(modifiers);
+        let chord = overview.unwrap_or(modifiers);
+        match self.hotkeys.press(&Hotkey::new(chord, key), stroke.repeat) {
+            Press::Unbound => verdict.swallow = overview.is_some(),
             Press::Swallowed => verdict.swallow = true,
             Press::Fired(action) => {
                 verdict.swallow = true;
@@ -243,7 +247,7 @@ mod tests {
     use rini_ipc::protocol::SwitchScope;
 
     use super::*;
-    use crate::input::domain::key::{MOD_FAMILIES, ModFamily, Modifiers};
+    use crate::input::domain::key::{MOD_FAMILIES, ModFamily, ModKey, Modifiers};
     use crate::input::domain::switch_session::{MAX_SESSION, Opens, OverviewSignal};
 
     fn family(name: &str) -> &'static ModFamily {
@@ -338,6 +342,14 @@ mod tests {
 
     fn passed() -> Verdict { Verdict::default() }
 
+    fn eaten() -> Verdict {
+        Verdict {
+            swallow: true,
+            signal: None,
+            action: None,
+        }
+    }
+
     fn open() -> Signal {
         Signal::Open {
             backward: false,
@@ -391,14 +403,7 @@ mod tests {
     fn a_repeat_of_a_bind_without_repeat_is_swallowed_and_fires_nothing() {
         let now = Instant::now();
         let mut router = router();
-        assert_eq!(
-            router.on_key(repeat(KeyCode::KeyJ, left("Ctrl"), now)),
-            Verdict {
-                swallow: true,
-                signal: None,
-                action: None,
-            }
-        );
+        assert_eq!(router.on_key(repeat(KeyCode::KeyJ, left("Ctrl"), now)), eaten());
     }
 
     #[test]
@@ -619,7 +624,7 @@ mod tests {
         assert!(unresolved.is_empty());
         let keys = vec![
             SwitchKeys {
-                opens: Opens::Overview,
+                opens: Opens::Overview { mod_key: ModKey::Alt },
                 forward: KeyCode::Slash,
                 hold: Modifiers::ALT,
             },
@@ -692,15 +697,177 @@ mod tests {
         assert!(router.close_switch(SessionId(1)), "and the overview stays open");
     }
 
+    /// Passed, Alt and a letter would reach the hidden application; its key-up still goes through.
     #[test]
-    fn an_unbound_key_inside_the_overview_passes() {
+    fn an_unbound_key_inside_the_overview_is_swallowed() {
         let now = Instant::now();
         let mut router = overviewing();
         opened(&mut router, now);
         for key in [KeyCode::KeyA, KeyCode::ArrowLeft] {
-            assert_eq!(router.on_key(down(key, alt(), now)), passed(), "{key:?}");
+            assert_eq!(router.on_key(down(key, alt(), now)), eaten(), "{key:?}");
+            let up = stroke(KeyEventKind::Up, key, alt(), now);
+            assert_eq!(router.on_key(up), passed(), "{key:?}'s key-up");
         }
         assert!(router.close_switch(SessionId(1)), "and it is still open");
+    }
+
+    /// Held by `Mod` itself, the overview looks a key up with the sides as pressed: a bind on the
+    /// right Alt fires on it, and one on the left Alt does not.
+    #[test]
+    fn inside_an_overview_held_by_mod_a_side_bind_keeps_its_side() {
+        let now = Instant::now();
+        let mut router = KeyRouter::default();
+        let unresolved = router.set_binds(
+            vec![
+                bind("Alt+Slash", Action::ToggleOverview, false),
+                bind("AltRight+J", Action::FocusColumnLeft, false),
+                bind("AltLeft+L", Action::FocusColumnRight, false),
+            ],
+            |spec| match spec {
+                "Alt+Slash" => Some(Hotkey::new(Modifiers::ALT, KeyCode::Slash)),
+                "AltRight+J" => Some(Hotkey::new(Modifiers::ALT_RIGHT, KeyCode::KeyJ)),
+                "AltLeft+L" => Some(Hotkey::new(Modifiers::ALT_LEFT, KeyCode::KeyL)),
+                _ => None,
+            },
+        );
+        assert!(unresolved.is_empty());
+        router.set_switch_keys(vec![SwitchKeys {
+            opens: Opens::Overview { mod_key: ModKey::Alt },
+            forward: KeyCode::Slash,
+            hold: Modifiers::ALT,
+        }]);
+        let right_alt = family("Alt").mask | family("Alt").right_mask;
+        router.on_key(stroke(
+            KeyEventKind::FlagsChanged,
+            KeyCode::AltRight,
+            right_alt,
+            now,
+        ));
+        let opened = router.on_key(down(KeyCode::Slash, right_alt, now));
+        assert_eq!(
+            opened,
+            signalled(true, overview(OverviewSignal::Open(SessionId(1))))
+        );
+        assert_eq!(
+            router.on_key(down(KeyCode::KeyJ, right_alt, now)),
+            fired(Action::FocusColumnLeft)
+        );
+        assert_eq!(router.on_key(down(KeyCode::KeyL, right_alt, now)), eaten());
+        assert!(router.close_switch(SessionId(1)), "and it is still open");
+    }
+
+    /// Kai's binds as `Mod`, Alt, resolves them, with the overview on `trigger` held by `hold`.
+    fn overview_held(trigger: KeyCode, hold: Modifiers) -> KeyRouter {
+        let mut router = KeyRouter::default();
+        let with = |extra: Modifiers, key| {
+            let mut held = Modifiers::ALT;
+            held.insert(extra);
+            Some(Hotkey::new(held, key))
+        };
+        let unresolved = router.set_binds(
+            vec![
+                bind("Alt+J", Action::FocusColumnLeft, false),
+                bind("Alt+Shift+J", Action::MoveWindowLeft, false),
+                bind("Alt+Comma", Action::ToggleFoldLeft, false),
+                bind("Alt+Period", Action::ToggleFoldRight, false),
+                bind("Super+J", Action::CloseWindow, false),
+            ],
+            |spec| match spec {
+                "Alt+J" => with(Modifiers::empty(), KeyCode::KeyJ),
+                "Alt+Shift+J" => with(Modifiers::SHIFT, KeyCode::KeyJ),
+                "Alt+Comma" => with(Modifiers::empty(), KeyCode::Comma),
+                "Alt+Period" => with(Modifiers::empty(), KeyCode::Period),
+                "Super+J" => Some(Hotkey::new(Modifiers::META, KeyCode::KeyJ)),
+                _ => None,
+            },
+        );
+        assert!(unresolved.is_empty());
+        router.set_switch_keys(vec![SwitchKeys {
+            opens: Opens::Overview { mod_key: ModKey::Alt },
+            forward: trigger,
+            hold,
+        }]);
+        router
+    }
+
+    /// Kai's ask: with the overview on Cmd+Caps, which reaches rini as Super+F19, a key pressed with
+    /// Cmd held runs what it runs with `Mod`, Shift adding moves; on Alt+Slash, Alt and the key run
+    /// it as they do outside. A key bound to Super outside is not looked up inside, and one with no
+    /// bind under `Mod` is swallowed. Escape closes it either way.
+    #[test]
+    fn inside_the_overview_a_key_runs_its_mod_bind_whichever_modifier_holds_it() {
+        let now = Instant::now();
+        let rows = [
+            (Modifiers::empty(), KeyCode::KeyJ, fired(Action::FocusColumnLeft)),
+            (
+                Modifiers::SHIFT_LEFT,
+                KeyCode::KeyJ,
+                fired(Action::MoveWindowLeft),
+            ),
+            (Modifiers::empty(), KeyCode::Comma, fired(Action::ToggleFoldLeft)),
+            (
+                Modifiers::empty(),
+                KeyCode::Period,
+                fired(Action::ToggleFoldRight),
+            ),
+            (
+                Modifiers::ALT_LEFT,
+                KeyCode::KeyJ,
+                fired(Action::FocusColumnLeft),
+            ),
+            (Modifiers::SHIFT_LEFT, KeyCode::KeyL, eaten()),
+            (Modifiers::empty(), KeyCode::KeyA, eaten()),
+        ];
+        for (name, trigger, hold) in [
+            ("Super+F19", KeyCode::F19, Modifiers::META),
+            ("Alt+Slash", KeyCode::Slash, Modifiers::ALT),
+        ] {
+            let mut router = overview_held(trigger, hold);
+            let held = if hold == Modifiers::META {
+                left("Super")
+            } else {
+                alt()
+            };
+            let opened = router.on_key(down(trigger, held, now));
+            assert_eq!(
+                opened,
+                signalled(true, overview(OverviewSignal::Open(SessionId(1)))),
+                "{name}"
+            );
+            for (extra, key, verdict) in rows.clone() {
+                let mut flags = held;
+                if extra.contains(Modifiers::SHIFT_LEFT) {
+                    flags |= left("Shift");
+                }
+                if extra.contains(Modifiers::ALT_LEFT) {
+                    flags |= alt();
+                }
+                assert_eq!(
+                    router.on_key(down(key, flags, now)),
+                    verdict,
+                    "{name}: {extra} {key:?}"
+                );
+            }
+            assert_eq!(
+                router.on_key(down(KeyCode::Escape, held, now)),
+                signalled(true, overview(OverviewSignal::Close)),
+                "{name}: Escape"
+            );
+            assert!(!router.close_switch(SessionId(1)), "{name}: and it is over");
+        }
+    }
+
+    /// Outside the overview Cmd and a key is the bind Cmd and the key names, or the application's.
+    #[test]
+    fn outside_the_overview_a_key_is_looked_up_as_pressed() {
+        let now = Instant::now();
+        let mut router = overview_held(KeyCode::F19, Modifiers::META);
+        assert_eq!(
+            router.on_key(down(KeyCode::KeyJ, left("Super"), now)),
+            fired(Action::CloseWindow)
+        );
+        assert_eq!(router.on_key(down(KeyCode::Comma, left("Super"), now)), passed());
+        assert_eq!(router.on_key(down(KeyCode::KeyA, alt(), now)), passed());
     }
 
     #[test]
@@ -724,16 +891,11 @@ mod tests {
         let now = Instant::now();
         let mut router = overviewing();
         opened(&mut router, now);
-        let eaten = Verdict {
-            swallow: true,
-            signal: None,
-            action: None,
-        };
 
-        assert_eq!(router.on_key(repeat(KeyCode::Slash, alt(), now)), eaten);
-        assert_eq!(router.on_key(down(KeyCode::Slash, alt(), now)), eaten);
+        assert_eq!(router.on_key(repeat(KeyCode::Slash, alt(), now)), eaten());
+        assert_eq!(router.on_key(down(KeyCode::Slash, alt(), now)), eaten());
         let up = stroke(KeyEventKind::Up, KeyCode::Slash, alt(), now);
-        assert_eq!(router.on_key(up), eaten, "its key-up too");
+        assert_eq!(router.on_key(up), eaten(), "its key-up too");
         assert_eq!(
             router.on_key(let_go(now)),
             signalled(false, overview(OverviewSignal::Close)),
@@ -907,11 +1069,7 @@ mod tests {
         opened(&mut router, now);
 
         let verdict = router.on_key(down(KeyCode::KeyQ, alt(), now));
-        assert_eq!(verdict, Verdict {
-            swallow: true,
-            signal: None,
-            action: None,
-        });
+        assert_eq!(verdict, eaten());
         assert_eq!(
             router.on_key(let_go(now)),
             signalled(false, overview(OverviewSignal::Close))

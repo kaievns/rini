@@ -118,8 +118,9 @@ merging back.
 
 The switcher needs a chord of your choosing. macOS does not give up Cmd-Tab: the Dock's switcher is
 a window-server hotkey, and dropping the key in an event tap cannot take back a dispatch already
-made. My keyboard layer sends Cmd+F17, Cmd+F18 and Cmd+F19 instead. With the chord redirected, a
-wedged rini cannot fall back to macOS's switcher, and Secure Input silences all three.
+made. My keyboard layer sends Cmd+F17 and Cmd+F18 instead, and Cmd+F19 from Cmd+Caps, which can
+open the overview in place of a switcher. With the chord redirected, a wedged rini cannot fall back
+to macOS's switcher, and Secure Input silences all three.
 
 ### What it no longer has
 

@@ -582,6 +582,16 @@ impl ModKey {
             ModKey::Super => "Super",
         }
     }
+
+    /// The modifier it stands for, either side.
+    pub fn modifiers(self) -> Modifiers {
+        match self {
+            ModKey::Alt => Modifiers::ALT,
+            ModKey::Ctrl => Modifiers::CONTROL,
+            ModKey::Shift => Modifiers::SHIFT,
+            ModKey::Super => Modifiers::META,
+        }
+    }
 }
 
 impl std::str::FromStr for ModKey {
@@ -940,5 +950,15 @@ mod tests {
         assert_eq!("Cmd".parse(), Ok(ModKey::Super));
         assert!("ISO_Level3_Shift".parse::<ModKey>().unwrap_err().contains("macOS"));
         assert!("Ctrl+Alt".parse::<ModKey>().is_err());
+    }
+
+    /// `Mod` stands for its modifier on either side, as `Mod+J` resolved to `Super+J` is bound.
+    #[test]
+    fn mod_key_stands_for_its_modifier_on_either_side() {
+        for mod_key in ModKey::ALL {
+            let mut named = Modifiers::empty();
+            assert!(named.insert_from_token(mod_key.name()), "{mod_key:?}");
+            assert_eq!(mod_key.modifiers(), named, "{mod_key:?}");
+        }
     }
 }

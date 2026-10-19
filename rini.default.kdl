@@ -178,11 +178,12 @@ recent-windows {
     //   are. A quick tap toggles the last two; hold the modifier to reach the rest.
     // - previous-window takes the same properties and starts the other way.
     //
-    // Cmd+Tab belongs to the Dock and cannot be taken. Examples:
+    // Cmd+Tab belongs to the Dock and cannot be taken. Examples, none on Super+F19, the
+    // overview's other key below:
     binds {
-        // Super+F19 { next-window; }
-        // Super+F18 { next-window scope="workspace"; }
+        // Super+F18 { next-window; }
         // Super+F17 { next-window filter="app-id"; }
+        // Super+F16 { next-window scope="workspace"; }
     }
 }
 
@@ -384,7 +385,10 @@ binds {
     //   quit                                          save the layout and exit
     //   redistribute-windows                          spread windows back across workspaces by where they belong
     //   toggle-overview                               every workspace of the display at once, open while
-    //                                                 the key's modifiers are held; needs a modifier
+    //                                                 the key's modifiers are held; needs a modifier.
+    //                                                 Inside, a key runs the bind it has with Mod in
+    //                                                 place of those modifiers; one with none is
+    //                                                 swallowed
     // The switcher's next-window and previous-window go in recent-windows' binds.
 
     Mod+Z { toggle-space-activated; }
@@ -421,7 +425,10 @@ binds {
 
     Mod+Tab { focus-workspace-previous; }
 
+    // Or Cmd+Caps, which a keyboard layer can send as Super+F19: held by Cmd, plain J inside
+    // runs Mod+J and Shift+J Mod+Shift+J. Both can be bound at once.
     Mod+Slash { toggle-overview; }
+    // Super+F19 { toggle-overview; }
 
     Mod+Comma { toggle-fold-left; }
     Mod+Period { toggle-fold-right; }
