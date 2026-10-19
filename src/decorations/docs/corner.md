@@ -6,9 +6,10 @@ clamped. The rules are "The corner" in `README.md`.
 Every piece a tile wears rounds to one corner, `DecorationLayers::corner_at`, the window's radius
 clamped as `shape::radius` clamps it (`Laying::fit`): the hairline, the outline, the shadow's
 silhouette, the hole its mask cuts and a clipped picture. An overview's thumb rounds them all to the
-switcher's card's corner instead (`DecorationLayers::lay`, `specs/overview.md`).
-Each is drawn separately, so any two that differ show as a step at the corner. A resize carries the
-one corner on every piece at each of its keys, the picture's under a key of the overlay's own.
+switcher's card's corner instead, or to the corner its picture keeps where that is wider on screen
+(`DecorationLayers::lay`, `specs/overview.md`). Each is drawn separately, so any two that differ
+show as a step at the corner. A resize carries the one corner on every piece at each of its keys,
+the picture's under a key of the overlay's own.
 
 **The radius is the window server's.** A window rule's `geometry-corner-radius` goes ahead of it
 for the ring and the border alone, on the tile and at rest (`Decoration::corner`,

@@ -595,6 +595,9 @@ struct Tile {
     lift: Option<Lift>,
     /// The wash under it, once it is drawn as the card.
     card: Option<card::Card>,
+    /// Whether its picture is clipped to its corner, as last dressed or swapped; else the picture
+    /// keeps its window's own corner.
+    clipped: bool,
 }
 
 /// The layers a crop-drawn tile is composed of, children of the tile's picture layer: the nine
@@ -1700,6 +1703,7 @@ fn new_tile(container: &CALayer) -> Tile {
         region: WHOLE,
         lift: None,
         card: None,
+        clipped: false,
     }
 }
 
@@ -1786,7 +1790,8 @@ impl Tile {
 /// Clips a tile's picture, with the crop pieces under it, to its corner, or not at all; a card is
 /// always clipped. The corner is the hairline's, laid at every placement (`place_tile`); unclipped
 /// it draws nothing, the picture having no background or border.
-fn clip_corners(tile: &Tile, clipped: bool) {
+fn clip_corners(tile: &mut Tile, clipped: bool) {
+    tile.clipped = clipped;
     tile.picture.setMasksToBounds(clipped || tile.card.is_some());
 }
 
@@ -3416,13 +3421,13 @@ mod tests {
     #[test]
     fn a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not() {
         let container = CALayer::layer();
-        let tile = new_tile(&container);
+        let mut tile = new_tile(&container);
         assert!(!tile.picture.masksToBounds(), "whole by default");
-        clip_corners(&tile, true);
+        clip_corners(&mut tile, true);
         assert!(tile.picture.masksToBounds());
         assert!(!tile.decorations.shadow.masksToBounds());
         assert_eq!(tile.decorations.shadow.cornerRadius(), 0.0);
-        clip_corners(&tile, false);
+        clip_corners(&mut tile, false);
         assert!(!tile.picture.masksToBounds());
     }
 
@@ -3431,8 +3436,8 @@ mod tests {
     #[test]
     fn a_corner_clip_leaves_the_hairline_whole() {
         let container = CALayer::layer();
-        let tile = new_tile(&container);
-        clip_corners(&tile, true);
+        let mut tile = new_tile(&container);
+        clip_corners(&mut tile, true);
         let parent = |layer: &CALayer| layer.superlayer().map(|parent| Retained::as_ptr(&parent));
         assert_eq!(
             parent(&tile.decorations.hairline),
@@ -3918,10 +3923,8 @@ mod tests {
         fn card_dresses(tree: &Tree, window: WindowId) -> Option<((f64, f64), Dresses)> {
             use crate::animation::domain::choreography::overview::card::{dressed_over, dressing};
             let entry = &tree.tile_layers[&window];
-            let own = entry.decorations.own();
-            let selected = entry.worn.wears_ring == crate::decorations::domain::style::Ring::Active;
             let span = dressing(&tree.replica, window, tree.now)?;
-            let frames = dressed_over(&tree.replica, window, own, selected, span);
+            let frames = dressed_over(&tree.replica, window, entry.thumb(), span);
             (frames.len() > 1).then_some((span, frames))
         }
 
@@ -3931,7 +3934,6 @@ mod tests {
         /// dress at every frame. A flight's tiles carry no card.
         fn plays_its_cards(tree: &Tree) {
             use crate::animation::domain::choreography::overview::card::dressed;
-            use crate::decorations::domain::style::Ring;
             for (window, entry) in &tree.tile_layers {
                 let Some(card) = &entry.card else {
                     assert!(tree.held.is_none(), "{window:?} held, a card");
@@ -3939,9 +3941,7 @@ mod tests {
                 };
                 assert!(tree.held.is_some(), "{window:?} no card in a flight");
                 assert!(entry.picture.masksToBounds(), "{window:?} clipped");
-                let own = entry.decorations.own();
-                let selected = entry.worn.wears_ring == Ring::Active;
-                let held = dressed(&tree.replica, *window, own, selected);
+                let held = dressed(&tree.replica, *window, entry.thumb());
                 let Some(frame) = tree.replica.model(Node::Tile(*window)).map(as_frame) else {
                     continue;
                 };
@@ -4788,6 +4788,15 @@ mod tests {
                 let shares: Vec<f64> = washed.keys.iter().map(|(_, share)| *share).collect();
                 assert!(close(shares[0], from) && close(shares[shares.len() - 1], to));
                 assert!(monotone(&shares), "{shares:?}");
+                let reach = installed(&wash, "rini.card.wash.move", point_in);
+                let outer = installed(&ring, "rini.tile.band.move", point_in);
+                assert_eq!(reach.keys.len(), outer.keys.len());
+                for ((unit, wash), (_, ring)) in reach.keys.iter().zip(&outer.keys) {
+                    assert!(
+                        -wash.x * scale(*unit) <= -ring.x * scale(*unit) + 1e-9,
+                        "the wash past the ring at {unit}: {wash:?} {ring:?}"
+                    );
+                }
                 let widths = installed(&ring, "rini.tile.band.width", number_in);
                 let widths: Vec<f64> =
                     widths.keys.iter().map(|(unit, width)| width * scale(*unit)).collect();
@@ -4865,6 +4874,65 @@ mod tests {
                 assert_eq!(ring.borderWidth(), 1.0);
                 assert_eq!(wash.opacity(), 0.0);
             }
+        }
+
+        /// Held, a thumb whose picture keeps its window's 26pt corner rounds to it on screen, wider
+        /// than the card's at the overview's shallowest depth, and a clipped one to the card's; a
+        /// picture swapped on with the other clip turns its thumb to the other corner.
+        #[test]
+        fn a_thumb_keeping_its_window_s_wider_corner_rounds_to_it_and_a_clipped_one_to_the_card_s()
+        {
+            use crate::animation::domain::choreography::overview::{at_rest, held, pose};
+            use crate::animation::domain::motion::plan::on_overlay;
+            use crate::chrome::domain::card::CORNER;
+            use crate::overview::domain::fixture::{Col, overview, row, strip, w};
+            use crate::overview::domain::scene::lay_out;
+
+            let _core_animation = hold_core_animation();
+            let columns = [Col { width: 800.0, windows: &[1] }, Col {
+                width: 800.0,
+                windows: &[2],
+            }];
+            let scene = lay_out(&overview(vec![row(strip(&columns, 0.0), Some(1))], 0));
+            let depth = scene.scale;
+            assert!(
+                26.0 * depth > CORNER,
+                "a depth the window's corner is the wider at"
+            );
+            let rest = at_rest(&scene, &[]);
+            let tiles: Vec<OverlayTile> = rest
+                .tiles
+                .iter()
+                .map(|(window, _, frame)| {
+                    let rect = on_overlay(*frame);
+                    let mut tile = overlay_tile(*window, rect, rect, false);
+                    tile.radius = Some(26.0);
+                    tile.clipped = *window == w(2);
+                    tile
+                })
+                .collect();
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.pose(&pose(&held(&scene)), &tiles);
+            tree.hold(depth);
+            plays_exactly(&tree);
+            let corner = |tree: &Tree, window: WindowId| {
+                tree.tile_layers[&window].picture.cornerRadius() * depth
+            };
+            let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+            assert!(close(corner(&tree, w(1)), 26.0 * depth), "its own");
+            assert!(close(corner(&tree, w(2)), CORNER), "the card's");
+            let size = |window: WindowId| -> TileSize {
+                match tree.replica.model(Node::Tile(window)) {
+                    Some(Value::Rect(frame)) => frame.size.respace(),
+                    other => panic!("{other:?}"),
+                }
+            };
+            let (one, two) = (size(w(1)), size(w(2)));
+            tree.swap(w(1), &test_picture(one), true, 0.0);
+            tree.swap(w(2), &test_picture(two), false, 0.0);
+            plays_exactly(&tree);
+            assert!(close(corner(&tree, w(1)), CORNER));
+            assert!(close(corner(&tree, w(2)), 26.0 * depth));
         }
 
         /// Held, every thumb of the overview casts the lift's shadow, the selected one's at its

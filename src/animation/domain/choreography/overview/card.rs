@@ -1,7 +1,7 @@
 //! A thumb of the overview drawn as the switcher's card (`chrome::domain::card`): rounded to the
-//! card's corner on screen, its bands round that corner, and the selected one ringed at the card's
-//! selection over the card's wash, as the switcher draws its selected card (`specs/overview.md`,
-//! "What it shows").
+//! card's corner on screen, or to a wider corner its picture keeps, its bands round that corner, and
+//! the selected one ringed at the card's selection over the card's wash, as the switcher draws its
+//! selected card (`specs/overview.md`, "What it shows").
 //!
 //! Every value is eased on screen from the window's own to the card's by how far the overview is
 //! held (`Node::Held`), then divided by the zoom it is drawn under: at rest a thumb is its window,
@@ -38,12 +38,23 @@ pub struct Dress {
     pub wash: Wash,
 }
 
-/// How a thumb whose window lays it `own` on screen is dressed `held` of the way into the card
-/// under a zoom by `zoom`: every corner but the selection's the card's, the border as wide as the
-/// window's, and the ring as wide as the window's on any other thumb; on the `selected` one the
-/// ring at least the card's ring and laid on the card's selection, its outer edge
-/// `SELECTION_OUTSET` out at `SELECTION_CORNER`, over the card's wash.
-pub fn dress(own: Laying, selected: bool, held: f64, zoom: f64) -> Dress {
+/// A thumb as its window has it: how the window lays it on screen, whether its picture keeps the
+/// window's own corner, which no clip rounds tighter, and whether it is the selected one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Thumb {
+    pub own: Laying,
+    pub keeps_corner: bool,
+    pub selected: bool,
+}
+
+/// How a thumb is dressed `held` of the way into the card under a zoom by `zoom`: every corner but
+/// the selection's the card's, or the picture's own on screen where it keeps a wider one, the
+/// border as wide as the window's, and the ring as wide as the window's on any other thumb; on the
+/// selected one the ring at least the card's ring and laid on the card's selection, its outer edge
+/// `SELECTION_OUTSET` out at `SELECTION_CORNER` as far past the thumb's corner as the card's is
+/// past `CORNER`, over the card's wash reaching as far as the ring's outer edge.
+pub fn dress(thumb: Thumb, held: f64, zoom: f64) -> Dress {
+    let Thumb { own, keeps_corner, selected } = thumb;
     let share = held.clamp(0.0, 1.0);
     let zoom = if zoom.is_finite() && zoom > 0.0 {
         zoom
@@ -51,6 +62,12 @@ pub fn dress(own: Laying, selected: bool, held: f64, zoom: f64) -> Dress {
         1.0
     };
     let ease = |from: f64, to: f64| (from + (to - from) * share) / zoom;
+    let corner = if keeps_corner {
+        card::CORNER.max(own.corner * zoom)
+    } else {
+        card::CORNER
+    };
+    let selection_corner = card::SELECTION_CORNER + (corner - card::CORNER);
     let ring = if selected {
         let ringed = own.ring.width > 0.0;
         let own_ring = own.ring.width - own.border.width;
@@ -61,30 +78,30 @@ pub fn dress(own: Laying, selected: bool, held: f64, zoom: f64) -> Dress {
         };
         Lay {
             width: ease(own.ring.width, width),
-            corner: ease(own.ring.corner, (card::SELECTION_CORNER - width).max(0.0)),
+            corner: ease(own.ring.corner, (selection_corner - width).max(0.0)),
             out: ease(0.0, (card::SELECTION_OUTSET - width).max(0.0)),
         }
     } else {
         Lay {
             width: ease(own.ring.width, own.ring.width),
-            corner: ease(own.ring.corner, card::CORNER),
+            corner: ease(own.ring.corner, corner),
             out: 0.0,
         }
     };
     Dress {
         laying: Laying {
-            corner: ease(own.corner, card::CORNER),
+            corner: ease(own.corner, corner),
             ring,
             border: Lay {
                 width: ease(own.border.width, own.border.width),
-                corner: ease(own.border.corner, card::CORNER),
+                corner: ease(own.border.corner, corner),
                 out: 0.0,
             },
         },
         wash: Wash {
             share: if selected { share } else { 0.0 },
-            out: card::SELECTION_OUTSET / zoom,
-            corner: card::SELECTION_CORNER / zoom,
+            out: ease(0.0, card::SELECTION_OUTSET),
+            corner: ease(own.corner, selection_corner),
         },
     }
 }
@@ -117,8 +134,7 @@ pub fn dressing(score: &Score, window: WindowId, now: f64) -> Option<(f64, f64)>
 pub fn dressed_over(
     score: &Score,
     window: WindowId,
-    own: Laying,
-    selected: bool,
+    thumb: Thumb,
     (begin, end): (f64, f64),
 ) -> Vec<(TileSize, Dress)> {
     let floats = floats(score, window);
@@ -141,7 +157,7 @@ pub fn dressed_over(
                 return None;
             };
             let zoom = score.sample(Node::Strip, at).filter(|_| !floats);
-            let dress = drawn(own, selected, (score.sample(Node::Held, at), zoom));
+            let dress = drawn(thumb, (score.sample(Node::Held, at), zoom));
             Some((frame.size.respace(), dress))
         })
         .collect::<Option<Vec<_>>>()
@@ -149,9 +165,9 @@ pub fn dressed_over(
 }
 
 /// `window`'s thumb dressed as `score` draws it once its tracks end.
-pub fn dressed(score: &Score, window: WindowId, own: Laying, selected: bool) -> Dress {
+pub fn dressed(score: &Score, window: WindowId, thumb: Thumb) -> Dress {
     let zoom = score.model(Node::Strip).filter(|_| !floats(score, window));
-    drawn(own, selected, (score.model(Node::Held), zoom))
+    drawn(thumb, (score.model(Node::Held), zoom))
 }
 
 /// How wide a band `width` wide on screen is drawn under the strip's zoom on `score`: once its
@@ -195,7 +211,7 @@ fn floats(score: &Score, window: WindowId) -> bool {
 }
 
 /// A thumb's dress at a `held` share, none with no share, under a `zoom`, none with no zoom.
-fn drawn(own: Laying, selected: bool, (held, zoom): (Option<Value>, Option<Value>)) -> Dress {
+fn drawn(thumb: Thumb, (held, zoom): (Option<Value>, Option<Value>)) -> Dress {
     let held = match held {
         Some(Value::Number(held)) => held,
         _ => 0.0,
@@ -204,7 +220,7 @@ fn drawn(own: Laying, selected: bool, (held, zoom): (Option<Value>, Option<Value
         Some(Value::Zoom(zoom)) => zoom.scale,
         _ => 1.0,
     };
-    dress(own, selected, held, zoom)
+    dress(thumb, held, zoom)
 }
 
 #[cfg(test)]
@@ -230,6 +246,15 @@ mod tests {
         }
     }
 
+    /// `own`'s thumb, its picture keeping its window's corner as a SkyLight capture does.
+    fn thumb(own: Laying, selected: bool) -> Thumb {
+        Thumb {
+            own,
+            keeps_corner: true,
+            selected,
+        }
+    }
+
     fn close(a: f64, b: f64) -> bool { (a - b).abs() < 1e-9 }
 
     /// At rest a thumb is its window, the selected one too, its wash showing none: frame zero and
@@ -237,7 +262,7 @@ mod tests {
     #[test]
     fn at_rest_a_thumb_is_its_window() {
         for selected in [false, true] {
-            let at_rest = dress(own(), selected, 0.0, 1.0);
+            let at_rest = dress(thumb(own(), selected), 0.0, 1.0);
             assert_eq!(at_rest.laying, own());
             assert_eq!(at_rest.wash.share, 0.0);
         }
@@ -248,7 +273,7 @@ mod tests {
     #[test]
     fn held_every_thumb_is_the_card_on_screen_at_any_depth() {
         for zoom in [0.22, 0.3, 0.5] {
-            let held = dress(own(), false, 1.0, zoom);
+            let held = dress(thumb(own(), false), 1.0, zoom);
             let on_screen = |value: f64| value * zoom;
             assert!(close(on_screen(held.laying.corner), card::CORNER), "{zoom}");
             assert!(close(on_screen(held.laying.ring.corner), card::CORNER));
@@ -265,7 +290,7 @@ mod tests {
     #[test]
     fn held_the_selected_thumb_wears_the_card_s_selection() {
         let zoom = 0.3;
-        let held = dress(own(), true, 1.0, zoom);
+        let held = dress(thumb(own(), true), 1.0, zoom);
         let ring = held.laying.ring;
         let on_screen = |value: f64| value * zoom;
         assert!(close(on_screen(ring.width), card::RING));
@@ -282,17 +307,84 @@ mod tests {
             ring: Lay { width: 6.0, ..own().ring },
             ..own()
         };
-        let ring = dress(wide, true, 1.0, zoom).laying.ring;
+        let ring = dress(thumb(wide, true), 1.0, zoom).laying.ring;
         assert!(close(on_screen(ring.width), 6.0) && ring.out == 0.0, "{ring:?}");
         let bare = Laying {
             ring: Lay { width: 0.0, ..own().ring },
             ..own()
         };
         assert_eq!(
-            dress(bare, true, 1.0, zoom).laying.ring.width,
+            dress(thumb(bare, true), 1.0, zoom).laying.ring.width,
             0.0,
             "no ring, none"
         );
+    }
+
+    /// A picture that keeps a corner wider on screen than the card's, as a 26pt window's SkyLight
+    /// capture does at depth 0.5, rounds to that corner, its bands and the selection with it, since
+    /// no clip rounds it tighter; clipped, it is the card's. At no share does a thumb round tighter
+    /// on screen than the corner its picture keeps.
+    #[test]
+    fn a_picture_keeping_a_wider_corner_than_the_card_rounds_to_its_own() {
+        let edge = |width: f64| Lay { width, corner: 26.0, out: 0.0 };
+        let wide = Laying {
+            corner: 26.0,
+            ring: edge(1.0),
+            border: edge(0.0),
+        };
+        let zoom = 0.5;
+        let on_screen = |value: f64| value * zoom;
+        let held = dress(thumb(wide, false), 1.0, zoom).laying;
+        for corner in [held.corner, held.ring.corner, held.border.corner] {
+            assert!(close(on_screen(corner), 13.0), "{held:?}");
+        }
+        let selected = dress(thumb(wide, true), 1.0, zoom);
+        let ring = selected.laying.ring;
+        let past = card::SELECTION_CORNER - card::CORNER;
+        assert!(close(on_screen(ring.corner + ring.width), 13.0 + past));
+        assert!(close(on_screen(selected.wash.corner), 13.0 + past));
+        let clipped = Thumb {
+            keeps_corner: false,
+            ..thumb(wide, false)
+        };
+        assert!(close(
+            on_screen(dress(clipped, 1.0, zoom).laying.corner),
+            card::CORNER
+        ));
+        for step in 0..=20 {
+            let share = f64::from(step) / 20.0;
+            let zoom = 1.0 - (1.0 - 0.5) * share;
+            let laying = dress(thumb(wide, false), share, zoom).laying;
+            for corner in [laying.corner, laying.ring.corner, laying.border.corner] {
+                assert!(corner * zoom >= 26.0 * zoom - 1e-9, "{share}: {laying:?}");
+            }
+        }
+    }
+
+    /// At every share the selected thumb's wash reaches no further out than its ring's outer edge,
+    /// so no halo shows outside the ring while the zoom plays.
+    #[test]
+    fn the_wash_never_reaches_past_the_ring() {
+        let wide = Laying {
+            ring: Lay { width: 6.0, ..own().ring },
+            ..own()
+        };
+        let bare = Laying {
+            ring: Lay { width: 0.0, ..own().ring },
+            ..own()
+        };
+        for laying in [own(), wide, bare] {
+            for step in 0..=20 {
+                let share = f64::from(step) / 20.0;
+                let zoom = 1.0 - (1.0 - 0.3) * share;
+                let dress = dress(thumb(laying, true), share, zoom);
+                let ring = dress.laying.ring;
+                assert!(
+                    dress.wash.out <= ring.out + ring.width + 1e-9,
+                    "{share}: {dress:?}"
+                );
+            }
+        }
     }
 
     fn scene() -> (Scene, Vec<(WindowId, OverlayRect)>) {
@@ -340,7 +432,7 @@ mod tests {
             let span = dressing(score, w(2), 0.0).expect("dressed along the zoom");
             let zoom = score.track(Node::Strip, Channel::Base).expect("a zoom");
             assert_eq!(span, (zoom.begin(), zoom.ends()));
-            let frames = dressed_over(score, w(2), own(), true, span);
+            let frames = dressed_over(score, w(2), thumb(own(), true), span);
             assert_eq!(
                 frames.len(),
                 (PRESS / SAMPLE_STEP).ceil() as usize + 1,
@@ -359,6 +451,10 @@ mod tests {
                 })
                 .collect();
             let washes: Vec<f64> = frames.iter().map(|(_, dress)| dress.wash.share).collect();
+            for (_, dress) in &frames {
+                let ring = dress.laying.ring;
+                assert!(dress.wash.out <= ring.out + ring.width + 1e-9, "{dress:?}");
+            }
             let ease = |share: f64| 10.0 + (card::CORNER - 10.0) * share;
             assert!(close(corners[0], ease(from)) && close(washes[0], from));
             let last = corners.len() - 1;
@@ -372,9 +468,9 @@ mod tests {
                 });
             }
         }
-        let held = dressed(&out, w(2), own(), true);
+        let held = dressed(&out, w(2), thumb(own(), true));
         assert!(close(held.laying.corner * depth, card::CORNER));
-        let landed = dressed(&back, w(2), own(), true);
+        let landed = dressed(&back, w(2), thumb(own(), true));
         assert_eq!(landed.laying, own());
     }
 
@@ -402,7 +498,7 @@ mod tests {
         let still = pressed(100.1);
         let span = dressing(&still, w(1), 0.0);
         assert_eq!(span, Some((zoom.begin(), 100.1 + PRESS)));
-        let frames = dressed_over(&still, w(1), own(), false, span.expect("dressed"));
+        let frames = dressed_over(&still, w(1), thumb(own(), false), span.expect("dressed"));
         let apart = ((100.1 + PRESS - zoom.begin()) / DRESS_STEP).ceil() as usize + 1;
         assert_eq!(
             frames.len(),

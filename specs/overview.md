@@ -137,13 +137,15 @@ Every workspace of one display at once, zoomed out, while its key is held.
   three cards drawn, the gap between cards, the selected card's ring width, the darkening of what
   is behind, the card's 11pt corner and the `--ember-soft` wash under the selected card. Kai asked
   for one visual style across the two, reusing components where they apply; two copies of a value
-  drift. Held, every thumb MUST round to the card's corner on screen at any depth, its ring and
-  border round that corner, and the selected thumb MUST wear the card's selection as the switcher's
-  selected card does: the wash under it 4pt out at a 14pt corner, and its ring laid with its outer
-  edge on the wash's: a thumb at its window's corner reads 3pt on screen for a 10pt corner at depth
-  0.3. Through the zoom out and back in each MUST ease on screen from the window's own corner, ring
-  and no wash to the card's with the zoom, so frame zero and the landing are the screen and neither
-  hand-over to the real windows jumps.
+  drift. Held, every thumb MUST round to the card's corner on screen at any depth (at its window's
+  corner a thumb reads 3pt on screen for a 10pt corner at depth 0.3), or to the corner its picture
+  keeps on screen where that is wider, since no clip rounds a picture tighter than its own corner (a
+  26pt window at depth 0.5 keeps 13pt), its ring and border round that corner, and the selected
+  thumb MUST wear the card's selection as the switcher's selected card does: the wash under it 4pt
+  out at a corner 3pt past the thumb's, 14pt on the card's, and its ring laid with its outer edge on
+  the wash's. Through the zoom out and back in each MUST ease on screen from the window's own
+  corner, ring and no wash to the card's with the zoom, the wash never reaching past the ring, so
+  frame zero and the landing are the screen and neither hand-over to the real windows jumps.
 
 > **Reported 2026-10-19.** "overall visual style must mutch the main app switcher, both should be
 > consistent with each other and reuse components where applicable". The stacks' values were the

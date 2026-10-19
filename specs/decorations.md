@@ -123,10 +123,10 @@ shadow; rini draws those only on the overlay's tiles, as `animation.md` requires
   the shadow and a clipped picture MUST keep the window's own corner: on a tile they draw what macOS
   draws at rest, and a corner that differed between the two would show at the lift. The overview's
   thumbs are the one exception: every piece of one rounds to the switcher's card's corner while it
-  is held, eased from the window's own with the zoom, so its frame zero and its landing still draw
-  what macOS draws (`specs/overview.md`, "What it shows"). Four radii MUST be refused unless equal:
-  rini rounds every corner of a band alike, and the window server reports no window with unequal
-  corners.
+  is held, or to the corner its picture keeps where that is wider on screen, eased from the window's
+  own with the zoom, so its frame zero and its landing still draw what macOS draws
+  (`specs/overview.md`, "What it shows"). Four radii MUST be refused unless equal: rini rounds every
+  corner of a band alike, and the window server reports no window with unequal corners.
 - A rule that says only what a window wears MUST NOT change what the window opens with: with no
   other rule applying, a new window still opens where its application's windows last were.
 - At open a window holds no focus, does not float and is not urgent, as niri reads it, so a rule

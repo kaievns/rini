@@ -20,7 +20,7 @@ use super::resize::{
 };
 use super::{TILE_SIZE_KEY, Tile, Tree, as_frame, number_object, point_object, rect_object};
 use crate::animation::domain::choreography::overview::card::{
-    self, Dress, Wash, Zoomed, dressed, dressed_over, dressing,
+    self, Dress, Thumb, Wash, Zoomed, dressed, dressed_over, dressing,
 };
 use crate::animation::domain::motion::score::{Channel, Node};
 use crate::chrome::domain::card::WASH;
@@ -181,6 +181,16 @@ fn wash_frame(size: TileSize, wash: Wash) -> CGRect {
 }
 
 impl Tile {
+    /// The thumb it is drawn as: as its window lays it, its picture keeping the window's own corner
+    /// unless clipped, and selected while it wears the active ring.
+    pub(super) fn thumb(&self) -> Thumb {
+        Thumb {
+            own: self.decorations.own(),
+            keeps_corner: !self.clipped,
+            selected: self.worn.wears_ring == Ring::Active,
+        }
+    }
+
     /// Its card, made beside it riding its frame and whatever its frame plays, unless it has one.
     fn card(&mut self) -> &Card {
         let picture = &self.picture;
@@ -233,9 +243,8 @@ impl Tree {
         let Some(entry) = self.tile_layers.get_mut(&window) else {
             return;
         };
-        let own = entry.decorations.own();
-        let selected = entry.worn.wears_ring == Ring::Active;
-        let held = dressed(&self.replica, window, own, selected);
+        let thumb = entry.thumb();
+        let held = dressed(&self.replica, window, thumb);
         entry.decorations.lay(Some(held.laying));
         entry.card();
         entry.picture.setMasksToBounds(true);
@@ -251,7 +260,7 @@ impl Tree {
             card.place(frame.size.respace(), held.wash);
         }
         let frames = dressing(&self.replica, window, self.now)
-            .map(|span| (span, dressed_over(&self.replica, window, own, selected, span)))
+            .map(|span| (span, dressed_over(&self.replica, window, thumb, span)))
             .filter(|(_, frames)| frames.len() > 1);
         let live = self
             .replica

@@ -278,8 +278,9 @@ ahead of it for the ring and the border alone. Every piece rounds on the continu
 through `shape::rounded_rect` (`every_path_follows_core_animation_s_corner_at_every_size`), and
 every corner is clamped to half the tile's shorter side, since Core Animation does not clamp it. The
 overview lays its thumbs in place of their windows' (`DecorationLayers::lay`): every piece at the
-switcher's card's corner, eased with its zoom (`src/overview/docs/README.md`). The reads, the fits
-and the data: [`corner.md`](corner.md).
+switcher's card's corner, or at the corner its picture keeps where that is wider on screen, eased
+with its zoom (`src/overview/docs/README.md`). The reads, the fits and the data:
+[`corner.md`](corner.md).
 
 ## Reading order
 

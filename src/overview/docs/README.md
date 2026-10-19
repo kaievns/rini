@@ -69,26 +69,35 @@ to share.
 its ring and border round that corner, and the selected one wears the card's selection: the `WASH`
 under it, `SELECTION_OUTSET` out at `SELECTION_CORNER`, and its ring, at least the card's `RING`,
 laid with its outer edge on the wash's, as the switcher draws its selected card
-(`src/chrome/domain/card.rs`). Each value is eased on screen from the window's own to the card's by
-the share the overview is held (`Node::Held`) and divided by the zoom
+(`src/chrome/domain/card.rs`). A picture that keeps its window's own corner, a SkyLight or
+ScreenCaptureKit capture (`Route::clips`), cannot be clipped tighter than that corner, so where it
+is wider on screen than `CORNER`, a 26pt window's 13pt at depth 0.5, the thumb, its ring and its
+border round to it instead and the selection rounds as far past it as `SELECTION_CORNER` is past
+`CORNER` (`Thumb::keeps_corner`); else the ring would round inside the picture's corner and leave a
+sliver at each corner. Each value is eased on screen from the window's own to the card's by the
+share the overview is held (`Node::Held`) and divided by the zoom
 (`src/animation/domain/choreography/overview/card.rs`, `dress`), so frame zero and the landing draw
-the window's own corner and ring and no wash, and neither hand-over to the real windows jumps. While
-the overview holds the overlay (`Render::Hold`) the overlay lays every piece of a thumb as that
-dress has it (`DecorationLayers::lay`) and clips every picture to it, since a picture not clipped
-carries its window's own corner and the ring would round past it; along the zoom it plays the dress
-sampled `DRESS_STEP` apart, every frame for a thumb its own track resizes then, its lift's shape with it
-(`dressing`, `dressed_over`, `src/animation/platform/overlay/card.rs`). Held, a thumb's own resize
-carries its wash and its lift as it carries its other pieces. Rings and borders keep their width on
-screen through the zoom so, and an empty workspace's outline its ring's (`outlined`); the engine
-sends every thumb in its window's own decoration, again only when that changes.
+the window's own corner and ring and no wash, and neither hand-over to the real windows jumps. The
+wash's reach eases from none to `SELECTION_OUTSET` with its opacity, so its edge stays at or inside
+the ring's outer edge, which eases from the window's ring width out to `SELECTION_OUTSET`, at every
+frame. While the overview holds the overlay (`Render::Hold`) the overlay lays every piece of a thumb
+as that dress has it (`DecorationLayers::lay`) and clips every picture to it; along the zoom it
+plays the dress sampled `DRESS_STEP` apart, every frame for a thumb its own track resizes then, its
+lift's shape with it (`dressing`, `dressed_over`, `src/animation/platform/overlay/card.rs`). Held, a
+thumb's own resize carries its wash and its lift as it carries its other pieces. Rings and borders
+keep their width on screen through the zoom so, and an empty workspace's outline its ring's
+(`outlined`); the engine sends every thumb in its window's own decoration, again only when that
+changes.
 
 Measured 2026-10-19 in a script over the zoom's curve, not on screen: sampled 1/60s apart, Core
 Animation's straight line between two samples lies within 0.084pt on screen of the corner it eases,
-0.017pt of a ring's width and 0.008 of the wash's opacity, at depth 0.22 over the 0.35s zoom; 1/120s
-apart, within 0.023pt, 0.005pt and 0.002, and a resizing thumb's pieces within 0.13pt of its frame
-in the strip's points, where 1/60s left 0.5pt. In a release test build, 4 rows of 8 thumbs, the
-zoom out's play took 4.8 to 6.1ms dressed, against 0.8 to 1.6ms undressed, most of it the paths of
-the casters' shadows and masks at every sample.
+0.017pt of a ring's width, 0.038pt of the wash's reach and 0.008 of the wash's opacity, at depth
+0.22 over the 0.35s zoom; 1/120s apart, within 0.023pt, 0.005pt, 0.010pt and 0.002, and a resizing
+thumb's pieces within 0.13pt of its frame in the strip's points, where 1/60s left 0.5pt. In a
+release test build, 4 rows of 8 thumbs, the zoom out's play took 4.8 to 6.1ms dressed, against 0.8
+to 1.6ms undressed, most of it the paths of the casters' shadows and masks at every sample. The
+wash's reach and the ring's outer edge are sampled at the same moments and the wash is inside at
+each, so Core Animation's line between two keeps it inside.
 
 **The desktop darkens on the score too.** Held, the desktop behind the thumbs is darkened by the
 card's backdrop, `--n0` at 0.40, the switcher's own darkening (`BACKDROP`, `BACKDROP_ALPHA` in
