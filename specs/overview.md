@@ -22,7 +22,8 @@ Every workspace of one display at once, zoomed out, while its key is held.
   config accepts MUST NOT do nothing.
 - Cmd+Caps, which Kai's keyboard layer sends as `Super+F19`, MUST open it held by Cmd as
   `Mod+Slash` does held by Alt: Kai asked for it in place of the switcher, and for the combination
-  to stay his to move. Both bound at once, each MUST open it, held by its own modifiers.
+  to stay his to move. Both bound at once, each MUST open it, held by its own modifiers. The keys
+  inside it work only as the keyboard sends them under that hold ("Keys inside it", below).
 
 > **Reported 2026-10-19.** "additionally i want to change the activation logic, and replace cmd-caps
 > from the app switcher to the overview (keep the app switcher around unbinded with an option to
@@ -113,9 +114,9 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 - The desktop behind the thumbs MUST be darkened while the overview is held, so it reads as a mode
   and its wallpaper is quieter under them: the card's backdrop, `--n0` at 0.40, the switcher's
-  darkening of what is behind its popup. It MUST darken with the zoom out from none at frame zero and
-  clear with the zoom in, and a flight MUST never be drawn darkened. The bar MUST NOT be darkened:
-  it is drawn over every thumb, as at rest.
+  darkening of what is behind its popup. It MUST darken with the zoom out from none at frame zero
+  and clear with the zoom in, and a flight MUST never be drawn darkened. The bar MUST NOT be
+  darkened: it is drawn over every thumb, as at rest.
 
 > **Reported 2026-10-19.** "tint/darken the background image a bit to distinct that we're in the
 > overview mode and so it would be less visually noisy".
@@ -175,6 +176,18 @@ Every workspace of one display at once, zoomed out, while its key is held.
   hold a `Super+J` bind is out of reach until it closes. Under a Cmd hold, a chord macOS answers in
   the window server, Cmd+Tab's application switcher, still reaches macOS, whatever its `Mod` bind
   does: an event tap cannot take it back.
+- A key MUST be looked up as macOS delivers it, its key code and the modifiers its event carries:
+  rini cannot see the physical key a keyboard layer sent it for. So the keys work inside only as
+  the keyboard sends them under the hold. Kai's layer sends U, I, O, P, J, K, L, Semicolon, Comma
+  and Period unchanged with Cmd held from the f home-row key, which raises his `cmd` layer. Held
+  from the EDIT thumb, which raises his `edit` layer, the same keys send that layer's symbols: I
+  runs `Mod+Minus` and K `Mod+Equal`, resizing the column, J `Mod+Shift+Comma`, exploding it, and
+  U, O, P, L, Comma and Period no bind, so they are swallowed. Opened from that thumb, the overview
+  needs his layer to send those keys unchanged until the thumb lifts.
+
+> **Found 2026-10-19, not reported.** Review of Kai's keyboard layer against his binds showed the
+> EDIT thumb's Cmd+Caps opening the overview with the edit layer still up; read off the layer's
+> tables, not tried on the keyboard.
 - Every bind MUST do what it does outside, on the real layout, and the overview MUST re-lay out from
   what it did: Kai asked for the same keys to work. What a press asks to fly MUST NOT fly while it
   is open, since the overview is what is seen to move; the real windows MUST go straight to where
@@ -234,7 +247,9 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 > **Reported 2026-10-19.** "speed up the animation to match tha navigation transitions". The zoom
 > ran half the zoom look's arc over 0.257s; it now runs as a pan does
-> (`src/transitions/docs/coordination.md`, "The overview").
+> (`src/transitions/docs/coordination.md`, "The overview"). Its whole length grew with it, so the
+> zoom back in, and the lift that hands over to the real windows, end 0.093s later than they did: a
+> press right after the release waits for that lift and flies up to 0.093s later.
 - A release while it zooms out MUST turn it back from where it is drawn, without a jump, each
   thing it draws as fast as it was going. Opened again while it zooms back in, it MUST zoom out
   again from where it is drawn: a quick let-go and press again would otherwise lift it and open it
