@@ -7,7 +7,7 @@
 
 use rini_geometry::space::{Point, Rect, Size};
 
-use super::palette::{Colour, N0};
+use super::palette::{Colour, EMBER_SOFT, N0};
 
 /// A card's corner radius, and a departure from the design system: `--radius-control` is 5px, a
 /// button's radius. A card is a picture of a window, and macOS rounds every window, so a
@@ -20,6 +20,18 @@ pub const GAP: f64 = 14.0;
 /// The ring around the selected card. A whole outline says "this is the one" about a card; the
 /// elevation law's edge bar for an active list row says "this is the current line".
 pub const RING: f64 = 2.0;
+
+/// How far the selected card's wash and ring reach outside it: the wash fills that margin, and the
+/// ring is its outer `RING`.
+pub const SELECTION_OUTSET: f64 = 4.0;
+
+/// The corner the selected card's wash and ring round to: a point under concentric with `CORNER`
+/// across `SELECTION_OUTSET`.
+pub const SELECTION_CORNER: f64 = CORNER + 3.0;
+
+/// The wash under the selected card, `--ember-soft`, the specified fill for an active row: it shows
+/// in the margin inside the ring, and through a card with no picture yet.
+pub const WASH: Colour = EMBER_SOFT;
 
 /// What darkens whatever is behind the cards: the deepest step on the spine, two below the content
 /// plane, because the cards float over content rather than being content.

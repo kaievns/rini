@@ -47,6 +47,11 @@ pub struct Metrics {
     pub gap: f64,
     /// The width of the ring around the selected row: the card's.
     pub ring: f64,
+    /// How far the selected row's wash and ring reach outside its card, the corner they round to and
+    /// the wash's colour: the card's selection, which the overview's selected thumb wears too.
+    pub selection_outset: f64,
+    pub selection_corner: f64,
+    pub wash: Colour,
     /// What darkens the panel's ground behind the rows, and how much: the card's backdrop, as the
     /// overview darkens the desktop behind its thumbs.
     pub backdrop: Colour,
@@ -84,6 +89,9 @@ impl Default for Metrics {
             tile_corner: card::CORNER,
             gap: card::GAP,
             ring: card::RING,
+            selection_outset: card::SELECTION_OUTSET,
+            selection_corner: card::SELECTION_CORNER,
+            wash: card::WASH,
             backdrop: card::BACKDROP,
             backdrop_alpha: card::BACKDROP_ALPHA,
             padding: 22.0,
@@ -125,6 +133,16 @@ impl Metrics {
             Size::new(row.width(), self.card_height(depth)),
         );
         (0..=depth).map(|k| self.stack.behind(front, k, Toward::Up).to_cg()).collect()
+    }
+
+    /// Where the selection's wash and ring are drawn around the selected `row`: its card's height,
+    /// `selection_outset` out on every side.
+    pub fn selection(&self, row: CGRect) -> CGRect {
+        let out = self.selection_outset;
+        CGRect::new(
+            CGPoint::new(row.origin.x - out, row.origin.y - out),
+            CGSize::new(row.size.width + 2.0 * out, self.tile_height + 2.0 * out),
+        )
     }
 
     fn row_height(&self) -> f64 { self.tile_height + self.caption_gap + self.caption }
@@ -385,9 +403,28 @@ mod tests {
         assert_eq!(m.tile_corner, card::CORNER);
         assert_eq!(m.gap, card::GAP);
         assert_eq!(m.ring, card::RING);
+        assert_eq!(m.selection_outset, card::SELECTION_OUTSET);
+        assert_eq!(m.selection_corner, card::SELECTION_CORNER);
+        assert_eq!(m.wash, card::WASH);
         assert_eq!(m.backdrop, card::BACKDROP);
         assert_eq!(m.backdrop_alpha, card::BACKDROP_ALPHA);
         assert_eq!(crate::switcher::domain::entries::BEHIND + 1, card::STACK.cards);
+    }
+
+    /// The selection's wash and ring reach the card's selection outset past the selected row's card on
+    /// every side, at the card's height whatever the caption under it.
+    #[test]
+    fn the_selection_reaches_the_card_s_outset_around_the_selected_card() {
+        let m = metrics();
+        let row = CGRect::new(CGPoint::new(40.0, 22.0), CGSize::new(260.0, 195.0));
+        let out = card::SELECTION_OUTSET;
+        assert_eq!(
+            m.selection(row),
+            CGRect::new(
+                CGPoint::new(40.0 - out, 22.0 - out),
+                CGSize::new(260.0 + 2.0 * out, m.tile_height + 2.0 * out)
+            )
+        );
     }
 
     /// A stack is a row like any other to the hit test: a click on a card behind lands in its row.

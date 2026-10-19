@@ -64,8 +64,6 @@ const N11: (f64, f64, f64) = palette::N11.rgb();
 /// `--ember`. Owns selection and active indicators, on a budget of one or two appearances per screen —
 /// here it is exactly one: the selected row.
 const EMBER: (f64, f64, f64) = palette::EMBER.rgb();
-/// `--ember-soft`, the specified fill for an active row.
-const EMBER_SOFT: (f64, f64, f64) = palette::EMBER_SOFT.rgb();
 
 /// The panel's corner radius.
 ///
@@ -320,10 +318,10 @@ impl SwitcherPanel {
         let highlight = CALayer::layer();
         highlight.setAnchorPoint(CGPoint::new(0.0, 0.0));
         highlight.setContentsScale(scale);
-        highlight.setCornerRadius(metrics.tile_corner + 3.0);
+        highlight.setCornerRadius(metrics.selection_corner);
         highlight.setZPosition(0.0);
         highlight.setHidden(true);
-        highlight.setBackgroundColor(Some(&token(EMBER_SOFT, 1.0)));
+        highlight.setBackgroundColor(Some(&token(metrics.wash.rgb(), 1.0)));
         root.addSublayer(&highlight);
 
         // Over everything: the cards behind are at 0.5 and 0.75, the tiles at 1.0, the badges at 1.5,
@@ -332,7 +330,7 @@ impl SwitcherPanel {
         let ring = CALayer::layer();
         ring.setAnchorPoint(CGPoint::new(0.0, 0.0));
         ring.setContentsScale(scale);
-        ring.setCornerRadius(metrics.tile_corner + 3.0);
+        ring.setCornerRadius(metrics.selection_corner);
         ring.setZPosition(3.0);
         ring.setHidden(true);
         // The ember's remit covers "focused borders" as well as active bars, and a switcher row is
@@ -707,10 +705,7 @@ impl SwitcherPanel {
     fn place_highlight(&self, strip: &Strip, selected: usize) {
         match strip.rows.get(selected) {
             Some(rect) => {
-                let frame = CGRect::new(
-                    CGPoint::new(rect.origin.x - 4.0, rect.origin.y - 4.0),
-                    CGSize::new(rect.size.width + 8.0, self.metrics.tile_height + 8.0),
-                );
+                let frame = self.metrics.selection(*rect);
                 self.highlight.setHidden(false);
                 self.highlight.setFrame(frame);
                 self.ring.setHidden(false);
