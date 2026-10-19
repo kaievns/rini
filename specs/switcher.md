@@ -260,8 +260,8 @@ switcher answers "every window I have, wherever it is".
   the stack shows as edges above the top card. The inset MUST be wider than a tile's corner radius, or
   a card behind shows through the top card's rounded corner.
 - The cards MUST be the overview's, from one record both draw from: the stack's step, inset and three
-  cards, the gap between cards, and the darkening of what is behind (`specs/overview.md`, "What it
-  shows"). A value changed for one changes for both.
+  cards, the gap between cards, the selected card's ring width, and the darkening of what is behind
+  (`specs/overview.md`, "What it shows"). A value changed for one changes for both.
 - Colours MUST come from the Okibi design system's resolved tokens rather than being chosen here.
   Specifically: the panel is a floating surface, so it takes the content plane `--n2` with a 1px
   `--line` hairline and a shadow; a card with no picture takes the raised plane `--n3`; captions take

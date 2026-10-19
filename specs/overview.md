@@ -109,7 +109,8 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > window's own shadow is a fifth of its size and reads as none.
 
 - Its look MUST be the switcher's, from one record both draw from: the stacks' step, inset and
-  three cards drawn, the gap between cards, and the darkening of what is behind. Kai asked for one visual style across the two, reusing components where they
+  three cards drawn, the gap between cards, the selected card's ring width, and the darkening of
+  what is behind. Kai asked for one visual style across the two, reusing components where they
   apply; two copies of a value drift.
 
 > **Reported 2026-10-19.** "overall visual style must mutch the main app switcher, both should be
@@ -128,9 +129,10 @@ Every workspace of one display at once, zoomed out, while its key is held.
   workspace not shown, as Kai reported of the strips beside on 2026-10-17.
 - Every thumb's ring and border MUST be drawn as wide on screen as at rest: drawn at its width
   under the zoom, a 1pt ring is 0.22pt on screen at depth 0.22, and the ring Kai asked to see move
-  does not read. Not yet met: while it zooms out and back in they are drawn at their own width,
-  which the zoom thins; from the end of the zoom out to the start of the zoom in they are as wide
-  as at rest.
+  does not read. The selected thumb's ring MUST be at least the card's ring, 2pt on screen, the
+  width the switcher rings its selection with, in the ring's own paint. Not yet met: while it zooms
+  out and back in they are drawn at their own width, which the zoom thins; from the end of the zoom
+  out to the start of the zoom in they are as wide as at rest, the selected ring as the card's.
 
 > **Found 2026-10-18, not reported.** Drawing the overview showed Kai's 1pt focus ring under a
 > fifth of a point at the depth four workspaces take on the laptop.

@@ -1114,7 +1114,8 @@ read slower than a press although it ended sooner. Kai asked for the navigation'
 2026-10-19. The zoom back in ends 0.093s later than it did, and the lift with it.
 
 From the end of its zoom out to the start of its zoom in, its thumbs' rings and borders are dressed
-again as wide on screen as at rest (`Render::Rewear`), and through the zoom at their own width,
+again as wide on screen as at rest, the selected thumb's ring as wide as the card's and dressed again
+as the selection moves (`Render::Rewear`), and through the zoom at their own width,
 which the zoom thins. So they visibly thicken as the zoom out lands and thin as the zoom in begins:
 keeping them steady through the zoom is what `specs/overview.md` marks not yet met.
 

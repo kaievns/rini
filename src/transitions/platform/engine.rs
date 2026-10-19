@@ -4490,20 +4490,36 @@ mod tests {
             }
 
             /// Held, every thumb's ring is dressed again as wide on screen under the zoom as it is
-            /// at rest, so the selection reads while held, and narrowed back as the zoom in begins.
+            /// at rest, the selected one's as wide as the card's ring, so the selection reads while
+            /// held, the accent moving with it, and narrowed back as the zoom in begins.
             #[test]
             fn the_thumbs_rings_are_as_wide_on_screen_as_at_rest_while_held() {
                 let mut h = harness();
                 let held = held_open(&mut h);
                 let scale = view(1).scene.scale;
-                let widened = rewidths(&held);
-                assert_eq!(widened.len(), 3, "{widened:?}");
-                assert!(widened.iter().all(|(_, width)| (width * scale - 1.0).abs() < 1e-9));
+                let on_screen = |widths: Vec<(WindowId, f64)>| -> Vec<(WindowId, f64)> {
+                    let mut widths: Vec<(WindowId, f64)> = widths
+                        .into_iter()
+                        .map(|(window, width)| (window, (width * scale * 1e6).round() / 1e6))
+                        .collect();
+                    widths.sort_by_key(|(window, _)| window.idx);
+                    widths
+                };
+                let ring = crate::chrome::domain::card::RING;
+                assert_eq!(on_screen(rewidths(&held)), [
+                    (w(1), ring),
+                    (w(2), 1.0),
+                    (w(3), 1.0)
+                ]);
                 let sent = h.step(Event::OverviewScene {
                     view: view(2),
                     presses: Vec::new(),
                 });
-                assert!(rewidths(&sent).is_empty(), "the ring moves at the width it has");
+                assert_eq!(
+                    on_screen(rewidths(&sent)),
+                    [(w(1), 1.0), (w(2), ring)],
+                    "the accent moves with the selection"
+                );
                 let sent = h.step(Event::OverviewClose { view: view(1) });
                 let narrowed = rewidths(&sent);
                 assert_eq!(narrowed.len(), 3);
@@ -4685,7 +4701,9 @@ mod tests {
                     .commands
                     .iter()
                     .filter_map(|command| match command {
-                        Render::Wear { window, worn } => Some((*window, worn.wears_ring)),
+                        Render::Wear { window, worn } | Render::Rewear { window, worn } => {
+                            Some((*window, worn.wears_ring))
+                        }
                         _ => None,
                     })
                     .collect();

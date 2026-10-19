@@ -17,7 +17,7 @@ use super::asks::on_screen;
 use super::tiles::{Stacking, frames_of};
 use super::{Event, FlightEngine};
 use crate::animation::domain::choreography::overview::{
-    Motion, Outline, Places, Press, at_rest, held, pose, pushes, screen_wide, toward,
+    Motion, Outline, Places, Press, accented, at_rest, held, pose, pushes, screen_wide, toward,
 };
 use crate::animation::domain::motion::plan::on_overlay;
 #[cfg(test)]
@@ -370,7 +370,12 @@ impl FlightEngine {
                         focused: tile.focused,
                     });
                 }
-                if worn != tile.worn {
+                if worn.decoration != tile.worn.decoration {
+                    turned.push(Render::Rewear {
+                        window: tile.window,
+                        worn: tile.worn,
+                    });
+                } else if worn != tile.worn {
                     turned.push(Render::Wear {
                         window: tile.window,
                         worn: tile.worn,
@@ -405,7 +410,7 @@ impl FlightEngine {
                 ring: Some(view.outline?),
                 ..Decoration::default()
             };
-            shown.dressed(ring, view.scene.scale).ring
+            shown.dressed(ring, view.scene.scale, false).ring
         });
         let outlines = shown.outlines.clone();
         self.render(Render::Outlines { outlines, ring });
@@ -420,20 +425,23 @@ impl FlightEngine {
             return;
         }
         shown.widened = on;
+        let selected = view.scene.selected.window;
+        let dressed: Vec<(WindowId, Decoration)> = shown
+            .tiles
+            .iter()
+            .filter_map(|tile| {
+                let info = view.windows.iter().find(|info| info.window == tile.window)?;
+                let on = selected == Some(tile.window);
+                Some((tile.window, shown.dressed(info.decoration, view.scene.scale, on)))
+            })
+            .collect();
         let mut rewear = Vec::new();
-        for tile in &mut shown.tiles {
-            let Some(info) = view.windows.iter().find(|info| info.window == tile.window) else {
+        for (window, decoration) in dressed {
+            let Some(tile) = shown.tiles.iter_mut().find(|tile| tile.window == window) else {
                 continue;
             };
-            tile.worn.decoration = if on {
-                screen_wide(info.decoration, view.scene.scale)
-            } else {
-                info.decoration
-            };
-            rewear.push(Render::Rewear {
-                window: tile.window,
-                worn: tile.worn,
-            });
+            tile.worn.decoration = decoration;
+            rewear.push(Render::Rewear { window, worn: tile.worn });
         }
         for command in rewear {
             self.render(command);
@@ -490,11 +498,22 @@ impl FlightEngine {
                 .or_else(|| self.pictures.usable(info.window))
                 .or_else(|| self.pictures.stand_in(rect.size.respace()));
             let Some(snapshot) = picture else { continue };
-            let worn = Worn::beside(self.shown_overview.dressed(info.decoration, view.scene.scale));
+            let on = selected == Some(info.window);
+            let decoration = self.shown_overview.dressed(info.decoration, view.scene.scale, on);
+            let worn = Worn::beside(decoration);
             let tile = stacking.tile_of(info.window, info.server_id, info.floating, worn);
             let clipped = snapshot.source.clips();
             made.push(tile.flying((rect, rect), Drawn { snapshot, clipped }, false));
         }
+        let dressed: HashMap<WindowId, Decoration> = view
+            .windows
+            .iter()
+            .map(|info| {
+                let on = selected == Some(info.window);
+                let decoration = self.shown_overview.dressed(info.decoration, view.scene.scale, on);
+                (info.window, decoration)
+            })
+            .collect();
         let shown = &mut self.shown_overview;
         shown
             .tiles
@@ -502,7 +521,7 @@ impl FlightEngine {
         shown.tiles.extend(made);
         for tile in &mut shown.tiles {
             let on = selected == Some(tile.window);
-            let decoration = tile.worn.decoration;
+            let decoration = dressed.get(&tile.window).copied().unwrap_or(tile.worn.decoration);
             tile.focused = on;
             tile.worn = if on {
                 Worn {
@@ -621,12 +640,13 @@ impl Shown {
         self.played = None;
     }
 
-    /// `decoration` as its thumb wears it now: as wide on screen as at rest while it is held.
-    fn dressed(&self, decoration: Decoration, scale: f64) -> Decoration {
-        if self.widened {
-            screen_wide(decoration, scale)
-        } else {
-            decoration
+    /// `decoration` as its thumb wears it now: as wide on screen as at rest while it is held, the
+    /// `selected` thumb's ring at least the card's ring.
+    fn dressed(&self, decoration: Decoration, scale: f64, selected: bool) -> Decoration {
+        match (self.widened, selected) {
+            (false, _) => decoration,
+            (true, false) => screen_wide(decoration, scale),
+            (true, true) => screen_wide(accented(decoration), scale),
         }
     }
 }
