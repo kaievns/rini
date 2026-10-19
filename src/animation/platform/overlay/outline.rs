@@ -1,24 +1,29 @@
 //! The outlines the overview draws of workspaces with no windows: each its tiling area ringed in the
 //! focus ring's band, in its active paint while its row is selected and its inactive one otherwise,
-//! hung in a container of the tree so it moves and zooms with that container.
+//! hung in a container of the tree so it moves and zooms with that container, its ring as wide on
+//! screen as at rest under the zoom (`Tree::dress_outlines`).
 
 use std::collections::HashMap;
 
 use objc2::rc::Retained;
 use objc2_core_foundation::CGPoint;
 use objc2_quartz_core::CALayer;
-use rini_geometry::space::{Respace, ToCg};
+use rini_geometry::space::{Respace, TileSize, ToCg};
 
+use super::card;
 use crate::animation::domain::choreography::overview::Outline;
+use crate::animation::domain::choreography::overview::card::Zoomed;
 use crate::animation::domain::motion::plan::GroupKey;
-use crate::decorations::domain::shape::{self, Laying};
+use crate::decorations::domain::shape;
 use crate::decorations::domain::style::{Band, Decoration, Ring, Worn};
 use crate::decorations::platform::layers::Bands;
 
-/// The outlines drawn: each a holder at its frame, carrying its bands.
+/// The outlines drawn: each a holder at its frame, carrying its bands, and the size it rings; and
+/// how wide their ring is on screen.
 #[derive(Default)]
 pub(super) struct Outlines {
-    drawn: Vec<(Retained<CALayer>, Bands)>,
+    drawn: Vec<(Retained<CALayer>, Bands, TileSize)>,
+    width: f64,
 }
 
 impl Outlines {
@@ -37,6 +42,7 @@ impl Outlines {
             ring: Some(ring),
             ..Decoration::default()
         };
+        self.width = shape::widths(&decoration, scale).ring;
         for outline in outlines {
             let Some(container) = containers.get(&outline.key) else {
                 continue;
@@ -47,8 +53,8 @@ impl Outlines {
             container.addSublayer(&holder);
             let mut bands = Bands::new(&holder);
             bands.wear(&decoration, scale);
-            let laying = Laying::on_edge(0.0, 0.0, shape::widths(&decoration, scale));
-            bands.place(&laying.fit(outline.frame.size.respace()));
+            let size: TileSize = outline.frame.size.respace();
+            bands.place(&card::outline_laying(self.width).fit(size));
             let worn = Worn {
                 decoration,
                 wears_ring: if outline.selected {
@@ -59,12 +65,28 @@ impl Outlines {
                 holds_focus: outline.selected,
             };
             bands.paint(&worn.style(false));
-            self.drawn.push((holder, bands));
+            self.drawn.push((holder, bands, size));
+        }
+    }
+
+    /// How wide their ring is on screen, at rest.
+    pub(super) fn width(&self) -> f64 { self.width }
+
+    /// Every outline's ring `width` wide once the zoom ends, and along `zoomed` while it plays.
+    pub(super) fn dress(&self, width: f64, zoomed: Option<&Zoomed>) {
+        for (_, bands, size) in &self.drawn {
+            bands.place(&card::outline_laying(width).fit(*size));
+            match zoomed {
+                Some(zoomed) => {
+                    card::install_outline(bands, zoomed, &card::outline_fits(*size, zoomed))
+                }
+                None => bands.remove_resize(),
+            }
         }
     }
 
     pub(super) fn clear(&mut self) {
-        for (holder, _) in self.drawn.drain(..) {
+        for (holder, ..) in self.drawn.drain(..) {
             holder.removeFromSuperlayer();
         }
     }
@@ -79,7 +101,7 @@ impl Outlines {
     )> {
         self.drawn
             .iter()
-            .map(|(holder, bands)| {
+            .map(|(holder, bands, _)| {
                 (
                     holder.clone(),
                     bands.ring.as_ref().map(|band| band.layer.clone()),

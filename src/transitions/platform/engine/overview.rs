@@ -17,7 +17,7 @@ use super::asks::on_screen;
 use super::tiles::{Stacking, frames_of};
 use super::{Event, FlightEngine};
 use crate::animation::domain::choreography::overview::{
-    Motion, Outline, Places, Press, accented, at_rest, held, pose, pushes, screen_wide, toward,
+    Motion, Outline, Places, Press, at_rest, held, pose, pushes, toward,
 };
 use crate::animation::domain::motion::plan::on_overlay;
 #[cfg(test)]
@@ -56,11 +56,9 @@ pub(super) struct Shown {
     presses: Vec<Press>,
     /// The outlines of its empty workspaces as last drawn.
     outlines: Vec<Outline>,
-    /// Whether its thumbs' bands are drawn as wide on screen as at rest: while it is held.
-    widened: bool,
-    /// The zoom its thumbs' lifts are cast under, as wide on screen as at rest: the latest held
-    /// scene's, from its open, which lifts nothing yet, to its lift, which lowers them all.
-    lifts_under: Option<f64>,
+    /// The zoom it holds the overlay under: the latest held scene's, from its open, which lifts
+    /// nothing yet and draws every thumb as its window, to its lift.
+    under: Option<f64>,
     /// The scene it last played, which the next is logged against.
     played: Option<Scene>,
     /// What waits for its lift: every flight asked for and every move of the overlay, and an open
@@ -222,7 +220,6 @@ impl FlightEngine {
             Command::ReportUp => self.report(true),
             Command::ReportSettled => self.report(false),
             Command::Clock(on) => self.overview_clock(on),
-            Command::Widen(on) => self.widen_overview(on),
             Command::Replay => {
                 for event in std::mem::take(&mut self.shown_overview.held) {
                     self.tx.send(event);
@@ -329,8 +326,8 @@ impl FlightEngine {
     }
 
     /// Every node from where it is drawn to where `target` has it at a press's pace, the pushes
-    /// among `presses` bounced over a press's length, each thumb wearing what it wears there, its
-    /// lifts cast under the held scene's zoom first.
+    /// among `presses` bounced over a press's length, each thumb wearing what it wears there, the
+    /// overlay held under the held scene's zoom first.
     fn move_overview(&mut self, target: Target, presses: &[Press], now: Instant) {
         let length = self.shown_overview.length;
         let Some(places) = self.overview_places(target) else {
@@ -364,10 +361,10 @@ impl FlightEngine {
         for edit in &edits {
             shown.score.apply(edit);
         }
-        let cast = (target == Target::Held && shown.lifts_under != Some(scene.scale))
-            .then(|| Render::CastLifts { under: scene.scale });
-        if cast.is_some() {
-            shown.lifts_under = Some(scene.scale);
+        let hold = (target == Target::Held && shown.under != Some(scene.scale))
+            .then(|| Render::Hold { under: scene.scale });
+        if hold.is_some() {
+            shown.under = Some(scene.scale);
         }
         let mut turned = Vec::new();
         for tile in &shown.tiles {
@@ -393,8 +390,8 @@ impl FlightEngine {
             }
         }
         let tiles = (!edits.is_empty()).then(|| shown.tiles.clone());
-        if let Some(cast) = cast {
-            self.render(cast);
+        if let Some(hold) = hold {
+            self.render(hold);
         }
         if let Some(tiles) = tiles {
             self.render(Render::Play { edits, tiles });
@@ -414,53 +411,12 @@ impl FlightEngine {
         self.draw_outlines();
     }
 
-    /// The outlines as last laid out, ringed in the focus ring's band as wide as the thumbs' are.
+    /// The outlines as last laid out, ringed in the focus ring's band.
     fn draw_outlines(&mut self) {
         let shown = &self.shown_overview;
-        let ring = shown.view.as_ref().and_then(|view| {
-            let ring = Decoration {
-                ring: Some(view.outline?),
-                ..Decoration::default()
-            };
-            shown.dressed(ring, view.scene.scale, false).ring
-        });
+        let ring = shown.view.as_ref().and_then(|view| view.outline);
         let outlines = shown.outlines.clone();
         self.render(Render::Outlines { outlines, ring });
-    }
-
-    /// Every thumb's bands, and the outlines', drawn as wide on screen as at rest while `on`, at
-    /// their own width otherwise.
-    fn widen_overview(&mut self, on: bool) {
-        let shown = &mut self.shown_overview;
-        let Some(view) = shown.view.as_ref() else { return };
-        if shown.widened == on {
-            return;
-        }
-        shown.widened = on;
-        let selected = view.scene.selected.window;
-        let dressed: Vec<(WindowId, Decoration)> = shown
-            .tiles
-            .iter()
-            .filter_map(|tile| {
-                let info = view.windows.iter().find(|info| info.window == tile.window)?;
-                let on = selected == Some(tile.window);
-                Some((tile.window, shown.dressed(info.decoration, view.scene.scale, on)))
-            })
-            .collect();
-        let mut rewear = Vec::new();
-        for (window, decoration) in dressed {
-            let Some(tile) = shown.tiles.iter_mut().find(|tile| tile.window == window) else {
-                continue;
-            };
-            tile.worn.decoration = decoration;
-            rewear.push(Render::Rewear { window, worn: tile.worn });
-        }
-        for command in rewear {
-            self.render(command);
-        }
-        if !self.shown_overview.outlines.is_empty() {
-            self.draw_outlines();
-        }
     }
 
     /// Where `target` has every node, from the latest view: none with no view or no display.
@@ -510,22 +466,13 @@ impl FlightEngine {
                 .or_else(|| self.pictures.usable(info.window))
                 .or_else(|| self.pictures.stand_in(rect.size.respace()));
             let Some(snapshot) = picture else { continue };
-            let on = selected == Some(info.window);
-            let decoration = self.shown_overview.dressed(info.decoration, view.scene.scale, on);
-            let worn = Worn::beside(decoration);
+            let worn = Worn::beside(info.decoration);
             let tile = stacking.tile_of(info.window, info.server_id, info.floating, worn);
             let clipped = snapshot.source.clips();
             made.push(tile.flying((rect, rect), Drawn { snapshot, clipped }, false));
         }
-        let dressed: HashMap<WindowId, Decoration> = view
-            .windows
-            .iter()
-            .map(|info| {
-                let on = selected == Some(info.window);
-                let decoration = self.shown_overview.dressed(info.decoration, view.scene.scale, on);
-                (info.window, decoration)
-            })
-            .collect();
+        let dressed: HashMap<WindowId, Decoration> =
+            view.windows.iter().map(|info| (info.window, info.decoration)).collect();
         let shown = &mut self.shown_overview;
         shown
             .tiles
@@ -641,26 +588,15 @@ impl FlightEngine {
 }
 
 impl Shown {
-    /// What it drew let go: the next open makes its thumbs afresh, at their own width.
+    /// What it drew let go: the next open makes its thumbs afresh.
     fn forget(&mut self) {
         self.tiles.clear();
         self.score = Score::default();
         self.frame_zero.clear();
         self.presses.clear();
         self.outlines.clear();
-        self.widened = false;
-        self.lifts_under = None;
+        self.under = None;
         self.played = None;
-    }
-
-    /// `decoration` as its thumb wears it now: as wide on screen as at rest while it is held, the
-    /// `selected` thumb's ring at least the card's ring.
-    fn dressed(&self, decoration: Decoration, scale: f64, selected: bool) -> Decoration {
-        match (self.widened, selected) {
-            (false, _) => decoration,
-            (true, false) => screen_wide(decoration, scale),
-            (true, true) => screen_wide(accented(decoration), scale),
-        }
     }
 }
 

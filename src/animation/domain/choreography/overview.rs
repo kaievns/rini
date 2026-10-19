@@ -24,9 +24,9 @@ use crate::animation::domain::motion::plan::{Banding, GroupKey, group_relative};
 use crate::animation::domain::motion::score::{
     Channel, Curve, Edit, Node, SAMPLE_STEP, Score, Track, Value, Zoom,
 };
-use crate::chrome::domain::card;
-use crate::decorations::domain::style::{Band, Decoration};
 use crate::overview::domain::scene::{Holder, Scene};
+
+pub mod card;
 
 /// A press inside the overview, as the flight it held back named it: what the scene's next change
 /// plays.
@@ -112,34 +112,6 @@ impl Places {
             self.zoom.draw(laid.origin),
             laid.size * self.zoom.scale,
         ))
-    }
-}
-
-/// `decoration` with its ring and border as wide on screen under a zoom by `scale` as they are
-/// drawn at rest.
-pub fn screen_wide(decoration: Decoration, scale: f64) -> Decoration {
-    let widened = |band: Option<Band>| {
-        band.map(|band| Band {
-            width: band.width / scale,
-            ..band
-        })
-    };
-    Decoration {
-        ring: widened(decoration.ring),
-        border: widened(decoration.border),
-        ..decoration
-    }
-}
-
-/// `decoration` as the selected thumb wears it while held: its ring at least the card's ring wide,
-/// the switcher's selection, in its own paint. With no ring it wears none.
-pub fn accented(decoration: Decoration) -> Decoration {
-    Decoration {
-        ring: decoration.ring.map(|band| Band {
-            width: band.width.max(card::RING),
-            ..band
-        }),
-        ..decoration
     }
 }
 
@@ -789,26 +761,6 @@ mod tests {
         assert_eq!(lift(0.0), 0.0, "frame zero casts no lift");
         assert!(lift(PRESS / 4.0) > 0.0 && lift(PRESS / 4.0) < SELECTED_LIFT);
         assert!((lift(PRESS + 0.01) - SELECTED_LIFT).abs() < 1e-9);
-    }
-
-    /// The selected thumb's ring is at least the card's ring wide, a wider one kept, its paint
-    /// kept, and a thumb with no ring wears none.
-    #[test]
-    fn the_selected_thumb_s_ring_is_at_least_the_card_s() {
-        use crate::decorations::domain::paint::{Colour, Paint};
-        let paint = Paint::Solid(Colour::rgb(0xff7c50));
-        let ringed = |width: f64| Decoration {
-            ring: Some(Band {
-                width,
-                active: paint,
-                inactive: paint,
-                urgent: paint,
-            }),
-            ..Decoration::default()
-        };
-        assert_eq!(accented(ringed(1.0)), ringed(card::RING));
-        assert_eq!(accented(ringed(4.0)), ringed(4.0));
-        assert_eq!(accented(Decoration::default()), Decoration::default());
     }
 
     /// The desktop behind is darkened all the way while held and not at all at rest, and the zoom

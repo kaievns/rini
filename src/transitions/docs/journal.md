@@ -45,7 +45,7 @@ the overview's own generation, the burst given once it reports settled.
 
 Both matches, over `Event` and over `Command`, have no `_` arm, so a new variant does not compile
 until it has a mark; nor does the match over the overview's commands (`overview_mark`), which gives
-its clock, its bands' widening and its letting go of what it drew (`Forget`) no mark.
+its clock and its letting go of what it drew (`Forget`) no mark.
 
 | Source | Mark | Fields |
 |---|---|---|

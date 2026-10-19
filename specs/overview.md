@@ -137,8 +137,13 @@ Every workspace of one display at once, zoomed out, while its key is held.
   three cards drawn, the gap between cards, the selected card's ring width, the darkening of what
   is behind, the card's 11pt corner and the `--ember-soft` wash under the selected card. Kai asked
   for one visual style across the two, reusing components where they apply; two copies of a value
-  drift. Not yet met: every thumb keeps its window's own corner at the zoom's scale, 3pt on screen
-  for a 10pt corner at depth 0.3, and the selected thumb wears the ring without the wash.
+  drift. Held, every thumb MUST round to the card's corner on screen at any depth, its ring and
+  border round that corner, and the selected thumb MUST wear the card's selection as the switcher's
+  selected card does: the wash under it 4pt out at a 14pt corner, and its ring laid with its outer
+  edge on the wash's: a thumb at its window's corner reads 3pt on screen for a 10pt corner at depth
+  0.3. Through the zoom out and back in each MUST ease on screen from the window's own corner, ring
+  and no wash to the card's with the zoom, so frame zero and the landing are the screen and neither
+  hand-over to the real windows jumps.
 
 > **Reported 2026-10-19.** "overall visual style must mutch the main app switcher, both should be
 > consistent with each other and reuse components where applicable". The stacks' values were the
@@ -154,12 +159,11 @@ Every workspace of one display at once, zoomed out, while its key is held.
   has zoomed out, and each picture taken goes onto its thumb at once.
 - Only the selected window MUST wear the active ring; every other window MUST be dressed as on a
   workspace not shown, as Kai reported of the strips beside on 2026-10-17.
-- Every thumb's ring and border MUST be drawn as wide on screen as at rest: drawn at its width
-  under the zoom, a 1pt ring is 0.22pt on screen at depth 0.22, and the ring Kai asked to see move
-  does not read. The selected thumb's ring MUST be at least the card's ring, 2pt on screen, the
-  width the switcher rings its selection with, in the ring's own paint. Not yet met: while it zooms
-  out and back in they are drawn at their own width, which the zoom thins; from the end of the zoom
-  out to the start of the zoom in they are as wide as at rest, the selected ring as the card's.
+- Every thumb's ring and border MUST be drawn as wide on screen as at rest, through the zoom as
+  well as held, and an empty workspace's outline its ring: drawn at its width under the zoom, a 1pt
+  ring is 0.22pt on screen at depth 0.22, and the ring Kai asked to see move does not read. The
+  selected thumb's ring MUST be at least the card's ring, 2pt on screen, the width the switcher
+  rings its selection with, in the ring's own paint, eased from its own width with the zoom.
 
 > **Found 2026-10-18, not reported.** Drawing the overview showed Kai's 1pt focus ring under a
 > fifth of a point at the depth four workspaces take on the laptop.
@@ -232,8 +236,7 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 - It MUST zoom out from the screen as it is, under every look: frame zero draws every window where
   it is on screen. Every open MUST draw afresh, after one the renderer had no overlay for as well:
-  thumbs kept from that one would carry its pictures and its widened bands, a 1pt ring drawn near
-  4.5pt wide.
+  thumbs kept from that one would carry its pictures.
 
 > **Found 2026-10-18, not reported.** Review of the lifecycle showed an overview the renderer could
 > not draw dropped its phase without letting go of its thumbs, which only its lift did.

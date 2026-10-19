@@ -335,7 +335,8 @@ impl Bands {
         }
     }
 
-    fn install_resize(&self, resize: &impl Resize) {
+    /// Each band carried through `resize`, laid as each fit lays it.
+    pub fn install_resize(&self, resize: &impl Resize) {
         if let Some(ring) = &self.ring {
             ring.install_resize(resize, |fit| fit.ring);
         }
@@ -344,7 +345,8 @@ impl Bands {
         }
     }
 
-    fn remove_resize(&self) {
+    /// Takes every animation `install_resize` put on the bands.
+    pub fn remove_resize(&self) {
         for band in self.each() {
             band.remove_resize();
         }

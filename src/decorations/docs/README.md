@@ -276,8 +276,10 @@ query as the flight composes (`windows::domain::info::reported_radius`, the larg
 above 0), else `FALLBACK_RADIUS`, 16pt; a rule's `geometry-corner-radius` goes ahead of it for the
 ring and the border alone. Every piece rounds on the continuous curve, the paths through
 `shape::rounded_rect` (`every_path_follows_core_animation_s_corner_at_every_size`), and every corner
-is clamped to half the tile's shorter side, since Core Animation does not clamp it. The reads, the
-fits and the data: [`corner.md`](corner.md).
+is clamped to half the tile's shorter side, since Core Animation does not clamp it. The overview
+lays its thumbs in place of their windows' (`DecorationLayers::lay`): every piece at the switcher's
+card's corner, eased with its zoom (`src/overview/docs/README.md`). The reads, the fits and the
+data: [`corner.md`](corner.md).
 
 ## Reading order
 

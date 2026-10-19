@@ -16,7 +16,7 @@ use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
-use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSArray, NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
     CAAnimation, CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming,
@@ -40,10 +40,9 @@ use crate::animation::domain::motion::score::{
 use crate::animation::domain::motion::tile::{self, Anchors, ContentMode, content_mode, crop};
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::animation::event::Crops;
-use crate::decorations::domain::shape::Fit;
 use crate::decorations::domain::style::{Band as DecorationBand, Worn};
 use crate::decorations::platform::layers::{
-    DecorationLayers, Resize, add_under, remove_under, round_continuous,
+    DecorationLayers, add_under, remove_under, round_continuous,
 };
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
@@ -53,11 +52,14 @@ use crate::pictures::platform::layer::{
 };
 use crate::pictures::platform::picture::Picture;
 
+mod card;
 mod lift;
 mod outline;
+mod resize;
 mod tint;
 
 use lift::Lift;
+use resize::{install_tile_resize, resizes};
 
 /// Above every managed window (CG layer 0), below utility panels and notification banners (19+).
 /// See "Level and coverage" in `src/animation/docs/capture-overlay-research.md`.
@@ -401,47 +403,7 @@ const PIECE_CONTENTS_KEY: &str = "rini.piece.contents";
 const PIECE_PICTURE_KEY: &str = "rini.piece.picture";
 const GROUND_COLOUR_KEY: &str = "rini.piece.ground";
 
-/// A tile's track as the resize its decorations play: each value mapped from the fit `fit` lays
-/// the size its key holds at.
-struct TileResize<'a, F>(&'a Track, F);
-
 fn size_of(value: Value) -> TileSize { as_frame(value).size.respace() }
-
-impl<F: Fn(TileSize) -> Fit> TileResize<'_, F> {
-    fn fit(&self, value: Value) -> Fit { (self.1)(size_of(value)) }
-}
-
-impl<F: Fn(TileSize) -> Fit> Resize for TileResize<'_, F> {
-    fn point(
-        &self,
-        key_path: &str,
-        value: impl Fn(&Fit) -> CGPoint,
-    ) -> Retained<CAPropertyAnimation> {
-        animation(self.0, key_path, |v| point_object(value(&self.fit(v))))
-    }
-
-    fn rect(
-        &self,
-        key_path: &str,
-        value: impl Fn(&Fit) -> CGRect,
-    ) -> Retained<CAPropertyAnimation> {
-        animation(self.0, key_path, |v| rect_object(value(&self.fit(v))))
-    }
-
-    fn number(&self, key_path: &str, value: impl Fn(&Fit) -> f64) -> Retained<CAPropertyAnimation> {
-        animation(self.0, key_path, |v| number_object(value(&self.fit(v))))
-    }
-
-    fn path(
-        &self,
-        key_path: &str,
-        value: impl Fn(&Fit) -> CFRetained<objc2_core_graphics::CGPath>,
-    ) -> Retained<CAPropertyAnimation> {
-        animation(self.0, key_path, |v| cf_object(&value(&self.fit(v))))
-    }
-
-    fn changes(&self, f: impl Fn(&Fit) -> f64) -> bool { changes(self.0, |v| f(&self.fit(v))) }
-}
 
 /// Installs a tile's track on every layer that draws the tile, each value mapped from the frame
 /// the key holds: the picture and the frame layers of its decorations ride its position; a resize
@@ -468,10 +430,7 @@ fn install_tile_track(tile: &mut Tile, track: &Track, corner: Option<Corner>) ->
     for layer in tile.layers() {
         add_under(layer, &position, TILE_ANIMATION_KEY);
     }
-    let resizes = track.keys().windows(2).any(|pair| {
-        rini_geometry::stretch::is_a_resize(as_frame(pair[0].1).size, as_frame(pair[1].1).size)
-    });
-    if !resizes {
+    if !resizes(track) {
         remove_resize(tile);
         return None;
     }
@@ -482,19 +441,7 @@ fn install_tile_track(tile: &mut Tile, track: &Track, corner: Option<Corner>) ->
     for layer in tile.layers() {
         add_under(layer, &bounds, TILE_SIZE_KEY);
     }
-    let decorations = &tile.decorations;
-    let resize = TileResize(track, |size| decorations.fit_at(size));
-    decorations.install_resize(&resize);
-    let radius = |fit: &Fit| fit.corner;
-    if resize.changes(radius) {
-        add_under(
-            &tile.picture,
-            &resize.number("cornerRadius", radius),
-            PICTURE_CORNER_KEY,
-        );
-    } else {
-        remove_under(&tile.picture, &[PICTURE_CORNER_KEY]);
-    }
+    install_tile_resize(tile, track);
     install_crop_grid(tile, track, corner)
 }
 
@@ -666,6 +613,8 @@ struct Tile {
     region: ContentsRect,
     /// The shadow it casts lifted off the strip, once the score has lifted it.
     lift: Option<Lift>,
+    /// The wash under it, once it is drawn as the card.
+    card: Option<card::Card>,
 }
 
 /// The layers a crop-drawn tile is composed of, children of the tile's picture layer: the nine
@@ -719,8 +668,9 @@ struct Tree {
     outlines: outline::Outlines,
     /// The overview's darkening of the desktop.
     tint: tint::Tint,
-    /// The zoom every lift is cast under: the overview's while it holds the overlay, else none.
-    lifts_under: f64,
+    /// The zoom the overview holds the overlay under, every lift cast under it and every tile drawn
+    /// as the card (`card`); none for a flight, whose lifts are cast under no zoom.
+    held: Option<f64>,
 }
 
 pub struct TileOverlay {
@@ -990,15 +940,16 @@ impl TileOverlay {
     /// `window`'s tile dressed again in `worn`'s decoration, its bands laid at their widths.
     pub fn rewear_tile(&mut self, window: WindowId, worn: Worn) { self.tree.rewear(window, worn); }
 
-    /// Every tile's lift cast under a zoom by `under`, as wide on screen as at rest under it, until
-    /// the overlay lets its tiles go.
-    pub fn cast_lifts(&mut self, under: f64) { self.tree.cast_lifts(under); }
+    /// The overview holds the overlay under a zoom by `under` until it lets its tiles go: every
+    /// lift cast as wide on screen as at rest under it, and every tile drawn as the card.
+    pub fn hold(&mut self, under: f64) { self.tree.hold(under); }
 
     /// The overview's outlines of its empty workspaces, ringed as `ring` is, in place of those
     /// before.
     pub fn set_outlines(&mut self, outlines: &[Outline], ring: Option<DecorationBand>) {
         let tree = &mut self.tree;
         tree.outlines.draw(outlines, ring, &tree.containers, tree.scale);
+        tree.dress_outlines();
     }
 
     /// Logs where each container is presented beside where the replica draws it, and the gap
@@ -1143,7 +1094,7 @@ impl Tree {
             crops: Crops::default(),
             outlines: outline::Outlines::default(),
             tint,
-            lifts_under: 1.0,
+            held: None,
         }
     }
 
@@ -1216,11 +1167,21 @@ impl Tree {
             self.install(track, tiles, true);
         }
         self.rebank();
+        let windows: Vec<WindowId> = self.tile_layers.keys().copied().collect();
+        self.dress_cards(&windows);
+        self.dress_outlines();
     }
 
     /// Folds each edit into the replica and carries it out.
     fn play(&mut self, edits: &[Edit], tiles: &[OverlayTile]) {
+        let mut zoomed = false;
+        let mut moved = Vec::new();
         for edit in edits {
+            match edit.node() {
+                Some(Node::Strip | Node::Held) => zoomed = true,
+                Some(Node::Tile(window)) if !moved.contains(&window) => moved.push(window),
+                _ => {}
+            }
             let new_leg = !matches!(edit, Edit::Add(track) if self.moves_only_the_end(track));
             self.replica.apply(edit);
             match edit {
@@ -1245,6 +1206,11 @@ impl Tree {
                 Edit::Bank(_) => self.rebank(),
             }
         }
+        if zoomed {
+            moved = self.tile_layers.keys().copied().collect();
+            self.dress_outlines();
+        }
+        self.dress_cards(&moved);
     }
 
     /// The container for `key` and, for the floating container, its twin, made covering the overlay
@@ -1311,19 +1277,14 @@ impl Tree {
 
     /// `window`'s tile lifted `share` of the way once nothing plays on its lift.
     fn place_lift(&mut self, window: WindowId, share: f64) {
-        let under = self.lifts_under;
+        let under = self.lifts_under();
         if let Some(entry) = self.tile_layers.get_mut(&window) {
             entry.lift(under).set(share);
         }
     }
 
-    /// Every tile's lift cast under a zoom by `under`, the ones made from here as well.
-    fn cast_lifts(&mut self, under: f64) {
-        self.lifts_under = under;
-        for entry in self.tile_layers.values_mut() {
-            entry.recast_lift(under);
-        }
-    }
+    /// The zoom every lift is cast under.
+    fn lifts_under(&self) -> f64 { self.held.unwrap_or(1.0) }
 
     /// Whether `track` is the replica's track on its node with only its end moved, as a snap makes it.
     fn moves_only_the_end(&self, track: &Track) -> bool {
@@ -1388,13 +1349,13 @@ impl Tree {
                 }
                 let corner = tile.and_then(|tile| {
                     let after = tile.from_corner.as_ref()?;
-                    clip_corners(&entry.picture, tile.clipped);
+                    clip_corners(entry, tile.clipped);
                     Some(Corner { before: &tile.snapshot, after })
                 });
                 self.crops.add(install_tile_track(entry, track, corner));
             }
             Node::Lift(window) => {
-                let under = self.lifts_under;
+                let under = self.lifts_under();
                 let Some(entry) = self.tile_layers.get_mut(&window) else {
                     return;
                 };
@@ -1529,6 +1490,7 @@ impl Tree {
             };
             entry.decorations.show(entry.worn.style(entry.focused));
         }
+        self.dress_cards(&[window]);
     }
 
     /// `window`'s tile wearing `worn` with its decoration too, unlike `wear`: each band it wears
@@ -1545,6 +1507,7 @@ impl Tree {
             entry.decorations.place(model.size.respace());
         }
         entry.decorations.show(worn.style(entry.focused));
+        self.dress_cards(&[window]);
     }
 
     /// `picture` onto `window`'s tile, `clipped` or whole, re-keyed along the tile's own track while
@@ -1559,7 +1522,7 @@ impl Tree {
         };
         let playing =
             self.replica.track(node, Channel::Base).filter(|track| track.at(at).is_some());
-        clip_corners(&entry.picture, clipped);
+        clip_corners(entry, clipped);
         self.crops.add(swap_onto(
             entry,
             picture,
@@ -1567,6 +1530,7 @@ impl Tree {
             playing,
             self.scale,
         ));
+        self.dress_cards(&[window]);
     }
 
     /// What the drain played since the last take spent on crop-drawn tiles, counted again from none.
@@ -1588,7 +1552,7 @@ impl Tree {
     fn release(&mut self) {
         self.outlines.clear();
         self.tint.clear();
-        self.lifts_under = 1.0;
+        self.held = None;
         clear_contents(&self.backdrop);
         self.backdrop.setHidden(true);
         for (_, entry) in self.tile_layers.drain() {
@@ -1629,7 +1593,7 @@ fn dress(entry: &mut Tile, tile: &OverlayTile, scale: f64) -> Option<Duration> {
     entry.focused = tile.focused;
     entry.picture.setContentsScale(scale);
     entry.decorations.wear(&entry.worn.decoration, scale);
-    clip_corners(&entry.picture, tile.clipped);
+    clip_corners(entry, tile.clipped);
     let (covered, source) = (tile.snapshot.coverage.covered, tile.snapshot.source);
     let mode = content_mode(covered, source, tile.from.size, tile.to.size);
     entry.anchors = Anchors::of_leg(tile.from, tile.to);
@@ -1734,16 +1698,18 @@ fn new_tile(container: &CALayer) -> Tile {
         anchors: Anchors::default(),
         region: WHOLE,
         lift: None,
+        card: None,
     }
 }
 
 impl Tile {
-    /// The layers that ride the tile's frame: the picture, the caster, the hairline and the lift's
-    /// caster.
+    /// The layers that ride the tile's frame: the picture, the caster, the hairline, the lift's
+    /// caster and the card's wash.
     fn layers(&self) -> Vec<&CALayer> {
         let [shadow, hairline] = self.decorations.frame_layers();
         let mut layers = vec![&*self.picture, shadow, hairline];
         layers.extend(self.lift.as_ref().map(Lift::layer));
+        layers.extend(self.card.as_ref().map(card::Card::layer));
         layers
     }
 
@@ -1792,6 +1758,9 @@ impl Tile {
         if let Some(lift) = &self.lift {
             lift.layer().removeAllAnimations();
         }
+        if let Some(card) = &self.card {
+            card.remove_animations();
+        }
         if let Some(grid) = &self.crop_grid {
             for layer in grid.layers() {
                 layer.removeAllAnimations();
@@ -1806,13 +1775,18 @@ impl Tile {
         if let Some(lift) = &self.lift {
             lift.stack(z);
         }
+        if let Some(card) = &self.card {
+            card.stack(z);
+        }
     }
 }
 
-/// Clips `picture`, with the crop pieces under it, to its corner, or not at all. The corner is the
-/// hairline's, laid at every placement (`place_tile`); unclipped it draws nothing, the picture
-/// having no background or border.
-fn clip_corners(picture: &CALayer, clipped: bool) { picture.setMasksToBounds(clipped); }
+/// Clips a tile's picture, with the crop pieces under it, to its corner, or not at all; a card is
+/// always clipped. The corner is the hairline's, laid at every placement (`place_tile`); unclipped
+/// it draws nothing, the picture having no background or border.
+fn clip_corners(tile: &Tile, clipped: bool) {
+    tile.picture.setMasksToBounds(clipped || tile.card.is_some());
+}
 
 /// Puts a tile's layers at `frame`, stacked at `z`, its decorations shaped for its size and its
 /// picture's corner rounded with them. The crop grid is laid again only when the size changes.
@@ -1954,8 +1928,10 @@ fn reparent(layer: &CALayer, container: &CALayer) {
 mod tests {
     use std::time::Duration;
 
+    use objc2_core_foundation::CFRetained;
     use rini_geometry::space::{FromCg, OverlayVector, Point, Rect, Size};
 
+    use super::resize::TileResize;
     use super::*;
     use crate::animation::domain::motion::bounce::Bounce;
     use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
@@ -1964,10 +1940,10 @@ mod tests {
     use crate::animation::domain::motion::plan::Resolved;
     use crate::animation::domain::motion::score::SAMPLE_STEP;
     use crate::animation::domain::motion::tile::Anchor;
-    use crate::decorations::domain::shape::{self, shadow_mask_frame};
+    use crate::decorations::domain::shape::{self, Fit, shadow_mask_frame};
     use crate::decorations::domain::stack::SHADOW_Z;
     use crate::decorations::platform::layers::{
-        assert_core_animation_held, hold_core_animation, shadow_mask_path, silhouette_path,
+        Resize, assert_core_animation_held, hold_core_animation, shadow_mask_path, silhouette_path,
     };
     use crate::pictures::platform::layer::test_components;
 
@@ -3440,11 +3416,11 @@ mod tests {
         let container = CALayer::layer();
         let tile = new_tile(&container);
         assert!(!tile.picture.masksToBounds(), "whole by default");
-        clip_corners(&tile.picture, true);
+        clip_corners(&tile, true);
         assert!(tile.picture.masksToBounds());
         assert!(!tile.decorations.shadow.masksToBounds());
         assert_eq!(tile.decorations.shadow.cornerRadius(), 0.0);
-        clip_corners(&tile.picture, false);
+        clip_corners(&tile, false);
         assert!(!tile.picture.masksToBounds());
     }
 
@@ -3454,7 +3430,7 @@ mod tests {
     fn a_corner_clip_leaves_the_hairline_whole() {
         let container = CALayer::layer();
         let tile = new_tile(&container);
-        clip_corners(&tile.picture, true);
+        clip_corners(&tile, true);
         let parent = |layer: &CALayer| layer.superlayer().map(|parent| Retained::as_ptr(&parent));
         assert_eq!(
             parent(&tile.decorations.hairline),
@@ -3757,6 +3733,21 @@ mod tests {
             }
         }
 
+        /// A focus ring `width` wide in Kai's ember, the only band worn.
+        fn ringed(width: f64) -> crate::decorations::domain::style::Decoration {
+            use crate::decorations::domain::paint::{Colour, Paint};
+            let paint = Paint::Solid(Colour::rgb(0xff7c50));
+            crate::decorations::domain::style::Decoration {
+                ring: Some(crate::decorations::domain::style::Band {
+                    width,
+                    active: paint,
+                    inactive: paint,
+                    urgent: paint,
+                }),
+                ..Default::default()
+            }
+        }
+
         fn banding(windows: &[WindowId], plan: &FlightPlan) -> Banding {
             Banding {
                 within: windows.iter().enumerate().map(|(i, w)| (*w, i)).collect(),
@@ -3862,10 +3853,16 @@ mod tests {
                 let track = replica.track(Node::Tile(window), Channel::Base);
                 let lift = replica.track(Node::Lift(window), Channel::Base);
                 let lifting = lift.is_some_and(|track| track.seconds() > 0.0);
+                let resizing = track.is_some_and(resizes);
+                let sampled = tree.held.and_then(|_| card_frames(tree, window));
+                let turns = sampled
+                    .as_ref()
+                    .is_some_and(|(_, fits)| fits.iter().any(|fit| fit.corner != fits[0].corner));
+                let lift_layer = entry.lift.as_ref().map(|lift| lift.layer() as *const CALayer);
                 for (index, layer) in entry.layers().into_iter().enumerate() {
                     let caster = index == 1;
                     let mut keys = Vec::new();
-                    if index == 3 && lifting {
+                    if lift_layer == Some(layer as *const CALayer) && lifting {
                         keys.push(lift::LIFT_KEY);
                     }
                     if let Some(track) = track {
@@ -3873,24 +3870,114 @@ mod tests {
                             installed(layer, TILE_ANIMATION_KEY, point_in),
                             expected(track, |v| as_frame(v).origin.to_cg())
                         );
-                        let resizes = track.keys().windows(2).any(|pair| {
-                            rini_geometry::stretch::is_a_resize(
-                                as_frame(pair[0].1).size,
-                                as_frame(pair[1].1).size,
-                            )
-                        });
-                        keys.extend(match (resizes, caster) {
-                            (true, true) => {
-                                vec![TILE_ANIMATION_KEY, TILE_SIZE_KEY, "rini.tile.shadow.path"]
-                            }
-                            (true, false) => vec![TILE_ANIMATION_KEY, TILE_SIZE_KEY],
-                            (false, _) => vec![TILE_ANIMATION_KEY],
-                        });
+                        keys.push(TILE_ANIMATION_KEY);
+                        if resizing {
+                            keys.push(TILE_SIZE_KEY);
+                        }
+                    }
+                    if caster && (resizing || sampled.is_some()) {
+                        keys.push("rini.tile.shadow.path");
+                    }
+                    if turns && index == 0 {
+                        keys.push(PICTURE_CORNER_KEY);
+                    }
+                    if turns && index == 2 {
+                        keys.push("rini.tile.hairline.corner");
                     }
                     assert_eq!(rini_keys(layer), sorted(keys), "{window:?} layer {index}");
                 }
             }
             plays_its_lifts(tree);
+            plays_its_cards(tree);
+        }
+
+        /// While the overview holds the tree, `window`'s tile along the zoom: when its dress plays
+        /// and the fit at each frame.
+        fn card_frames(tree: &Tree, window: WindowId) -> Option<((f64, f64), Vec<Fit>)> {
+            let (span, frames) = card_dresses(tree, window)?;
+            let fits = frames.iter().map(|(size, dress)| dress.laying.fit(*size)).collect();
+            Some((span, fits))
+        }
+
+        /// A tile's size and dress at one frame along the zoom.
+        type Dressed = (
+            TileSize,
+            crate::animation::domain::choreography::overview::card::Dress,
+        );
+        type Dresses = Vec<Dressed>;
+
+        /// `window`'s tile's dress at each frame along the zoom, while the overview holds the tree.
+        fn card_dresses(tree: &Tree, window: WindowId) -> Option<((f64, f64), Dresses)> {
+            use crate::animation::domain::choreography::overview::card::{dressed_over, dressing};
+            let entry = &tree.tile_layers[&window];
+            let own = entry.decorations.own();
+            let selected = entry.worn.wears_ring == crate::decorations::domain::style::Ring::Active;
+            let span = dressing(&tree.replica, window)?;
+            let frames = dressed_over(&tree.replica, window, own, selected, span);
+            (frames.len() > 1).then_some((span, frames))
+        }
+
+        /// While the overview holds the tree, every tile is the card: its picture clipped and
+        /// rounded, its wash showing, as its dress has them once the replica's tracks end, the
+        /// selected one alone washed, and along the zoom its picture's corner and its wash at its
+        /// dress at every frame. A flight's tiles carry no card.
+        fn plays_its_cards(tree: &Tree) {
+            use crate::animation::domain::choreography::overview::card::dressed;
+            use crate::decorations::domain::style::Ring;
+            for (window, entry) in &tree.tile_layers {
+                let Some(card) = &entry.card else {
+                    assert!(tree.held.is_none(), "{window:?} held, a card");
+                    continue;
+                };
+                assert!(tree.held.is_some(), "{window:?} no card in a flight");
+                assert!(entry.picture.masksToBounds(), "{window:?} clipped");
+                let own = entry.decorations.own();
+                let selected = entry.worn.wears_ring == Ring::Active;
+                let held = dressed(&tree.replica, *window, own, selected);
+                let Some(frame) = tree.replica.model(Node::Tile(*window)).map(as_frame) else {
+                    continue;
+                };
+                let size: TileSize = frame.size.respace();
+                let fit = held.laying.fit(size);
+                assert_eq!(entry.picture.cornerRadius(), fit.corner, "{window:?}");
+                assert_eq!(entry.decorations.hairline.cornerRadius(), fit.corner);
+                assert_eq!(f64::from(card.wash().opacity()), held.wash.share as f32 as f64);
+                assert_eq!(card.wash().cornerRadius(), held.wash.corner);
+                let out = held.wash.out;
+                let wash = rect(-out, -out, size.width + 2.0 * out, size.height + 2.0 * out);
+                assert_eq!(card.wash().frame(), wash, "{window:?}");
+                let Some(((begin, end), fits)) = card_frames(tree, *window) else {
+                    assert!(rini_keys(card.wash()).is_empty(), "{window:?} washed still");
+                    continue;
+                };
+                let (_, dresses) = card_dresses(tree, *window).expect("dressed along the zoom");
+                let moves = |f: &dyn Fn(&Dressed) -> f64| {
+                    dresses.iter().any(|frame| f(frame) != f(&dresses[0]))
+                };
+                let mut washing = Vec::new();
+                if moves(&|(_, dress)| dress.wash.share) {
+                    washing.push("rini.card.wash.opacity");
+                }
+                if moves(&|(_, dress)| dress.wash.out) {
+                    washing.push("rini.card.wash.move");
+                }
+                if moves(&|(_, dress)| dress.wash.out)
+                    || moves(&|(size, _)| size.width)
+                    || moves(&|(size, _)| size.height)
+                {
+                    washing.push("rini.card.wash.size");
+                }
+                if moves(&|(_, dress)| dress.wash.corner) {
+                    washing.push("rini.card.wash.corner");
+                }
+                assert_eq!(rini_keys(card.wash()), sorted(washing), "{window:?} its wash");
+                let corner = installed(&entry.picture, PICTURE_CORNER_KEY, number_in);
+                let last = (fits.len() - 1) as f64;
+                assert_eq!((corner.begin, corner.seconds), (begin, end - begin));
+                let corners: Vec<(f64, f64)> =
+                    fits.iter().enumerate().map(|(k, fit)| (k as f64 / last, fit.corner)).collect();
+                assert_eq!(corner.keys, corners, "{window:?}");
+            }
         }
 
         /// The tint lies over the desktop and under every container at the replica's share of the
@@ -3929,7 +4016,7 @@ mod tests {
         fn plays_its_lifts(tree: &Tree) {
             use crate::decorations::domain::shape::{LIFT_REACH, mask_frame};
             use crate::decorations::domain::style::LIFT_SHADOW;
-            let cast = LIFT_SHADOW.under(tree.lifts_under);
+            let cast = LIFT_SHADOW.under(tree.lifts_under());
             let replica = &tree.replica;
             for (window, _) in replica.tiles() {
                 let entry = &tree.tile_layers[&window];
@@ -4317,6 +4404,68 @@ mod tests {
             assert!(tree.outlines.drawn().is_empty());
         }
 
+        /// An empty workspace's outline keeps its ring's width on screen under the strip's zoom:
+        /// drawn at rest at its width, and through a zoom out at every frame its width divided by
+        /// the zoom, ending at that under the zoom held.
+        #[test]
+        fn an_empty_workspace_s_outline_keeps_its_width_on_screen_through_the_zoom() {
+            use crate::animation::domain::choreography::overview::Outline;
+            let _core_animation = hold_core_animation();
+            let key = GroupKey::Rigid(5);
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            let rest = Value::Zoom(Zoom::REST);
+            tree.play(
+                &[
+                    Edit::Place(Node::Strip, rest),
+                    Edit::Place(Node::Container(key), Value::Point(OverlayPoint::new(0.0, 0.0))),
+                ],
+                &[],
+            );
+            let frame: GroupRect = typed(16.0, 48.0, 1696.0, 1053.0);
+            let outline = Outline { key, frame, selected: true };
+            let ring = ringed(1.0).ring;
+            let containers = tree.containers.clone();
+            tree.outlines.draw(&[outline], ring, &containers, 2.0);
+            tree.dress_outlines();
+            let band = |tree: &Tree| tree.outlines.drawn()[0].1.clone().expect("ringed");
+            assert_eq!(band(&tree).borderWidth(), 1.0, "its width at rest");
+            let deep = Zoom {
+                scale: 0.3,
+                shift: OverlayVector::zero(),
+            };
+            let zoom = Track::between(
+                Node::Strip,
+                Channel::Base,
+                rest,
+                Value::Zoom(deep),
+                100.0,
+                0.35,
+                Curve::Bezier(crate::animation::domain::motion::easing::MOTION_CURVE),
+            );
+            tree.play(
+                &[
+                    Edit::Place(Node::Strip, Value::Zoom(deep)),
+                    Edit::Add(zoom.clone()),
+                ],
+                &[],
+            );
+            let ring = band(&tree);
+            assert!(
+                (ring.borderWidth() * 0.3 - 1.0).abs() < 1e-9,
+                "held at its width on screen"
+            );
+            let widths = installed(&ring, "rini.tile.band.width", number_in);
+            assert_eq!(widths.begin, zoom.begin());
+            for (unit, width) in &widths.keys {
+                let Some(Value::Zoom(drawn)) =
+                    tree.replica.sample(Node::Strip, 100.0 + 0.35 * unit)
+                else {
+                    panic!("zoomed")
+                };
+                assert!((width * drawn.scale - 1.0).abs() < 1e-9, "{unit}: {width}");
+            }
+        }
+
         /// The overview's session on the tree: frame zero, the zoom out, a press bending it, a
         /// step that sends a column into an edge stack and brings one out, a push against the
         /// strip's end, a window moving to the row below and the zoom back in. The tree plays
@@ -4374,7 +4523,18 @@ mod tests {
                 for (window, _, frame) in &places.tiles {
                     if !tiles.iter().any(|tile| tile.window == *window) {
                         let rect = on_overlay(*frame);
-                        tiles.push(overlay_tile(*window, rect, rect, false));
+                        let mut tile = overlay_tile(*window, rect, rect, false);
+                        tile.radius = Some(10.0);
+                        tile.worn = Worn {
+                            decoration: ringed(1.0),
+                            wears_ring: if *window == w(3) {
+                                crate::decorations::domain::style::Ring::Active
+                            } else {
+                                crate::decorations::domain::style::Ring::None
+                            },
+                            holds_focus: *window == w(3),
+                        };
+                        tiles.push(tile);
                     }
                 }
                 tiles.clone()
@@ -4385,6 +4545,8 @@ mod tests {
             let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
             tree.pose(&score, &wear(&rest));
             assert_eq!(tree.replica, score);
+            plays_exactly(&tree);
+            tree.hold(opened.scale);
             plays_exactly(&tree);
 
             let mut play = |score: &mut Score, edits: Vec<Edit>, tiles: Vec<OverlayTile>| {
@@ -4472,6 +4634,175 @@ mod tests {
             assert_eq!(layer.opacity(), 0.0, "a lift takes it away");
         }
 
+        /// The overview's thumbs, read back off the tree: frame zero is the screen, every thumb at
+        /// its window's corner and ring and no wash; the zoom out eases each, on screen, into the
+        /// card's 11pt corner, the selected one's ring into the card's at its selection and its
+        /// wash in, with the zoom's own begin and length, from the window's at its first frame;
+        /// held, each is the card; and the zoom back in eases them out again onto the window's at
+        /// its last frame, so neither hand-over to the real windows jumps. A thumb's ring keeps its
+        /// width on screen through the zoom rather than thinning with it.
+        #[test]
+        fn the_overview_s_thumbs_ease_into_the_card_with_the_zoom_and_out_of_it() {
+            use crate::animation::domain::choreography::overview::{
+                Motion, at_rest, held, pose, toward,
+            };
+            use crate::animation::domain::motion::plan::on_overlay;
+            use crate::chrome::domain::card::{CORNER, RING, SELECTION_CORNER, SELECTION_OUTSET};
+            use crate::decorations::domain::style::Ring;
+            use crate::overview::domain::fixture::{Col, overview, row, strip, w};
+            use crate::overview::domain::scene::lay_out;
+
+            let _core_animation = hold_core_animation();
+            let columns = [
+                Col { width: 800.0, windows: &[1] },
+                Col { width: 800.0, windows: &[2] },
+                Col { width: 800.0, windows: &[3] },
+            ];
+            let input = overview(vec![row(strip(&columns, 0.0), Some(2))], 0);
+            let scene = lay_out(&input);
+            let depth = scene.scale;
+            let shown: Vec<(WindowId, OverlayRect)> = input.rows[0]
+                .columns
+                .iter()
+                .flat_map(|column| &column.windows)
+                .map(|laid| (laid.window, to_overlay_space(laid.frame, DISPLAY)))
+                .collect();
+            let rest = at_rest(&scene, &shown);
+            let tiles: Vec<OverlayTile> = rest
+                .tiles
+                .iter()
+                .map(|(window, _, frame)| {
+                    let rect = on_overlay(*frame);
+                    let mut tile = overlay_tile(*window, rect, rect, false);
+                    tile.radius = Some(10.0);
+                    let selected = *window == w(2);
+                    tile.worn = Worn {
+                        decoration: ringed(1.0),
+                        wears_ring: if selected { Ring::Active } else { Ring::None },
+                        holds_focus: selected,
+                    };
+                    tile
+                })
+                .collect();
+            let mut score = pose(&rest);
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+            tree.pose(&score, &tiles);
+            tree.hold(depth);
+            plays_exactly(&tree);
+            let entry = |tree: &Tree,
+                         window: WindowId|
+             -> (Retained<CALayer>, Retained<CALayer>, Retained<CALayer>) {
+                let entry = &tree.tile_layers[&window];
+                let ring = entry.decorations.bands.ring.as_ref().expect("ringed");
+                let card = entry.card.as_ref().expect("a card");
+                (
+                    entry.picture.clone(),
+                    Retained::into_super(ring.layer.clone()),
+                    objc2::Message::retain(card.wash()),
+                )
+            };
+            let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+            for window in [w(1), w(2), w(3)] {
+                let (picture, ring, wash) = entry(&tree, window);
+                assert!(picture.masksToBounds(), "{window:?} clipped");
+                assert_eq!(
+                    picture.cornerRadius(),
+                    10.0,
+                    "{window:?} the window's own at rest"
+                );
+                assert_eq!(ring.borderWidth(), 1.0);
+                assert_eq!(wash.opacity(), 0.0, "{window:?} no wash at rest");
+            }
+
+            let slide = Motion::Slide { seconds: 0.35 };
+            let play = |tree: &mut Tree, score: &mut Score, edits: Vec<Edit>| {
+                for edit in &edits {
+                    score.apply(edit);
+                }
+                tree.play(&edits, &tiles);
+                plays_exactly(tree);
+            };
+            let eased = |tree: &Tree, score: &Score, (from, to): (f64, f64)| {
+                let zoom = score.track(Node::Strip, Channel::Base).expect("a zoom").clone();
+                let scale = |unit: f64| match score
+                    .sample(Node::Strip, zoom.begin() + zoom.seconds() * unit)
+                {
+                    Some(Value::Zoom(zoom)) => zoom.scale,
+                    other => panic!("{other:?}"),
+                };
+                let rising = to > from;
+                let monotone = |values: &[f64]| {
+                    values.windows(2).all(|pair| {
+                        if rising {
+                            pair[1] >= pair[0] - 1e-9
+                        } else {
+                            pair[1] <= pair[0] + 1e-9
+                        }
+                    })
+                };
+                let ease = |own: f64, card: f64, share: f64| own + (card - own) * share;
+                let (picture, ring, wash) = entry(tree, w(2));
+                let corner = installed(&picture, PICTURE_CORNER_KEY, number_in);
+                assert!(corner.begin == zoom.begin() && close(corner.seconds, zoom.seconds()));
+                let on_screen: Vec<f64> =
+                    corner.keys.iter().map(|(unit, corner)| corner * scale(*unit)).collect();
+                assert!(close(on_screen[0], ease(10.0, CORNER, from)), "{on_screen:?}");
+                assert!(close(on_screen[on_screen.len() - 1], ease(10.0, CORNER, to)));
+                assert!(monotone(&on_screen), "{on_screen:?}");
+                let washed = installed(&wash, "rini.card.wash.opacity", number_in);
+                let shares: Vec<f64> = washed.keys.iter().map(|(_, share)| *share).collect();
+                assert!(close(shares[0], from) && close(shares[shares.len() - 1], to));
+                assert!(monotone(&shares), "{shares:?}");
+                let widths = installed(&ring, "rini.tile.band.width", number_in);
+                let widths: Vec<f64> =
+                    widths.keys.iter().map(|(unit, width)| width * scale(*unit)).collect();
+                assert!(close(widths[0], ease(1.0, RING, from)), "{widths:?}");
+                assert!(close(widths[widths.len() - 1], ease(1.0, RING, to)));
+                assert!(monotone(&widths), "{widths:?}");
+                let (_, beside, _) = entry(tree, w(1));
+                let beside = installed(&beside, "rini.tile.band.width", number_in);
+                assert!(
+                    beside.keys.iter().all(|(unit, width)| close(width * scale(*unit), 1.0)),
+                    "a ring as wide on screen through the zoom: {:?}",
+                    beside.keys
+                );
+            };
+
+            let edits = toward(&score, &held(&scene), 100.0, slide);
+            play(&mut tree, &mut score, edits);
+            eased(&tree, &score, (0.0, 1.0));
+            for window in [w(1), w(2), w(3)] {
+                let (picture, ..) = entry(&tree, window);
+                assert!(
+                    close(picture.cornerRadius() * depth, CORNER),
+                    "{window:?} the card's"
+                );
+            }
+            let (_, ring, wash) = entry(&tree, w(2));
+            assert!(close(ring.borderWidth() * depth, RING));
+            let outer = ring.frame().origin.x * depth;
+            assert!(
+                close(-outer, SELECTION_OUTSET),
+                "at the card's selection: {outer}"
+            );
+            assert!(close(ring.cornerRadius() * depth, SELECTION_CORNER));
+            assert_eq!(wash.opacity(), 1.0, "the selected one washed");
+            assert!(close(-wash.frame().origin.x * depth, SELECTION_OUTSET));
+            assert!(close(wash.cornerRadius() * depth, SELECTION_CORNER));
+            let (_, _, beside) = entry(&tree, w(1));
+            assert_eq!(beside.opacity(), 0.0, "only the selected one");
+
+            let edits = toward(&score, &at_rest(&scene, &shown), 101.0, slide);
+            play(&mut tree, &mut score, edits);
+            eased(&tree, &score, (1.0, 0.0));
+            for window in [w(1), w(2), w(3)] {
+                let (picture, ring, wash) = entry(&tree, window);
+                assert_eq!(picture.cornerRadius(), 10.0, "{window:?} landed on its window's");
+                assert_eq!(ring.borderWidth(), 1.0);
+                assert_eq!(wash.opacity(), 0.0);
+            }
+        }
+
         /// Held, every thumb of the overview casts the lift's shadow, the selected one's at its
         /// full opacity and every other's fainter, each as wide and falling as far on screen under
         /// the zoom as a flight's lift at rest, whether cast before its thumb was lifted or after;
@@ -4511,7 +4842,7 @@ mod tests {
             let drawn = |places: &crate::animation::domain::choreography::overview::Places| {
                 let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
                 tree.pose(&pose(places), &tiles(places));
-                tree.cast_lifts(scene.scale);
+                tree.hold(scene.scale);
                 plays_exactly(&tree);
                 tree
             };
@@ -4528,7 +4859,7 @@ mod tests {
             let tree = drawn(&held(&scene));
             on_screen(&tree);
             let mut cast_first = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
-            cast_first.cast_lifts(scene.scale);
+            cast_first.hold(scene.scale);
             cast_first.pose(&pose(&held(&scene)), &tiles(&held(&scene)));
             plays_exactly(&cast_first);
             on_screen(&cast_first);

@@ -60,10 +60,32 @@ flight casts (`LIFT_SHADOW`, `Node::Lift`), the selected one all of it and the r
 (`SELECTED_LIFT`, `THUMB_LIFT` in `src/animation/domain/choreography/overview.rs`), so the shadow
 rises and falls with the zoom on the score rather than being a layer of its own. The casters sit
 under the zoom, so the engine has the overlay cast every lift under the held scene's zoom
-(`Render::CastLifts`, `ShadowStyle::under`) from the open, while nothing is lifted yet, to the
+(`Render::Hold`, `ShadowStyle::under`) from the open, while nothing is lifted yet, to the
 lift: the shadow is a flight's on screen, where at the zoom's scale it was a fifth of it. The
 switcher's cards cast none: its panel's window casts the shadow there, so there is no card shadow
 to share.
+
+**Thumbs are the switcher's cards.** Held, every thumb rounds to the card's 11pt `CORNER` on
+screen, its ring and border round that corner, and the selected one wears the card's selection: the
+`WASH` under it, `SELECTION_OUTSET` out at `SELECTION_CORNER`, and its ring, at least the card's
+`RING`, laid with its outer edge on the wash's, as the switcher draws its selected card
+(`src/chrome/domain/card.rs`). Each value is eased on screen from the window's own to the card's by
+the share the overview is held (`Node::Held`) and divided by the zoom
+(`src/animation/domain/choreography/overview/card.rs`, `dress`), so frame zero and the landing
+draw the window's own corner and ring and no wash, and neither hand-over to the real windows jumps.
+While the overview holds the overlay (`Render::Hold`) the overlay lays every piece of a thumb as
+that dress has it (`DecorationLayers::lay`) and clips every picture to it, since a picture not
+clipped carries its window's own corner and the ring would round past it; along the zoom it plays
+the dress sampled `DRESS_STEP` apart (`dressing`, `dressed_over`,
+`src/animation/platform/overlay/card.rs`). Rings and borders keep their width on screen through the
+zoom so, and an empty workspace's outline its ring's (`outlined`); the engine sends every thumb in
+its window's own decoration, again only when that changes.
+
+Measured 2026-10-19 in a script over the zoom's curve, not on screen: sampled 1/60s apart, Core
+Animation's straight line between two samples lies within 0.084pt on screen of the corner it eases,
+0.017pt of a ring's width and 0.008 of the wash's opacity, at depth 0.22 over the 0.35s zoom; 1/120s
+apart, within 0.023pt. In a release test build the zoom out's play for 32 thumbs took 3.8 to 4.5ms
+dressed, against 0.8 to 1.3ms undressed.
 
 **The desktop darkens on the score too.** Held, the desktop behind the thumbs is darkened by the
 card's backdrop, `--n0` at 0.40, the switcher's own darkening (`BACKDROP`, `BACKDROP_ALPHA` in
@@ -81,19 +103,14 @@ the moved window on the axis, so it pans nothing; the columns it passes change p
 
 ## Known debt
 
-**The ring thins as the overview zooms.** A thumb's ring and border are drawn at their width in the
-strip's points, so the zoom out draws them thinner as it goes, down to the depth's share of their
-width: a 1pt ring is 0.22pt on screen at depth 0.22. While held they are dressed again as wide on
-screen as at rest (`Command::Widen`), the selected thumb's ring as wide as the card's (`accented`), and narrowed again as the zoom in begins: at rest and while
-held they read at their width, but they thicken at once as the zoom out lands and thin at once as
-the zoom in begins. Keeping them at their width through the zoom needs each band's width to follow
-the zoom's track.
+**A lift is cut to the corner its dress ends on.** A thumb's lift is shaped at its models and not
+along the zoom, so through the zoom back in its shadow is cut to the window's corner while the
+picture still rounds nearer the card's. Not checked on screen; under the lift's blur it is not
+expected to show.
 
-**Its thumbs keep their windows' corners, and no wash.** The switcher's card has an 11pt `CORNER`
-and an `--ember-soft` wash under the selected one; the overview draws neither yet. A thumb's
-corner is its window's at the zoom's scale, 3pt on screen for a 10pt corner at depth 0.3. Rounding
-it to the card's means clipping every picture to it, since a picture not clipped carries its
-window's own corner, and the ring would then round past it.
+**Frame zero clips every picture.** A thumb's picture is clipped to its window's corner from frame
+zero, where a window's own picture was drawn whole. Not checked on screen; the clip follows the
+corner the window server reports, on the curve macOS draws.
 
 **A scroll reaches the window under the overview.** Every mouse button's press inside it is
 swallowed (`KeyRouter::on_click`), but the tap asks for no scroll event, so a scroll scrolls the

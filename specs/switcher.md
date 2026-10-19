@@ -262,8 +262,8 @@ switcher answers "every window I have, wherever it is".
 - The cards MUST be the overview's, from one record both draw from: the stack's step, inset and three
   cards, the gap between cards, the selected card's ring width, and the darkening of what is behind
   (`specs/overview.md`, "What it shows"). A value changed for one changes for both. The card's
-  corner and the selection's wash are the switcher's alone until the overview draws them, which it
-  marks not yet met.
+  corner and its selection, the wash and the ring at the wash's outer edge, are the overview's too:
+  its thumbs round to that corner on screen and its selected thumb wears that selection.
 - Colours MUST come from the Okibi design system's resolved tokens rather than being chosen here.
   Specifically: the panel is a floating surface, so it takes the content plane `--n2` with a 1px
   `--line` hairline and a shadow; a card with no picture takes the raised plane `--n3`; captions take

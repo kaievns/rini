@@ -329,6 +329,18 @@ pub enum Edit {
     Bank(Banding),
 }
 
+impl Edit {
+    /// The node it changes: a ride's tile, and none for a bank, which changes every depth.
+    pub fn node(&self) -> Option<Node> {
+        match self {
+            Edit::Place(node, _) | Edit::Cut(node, _) | Edit::Drop(node) => Some(*node),
+            Edit::Add(track) => Some(track.node()),
+            Edit::Ride(window, _) => Some(Node::Tile(*window)),
+            Edit::Bank(_) => None,
+        }
+    }
+}
+
 /// Where every node ends, as a layer's model value, the tracks that carry them there, which container
 /// each tile rides, and how deep each is drawn.
 #[derive(Clone, Debug, Default, PartialEq)]
