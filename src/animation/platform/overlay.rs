@@ -4339,6 +4339,69 @@ mod tests {
             play(&mut score, edits, wear(&places));
         }
 
+        /// Held, every thumb of the overview casts the lift's shadow, the selected one's at its
+        /// full opacity and every other's fainter; posed at rest, none casts any.
+        #[test]
+        fn the_overview_s_thumbs_float_the_selected_one_highest() {
+            use crate::animation::domain::choreography::overview::{
+                SELECTED_LIFT, THUMB_LIFT, at_rest, held, pose,
+            };
+            use crate::animation::domain::motion::plan::on_overlay;
+            use crate::decorations::domain::style::LIFT_SHADOW;
+            use crate::overview::domain::fixture::{Col, overview, row, strip, w};
+            use crate::overview::domain::scene::lay_out;
+
+            let _core_animation = hold_core_animation();
+            let columns = [
+                Col { width: 800.0, windows: &[1] },
+                Col { width: 800.0, windows: &[2] },
+                Col { width: 800.0, windows: &[3] },
+            ];
+            let input = overview(vec![row(strip(&columns, 0.0), Some(2))], 0);
+            let scene = lay_out(&input);
+            let opacity = |tree: &Tree, window: WindowId| {
+                let lift = tree.tile_layers[&window].lift.as_ref().expect("a caster");
+                f64::from(lift.layer().shadowOpacity())
+            };
+            let drawn = |places: &crate::animation::domain::choreography::overview::Places| {
+                let mut tree = Tree::new(CALayer::layer(), DISPLAY.size.to_cg(), 2.0);
+                let tiles: Vec<OverlayTile> = places
+                    .tiles
+                    .iter()
+                    .map(|(window, _, frame)| {
+                        let rect = on_overlay(*frame);
+                        overlay_tile(*window, rect, rect, false)
+                    })
+                    .collect();
+                tree.pose(&pose(places), &tiles);
+                plays_exactly(&tree);
+                tree
+            };
+            let tree = drawn(&held(&scene));
+            let full = f64::from(LIFT_SHADOW.opacity);
+            assert!((opacity(&tree, w(2)) - full * SELECTED_LIFT).abs() < 1e-6);
+            for window in [w(1), w(3)] {
+                assert!(
+                    (opacity(&tree, window) - full * THUMB_LIFT).abs() < 1e-6,
+                    "{window:?}"
+                );
+                assert!(
+                    opacity(&tree, window) < opacity(&tree, w(2)),
+                    "the selected one highest"
+                );
+            }
+            let shown: Vec<(WindowId, OverlayRect)> = input.rows[0]
+                .columns
+                .iter()
+                .flat_map(|column| &column.windows)
+                .map(|laid| (laid.window, to_overlay_space(laid.frame, DISPLAY)))
+                .collect();
+            let tree = drawn(&at_rest(&scene, &shown));
+            for window in [w(1), w(2), w(3)] {
+                assert_eq!(opacity(&tree, window), 0.0, "{window:?} flat at rest");
+            }
+        }
+
         /// A zoom look's flight on its own arc, two columns swapped and a push waiting, then a pan
         /// folded into the arc: the strip layer's zoom and every container's movement begin on one
         /// clock, and the tree plays exactly its replica, which is the score, after each.

@@ -89,6 +89,16 @@ Every workspace of one display at once, zoomed out, while its key is held.
 > luped together and hard to see which one which, for example the rainbow terminals on ws3 is a
 > mess". Kai's 3pt gap is 0.9pt on screen at depth 0.3.
 
+- Every thumb MUST cast a shadow while the overview is held, so it floats over what is behind it,
+  and the selected one a stronger one to accent it: the lift a carried window takes in a flight,
+  all of it for the selected thumb and 0.4 of it for every other. Frame zero and the landing MUST
+  cast none, since the screen at rest has none: the shadows rise with the zoom out, fall with the
+  zoom in, and move with the selection.
+
+> **Reported 2026-10-19.** "add a bit of depth to the thumbs, like shadows or something so they'd
+> appear a bit floating, more so for the currently selected window to accent it". Under the zoom a
+> window's own shadow is a fifth of its size and reads as none.
+
 - Its look MUST be the switcher's, from one record both draw from: the stacks' step, inset and
   three cards drawn, and the gap between cards. Kai asked for one visual style across the two, reusing components where they
   apply; two copies of a value drift.

@@ -52,6 +52,12 @@ wide as that column between the row and the stack (reported 2026-10-19). A top c
 always reaches under the thumb beside it unless the gap between the two is wider than the inset;
 then it moves in to reach `TUCK` under it.
 
+**Thumbs float on a flight's lift.** Held, every thumb casts the shadow a window carried in a
+flight casts (`LIFT_SHADOW`, `Node::Lift`), the selected one all of it and the rest 0.4 of it
+(`SELECTED_LIFT`, `THUMB_LIFT` in `src/animation/domain/choreography/overview.rs`), so the shadow
+rises and falls with the zoom on the score rather than being a layer of its own. The switcher's cards
+cast none: its panel's window casts the shadow there, so there is no card shadow to share.
+
 **A pan is read off one window on the strip in both scenes.** The window the row is aligned on
 after, else the one it was aligned on before, else any window in both. A move along the strip keeps
 the moved window on the axis, so it pans nothing; the columns it passes change places beneath it.

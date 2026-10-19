@@ -1,8 +1,9 @@
 //! How the overview moves on the overlay: every row of its scene one strip container, its edge
 //! stacks and its floating windows a container each, all under the strip's zoom; the zoom out from
 //! the screen as it is and back in onto the real layout, and every press inside it, played Slide's
-//! way at a press's pace, each node from where it is drawn to where the new scene has it; and the
-//! push at an end bounced on screen as far as a flight's.
+//! way at a press's pace, each node from where it is drawn to where the new scene has it; every
+//! thumb lifted off the overlay while it is held, the selected one furthest; and the push at an end
+//! bounced on screen as far as a flight's.
 //!
 //! Not a `Look`, nor in `Look::ALL`: the overview is a view the presses inside it change, and its
 //! moves are the same under every look (`specs/overview.md`, "How it moves").
@@ -39,6 +40,13 @@ pub enum Press {
     },
 }
 
+/// How far every thumb but the selected one is lifted while the overview is held, of the lift a
+/// flight's carried window takes (`LIFT_SHADOW`): enough of a shadow to float it, under the
+/// selected one's, which is lifted all the way.
+pub const THUMB_LIFT: f64 = 0.4;
+/// How far the selected thumb is lifted while the overview is held.
+pub const SELECTED_LIFT: f64 = 1.0;
+
 /// How long a spring a press bends a node on runs, as a share of `1 / omega`: within 0.01% of its
 /// destination by then, so its last sample lands on it.
 const SPRING_RUNS: f64 = 12.0;
@@ -65,12 +73,15 @@ fn key(row: usize, part: Part) -> GroupKey {
 pub fn strip_of(row: usize) -> GroupKey { key(row, Part::Strip) }
 
 /// Where every node of the overview is drawn once its tracks end: the strip's zoom, each
-/// container's place, each thumb's container and frame in it, and each empty workspace's outline.
+/// container's place, each thumb's container and frame in it and how far it is lifted, and each
+/// empty workspace's outline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Places {
     pub zoom: Zoom,
     pub containers: Vec<(GroupKey, OverlayPoint)>,
     pub tiles: Vec<(WindowId, GroupKey, GroupRect)>,
+    /// Each thumb's lift, from 0 to 1, in `tiles`' order.
+    pub lifts: Vec<(WindowId, f64)>,
     pub banding: Banding,
     pub outlines: Vec<Outline>,
 }
@@ -153,7 +164,8 @@ fn held_containers(scene: &Scene) -> Vec<(GroupKey, OverlayPoint)> {
 }
 
 /// The scene as it is held: every row at its depth, each drawn thumb in its holder's container at
-/// where the scene draws it, the selected window and its row in front.
+/// where the scene draws it and lifted, the selected window furthest, the selected window and its
+/// row in front.
 pub fn held(scene: &Scene) -> Places {
     let s = scene.scale;
     let containers = held_containers(scene);
@@ -184,6 +196,17 @@ pub fn held(scene: &Scene) -> Places {
             });
         }
     }
+    let lifts = tiles
+        .iter()
+        .map(|(window, ..)| {
+            let lift = if scene.selected.window == Some(*window) {
+                SELECTED_LIFT
+            } else {
+                THUMB_LIFT
+            };
+            (*window, lift)
+        })
+        .collect();
     Places {
         zoom: Zoom {
             scale: s,
@@ -191,17 +214,21 @@ pub fn held(scene: &Scene) -> Places {
         },
         containers,
         tiles,
+        lifts,
         banding: banding(scene),
         outlines,
     }
 }
 
 /// The scene as the display shows it at rest: the zoom at 1, its active row's windows each at its
-/// frame in `shown`, its strip about where its thumbs' centres put it, and every other row where the
-/// stack has it, off the display above and below.
+/// frame in `shown`, its strip about where its thumbs' centres put it, every other row where the
+/// stack has it, off the display above and below, and no thumb lifted.
 /// What the overview zooms out from as it opens, and back into as it closes.
 pub fn at_rest(scene: &Scene, shown: &[(WindowId, OverlayRect)]) -> Places {
     let mut places = held(scene);
+    for (_, lift) in &mut places.lifts {
+        *lift = 0.0;
+    }
     let s = scene.scale;
     let active = scene.selected.row;
     let Some(row) = scene.rows.get(active) else {
@@ -306,6 +333,9 @@ fn placed(places: &Places) -> Vec<Edit> {
         edits.push(Edit::Ride(*window, *key));
         edits.push(Edit::Place(Node::Tile(*window), Value::Rect(*frame)));
     }
+    for (window, lift) in &places.lifts {
+        edits.push(Edit::Place(Node::Lift(*window), Value::Number(*lift)));
+    }
     edits.push(Edit::Bank(places.banding.clone()));
     edits
 }
@@ -376,6 +406,10 @@ pub fn toward(playing: &Score, places: &Places, at: f64, motion: Motion) -> Vec<
                 edits.extend(leg(playing, node, carried, Value::Rect(*frame), at, shape));
             }
         }
+    }
+    for (window, lift) in &places.lifts {
+        let to = Value::Number(*lift);
+        edits.extend(leg(playing, Node::Lift(*window), None, to, at, shape));
     }
     let stale: Vec<GroupKey> =
         playing.containers().filter(|key| places.container(*key).is_none()).collect();
@@ -703,6 +737,36 @@ mod tests {
                 assert!(at.is_within(1e-6, tile.frame), "{tile:?}: {at:?}");
             }
         }
+    }
+
+    /// Held, every drawn thumb is lifted, the selected one all the way; at rest none is, so frame
+    /// zero is the screen without a shadow, and the zoom out lifts them as it goes.
+    #[test]
+    fn held_thumbs_are_lifted_the_selected_one_highest_and_none_at_rest() {
+        let scene = scene(&STRIP, 3);
+        let places = held(&scene);
+        assert_eq!(places.lifts.len(), places.tiles.len());
+        for (window, lift) in &places.lifts {
+            let expected = if *window == w(3) {
+                SELECTED_LIFT
+            } else {
+                THUMB_LIFT
+            };
+            assert_eq!(*lift, expected, "{window:?}");
+        }
+        const { assert!(SELECTED_LIFT > THUMB_LIFT && THUMB_LIFT > 0.0) };
+        let rest = at_rest(&scene, &shown(&STRIP, 3));
+        assert!(rest.lifts.iter().all(|(_, lift)| *lift == 0.0));
+        let start = pose(&rest);
+        let edits = toward(&start, &places, 0.0, Motion::Slide { seconds: PRESS });
+        let score = played(&start, &edits);
+        let lift = |t: f64| match score.sample(Node::Lift(w(3)), t) {
+            Some(Value::Number(lift)) => lift,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(lift(0.0), 0.0, "frame zero casts no lift");
+        assert!(lift(PRESS / 4.0) > 0.0 && lift(PRESS / 4.0) < SELECTED_LIFT);
+        assert!((lift(PRESS + 0.01) - SELECTED_LIFT).abs() < 1e-9);
     }
 
     /// A step right pans the row on Slide's curve over the plain length, as one piece: its strip's
