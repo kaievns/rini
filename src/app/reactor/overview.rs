@@ -234,7 +234,9 @@ impl Reactor {
 
     /// With the overview open and focus on a floating window, focus taken to the strip's window its
     /// scene selects, as a focus press off a floating window returns there, so the press about to
-    /// run acts on the strip it shows. Ahead of every layout command.
+    /// run acts on the strip it shows. Ahead of every layout command but the one that turns focus
+    /// between the floating windows and the strip, which from a floating window lands there itself,
+    /// and of a move to another display that names no window.
     pub(super) fn resume_overview_on_strip(&mut self) {
         let Some(live) = &self.overview.live else { return };
         let (space, Some(window)) = (live.space, live.view.scene.selected.window) else {
@@ -252,6 +254,14 @@ impl Reactor {
             },
             None,
         );
+    }
+
+    /// The window a press inside the open overview that names none acts on: the layout's focus,
+    /// taken off a floating window to the strip first. Not the key window macOS reports, which
+    /// follows the raise only once the application answers it.
+    pub(super) fn overview_press_window(&mut self) -> Option<WindowId> {
+        self.resume_overview_on_strip();
+        self.layout_engine.focused_window()
     }
 
     /// Whether the layout's focus is on a floating window.

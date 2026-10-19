@@ -220,21 +220,25 @@ Every workspace of one display at once, zoomed out, while its key is held.
 
 - Opened with a floating window focused, it MUST move no focus: the selection starts on the shown
   row's current window, the strip's, and nothing changes until a press. A press of a layout action
-  inside, every focus, move, fold, resize and workspace action among them, MUST act on the strip
-  from the selection: while a floating window holds focus, focus MUST go to the selected window
-  first, raised as a focus press off a floating window raises it, and the press then runs from
-  there. Run from the hidden floating window, a focus press would land on the selection the ring is
-  already on, a press seen to do nothing, and a move press would move that window unseen. A press
-  MUST NOT select a floating window: the selection is always the row's current window, so a press
-  that focuses one leaves the selection on the strip. A row with nothing on its strip selects no
-  window, so there a press runs from the floating window as it does outside. Not yet met:
-  `close-window` closes the window macOS reports focused, so it closes the floating window, unseen.
+  inside, every focus, move, fold, resize and workspace action among them, and a move to another
+  display that names no window, MUST act on the strip from the selection: while a floating window
+  holds focus, focus MUST go to the selected window first, raised as a focus press off a floating
+  window raises it, and the press then runs from there. Run from the hidden floating window, a focus
+  press would land on the selection the ring is already on, a press seen to do nothing, and a move
+  press would move that window unseen. `switch-focus-between-floating-and-tiling` MUST NOT be
+  handed off first: from a floating window it lands on the selection itself, and handed off it
+  would turn focus back to the floating window, a press seen to do nothing. A press MUST NOT select
+  a floating window: the selection is always the row's current window, so a press that focuses one
+  leaves the selection on the strip. A row with nothing on its strip selects no window, so there a
+  press runs from the floating window as it does outside. Not yet met: `close-window` closes the
+  window macOS reports focused, so it closes the floating window, unseen.
 
 > **Found 2026-10-19, not reported.** Taking floating windows out of the overview for Kai's report
 > above showed it opened on a floating window's focus: by the layout's own rules, a focus press from
 > that window lands on the strip's selection, which the ring was already on, and Kai's
 > `Mod+Shift+K` moves that window to the workspace below. Read off the layout's rules and its tests,
-> not tried live.
+> not tried live. Review of that change found Kai's `Mod+Ctrl+A` handed off first turned focus back
+> to the floating window, and `Mod+M` sent the floating window to the other display, unseen.
 - A key with no bind, looked up as above, MUST be swallowed, its key-up passed as a bound key's is.
   Passed, it reaches the hidden application with the hold still down: Cmd+Q would quit it and Cmd+W
   close its window, unseen. This cannot leave a dead keyboard, since a key whose flags show the hold

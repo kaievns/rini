@@ -1397,3 +1397,64 @@ fn closed_with_no_press_the_floating_window_is_focused_and_shows_as_it_was() {
     });
     assert!(!written, "nothing moves the floating window");
 }
+
+/// Turning focus to the strip as the first press from a floating window's focus lands on the
+/// selection the ring is on: no hand-off runs ahead of it, which would take focus there and turn it
+/// back to the floating window.
+#[test]
+fn turning_focus_to_the_strip_first_from_a_floating_window_lands_on_the_selection() {
+    let (mut apps, mut reactor) = floating_desk();
+    open(&mut apps, &mut reactor);
+    assert_eq!(reactor.layout().focused_window(), Some(w(7)));
+    assert_eq!(selected(&reactor), (1, Some(w(5))));
+
+    press(&mut apps, &mut reactor, LayoutCommand::ToggleFocusFloating);
+    assert_eq!(reactor.layout().focused_window(), Some(w(5)));
+    assert_eq!(selected(&reactor), (1, Some(w(5))));
+}
+
+/// Two displays side by side: w1 and w3 on the left one's strip with w2 floating over it, focused
+/// and the key window, and w4 on the right one's.
+fn floating_beside_another_display() -> (Apps, Reactor, SpaceId) {
+    let mut reactor = test_reactor();
+    let mut apps = Apps::new();
+    let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let right = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let other = SpaceId::new(2);
+    reactor.handle_event(space_state_event(vec![left, right], vec![
+        Some(space()),
+        Some(other),
+    ]));
+    let mut windows = make_windows(4);
+    windows[3].frame.origin.x += 1440.;
+    apps.make_app_and_settle(&mut reactor, 1, windows);
+    focus(&mut apps, &mut reactor, w(2));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    apps.simulate_until_quiet(&mut reactor);
+    assert!(reactor.layout().is_window_floating(w(2)));
+    assert_eq!(reactor.layout().focused_window(), Some(w(2)));
+    (apps, reactor, other)
+}
+
+/// A move to another display that names no window, pressed inside the overview from a floating
+/// window's focus, moves the strip's selected window, not the hidden floating one.
+#[test]
+fn a_move_to_another_display_from_a_floating_window_s_focus_moves_the_selection() {
+    let (mut apps, mut reactor, other) = floating_beside_another_display();
+    open(&mut apps, &mut reactor);
+    let (_, Some(selection)) = selected(&reactor) else {
+        panic!("the strip selects a window");
+    };
+    assert_ne!(selection, w(2));
+
+    let to_the_right = ReactorCommand::MoveWindowToDisplay {
+        selector: rini_ipc::protocol::DisplaySelector::Index(1),
+        window_id: None,
+    };
+    batch(&mut apps, &mut reactor, vec![Event::Command(Command::Reactor(
+        to_the_right,
+    ))]);
+    let on = |window| reactor.affinity().assigned_space_for_window_id(window);
+    assert_eq!(on(selection), Some(other), "the selection moves");
+    assert_eq!(on(w(2)), Some(space()), "the floating window stays");
+}

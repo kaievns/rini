@@ -102,7 +102,9 @@ impl Reactor {
         &mut self,
         command: LayoutCommand,
     ) -> anyhow::Result<EventOutcome> {
-        self.resume_overview_on_strip();
+        if !matches!(command, LayoutCommand::ToggleFocusFloating) {
+            self.resume_overview_on_strip();
+        }
         let command_space = self.command_context_space();
         self.on_layout_command_in(command, command_space)
     }
@@ -182,7 +184,11 @@ impl Reactor {
             warn!("Ignoring move-window-to-display while a drag is active");
             return Ok(EventOutcome::no_change());
         }
-        let Some(window) = self.window_for_move_command(window_id) else {
+        let window = match window_id {
+            None if self.overview_covers_the_pointer() => self.overview_press_window(),
+            _ => self.window_for_move_command(window_id),
+        };
+        let Some(window) = window else {
             warn!("Move window to display ignored because no target window was resolved");
             return Ok(EventOutcome::no_change());
         };
