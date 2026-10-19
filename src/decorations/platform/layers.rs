@@ -20,7 +20,7 @@ use objc2_quartz_core::{
 use rini_geometry::space::{FromCg, TileRect, TileSize, ToCg, Vector};
 
 use crate::decorations::domain::paint::{Colour, Gradient, Paint};
-use crate::decorations::domain::shape::{self, SHADOW_REACH, Segment};
+use crate::decorations::domain::shape::{self, Fit, Lay, Laying, SHADOW_REACH, Segment, Widths};
 use crate::decorations::domain::stack::{HAIRLINE_Z, SHADOW_Z};
 use crate::decorations::domain::style::{Decoration, LIGHT_PT, OUTLINE_ALPHA, OUTLINE_PT, Style};
 
@@ -35,6 +35,8 @@ const BAND_SIZE_KEY: &str = "rini.tile.band.size";
 const BAND_CORNER_KEY: &str = "rini.tile.band.corner";
 const BAND_START_KEY: &str = "rini.tile.band.start";
 const BAND_END_KEY: &str = "rini.tile.band.end";
+const BAND_WIDTH_KEY: &str = "rini.tile.band.width";
+const BAND_MOVE_KEY: &str = "rini.tile.band.move";
 
 pub fn add_under(layer: &CALayer, animation: &CAAnimation, key: &str) {
     layer.addAnimation_forKey(animation, Some(&NSString::from_str(key)));
@@ -47,31 +49,24 @@ pub fn remove_under(layer: &CALayer, keys: &[&str]) {
 }
 
 /// A tile's resize as Core Animation plays it: an animation of `key_path` through each value
-/// `value` maps from the sizes the tile passes through, on the tile's own timing. The overlay fills
-/// it from the tile's track.
+/// `value` maps from the fits the tile passes through, on the tile's own timing. The overlay fills
+/// it from the tile's track, each size laid as its decorations are (`DecorationLayers::fit_at`).
 pub trait Resize {
     fn point(
         &self,
         key_path: &str,
-        value: impl Fn(TileSize) -> CGPoint,
+        value: impl Fn(&Fit) -> CGPoint,
     ) -> Retained<CAPropertyAnimation>;
-    fn rect(
-        &self,
-        key_path: &str,
-        value: impl Fn(TileSize) -> CGRect,
-    ) -> Retained<CAPropertyAnimation>;
-    fn number(
-        &self,
-        key_path: &str,
-        value: impl Fn(TileSize) -> f64,
-    ) -> Retained<CAPropertyAnimation>;
+    fn rect(&self, key_path: &str, value: impl Fn(&Fit) -> CGRect)
+    -> Retained<CAPropertyAnimation>;
+    fn number(&self, key_path: &str, value: impl Fn(&Fit) -> f64) -> Retained<CAPropertyAnimation>;
     fn path(
         &self,
         key_path: &str,
-        value: impl Fn(TileSize) -> CFRetained<CGPath>,
+        value: impl Fn(&Fit) -> CFRetained<CGPath>,
     ) -> Retained<CAPropertyAnimation>;
-    /// Whether `f` of the sizes the resize passes through differs between any two of them.
-    fn changes(&self, f: impl Fn(TileSize) -> f64) -> bool;
+    /// Whether `f` of the fits the resize passes through differs between any two of them.
+    fn changes(&self, f: impl Fn(&Fit) -> f64) -> bool;
 }
 
 /// What one tile wears. See "A layer shadow covers the whole layer" in
@@ -94,6 +89,10 @@ pub struct DecorationLayers {
     pub radius: Option<f64>,
     /// What the bands were last worn for, whose rule's corner they round to ahead of `radius`.
     worn: Decoration,
+    /// How wide the bands were last worn, in the display's device pixels.
+    widths: Widths,
+    /// How every piece is laid in place of the window's own (`own`), while one is given.
+    laying: Option<Laying>,
     /// The size and corner the caster's silhouette and its mask were last shaped for.
     built: Cell<Option<(TileSize, f64)>>,
 }
@@ -136,6 +135,8 @@ impl DecorationLayers {
             bands,
             radius: None,
             worn: Decoration::default(),
+            widths: Widths { border: 0.0, ring: 0.0 },
+            laying: None,
             built: Cell::new(None),
         }
     }
@@ -163,12 +164,13 @@ impl DecorationLayers {
         self.hairline.setZPosition(z + HAIRLINE_Z);
     }
 
-    /// Shapes the decorations for a tile of `size`, laid at its frame, all at one corner: the
+    /// Shapes the decorations for a tile of `size`, laid at its frame as `fit_at` lays it: the
     /// shadow and its mask only when the size or the corner differs from the ones they were shaped
     /// for, since a tile can be dressed again at the same size for a radius that changed; the
     /// hairline every time.
     pub fn place(&self, size: TileSize) {
-        let corner = self.corner_at(size);
+        let fit = self.fit_at(size);
+        let corner = fit.corner;
         if self.built.get() != Some((size, corner)) {
             self.shadow.setShadowPath(Some(&silhouette_path(size, corner)));
             self.shadow_mask.setFrame(shape::shadow_mask_frame(size).to_cg());
@@ -178,17 +180,28 @@ impl DecorationLayers {
         self.hairline.setCornerRadius(corner);
         self.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()));
         self.outline.setPath(Some(&outline_path(size, corner)));
-        self.bands.place(size, self.band_corner_at(size));
+        self.bands.place(&fit);
     }
 
-    /// The corner a tile of `size` rounds to, every piece of it but the bands: its window's radius,
-    /// clamped to the tile.
-    pub fn corner_at(&self, size: TileSize) -> f64 { shape::radius(self.radius, size) }
-
-    /// The corner the bands round to on a tile of `size`: a window rule's, else its window's.
-    fn band_corner_at(&self, size: TileSize) -> f64 {
-        shape::radius(self.worn.corner(|| self.radius), size)
+    /// How its window lays it: every piece but the bands at the window's radius, the bands at a
+    /// window rule's, else the window's, each on the window's edge at the width it was worn at.
+    pub fn own(&self) -> Laying {
+        let corner = self.radius.unwrap_or(shape::FALLBACK_RADIUS);
+        let band_corner = self.worn.corner(|| self.radius).unwrap_or(shape::FALLBACK_RADIUS);
+        Laying::on_edge(corner, band_corner, self.widths)
     }
+
+    /// Laid as `laying` has it from the next `place` or resize on, or as its window lays it with
+    /// none.
+    pub fn lay(&mut self, laying: Option<Laying>) { self.laying = laying; }
+
+    /// How a tile of `size` is laid: as it was given, else as its window lays it, clamped to `size`.
+    pub fn fit_at(&self, size: TileSize) -> Fit {
+        self.laying.unwrap_or_else(|| self.own()).fit(size)
+    }
+
+    /// The corner a tile of `size` rounds to, every piece of it but the bands.
+    pub fn corner_at(&self, size: TileSize) -> f64 { self.fit_at(size).corner }
 
     /// Paints the hairline's white, the shadow's depth, the ring and the border as `style` has them.
     pub fn show(&self, style: Style) {
@@ -213,38 +226,39 @@ impl DecorationLayers {
     pub fn wear(&mut self, decoration: &Decoration, scale: f64) {
         self.outline.setContentsScale(scale);
         self.worn = *decoration;
+        self.widths = shape::widths(decoration, scale);
         self.bands.wear(decoration, scale);
     }
 
-    /// Carries the decorations through `resize`, each piece at the corner of every size it passes
-    /// through: the caster's silhouette, its mask's frame and path, the hairline's corner while it
-    /// changes, and the outline's path. The frame layers' bounds ride the tile's own resize.
+    /// Carries the decorations through `resize`, each piece as every fit it passes through lays
+    /// it: the caster's silhouette, its mask's frame and path, the hairline's corner while it
+    /// changes, the outline's path, and the bands. The frame layers' bounds ride the tile's own
+    /// resize.
     pub fn install_resize(&self, resize: &impl Resize) {
         let origin = CGPoint::new(0.0, 0.0);
-        let corner = |size: TileSize| self.corner_at(size);
-        let silhouette = resize.path("shadowPath", |size| silhouette_path(size, corner(size)));
+        let silhouette = resize.path("shadowPath", |fit| silhouette_path(fit.size, fit.corner));
         add_under(&self.shadow, &silhouette, SILHOUETTE_KEY);
-        let mask = |size: TileSize| shape::shadow_mask_frame(size).to_cg();
-        let mask_position = resize.point("position", |size| mask(size).origin);
+        let mask = |fit: &Fit| shape::shadow_mask_frame(fit.size).to_cg();
+        let mask_position = resize.point("position", |fit| mask(fit).origin);
         add_under(&self.shadow_mask, &mask_position, MASK_MOVE_KEY);
-        let mask_bounds = resize.rect("bounds", |size| CGRect::new(origin, mask(size).size));
+        let mask_bounds = resize.rect("bounds", |fit| CGRect::new(origin, mask(fit).size));
         add_under(&self.shadow_mask, &mask_bounds, MASK_SIZE_KEY);
-        let mask_path = resize.path("path", |size| {
-            CFRetained::from(&*shadow_mask_path(size, corner(size)))
+        let mask_path = resize.path("path", |fit| {
+            CFRetained::from(&*shadow_mask_path(fit.size, fit.corner))
         });
         add_under(&self.shadow_mask, &mask_path, MASK_PATH_KEY);
-        if resize.changes(corner) {
+        if resize.changes(|fit| fit.corner) {
             add_under(
                 &self.hairline,
-                &resize.number("cornerRadius", corner),
+                &resize.number("cornerRadius", |fit| fit.corner),
                 CORNER_KEY,
             );
         } else {
             remove_under(&self.hairline, &[CORNER_KEY]);
         }
-        let outline = resize.path("path", |size| outline_path(size, corner(size)));
+        let outline = resize.path("path", |fit| outline_path(fit.size, fit.corner));
         add_under(&self.outline, &outline, OUTLINE_KEY);
-        self.bands.install_resize(resize, |size: TileSize| self.band_corner_at(size));
+        self.bands.install_resize(resize);
     }
 
     /// Takes away every animation `install_resize` put on the decorations.
@@ -301,9 +315,13 @@ impl Bands {
 
     fn each(&self) -> impl Iterator<Item = &Band> { self.ring.iter().chain(&self.border) }
 
-    pub fn place(&self, size: TileSize, corner: f64) {
-        for band in self.each() {
-            band.place(size, corner);
+    /// Each band laid around a window as `fit` lays it.
+    pub fn place(&self, fit: &Fit) {
+        if let Some(ring) = &self.ring {
+            ring.place(fit.size, fit.ring);
+        }
+        if let Some(border) = &self.border {
+            border.place(fit.size, fit.border);
         }
     }
 
@@ -317,9 +335,12 @@ impl Bands {
         }
     }
 
-    fn install_resize(&self, resize: &impl Resize, corner: impl Fn(TileSize) -> f64 + Copy) {
-        for band in self.each() {
-            band.install_resize(resize, corner);
+    fn install_resize(&self, resize: &impl Resize) {
+        if let Some(ring) = &self.ring {
+            ring.install_resize(resize, |fit| fit.ring);
+        }
+        if let Some(border) = &self.border {
+            border.install_resize(resize, |fit| fit.border);
         }
     }
 
@@ -388,9 +409,12 @@ impl Band {
         self.mask.setBorderWidth(width);
     }
 
-    /// Lays the band around a window of `size` at `corner`, the window at its parent's origin.
-    pub fn place(&self, size: TileSize, corner: f64) {
-        let (rect, outer) = shape::band(size, corner, self.width.get());
+    /// Lays the band around a window of `size` as `lay` has it, the window at its parent's origin.
+    pub fn place(&self, size: TileSize, lay: Lay) {
+        if self.width.get() != lay.width {
+            self.set_width(lay.width);
+        }
+        let (rect, outer) = shape::band_at(size, lay);
         self.layer.setFrame(rect.to_cg());
         self.layer.setCornerRadius(outer);
         self.mask.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), rect.size.to_cg()));
@@ -410,7 +434,7 @@ impl Band {
                     self.layer.setMask(None);
                 }
                 if self.gradient.take().is_some() {
-                    remove_under(&self.mask, &[BAND_SIZE_KEY, BAND_CORNER_KEY]);
+                    remove_under(&self.mask, &[BAND_SIZE_KEY, BAND_CORNER_KEY, BAND_WIDTH_KEY]);
                 }
             }
             Some(Paint::Gradient(gradient)) => {
@@ -440,7 +464,7 @@ impl Band {
 
     /// The resize the band's layer plays, put on the mask just attached to it.
     fn mask_rides_resize(&self) {
-        for key in [BAND_SIZE_KEY, BAND_CORNER_KEY] {
+        for key in [BAND_SIZE_KEY, BAND_CORNER_KEY, BAND_WIDTH_KEY] {
             let key = NSString::from_str(key);
             // SAFETY: a read of the band's own animation.
             if let Some(animation) = unsafe { self.layer.animationForKey(&key) } {
@@ -458,38 +482,52 @@ impl Band {
         }
     }
 
-    /// Carries the band through `resize`: its bounds at every size, its corner while it changes, the
-    /// mask's with them while a gradient has it attached, and a gradient's axis while it moves with
-    /// the size. Its position, the window's corner less its width, holds. A gradient painted
-    /// mid-resize at another angle keeps the axis of the size the band is laid at until the next.
-    fn install_resize(&self, resize: &impl Resize, corner: impl Fn(TileSize) -> f64) {
-        let width = self.width.get();
-        let band = |size: TileSize| shape::band(size, corner(size), width);
-        let bounds = resize.rect("bounds", |size| {
-            CGRect::new(CGPoint::new(0.0, 0.0), band(size).0.size.to_cg())
+    /// Carries the band through `resize`, laid as `lay` takes it from each fit: its bounds at
+    /// every fit, its corner, its width and its position while each changes, the mask's bounds,
+    /// corner and width with them while a gradient has it attached, and a gradient's axis while it
+    /// moves with the size. A gradient painted mid-resize at another angle keeps the axis of the size
+    /// the band is laid at until the next.
+    fn install_resize(&self, resize: &impl Resize, lay: impl Fn(&Fit) -> Lay) {
+        let band = |fit: &Fit| shape::band_at(fit.size, lay(fit));
+        let bounds = resize.rect("bounds", |fit| {
+            CGRect::new(CGPoint::new(0.0, 0.0), band(fit).0.size.to_cg())
         });
-        let outer = |size: TileSize| band(size).1;
+        let outer = |fit: &Fit| band(fit).1;
         let rounds = resize.changes(outer).then(|| resize.number("cornerRadius", outer));
+        let width = |fit: &Fit| lay(fit).width;
+        let widens = resize.changes(width).then(|| resize.number("borderWidth", width));
         let masked = self.gradient.get().is_some().then_some(&*self.mask);
         let layers: [Option<&CALayer>; 2] = [Some(&self.layer), masked];
         for layer in layers.into_iter().flatten() {
             add_under(layer, &bounds, BAND_SIZE_KEY);
-            match &rounds {
-                Some(rounding) => add_under(layer, rounding, BAND_CORNER_KEY),
-                None => remove_under(layer, &[BAND_CORNER_KEY]),
+            for (animation, key) in [(&rounds, BAND_CORNER_KEY), (&widens, BAND_WIDTH_KEY)] {
+                match animation {
+                    Some(animation) => add_under(layer, animation, key),
+                    None => remove_under(layer, &[key]),
+                }
             }
+        }
+        let (x, y) = (
+            |fit: &Fit| band(fit).0.origin.x,
+            |fit: &Fit| band(fit).0.origin.y,
+        );
+        if resize.changes(x) || resize.changes(y) {
+            let position = resize.point("position", |fit| band(fit).0.origin.to_cg());
+            add_under(&self.layer, &position, BAND_MOVE_KEY);
+        } else {
+            remove_under(&self.layer, &[BAND_MOVE_KEY]);
         }
         match self.gradient.get().filter(Gradient::follows_size) {
             Some(gradient) => {
-                let axis = |size: TileSize| gradient.axis(band(size).0.size);
+                let axis = |fit: &Fit| gradient.axis(band(fit).0.size);
                 add_under(
                     &self.layer,
-                    &resize.point("startPoint", |size| axis(size).start.to_cg()),
+                    &resize.point("startPoint", |fit| axis(fit).start.to_cg()),
                     BAND_START_KEY,
                 );
                 add_under(
                     &self.layer,
-                    &resize.point("endPoint", |size| axis(size).end.to_cg()),
+                    &resize.point("endPoint", |fit| axis(fit).end.to_cg()),
                     BAND_END_KEY,
                 );
             }
@@ -501,10 +539,12 @@ impl Band {
         remove_under(&self.layer, &[
             BAND_SIZE_KEY,
             BAND_CORNER_KEY,
+            BAND_WIDTH_KEY,
+            BAND_MOVE_KEY,
             BAND_START_KEY,
             BAND_END_KEY,
         ]);
-        remove_under(&self.mask, &[BAND_SIZE_KEY, BAND_CORNER_KEY]);
+        remove_under(&self.mask, &[BAND_SIZE_KEY, BAND_CORNER_KEY, BAND_WIDTH_KEY]);
     }
 
     /// Takes every animation off the band and its mask.
@@ -690,9 +730,14 @@ mod tests {
         layer.superlayer().map(|parent| Retained::as_ptr(&parent))
     }
 
-    /// A resize from one size to another: every animation is handed over bare, under its key path,
-    /// and a value changes when it differs at the two sizes.
-    struct Between(TileSize, TileSize);
+    /// A resize from one fit to another: every animation is handed over bare, under its key path,
+    /// and a value changes when it differs at the two fits.
+    struct Between(Fit, Fit);
+
+    /// A resize between two sizes, each laid as `layers` lays it.
+    fn between(layers: &DecorationLayers, from: TileSize, to: TileSize) -> Between {
+        Between(layers.fit_at(from), layers.fit_at(to))
+    }
 
     fn bare(key_path: &str) -> Retained<CAPropertyAnimation> {
         Retained::into_super(CABasicAnimation::animationWithKeyPath(Some(
@@ -704,7 +749,7 @@ mod tests {
         fn point(
             &self,
             key_path: &str,
-            _: impl Fn(TileSize) -> CGPoint,
+            _: impl Fn(&Fit) -> CGPoint,
         ) -> Retained<CAPropertyAnimation> {
             bare(key_path)
         }
@@ -712,28 +757,24 @@ mod tests {
         fn rect(
             &self,
             key_path: &str,
-            _: impl Fn(TileSize) -> CGRect,
+            _: impl Fn(&Fit) -> CGRect,
         ) -> Retained<CAPropertyAnimation> {
             bare(key_path)
         }
 
-        fn number(
-            &self,
-            key_path: &str,
-            _: impl Fn(TileSize) -> f64,
-        ) -> Retained<CAPropertyAnimation> {
+        fn number(&self, key_path: &str, _: impl Fn(&Fit) -> f64) -> Retained<CAPropertyAnimation> {
             bare(key_path)
         }
 
         fn path(
             &self,
             key_path: &str,
-            _: impl Fn(TileSize) -> CFRetained<CGPath>,
+            _: impl Fn(&Fit) -> CFRetained<CGPath>,
         ) -> Retained<CAPropertyAnimation> {
             bare(key_path)
         }
 
-        fn changes(&self, f: impl Fn(TileSize) -> f64) -> bool { f(self.0) != f(self.1) }
+        fn changes(&self, f: impl Fn(&Fit) -> f64) -> bool { f(&self.0) != f(&self.1) }
     }
 
     /// Each animation on `layer` as its key and the key path it animates, sorted by key.
@@ -1029,7 +1070,8 @@ mod tests {
         layers.wear(&Decoration::default(), 2.0);
         layers.place(TileSize::new(859.0, 1081.0));
         layers.show(Style::of(true, Ring::Active, &Decoration::default()));
-        layers.install_resize(&Between(
+        layers.install_resize(&between(
+            &layers,
             TileSize::new(0.0, 1081.0),
             TileSize::new(859.0, 1081.0),
         ));
@@ -1282,7 +1324,8 @@ mod tests {
     fn taking_every_animation_away_clears_every_decoration_layer() {
         let _core_animation = hold_core_animation();
         let layers = graded();
-        layers.install_resize(&Between(
+        layers.install_resize(&between(
+            &layers,
             TileSize::new(0.0, 1081.0),
             TileSize::new(859.0, 1081.0),
         ));
@@ -1315,7 +1358,8 @@ mod tests {
     fn a_resize_installs_each_decoration_under_its_own_key() {
         let _core_animation = hold_core_animation();
         let layers = banded();
-        layers.install_resize(&Between(
+        layers.install_resize(&between(
+            &layers,
             TileSize::new(0.0, 1081.0),
             TileSize::new(859.0, 1081.0),
         ));
@@ -1353,7 +1397,8 @@ mod tests {
             );
         }
 
-        layers.install_resize(&Between(
+        layers.install_resize(&between(
+            &layers,
             TileSize::new(1200.0, 1081.0),
             TileSize::new(859.0, 1081.0),
         ));
@@ -1371,12 +1416,94 @@ mod tests {
         }
     }
 
+    /// A ring that widens and moves out of its window through a resize rides its width and its
+    /// place with it, the mask a gradient draws it through its width too; a border that keeps both
+    /// rides neither, and taking the resize away takes them.
+    #[test]
+    fn a_band_widening_or_moving_out_through_a_resize_rides_its_width_and_place() {
+        let _core_animation = hold_core_animation();
+        let mut layers = banded();
+        let graded = Decoration {
+            ring: Some(crate::decorations::domain::style::Band { active: sunset(45.0), ..RING }),
+            border: Some(BORDER),
+            ..Decoration::default()
+        };
+        layers.wear(&graded, 2.0);
+        layers.show(Style::of(true, Ring::Active, &graded));
+        let size = TileSize::new(859.0, 1081.0);
+        let from = layers.fit_at(size);
+        let to = Fit {
+            ring: Lay {
+                width: from.ring.width + 2.0,
+                out: 2.0,
+                ..from.ring
+            },
+            ..from
+        };
+        layers.install_resize(&Between(from, to));
+        assert_eq!(
+            installed(&ring(&layers).layer),
+            pairs([
+                ("rini.tile.band.corner", "cornerRadius"),
+                ("rini.tile.band.end", "endPoint"),
+                ("rini.tile.band.move", "position"),
+                ("rini.tile.band.size", "bounds"),
+                ("rini.tile.band.start", "startPoint"),
+                ("rini.tile.band.width", "borderWidth"),
+            ])
+        );
+        assert_eq!(
+            installed(&ring(&layers).mask),
+            pairs([
+                ("rini.tile.band.corner", "cornerRadius"),
+                ("rini.tile.band.size", "bounds"),
+                ("rini.tile.band.width", "borderWidth"),
+            ])
+        );
+        assert_eq!(
+            installed(&border(&layers).layer),
+            pairs([("rini.tile.band.size", "bounds")])
+        );
+        layers.remove_resize();
+        assert!(installed(&ring(&layers).layer).is_empty());
+        assert!(installed(&ring(&layers).mask).is_empty());
+    }
+
+    /// Laid in place of its window's own, every piece rounds to the laying's corner and each band
+    /// is laid as it says; given none again, the window's own.
+    #[test]
+    fn a_tile_laid_in_place_of_its_window_rounds_and_rings_as_the_laying_has_it() {
+        let mut layers = banded();
+        let size = TileSize::new(859.0, 1081.0);
+        let own = layers.own();
+        layers.lay(Some(Laying {
+            corner: 36.0,
+            ring: Lay {
+                width: 6.0,
+                corner: 39.0,
+                out: 6.0,
+            },
+            ..own
+        }));
+        layers.place(size);
+        assert_eq!(layers.hairline.cornerRadius(), 36.0);
+        let band = ring(&layers).layer.clone();
+        assert_eq!(band.frame(), rect(-12.0, -12.0, 883.0, 1105.0));
+        assert_eq!(band.cornerRadius(), 45.0);
+        assert_eq!(band.borderWidth(), 6.0);
+        layers.lay(None);
+        layers.place(size);
+        assert_eq!(layers.hairline.cornerRadius(), shape::FALLBACK_RADIUS);
+        assert_eq!(band.borderWidth(), own.ring.width);
+    }
+
     /// Only the resize's own keys go: what the overlay installs on the frame layers stays.
     #[test]
     fn taking_a_resize_away_leaves_no_decoration_animation() {
         let _core_animation = hold_core_animation();
         let layers = graded();
-        layers.install_resize(&Between(
+        layers.install_resize(&between(
+            &layers,
             TileSize::new(0.0, 1081.0),
             TileSize::new(859.0, 1081.0),
         ));
@@ -1502,7 +1629,11 @@ mod tests {
         root.addSublayer(&holder);
         let band = Band::new(&holder, None);
         band.set_width(10.0);
-        band.place(TileSize::new(200.0, 100.0), 0.0);
+        band.place(TileSize::new(200.0, 100.0), Lay {
+            width: 10.0,
+            corner: 0.0,
+            out: 0.0,
+        });
         let Paint::Gradient(grey) = sunset(45.0) else {
             unreachable!()
         };
@@ -1532,8 +1663,12 @@ mod tests {
             border: Some(crate::decorations::domain::style::Band { active: sunset(angle), ..RING }),
             ..Decoration::default()
         };
-        let resize = Between(TileSize::new(1200.0, 1081.0), TileSize::new(859.0, 1081.0));
         layers.wear(&graded(45.0), 2.0);
+        let resize = between(
+            &layers,
+            TileSize::new(1200.0, 1081.0),
+            TileSize::new(859.0, 1081.0),
+        );
         layers.show(Style::of(true, Ring::None, &graded(45.0)));
         layers.install_resize(&resize);
         let (border, mask) = (&border(&layers).layer, &border(&layers).mask);
@@ -1577,7 +1712,8 @@ mod tests {
         };
         layers.wear(&graded, 2.0);
         layers.show(Style::of(false, Ring::Inactive, &graded));
-        layers.install_resize(&Between(
+        layers.install_resize(&between(
+            &layers,
             TileSize::new(0.0, 1081.0),
             TileSize::new(859.0, 1081.0),
         ));

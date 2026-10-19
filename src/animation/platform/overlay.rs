@@ -40,6 +40,7 @@ use crate::animation::domain::motion::score::{
 use crate::animation::domain::motion::tile::{self, Anchors, ContentMode, content_mode, crop};
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::animation::event::Crops;
+use crate::decorations::domain::shape::Fit;
 use crate::decorations::domain::style::{Band as DecorationBand, Worn};
 use crate::decorations::platform::layers::{
     DecorationLayers, Resize, add_under, remove_under, round_continuous,
@@ -400,45 +401,46 @@ const PIECE_CONTENTS_KEY: &str = "rini.piece.contents";
 const PIECE_PICTURE_KEY: &str = "rini.piece.picture";
 const GROUND_COLOUR_KEY: &str = "rini.piece.ground";
 
-/// A tile's track as the resize its decorations play: each value mapped from the size its key holds.
-struct TileResize<'a>(&'a Track);
+/// A tile's track as the resize its decorations play: each value mapped from the fit `fit` lays
+/// the size its key holds at.
+struct TileResize<'a, F>(&'a Track, F);
 
 fn size_of(value: Value) -> TileSize { as_frame(value).size.respace() }
 
-impl Resize for TileResize<'_> {
+impl<F: Fn(TileSize) -> Fit> TileResize<'_, F> {
+    fn fit(&self, value: Value) -> Fit { (self.1)(size_of(value)) }
+}
+
+impl<F: Fn(TileSize) -> Fit> Resize for TileResize<'_, F> {
     fn point(
         &self,
         key_path: &str,
-        value: impl Fn(TileSize) -> CGPoint,
+        value: impl Fn(&Fit) -> CGPoint,
     ) -> Retained<CAPropertyAnimation> {
-        animation(self.0, key_path, |v| point_object(value(size_of(v))))
+        animation(self.0, key_path, |v| point_object(value(&self.fit(v))))
     }
 
     fn rect(
         &self,
         key_path: &str,
-        value: impl Fn(TileSize) -> CGRect,
+        value: impl Fn(&Fit) -> CGRect,
     ) -> Retained<CAPropertyAnimation> {
-        animation(self.0, key_path, |v| rect_object(value(size_of(v))))
+        animation(self.0, key_path, |v| rect_object(value(&self.fit(v))))
     }
 
-    fn number(
-        &self,
-        key_path: &str,
-        value: impl Fn(TileSize) -> f64,
-    ) -> Retained<CAPropertyAnimation> {
-        animation(self.0, key_path, |v| number_object(value(size_of(v))))
+    fn number(&self, key_path: &str, value: impl Fn(&Fit) -> f64) -> Retained<CAPropertyAnimation> {
+        animation(self.0, key_path, |v| number_object(value(&self.fit(v))))
     }
 
     fn path(
         &self,
         key_path: &str,
-        value: impl Fn(TileSize) -> CFRetained<objc2_core_graphics::CGPath>,
+        value: impl Fn(&Fit) -> CFRetained<objc2_core_graphics::CGPath>,
     ) -> Retained<CAPropertyAnimation> {
-        animation(self.0, key_path, |v| cf_object(&value(size_of(v))))
+        animation(self.0, key_path, |v| cf_object(&value(&self.fit(v))))
     }
 
-    fn changes(&self, f: impl Fn(TileSize) -> f64) -> bool { changes(self.0, |v| f(size_of(v))) }
+    fn changes(&self, f: impl Fn(&Fit) -> f64) -> bool { changes(self.0, |v| f(&self.fit(v))) }
 }
 
 /// Installs a tile's track on every layer that draws the tile, each value mapped from the frame
@@ -480,9 +482,10 @@ fn install_tile_track(tile: &mut Tile, track: &Track, corner: Option<Corner>) ->
     for layer in tile.layers() {
         add_under(layer, &bounds, TILE_SIZE_KEY);
     }
-    let resize = TileResize(track);
-    tile.decorations.install_resize(&resize);
-    let radius = |size: TileSize| tile.decorations.corner_at(size);
+    let decorations = &tile.decorations;
+    let resize = TileResize(track, |size| decorations.fit_at(size));
+    decorations.install_resize(&resize);
+    let radius = |fit: &Fit| fit.corner;
     if resize.changes(radius) {
         add_under(
             &tile.picture,
@@ -3570,12 +3573,13 @@ mod tests {
             100.0,
             0.35,
         );
-        let animation = TileResize(&track)
-            .path("shadowPath", |size| {
+        let decorations = DecorationLayers::new(&CALayer::layer());
+        let animation = TileResize(&track, |size| decorations.fit_at(size))
+            .path("shadowPath", |fit| {
                 // SAFETY: a null transform means the path is taken as given.
                 unsafe {
                     objc2_core_graphics::CGPath::with_rect(
-                        CGRect::new(CGPoint::new(0.0, 0.0), size.to_cg()),
+                        CGRect::new(CGPoint::new(0.0, 0.0), fit.size.to_cg()),
                         std::ptr::null(),
                     )
                 }

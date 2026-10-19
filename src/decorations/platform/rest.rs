@@ -32,6 +32,7 @@ use crate::decorations::domain::rest::{
     self, Batch, Draw, Heard, Introduction, Layers, Look, PanelOp, PanelState, Placed, Rest,
     RestModel, Taken, Word, delta, stack_change,
 };
+use crate::decorations::domain::shape::{self, Laying};
 use crate::decorations::platform::layers::Bands;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::event::{Following, ServerRead, StackLevel, ToRead};
@@ -205,7 +206,8 @@ impl Panel {
             .setFrame(CGRect::new(CGPoint::new(inside.x, inside.y), size.to_cg()));
         self.root.setContentsScale(scale);
         self.bands.wear(&decoration, scale);
-        self.bands.place(size, corner);
+        let laying = Laying::on_edge(corner, corner, shape::widths(&decoration, scale));
+        self.bands.place(&laying.fit(size));
         self.bands.paint(&style);
     }
 

@@ -118,6 +118,78 @@ pub fn band(size: TileSize, corner: f64, width: f64) -> (TileRect, f64) {
     (rect, outer.min(size.width.min(size.height) / 2.0))
 }
 
+/// Where a band is laid around a window: how wide it is, the corner of the contour it rings, and
+/// how far outside the window that contour lies, none for a band on the window's own edge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lay {
+    pub width: f64,
+    pub corner: f64,
+    pub out: f64,
+}
+
+/// `band` laid as `lay` has it around a window of `size`: around the window grown by `lay.out` on
+/// every side, its corner `lay.corner`.
+pub fn band_at(size: TileSize, lay: Lay) -> (TileRect, f64) {
+    let out = lay.out.max(0.0);
+    let contour = TileSize::new(size.width.max(0.0) + 2.0 * out, size.height.max(0.0) + 2.0 * out);
+    let (rect, outer) = band(contour, lay.corner, lay.width);
+    let origin = Point::new(rect.origin.x - out, rect.origin.y - out);
+    (TileRect::new(origin, rect.size), outer)
+}
+
+/// How a window's decorations are laid at any size: the corner its picture and every piece but the
+/// bands round to, and where its ring and its border are laid, each corner as given.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Laying {
+    pub corner: f64,
+    pub ring: Lay,
+    pub border: Lay,
+}
+
+/// A `Laying` at one size, each corner clamped to it as `radius` clamps one: what every piece of a
+/// window's decorations is shaped for at one moment of a resize.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fit {
+    pub size: TileSize,
+    pub corner: f64,
+    pub ring: Lay,
+    pub border: Lay,
+}
+
+impl Laying {
+    /// Every piece but the bands at `corner`, and each band on the window's edge at `band_corner`,
+    /// as wide as `widths` has it.
+    pub fn on_edge(corner: f64, band_corner: f64, widths: Widths) -> Laying {
+        let on_edge = |width: f64| Lay {
+            width,
+            corner: band_corner,
+            out: 0.0,
+        };
+        Laying {
+            corner,
+            ring: on_edge(widths.ring),
+            border: on_edge(widths.border),
+        }
+    }
+
+    pub fn fit(self, size: TileSize) -> Fit {
+        let clamp = |corner: f64, out: f64| {
+            let shorter = (size.width.min(size.height) + 2.0 * out.max(0.0)) / 2.0;
+            corner.min(shorter).max(0.0)
+        };
+        let lay = |lay: Lay| Lay {
+            corner: clamp(lay.corner, lay.out),
+            ..lay
+        };
+        Fit {
+            size,
+            corner: clamp(self.corner, 0.0),
+            ring: lay(self.ring),
+            border: lay(self.border),
+        }
+    }
+}
+
 /// The window a band at rest is drawn in around a window at `frame` on `display`: the band's outer
 /// rect cut to the display, so a window at the display's edge draws nothing onto the next one.
 /// `None` when nothing of it is on the display.
@@ -289,6 +361,40 @@ mod tests {
             1.5,
             "whole device pixels"
         );
+    }
+
+    /// A band laid out of its window rings the window grown by that much, at the corner given; laid
+    /// on its edge it is the band.
+    #[test]
+    fn a_band_laid_out_of_its_window_rings_the_window_grown_by_that_much() {
+        let size = TileSize::new(859.0, 1081.0);
+        let on_edge = Lay {
+            width: 2.0,
+            corner: 16.0,
+            out: 0.0,
+        };
+        assert_eq!(band_at(size, on_edge), band(size, 16.0, 2.0));
+        let (rect, outer) = band_at(size, Lay { out: 3.0, ..on_edge });
+        assert_eq!(rect, self::rect(-5.0, -5.0, 869.0, 1091.0));
+        assert_eq!(outer, 18.0);
+    }
+
+    /// A laying fits a size as `radius` clamps a corner: each corner at most half the shorter side
+    /// of what it rounds, a band's contour out of the window counted, and never below none.
+    #[test]
+    fn a_laying_clamps_each_corner_to_the_size_it_fits() {
+        let lay = |corner: f64, out: f64| Lay { width: 1.0, corner, out };
+        let laying = Laying {
+            corner: 40.0,
+            ring: lay(40.0, 4.0),
+            border: lay(-1.0, 0.0),
+        };
+        let fit = laying.fit(TileSize::new(30.0, 400.0));
+        assert_eq!(fit.corner, 15.0);
+        assert_eq!(fit.ring, lay(19.0, 4.0));
+        assert_eq!(fit.border, lay(0.0, 0.0));
+        let wide = laying.fit(TileSize::new(859.0, 1081.0));
+        assert_eq!((wide.corner, wide.ring.corner), (40.0, 40.0));
     }
 
     fn band_of(width: f64) -> (TileRect, f64) { band(TileSize::new(859.0, 1081.0), 16.0, width) }

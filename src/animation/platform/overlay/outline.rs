@@ -11,6 +11,7 @@ use rini_geometry::space::{Respace, ToCg};
 
 use crate::animation::domain::choreography::overview::Outline;
 use crate::animation::domain::motion::plan::GroupKey;
+use crate::decorations::domain::shape::{self, Laying};
 use crate::decorations::domain::style::{Band, Decoration, Ring, Worn};
 use crate::decorations::platform::layers::Bands;
 
@@ -46,7 +47,8 @@ impl Outlines {
             container.addSublayer(&holder);
             let mut bands = Bands::new(&holder);
             bands.wear(&decoration, scale);
-            bands.place(outline.frame.size.respace(), 0.0);
+            let laying = Laying::on_edge(0.0, 0.0, shape::widths(&decoration, scale));
+            bands.place(&laying.fit(outline.frame.size.respace()));
             let worn = Worn {
                 decoration,
                 wears_ring: if outline.selected {
