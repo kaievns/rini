@@ -11,7 +11,7 @@ pub const SHALLOWEST: f64 = 0.5;
 /// On screen between the stack and the usable frame's top and bottom.
 pub const MARGIN: f64 = 24.0;
 /// On screen between one row and the next.
-pub const ROW_GAP: f64 = 24.0;
+pub const ROW_GAP: f64 = 12.0;
 
 /// The depth `rows` rows of the usable frame fit `usable_height` at, between `DEEPEST` and
 /// `SHALLOWEST`, with `MARGIN` above and below and `ROW_GAP` between.
@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn four_workspaces_fit_the_laptop_at_the_depth_their_rows_need() {
         let s = depth(4, LAPTOP);
-        assert!((s - 965.0 / 4340.0).abs() < 1e-12, "{s}");
+        assert!((s - 1001.0 / 4340.0).abs() < 1e-12, "{s}");
         let placed = row_tops(4, LAPTOP * s, SPAN, 0.0, 0);
         assert_eq!(placed.scroll, 0.0);
         assert!((placed.tops[0] - (SPAN.top + MARGIN)).abs() < 1e-9, "{placed:?}");

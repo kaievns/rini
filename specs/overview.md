@@ -81,9 +81,13 @@ Every workspace of one display at once, zoomed out, while its key is held.
   where that one floats, the strip's own selection, which a focus press off the floating window
   returns to; on the shown workspace, the focused window while it is on the strip. A row with no
   current window MUST keep its strip where it shows.
-- Every row MUST fit the area below the bar at a depth between 0.2 and 0.5, 24pt between rows and
-  at the edges; with more rows than fit at 0.2, the stack MUST scroll the least that keeps the
-  selected row in view. First values for Kai to tune.
+- Every row MUST fit the area below the bar at a depth between 0.2 and 0.5, 12pt between rows and
+  24pt at the edges; with more rows than fit at 0.2, the stack MUST scroll the least that keeps the
+  selected row in view.
+
+> **Reported 2026-10-19.** "reduce the gaps butween the workspaces a bit". The rows were 24pt apart
+> on screen, as far as the stack is from the edges; at 12pt four workspaces on the laptop draw at
+> depth 0.231 where they drew at 0.222.
 - Columns past either edge MUST collapse into a stack at that edge: the nearest one on top, its
   outer edge 16pt in, each card behind 8pt further out and 12pt shorter at top and bottom, three
   cards at most, as the switcher stacks an application's windows, on their side. The current column
