@@ -66,9 +66,9 @@ one workspace at one size. Slots are matched in order:
 A slot is claimed once, so two windows cannot both take it.
 
 A focuslab window, a Ghostty window `tools/focuslab/lab.sh` titled `lab-` and one ASCII
-letter (`is_focuslab_window`), leaves no slot and takes none, and the lookup counts it as no sibling,
-since it left no slot to claim. The slots a file already holds for one are dropped as it loads.
-On 2026-11-04 `~/.rini/layout.ron` held 18 of them among Ghostty's 47 slots, under 3 of its 5
+letter (`is_focuslab_window`), leaves no slot and takes none, and the lookup counts it as no
+sibling, since it left no slot to claim. The slots a file already holds for one are dropped as it
+loads. On 2026-11-04 `~/.rini/layout.ron` held 18 of them among Ghostty's 47 slots, under 3 of its 5
 arrangements, each after the terminals' own, so a terminal opened past its siblings' slots
 would take a lab window's by ordinal: its workspace and its width. A longer title, `lab-notes`
 or `lab-AB`, can be a terminal's own and keeps its slot. A test reads `lab.sh` for the title
@@ -90,7 +90,12 @@ Explicit configuration wins over anything learned, one property at a time:
    kept across a removal, and keeps its own width or the default it had
    (`a_window_given_back_takes_no_width_from_a_launch_slot`). Not met: it can land on that
    sibling's workspace, since a removal forgets the workspace; taking no slot at all would send
-   every window back from a wake to the active workspace instead.
+   every window back from a wake to the active workspace instead. Not met either: the windows the
+   session has seen start empty when rini restarts, so a window minimized at the default, which
+   has no width record for the startup sweep to keep, counts as a first sighting once restored and
+   takes a sibling's slot width by ordinal, or its application's where no slot matches. Not built:
+   counting as seen at startup the windows the window server still holds for their process, the
+   check `forget_windows_gone_since_the_save` already makes.
 3. For a window new to the session that took no slot and whose rules set no width, the width
    its application was last given on a display of this shape ("An application's width").
 4. Today's default: active workspace, display under the cursor, configured column width.
@@ -110,8 +115,8 @@ the slot keeps no record of the rule's value it was written under, so telling a 
 a rule's edited since is not built (`specs/workspaces.md`, "Relaunching an application"). This
 order departs on purpose from "Precedence, in KWin's words" in the window sizing research, not
 yet on `main` (branch `sizing/research`), which puts the slot above a rule's default and lets a
-rule's width win only once its value changed. That order needs the rule's value stored with the slot, a file format
-change, and this list is rewritten to it when that record lands.
+rule's width win only once its value changed. That order needs the rule's value stored with the
+slot, a file format change, and this list is rewritten to it when that record lands.
 
 ## An application's width
 
@@ -169,7 +174,8 @@ it. Kai allowed that on 2026-11-04 ("2. yes"); a window's own records still shar
   `(full:true)`, and its default `(default_column_width:Some(0.5))`. A field a later rini adds is
   skipped. A record left without a field this rini reads, as a width held only in points or one
   made under a rule rather than the default, is dropped alone, and the file loads with every
-  other record, home and slot (`a_file_from_a_later_rini_loads_every_app_width_it_can_read_and_everything_else`).
+  other record, home and slot
+  (`a_file_from_a_later_rini_loads_every_app_width_it_can_read_and_everything_else`).
   A later kind MUST leave those fields empty rather than fill them with a value this rini would
   misread. The dropped records are not written back by this rini.
 
@@ -191,7 +197,8 @@ Not met, from "Why sizes reset today, ranked" in the window sizing research (bra
   display (`take_slot_home_and_width`) and read under the display of the space the window opens
   on (`apply_remembered_column_width`), so a docked window that opens on another display than its
   slot's takes the default there. Inferred from the code: on 2026-11-04, 0 of 82 docked slots in
-  `~/.rini/layout.ron` named an external display.
+  `~/.rini/layout.ron` named an external display, as the research's `recount.txt` for that day
+  prints on branch `sizing/research`.
 - **Failure 7, an untouched width stored as none.** A window never given a width leaves a slot
   with no width, by design ("Recording"); a default per class of application, above, is what
   would fill it.

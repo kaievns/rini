@@ -92,24 +92,19 @@ context is arranged differently depending on what is plugged in, and rini rememb
   Each is a moment the width is read again, and a width read back as the default undoes the user's
   choice with nothing the user did to explain it. So only a close, the application quitting, or
   the window being gone, from the windows rini holds or, at startup, from the window server since
-  the save, MAY erase a window's widths. A minimize, a window briefly not manageable, one the window server leaves
-  out of a snapshot or moves to another space, a drag to another space and a rule that stops
-  managing it MUST each keep them, and a window that leaves native fullscreen under another id MUST
-  hand them to that id and be laid at them, though that id joins the strip before the old one leaves
-  it. A width only the layout holds, as a drag's or a rule's, MUST be recorded before such a
-  removal, and a launch slot's width MUST NOT replace one the window has of its own, nor be
-  taken by a window the session has seen, which is matched to a slot after its siblings and can
-  take one of theirs.
+  the save, MAY erase a window's widths. A minimize, a window briefly not manageable, one the
+  window server leaves out of a snapshot or moves to another space, a drag to another space and a
+  rule that stops managing it MUST each keep them, and a window that leaves native fullscreen
+  under another id MUST hand them to that id and be laid at them, though that id joins the strip
+  before the old one leaves it. A width only the layout holds, as a drag's or a rule's, MUST be
+  recorded before such a removal, and a launch slot's width MUST NOT replace one the window has of
+  its own, nor be taken by a window the session has seen, which is matched to a slot after its
+  siblings and can take one of theirs.
 - A window's records MUST NOT outlive it into a window that takes its id. An id is the process id
   and the window server id, both reused after a reboot, and a removal that keeps the widths keeps
   them with no home, so a minimized window's width left in the file would size a different window
   opened under that id. At startup a record MUST be kept only for a window the restore can still
   match or the window server still has for that process.
-
-> **Found 2026-11-05, not reported.** A review of the change that keeps widths across a removal
-> found a minimized window's width record, with no home, reached by no clean-up and saved to
-> `~/.rini/layout.ron`, and read by any window opened under its id after a reboot. Inferred from
-> the code, not seen.
 - A rule's width is a window's first. A width the window has of its own on a display MUST beat it
   when the window is laid out again, and the rule MUST NOT size the window again on its app's next
   report, unless the rule's width changed since it sized the window: an edit to a rule MUST show on
@@ -145,6 +140,11 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > **Found 2026-11-04, not reported.** A window an app rule sized went back to the rule's width on
 > every report of its app, a re-add among them: an editor widened to 474pt went back to the rule's
 > 234pt. Kai's config sets no rule width.
+
+> **Found 2026-11-05, not reported.** A review of the change that keeps widths across a removal
+> found a minimized window's width record, with no home, reached by no clean-up and saved to
+> `~/.rini/layout.ron`, and read by any window opened under its id after a reboot. Inferred from
+> the code, not seen.
 
 - A window's display MUST be written only by intent: an explicit move, a drag, a first sighting, or a
   restore. The forced reassignment that follows an unplug MUST NOT write it, because that record is the

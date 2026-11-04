@@ -148,10 +148,10 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   any was named (`Unadopted`; only a file that names arrangements and none in force gets
   there). The service's log on 2026-11-04 could not say which path erased a width lost
   across a sleep, because none of them was logged.
-- **Only a close erases a window's widths** (`Removal::widths`). `WindowRemoved`
-  carries the `Removal`, and every removal forgets the window's workspace, floating
-  state, home and place in the strip (`forget_place`). Its widths it keeps, for a
-  window that still exists and can come back: a minimize, a drag to another native
+- **Of the removals, only a close erases a window's widths** (`Removal::widths`).
+  `WindowRemoved` carries the `Removal`, and every removal forgets the window's
+  workspace, floating state, home and place in the strip (`forget_place`). Its widths it
+  keeps, for a window that still exists and can come back: a minimize, a drag to another native
   space, a window turning unmanageable on a refresh of the window server's facts or on
   its app reporting it again (one variant each), a rule that no longer manages it, a
   window left out of an authoritative snapshot, and the two removals in
