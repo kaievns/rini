@@ -10,6 +10,7 @@ use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::domain::rules::{RuleMatch, WindowRule};
 use crate::windows::domain::state::WindowState;
 use crate::workspaces::domain::display_affinity::Removal;
+use crate::workspaces::domain::display_pin::DisplayRole;
 use crate::workspaces::domain::display_setup::SetupId;
 use crate::workspaces::domain::launch_memory::Slot;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
@@ -475,7 +476,13 @@ fn a_relaunched_window_s_slot_beats_its_app_s_width() {
 
 /// Two terminals given back their app's slots, a default then a full width, matched by order.
 fn two_terminals_in_their_slots() -> (Desk, WindowId, WindowId) {
-    let mut desk = Desk::new(BUILT_IN, SIXTEEN);
+    two_terminals_in_their_slots_under(&VirtualWorkspaceSettings::default())
+}
+
+fn two_terminals_in_their_slots_under(
+    settings: &VirtualWorkspaceSettings,
+) -> (Desk, WindowId, WindowId) {
+    let mut desk = Desk::with(settings, BUILT_IN, SIXTEEN);
     let slot = |width| Slot {
         title: None,
         display_uuid: desk.display.clone(),
@@ -495,7 +502,9 @@ fn two_terminals_in_their_slots() -> (Desk, WindowId, WindowId) {
 }
 
 /// A window the session has seen takes no launch slot's width when it comes back: with no home,
-/// it is matched after its sibling, to the sibling's full-width slot, and keeps the default it had.
+/// it is matched after its sibling, to the sibling's full-width slot, and keeps the default it had,
+/// matched by no rule or by one that sets neither its workspace nor its width, as Kai's
+/// `open-on-output "internal"` for Slack, Outlook and Messages.
 #[test]
 fn a_window_given_back_takes_no_width_from_a_launch_slot() {
     let (mut desk, at_default, full) = two_terminals_in_their_slots();
@@ -520,6 +529,27 @@ fn a_window_given_back_takes_no_width_from_a_launch_slot() {
         None,
         "added back before its app reports it"
     );
+
+    let settings = VirtualWorkspaceSettings {
+        app_rules: vec![WindowRule {
+            open_on_output: Some(DisplayRole::Internal),
+            ..WindowRule::when(RuleMatch::app(GHOSTTY))
+        }],
+        ..VirtualWorkspaceSettings::default()
+    };
+    let (mut desk, at_default, full) = two_terminals_in_their_slots_under(&settings);
+    let _ = desk.engine.handle_event(
+        &mut desk.windows,
+        &mut desk.memory,
+        LayoutEvent::WindowRemoved(at_default, Removal::LeftOutOfSnapshot),
+    );
+    desk.report(400, GHOSTTY);
+    assert_eq!(
+        desk.width(at_default),
+        None,
+        "given back under a rule that sets no width"
+    );
+    assert_eq!(desk.width(full), Some(ColumnWidth::FullWidth));
 }
 
 /// A rule's width is the window's first, so the rule, not the app's width, sizes a window it
