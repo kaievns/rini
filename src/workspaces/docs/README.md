@@ -27,7 +27,7 @@ a restart. Sits above `windows`, `displays` and `layout`.
 | `domain/display_pin.rs` | `DisplayRole`: an app pinned to a display by its role, such as the built-in screen, resolved against whatever is attached (`display_for_role`), a default an explicit move beats |
 | `domain/display_setup.rs` | `Setup` per `SetupId`, the set of attached display UUIDs: each window's display, the strip order per display and the width per window and display, never shared between arrangements |
 | `domain/window_store.rs` | `WindowStore`: the window catalogue with each window's workspace assignment, the operations that touch both kept here so the two cannot disagree |
-| `domain/launch_memory.rs` | Where an application's windows belong, under a key that outlives the process |
+| `domain/launch_memory.rs` | Where an application's windows belong, under a key that outlives the process, focuslab's lab windows left out (`is_focuslab_window`) |
 | `domain/floating.rs`, `domain/floating_position_store.rs` | Which windows float and where they sit |
 | `domain/hidden_window_placement.rs` | Where off-workspace windows park |
 | `domain/workspaces.rs` | `WorkspaceLayouts`: a layout per workspace per display SIZE |

@@ -64,6 +64,13 @@ one workspace at one size. Slots are matched in order:
 
 A slot is claimed once, so two windows cannot both take it.
 
+A focuslab window, a Ghostty window `tools/focuslab/lab.sh` titled `lab-` and a letter
+(`is_focuslab_window`), leaves no slot and takes none, and the lookup counts it as no sibling,
+since it left no slot to claim. The slots a file already holds for one are dropped as it loads.
+On 2026-11-04 `~/.rini/layout.ron` held 18 of them among Ghostty's 47 slots, under 3 of its 5
+arrangements, each after the terminals' own, so a terminal opened past its siblings' slots
+would take a lab window's by ordinal: its workspace and its width.
+
 ## Precedence
 
 Explicit configuration wins over anything learned:

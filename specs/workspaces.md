@@ -93,6 +93,14 @@ moves along the strip within one workspace.
 - Where an application's windows belong MUST survive the application quitting, keyed so it does not
   depend on a process id: by bundle identifier and display topology.
 - A relaunched window MUST return to its remembered workspace AND its remembered width.
+- A window a screen test opens MUST NOT leave a remembered place or take one, and a place one left
+  in a file MUST be dropped as the file is read. A test's windows are not the user's, and matched
+  by order, the place a test window left hands its workspace and width to the user's next window
+  of that application.
+
+> **Found 2026-11-04, not reported.** Kai's `~/.rini/layout.ron` held 18 places for focuslab's
+> `lab-A` to `lab-D` among Ghostty's 47, under 3 of its 5 arrangements.
+
 - A window that takes no remembered place MUST say why in the log, at a level the running service
   keeps, because a window that comes back at the default width is otherwise not explained by
   anything the service writes.

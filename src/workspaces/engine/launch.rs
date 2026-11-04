@@ -10,7 +10,7 @@ use crate::layout::ColumnWidth;
 use crate::workspaces::WindowStore;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::display_setup::SetupId;
-use crate::workspaces::domain::launch_memory::{Slot, slot_for_window};
+use crate::workspaces::domain::launch_memory::{Slot, is_focuslab_window, slot_for_window};
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::LayoutEngine;
 
@@ -42,6 +42,8 @@ pub(super) enum NoLaunchSlot {
     RuleApplies,
     /// The slot's workspace, the `workspace_index`th, could not take the window.
     WorkspaceRefused { workspace_index: usize },
+    /// The window is one focuslab opened, which neither leaves a slot nor takes one.
+    FocuslabWindow,
 }
 
 impl LayoutEngine {
@@ -201,7 +203,8 @@ impl LayoutEngine {
             NoLaunchSlot::NothingRemembered
             | NoLaunchSlot::NoFreeSlot { .. }
             | NoLaunchSlot::RuleApplies
-            | NoLaunchSlot::WorkspaceRefused { .. } => info!(
+            | NoLaunchSlot::WorkspaceRefused { .. }
+            | NoLaunchSlot::FocuslabWindow => info!(
                 idx = window.idx.get(),
                 app_id,
                 %topology,
@@ -233,17 +236,22 @@ impl LayoutEngine {
         if topology.is_empty() {
             return Err(NoLaunchSlot::NoTopology);
         }
+        if is_focuslab_window(app_id, title) {
+            return Err(NoLaunchSlot::FocuslabWindow);
+        }
         let slots = memory.launch.slots(app_id, &topology);
         if slots.is_empty() {
             return Err(NoLaunchSlot::NothingRemembered);
         }
 
-        // Siblings already placed, in the order they were placed.
+        // Siblings already placed, in the order they were placed. A focuslab window left no slot, so
+        // it is no sibling either: counted, it would shift every ordinal after it.
         let mut siblings: Vec<(u32, WindowId)> = window_store
             .iter_windows()
             .filter(|(other, state)| {
                 *other != window
                     && state.info.bundle_id.as_deref() == Some(app_id)
+                    && !is_focuslab_window(app_id, Some(&state.info.title))
                     && memory.affinity.window_home(*other).is_some()
             })
             .map(|(other, _)| (other.idx.get(), other))

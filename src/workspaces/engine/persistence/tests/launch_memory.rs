@@ -949,3 +949,41 @@ fn the_lookup_says_why_a_window_takes_no_remembered_slot() {
         "the first window, placed, holds the one slot"
     );
 }
+
+/// A focuslab window takes no slot and is no sibling: counted, the lab window placed before a
+/// terminal would push the terminal past the one slot it left.
+#[test]
+fn a_focuslab_window_takes_no_slot_and_pushes_no_terminal_off_its_own() {
+    use crate::workspaces::domain::display_setup::SetupId;
+    use crate::workspaces::domain::launch_memory::Slot;
+    use crate::workspaces::engine::launch::NoLaunchSlot;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    const GHOSTTY: &str = "com.mitchellh.ghostty";
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let (lab, terminal_window) = (WindowId::new(700, 1), WindowId::new(700, 2));
+    window_store.insert_window(lab, terminal("lab-A", 7001));
+    window_store.insert_window(terminal_window, terminal("", 7002));
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
+    let slot = Slot {
+        title: Some("~/p/rini".into()),
+        display_uuid: DisplayUuid::new(DISPLAY),
+        workspace_index: 1,
+        width: None,
+    };
+    let topology = SetupId::of(&[DisplayUuid::new(DISPLAY)]);
+    memory.launch.remember(GHOSTTY, &topology, vec![slot.clone().into()]);
+
+    assert_eq!(
+        engine.find_launch_slot(&window_store, &memory, lab, GHOSTTY, Some("lab-A")),
+        Err(NoLaunchSlot::FocuslabWindow)
+    );
+    memory.affinity.set_window_home(lab, &DisplayUuid::new(DISPLAY));
+    assert_eq!(
+        engine.find_launch_slot(&window_store, &memory, terminal_window, GHOSTTY, None),
+        Ok(slot),
+        "the terminal is the first of its app's windows, so it takes the first slot"
+    );
+}
