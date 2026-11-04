@@ -28,16 +28,17 @@ impl LayoutEngine {
     /// window neither answers yes for is dropped before anything matches against it.
     pub fn load_for_startup_restore(
         path: PathBuf,
-        window_exists: impl FnMut(WindowId, u32) -> bool,
+        mut window_exists: impl FnMut(WindowId, u32) -> bool,
         application_runs: impl FnMut(&str) -> bool,
     ) -> anyhow::Result<(Self, DisplayMemory)> {
         let loaded = Self::load_file(&path)?;
         let schema_version = loaded.schema_version;
-        let memory = loaded.memory;
+        let mut memory = loaded.memory;
         let mut engine = loaded.layout?;
         engine.startup_restore_pending = true;
         let unavailable_windows =
-            engine.discard_unmatchable_startup_candidates(window_exists, application_runs);
+            engine.discard_unmatchable_startup_candidates(&mut window_exists, application_runs);
+        engine.forget_windows_gone_since_the_save(&mut memory, window_exists);
         tracing::info!(
             path = %path.display(),
             schema_version,

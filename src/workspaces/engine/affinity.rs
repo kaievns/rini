@@ -116,20 +116,51 @@ impl LayoutEngine {
     }
 
     /// Drop affinity for windows that have gone. Called on every settled topology: the removal
-    /// paths alone miss windows closed while their display was unplugged.
+    /// paths alone miss windows closed while their display was unplugged. A window the store does
+    /// not hold is gone when it has a home in the arrangement in force, or when this session saw
+    /// it, as a minimized window it saw and kept only the widths of. One from the file this session
+    /// has not seen is left to its app's report: `forget_windows_gone_since_the_save` judged it.
     pub fn forget_affinity_for_dead_windows(
         &mut self,
         window_store: &WindowStore,
         memory: &mut DisplayMemory,
     ) {
-        let stale: Vec<WindowId> = memory
-            .affinity
-            .homed_windows()
-            .into_iter()
-            .filter(|window| !window_store.contains_window(*window))
-            .collect();
+        let mut stale: Vec<WindowId> = memory.affinity.homed_windows();
+        stale.extend(
+            memory
+                .affinity
+                .remembered_windows()
+                .into_iter()
+                .filter(|window| self.was_sighted(*window)),
+        );
+        stale.sort_unstable();
+        stale.dedup();
+        stale.retain(|window| !window_store.contains_window(*window));
         for window in stale {
             self.log_erased_widths(Erase::Gone, &memory.affinity.forget_window(window));
+        }
+    }
+
+    /// Forgets, as rini starts, every window the file has records for that is neither a candidate
+    /// of the startup restore nor still held by the window server for its process
+    /// (`window_exists`, asked of the window server id a window's id carries). A window id is its
+    /// process id and that window server id, both reused after a reboot, so a record left under
+    /// one would size a different window.
+    pub(super) fn forget_windows_gone_since_the_save(
+        &self,
+        memory: &mut DisplayMemory,
+        mut window_exists: impl FnMut(WindowId, u32) -> bool,
+    ) {
+        let gone: Vec<WindowId> = memory
+            .affinity
+            .remembered_windows()
+            .into_iter()
+            .filter(|window| {
+                !self.is_restore_candidate(*window) && !window_exists(*window, window.idx.get())
+            })
+            .collect();
+        for window in gone {
+            self.log_erased_widths(Erase::GoneSinceTheSave, &memory.affinity.forget_window(window));
         }
     }
 

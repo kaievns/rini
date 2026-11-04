@@ -196,6 +196,11 @@ impl LayoutEngine {
         self.persistence.forget_app(pid);
     }
 
+    /// Whether `window` is a saved window the startup restore may still match to a live one.
+    pub(super) fn is_restore_candidate(&self, window: WindowId) -> bool {
+        self.persistence.pending_windows.contains(&window)
+    }
+
     /// The app and title `window` had when last seen, for a log line about it.
     pub(super) fn recorded_identity(&self, window: WindowId) -> (Option<&str>, Option<&str>) {
         self.persistence.fingerprint(window).map_or((None, None), |fingerprint| {

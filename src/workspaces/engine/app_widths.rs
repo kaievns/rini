@@ -53,6 +53,11 @@ impl LayoutEngine {
         self.app_width_runtime.seen.insert(window)
     }
 
+    /// Whether this session has seen `window`.
+    pub(super) fn was_sighted(&self, window: WindowId) -> bool {
+        self.app_width_runtime.seen.contains(&window)
+    }
+
     /// Forgets `window`, whose id is dead: closed, or owned by another id now.
     pub(super) fn forget_sighting(&mut self, window: WindowId) {
         self.app_width_runtime.seen.remove(&window);

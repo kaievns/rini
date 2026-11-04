@@ -142,6 +142,15 @@ impl Setup {
             || self.display_strip.values().any(|strip| strip.contains(&window))
     }
 
+    /// Every window this arrangement holds a home, a strip place or a width for.
+    pub fn windows(&self) -> impl Iterator<Item = WindowId> + '_ {
+        self.window_home
+            .keys()
+            .copied()
+            .chain(self.display_strip.values().flatten().copied())
+            .chain(self.window_width.values().flat_map(|widths| widths.keys().copied()))
+    }
+
     /// Forgets `window`'s home and its place in each strip, keeping its widths.
     pub fn forget_place(&mut self, window: WindowId) {
         self.window_home.remove(&window);

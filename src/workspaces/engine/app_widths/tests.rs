@@ -722,6 +722,80 @@ fn a_closed_window_and_a_quit_app_s_windows_are_forgotten_as_seen() {
     assert!(desk.engine.app_width_runtime.seen.contains(&other_app));
 }
 
+/// A terminal made two thirds wide and minimized, so the file holds its width and no home for it,
+/// its app's width the whole display's since, saved, and loaded by a rini starting after it with `window_exists` saying whether the window
+/// server still has it.
+fn a_minimized_terminal_s_width_loaded(window_exists: bool) -> (Desk, WindowId) {
+    let mut desk = Desk::new(BUILT_IN, SIXTEEN);
+    let minimized = WindowId::new(400, 1);
+    desk.open(minimized, GHOSTTY, "~/projects/rini");
+    desk.cycle(minimized, 1);
+    let widest = WindowId::new(400, 2);
+    desk.open(widest, GHOSTTY, "~");
+    desk.cycle(widest, 1);
+    let _ = desk.engine.handle_event(
+        &mut desk.windows,
+        &mut desk.memory,
+        LayoutEvent::WindowRemoved(minimized, Removal::Minimized),
+    );
+    assert_eq!(desk.memory.affinity.window_home(minimized), None);
+    assert_eq!(
+        desk.memory.affinity.window_width(&desk.display, minimized),
+        two_thirds()
+    );
+    let (_dir, path) = layout_file();
+    desk.engine.save(&desk.memory, path.clone()).expect("the file is written");
+
+    let (_, memory) = LayoutEngine::load_for_startup_restore(path, |_, _| window_exists, |_| false)
+        .expect("the file loads");
+    let mut after = Desk::new(BUILT_IN, SIXTEEN);
+    after.memory = memory;
+    after.attach(SpaceId::new(23), BUILT_IN, SIXTEEN);
+    (after, minimized)
+}
+
+/// After a reboot the process id and the window server id of a minimized window are another
+/// window's to take: the width it left in the file is not that window's.
+#[test]
+fn a_width_left_by_a_window_gone_since_the_save_does_not_size_a_window_at_its_id() {
+    let (mut after, id) = a_minimized_terminal_s_width_loaded(false);
+    after.open(id, "com.apple.TextEdit", "Untitled");
+    assert_eq!(after.width(id), None);
+}
+
+/// After rini restarts the minimized window is still there under its id, and keeps its width.
+#[test]
+fn a_minimized_window_still_there_after_rini_restarts_keeps_its_width() {
+    let (mut after, minimized) = a_minimized_terminal_s_width_loaded(true);
+    after.open(minimized, GHOSTTY, "~/projects/rini");
+    assert_eq!(after.width(minimized), two_thirds());
+}
+
+/// A window this session saw that leaves the window store with no close it heard of leaves no
+/// width behind, though it has no home.
+#[test]
+fn a_seen_window_gone_from_the_store_leaves_no_width_behind() {
+    let mut desk = Desk::new(BUILT_IN, SIXTEEN);
+    let minimized = WindowId::new(400, 1);
+    desk.open(minimized, GHOSTTY, "~/projects/rini");
+    desk.cycle(minimized, 1);
+    let _ = desk.engine.handle_event(
+        &mut desk.windows,
+        &mut desk.memory,
+        LayoutEvent::WindowRemoved(minimized, Removal::Minimized),
+    );
+    desk.engine.forget_affinity_for_dead_windows(&desk.windows, &mut desk.memory);
+    assert_eq!(
+        desk.memory.affinity.window_width(&desk.display, minimized),
+        two_thirds(),
+        "still in the store"
+    );
+
+    desk.windows.remove_window(minimized);
+    desk.engine.forget_affinity_for_dead_windows(&desk.windows, &mut desk.memory);
+    assert_eq!(desk.memory.affinity.window_width(&desk.display, minimized), None);
+}
+
 fn layout_file() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let path = dir.path().join("layout.ron");

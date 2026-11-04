@@ -127,6 +127,18 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   Measured: the external's affinity list held three closed windows while all
   fourteen live windows were homed to the built-in; repatriation reported
   `homed=[3 windows] to_move=[]` and the external came back empty every time.
+  The pass reaches a window homed in the arrangement in force, and any window this
+  session has seen with a record in any arrangement, as a removal that keeps widths
+  leaves one with no home. A window from the file this session has not seen yet is
+  left alone: after a restart a live window is not in the store until its app
+  reports it, and a pass then would erase the width a minimize kept.
+- **At startup, a window's records go with it unless it can still be found**
+  (`forget_windows_gone_since_the_save`, `Erase::GoneSinceTheSave`). A window id is
+  the process id and the window server id, both reused after a reboot, so a width
+  left under one by a minimized window would size whichever window takes that id.
+  A restore candidate keeps its records for the rekey, and a window the window
+  server still has for that process keeps them under its id, as one minimized
+  across a restart of rini does.
 - **Every erase of a width record is logged at `info` with why** (`log_erased_widths`,
   its `Erase`), and with the window's app and title as its persistence fingerprint last
   recorded them, read before the fingerprint is forgotten: the window's removal from

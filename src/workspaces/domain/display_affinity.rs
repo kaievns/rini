@@ -64,6 +64,9 @@ pub enum Erase {
     AppQuit,
     /// The window store does not hold it, found on a settled topology.
     Gone,
+    /// Saved under an id no window the startup restore can match holds, and no window the window
+    /// server has now: a new window may take that id.
+    GoneSinceTheSave,
     /// A width command put its column back at the display's default.
     AtDefault,
     /// Written before any arrangement was named, and the first one named was already known, so it
@@ -469,6 +472,14 @@ impl DisplayAffinity {
     pub fn homed_windows(&self) -> Vec<WindowId> {
         let mut windows: Vec<WindowId> = self.setup().window_home.keys().copied().collect();
         windows.sort_unstable();
+        windows
+    }
+
+    /// Every window any arrangement holds a home, a strip place or a width for, once each.
+    pub fn remembered_windows(&self) -> Vec<WindowId> {
+        let mut windows: Vec<WindowId> = self.setups.values().flat_map(Setup::windows).collect();
+        windows.sort_unstable();
+        windows.dedup();
         windows
     }
 
