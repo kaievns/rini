@@ -32,6 +32,9 @@ pub(super) struct AppWidthRuntime {
     /// The app's width each window was laid at on arrival, and on which display, so a window found
     /// later to be one the session has seen, under another id, can be put back at the default.
     laid_from_app: HashMap<WindowId, (DisplayUuid, ColumnWidth)>,
+    /// Each running app's localised name, as it last reported its windows, for a rule matching on
+    /// `app-name` to be asked of a window added before its app reports it.
+    app_names: HashMap<pid_t, String>,
 }
 
 impl LayoutEngine {
@@ -65,8 +68,16 @@ impl LayoutEngine {
         self.app_width_runtime.laid_from_app.remove(&window);
     }
 
+    /// Notes `name` as the localised name of the app of `pid`.
+    pub(super) fn note_app_name(&mut self, pid: pid_t, name: &str) {
+        if self.app_width_runtime.app_names.get(&pid).map(String::as_str) != Some(name) {
+            self.app_width_runtime.app_names.insert(pid, name.to_owned());
+        }
+    }
+
     /// Forgets every window of `pid`, which quit.
     pub(super) fn forget_app_sightings(&mut self, pid: pid_t) {
+        self.app_width_runtime.app_names.remove(&pid);
         self.app_width_runtime.seen.retain(|window| window.pid != pid);
         self.app_width_runtime.on_arrival.retain(|window, _| window.pid != pid);
         self.app_width_runtime.laid_from_app.retain(|window, _| window.pid != pid);
@@ -173,7 +184,9 @@ impl LayoutEngine {
     }
 
     /// `take_app_width` for a window no rule has been asked about yet: its rules decide first
-    /// whether it takes its app's width, as they do at a first sighting through them.
+    /// whether it takes its app's width, as they do at a first sighting through them, under the
+    /// app's name as it last reported its windows. An app that has reported none has no name yet,
+    /// and a rule matching on `app-name` cannot match its window here.
     pub(super) fn take_app_width_unruled(
         &mut self,
         window_store: &WindowStore,
@@ -187,9 +200,10 @@ impl LayoutEngine {
         let Some(app_id) = state.info.bundle_id.as_deref() else {
             return;
         };
+        let app_name = self.app_width_runtime.app_names.get(&window.pid).map(String::as_str);
         let decision = self.evaluate_app_rules(
             Some(app_id),
-            None,
+            app_name,
             Some(&state.info.title),
             state.info.ax_role.as_deref(),
             state.info.ax_subrole.as_deref(),

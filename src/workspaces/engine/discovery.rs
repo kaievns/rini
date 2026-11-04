@@ -94,6 +94,9 @@ impl LayoutEngine {
         // Floating windows are left out: it is the strip's membership.
         let mut tiled_by_workspace: HashMap<VirtualWorkspaceId, Vec<WindowId>> = HashMap::default();
         let app_bundle_id = app_info.as_ref().and_then(|info| info.bundle_id.as_deref());
+        if let Some(name) = app_info.as_ref().and_then(|info| info.localized_name.as_deref()) {
+            self.note_app_name(pid, name);
+        }
         let mut focus_request = None;
 
         for entry in windows_with_titles {

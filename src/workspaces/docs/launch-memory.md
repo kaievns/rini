@@ -137,7 +137,10 @@ it. Kai allowed that on 2026-11-04 ("2. yes"); a window's own records still shar
   took no slot and whose rules set no width, as it first joins a strip on the display it was
   first seen on (`take_app_width`, `take_arrival_width`), unless it has a width of its own there.
   A window the window server takes away and gives back has been seen, so it keeps its own width
-  or the default it had rather than a sibling's since.
+  or the default it had rather than a sibling's since. A window the reactor adds before its app
+  reports it has its rules asked under the app's name as it last reported its windows
+  (`note_app_name`). Not met: a window of an app that has reported none is asked under no name,
+  so a rule matching on `app-name` alone cannot keep the app's width off it.
 - **Held apart from the window's record** until it arrives, so a width of its own there wins at
   that arrival (`a_window_s_own_width_beats_its_app_s_at_the_same_arrival`).
 - **Not for a window's new id.** A window back from native fullscreen under a new id is one the

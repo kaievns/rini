@@ -123,7 +123,10 @@ impl Desk {
     }
 
     /// The app of `pid` reports every window it has.
-    fn report(&mut self, pid: pid_t, app: &str) {
+    fn report(&mut self, pid: pid_t, app: &str) { self.report_named(pid, app, None); }
+
+    /// The app of `pid`, named `name`, reports every window it has.
+    fn report_named(&mut self, pid: pid_t, app: &str, name: Option<&str>) {
         let mut ids: Vec<WindowId> = self
             .windows
             .iter_windows()
@@ -141,7 +144,7 @@ impl Desk {
                 windows,
                 app_info: Some(AppInfo {
                     bundle_id: Some(app.into()),
-                    localized_name: None,
+                    localized_name: name.map(str::to_owned),
                 }),
             }),
         );
@@ -544,6 +547,33 @@ fn a_window_a_rule_sizes_neither_takes_nor_leaves_its_app_s_width() {
     desk.cycle(plain, 1);
     let ruled = WindowId::new(400, 3);
     desk.open(ruled, GHOSTTY, "rule-sized");
+    assert_eq!(desk.width(ruled), None, "nothing but the rule's resize sizes it");
+}
+
+/// A rule matching on the app's name is asked of a window the reactor adds before its app reports
+/// it, under the name the app last reported: a window it sizes takes no width of its app's.
+#[test]
+fn a_window_an_app_name_rule_sizes_takes_no_app_width_when_added_before_its_app_reports_it() {
+    let settings = VirtualWorkspaceSettings {
+        app_rules: vec![WindowRule {
+            default_column_width: Some(600.0),
+            ..WindowRule::when(RuleMatch {
+                app_name: Some("Ghostty".parse().expect("a valid pattern")),
+                title: Some("rule-sized".parse().expect("a valid pattern")),
+                ..RuleMatch::default()
+            })
+        }],
+        ..VirtualWorkspaceSettings::default()
+    };
+    let mut desk = Desk::with(&settings, BUILT_IN, SIXTEEN);
+    let plain = WindowId::new(400, 1);
+    desk.store(plain, GHOSTTY, "~");
+    desk.report_named(400, GHOSTTY, Some("Ghostty"));
+    desk.cycle(plain, 1);
+
+    let ruled = WindowId::new(400, 2);
+    desk.store(ruled, GHOSTTY, "rule-sized");
+    desk.add(ruled);
     assert_eq!(desk.width(ruled), None, "nothing but the rule's resize sizes it");
 }
 
