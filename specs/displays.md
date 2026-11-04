@@ -62,10 +62,20 @@ context is arranged differently depending on what is plugged in, and rini rememb
   display size differs.
 - A width the user set, by a command or by dragging an edge, MUST survive the display sleeping and
   waking, the window server removing and re-adding the window, a drag of the window, and a relaunch
-  of an application an opening rule matches. Each is a moment the width is read again, and a width
-  read back as the default undoes the user's choice with nothing the user did to explain it. Not yet
-  met: a wake, a re-add and a relaunch under a rule each reset a width to the default on 2026-11-03
-  and 2026-11-04, and a width set by dragging an edge is not what a re-added window reads back.
+  of an application an opening rule matches, when the rule sets no width or its width has not
+  changed since the user set theirs. Each is a moment the width is read again, and a width read back
+  as the default undoes the user's choice with nothing the user did to explain it. Not yet met: a
+  wake and a re-add each reset a width to the default on 2026-11-03 and 2026-11-04, a relaunch under
+  a rule is inferred to have reset one, and a width set by dragging an edge is not what a re-added
+  window reads back.
+- A width an opening rule sets MUST win over a width remembered before the rule set that value, so
+  adding a width to a rule or changing it shows at the next window the rule opens. Otherwise an edit
+  to a rule does nothing for any application that has a record, and looks broken.
+- A new window of an application already running MUST open at the width the user last gave that
+  application's windows on this display in this arrangement, unless the window has a record or a
+  launch slot of its own, or a rule's width added or changed since overrides it. A Cmd+N that opens
+  at the default undoes a width the user chose for that application minutes before. Not yet met: a
+  window beyond the remembered slots gets the default, inferred behind 2 resets on 2026-11-04.
 - A remembered width MUST be written so a rini from before its kind existed still reads the file. A
   rini that cannot read the file starts with no homes, widths or launch slots, and its next save
   writes that over the file, so going back a version would forget the machine.
@@ -99,8 +109,8 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > the prevous sizes tracking it's buggy as fuck and doesn't work all that well, so i keep getting
 > everything resetting back to 1/2 which is annoying". 11 resets on 2026-11-03 and 2026-11-04 were
 > tied to the service log: 4 after a wake (1 measured at both ends, 3 by timing alone), 1 at a
-> re-add, 1 at Slack's relaunch, which an opening rule matches, 2 at a new window of a running app,
-> and 3 unexplained (`docs/window-sizing-research.md`, "Why sizes reset today, ranked").
+> re-add, 1 at Slack's relaunch, which an opening rule matches (inferred), 2 at a new window of a
+> running app (inferred), and 3 unexplained (`docs/window-sizing-research.md`, "Why sizes reset today, ranked").
 
 > **Reported 2026-11-04, same session.** Asked whether an application's width may carry across
 > arrangements, below the per-window record, Kai answered "2. yes". The rule this amends said
@@ -108,6 +118,13 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > That reason holds for a window's own records, which still share nothing. Applied to every record,
 > it meant each desk or meeting room not seen before opened every window at the default width, one
 > of the paths behind the report above.
+
+> **Found 2026-11-04, not reported.** A review of the requirement that a user-set width survives a
+> relaunch under a rule: without a limit, a width remembered before a rule gained or changed its own
+> width would beat it, so adding `fixed 1500` to a rule (the research's experiments E2 and E3) would
+> do nothing for an application with a record. A rule's added or changed width now wins, and a
+> record made under the old value is dropped (`docs/window-sizing-research.md`, after the
+> precedence list).
 
 > **Found 2026-10-15, not reported.** The explicit move and the return on replug placed a window with
 > two copies of one rule that disagreed on a window larger than the display: the move kept its

@@ -7,7 +7,7 @@ scripts, their per-slot, per-day and per-reset outputs and the Model B fit are i
 `docs/data/2026-11-04-window-sizing/`, whose README names each file; each table names its source
 and how it was counted. Kai answered the research's three questions the same day ("Kai's answers"),
 and every figure they touch is recomputed with them: the 5K2K at 3360x1418 points, and the two
-1920x1200 displays discarded, with the 50 launch slots filed under them.
+1920x1200 displays discarded. No launch slot names either of them, so every slot is still counted.
 
 ## Verdict
 
@@ -32,7 +32,7 @@ columns in the strip (H1) are deferred. rini can read a display's physical size:
 
 | # | Reading | Verdict | Evidence |
 |---|---|---|---|
-| 1 | Width is a function of (app class, display); classes are "work" and "utility" | **Corrected: 3 classes, not 2** | Terminals behave unlike the other work apps, below. Obsidian's 4 kept records fit no class |
+| 1 | Width is a function of (app class, display); classes are "work" and "utility" | **Corrected: 3 classes, not 2** | Terminals behave unlike the other work apps, below. Obsidian splits per window |
 | 2 | Fractions shrink as displays grow, close to a constant point width snapped to a preset | **Partly holds** | 18 of 20 cells in sample, 15 leave-one-out, with the 5K2K at 3360x1418. Its 1/3 (1116pt) is narrower than the 16"'s 2/3 (1147pt) |
 | 3 | Big displays need columns shorter than the full height | **Holds, inferred; met by floating (H2)** | A 1/4 column on the 32" is 0.45 wide per unit of height. rini cannot shorten a lone window today, and Kai accepts a floating corner window instead |
 | 4 | Remembered sizes have to work before defaults matter | **Holds, measured** | 5 windows reset twice each on 11-03 and 11-04, each from 860pt; 11 resets tied to their log lines in §4 |
@@ -50,39 +50,39 @@ Kai's words this research tests, beyond the table above (2026-11-04):
 
 Source: `~/.rini/layout.ron` `display_memory.launch.apps`, parsed to
 `docs/data/2026-11-04-window-sizing/slots.csv` and counted by `recount.py` there. The file holds 133
-slots under 5 arrangements; the 2 arrangements with a 1920x1200 display hold 50, and are left out
-as Kai asked, which leaves 83 slots under 3 arrangements. 61 name the built-in display (37D8832A…):
-29 under the laptop alone and 32 under the one docked arrangement left. The other 22 name
-C5A3728A…, a display that formed an arrangement on its own. It has no `display_space` entry and no
-layout size in `layout.ron`, so its size is unknown, and those slots are left out below. None of
-the 61 built-in slots is a focuslab window, so the table counts all 61, and every width is a 16"
-width. Effective ratio is 0.5 plus the stored offset, clamped to 2/3 unless the slot is
-`width_dragged`.
+slots under 5 arrangements. 111 name the built-in display (37D8832A…): 29 under the laptop alone
+and 82 under the 3 docked arrangements. The other 22 name C5A3728A…, a display that formed an
+arrangement on its own. It has no `display_space` entry and no layout size in `layout.ron`, so its
+size is unknown, and those slots are left out below. No slot names a 1920x1200 display
+(64F4B5B7…, 71A9490F…). Two docked arrangements include one, but their 50 slots all name the
+built-in display, so they are 16" widths and stay in. The table counts the 111 built-in slots less
+12 focuslab windows, so every width is a 16" width. Effective ratio is 0.5 plus the stored offset,
+clamped to 2/3 unless the slot is `width_dragged`.
 
 | Class | Apps | Width records | Distribution (measured) |
 |---|---|---|---|
-| **Wide** | VS Code, Kiro, Zen, Chrome, Slack, Outlook, Kiro Crew, Shapr3d, ACME | 22 | 21 full (Slack's one is a dragged 1.0), 1 at default |
-| **Terminal** | Ghostty | 9 | 1/2 x5 (all default), 2/3 x4, full x0 |
-| **Narrow** | Messages, Books, Finder, Word, Docker, MCS, Connections, Terminal | 19 | all at the default 1/2 |
-| Per window | Obsidian | 4 | full x1 (a note), default x3 (1 an Excalidraw canvas) |
-| Floating | Zoom, 1Password, System Settings | 6 | `open-floating` rules, `~/.config/rini/config.kdl:245-276` |
+| **Wide** | VS Code, Kiro, Zen, Chrome, Slack, Outlook, Kiro Crew, Shapr3d, ACME | 38 | 37 full (Slack's one is a dragged 1.0), 1 at default |
+| **Terminal** | Ghostty | 23 | 1/2 x15 (13 default), 2/3 x7, 0.533 x1, full x0 |
+| **Narrow** | Messages, Books, Finder, Word, Docker, MCS, Connections, Terminal | 21 | all at the default 1/2 |
+| Per window | Obsidian | 8 | full x3 (2 are one Excalidraw canvas, 1 a note), default x5 (1 the same canvas) |
+| Floating | Zoom, 1Password, System Settings | 8 | `open-floating` rules, `~/.config/rini/config.kdl:245-276` |
 
 Preview's one record, at 2/3, is in no class.
 
 ```
-16" laptop, records per effective width (built-in slots, kept arrangements)
-1.0   █████████████████████ 21    wide
-2/3   ████ 4                      terminal
-1/2   ████████████████████████ 24 terminal 5 + narrow 19
+16" laptop, records per effective width (built-in slots, non-lab)
+1.0   █████████████████████████████████████ 37  wide
+2/3   ███████ 7                                 terminal
+1/2   ████████████████████████████████████ 36   terminal 15 + narrow 21
 ```
 
-- **Terminals are their own class.** Kai says terminals go full on the 14", but 0 of 9 Ghostty
+- **Terminals are their own class.** Kai says terminals go full on the 14", but 0 of 23 Ghostty
   records on the 16" are full. On the 32" he wants a terminal (1/3) narrower than a browser (1/2).
 - **A default record is weak evidence.** It also covers windows Kai never touched, so the narrow
   class's 1/2 is not a choice he made.
-- **Obsidian stays unclassed.** The kept records do not show canvases going full: the one full
-  record is a note, and the canvas sits at the default. The two full canvas records were under the
-  discarded 1920x1200 arrangements. A title rule would need
+- **Obsidian needs a title rule,** not an app rule: the canvas went full in 2 of its 3 records,
+  notes stayed at 1/2 in 4 of 5. The canvas's 2 full records are the laptop's, docked to a
+  1920x1200 display, so they are 16" evidence like the rest. A title rule would need
   `reapply-window-rules-on-title-change` (`~/.config/rini/config.kdl:224`), and a rule's width
   resize runs "once, after it joins the strip" (`rini.default.kdl:243-245`); whether a title
   change runs it again is unchecked.
@@ -98,7 +98,7 @@ Displays:
 
 | Display | Looks like | pt/in | Status |
 |---|---|---|---|
-| 16" built-in | 1728x1117 | 127.5 | measured (`CGDisplayScreenSize`, 344x222mm) |
+| 16" built-in | 1728x1117 | 127.6 | measured (`CGDisplayScreenSize`, 344x222mm) |
 | 14" MacBook Pro | 1512x982 | 127.0 | assumed default mode; not on this Mac |
 | 32" 4K | 3008x1692 | 109.6 | measured: 4 UUIDs at this mode (14 entries) in the window server's display plist |
 | 27" 4K | 2560x1440 | 108.8 | assumed; the plist's 14 entries at 2560x1440 are all 1x, so not a 4K panel |
@@ -107,7 +107,7 @@ Displays:
 The plist counts are from `plutil -convert json` of
 `/Library/Preferences/com.apple.windowserver.displays.plist`, every mode with `Wide`, `High` and
 `Scale`. The two 1920x1200 displays in `layout.ron` (64F4B5B7…, 71A9490F…) are discarded, as Kai
-asked, and appear in no table or fit.
+asked, and appear in no table or fit; the laptop's slots while docked to them are counted in §1.
 
 Point widths Kai's stated fractions imply (`fit.py`, "point widths"):
 
@@ -266,18 +266,18 @@ again under "Model M0".
 |---|---|---|---|---|---|
 | 8 | **A width is lost across sleep and wake** | Display off, sleep, wake; seen on the laptop alone | **Mechanism not verified.** Candidate (a): a window briefly not `EffectivelyManageable` takes `LayoutEvent::WindowRemoved`, not the preserving variant (`src/app/reactor/display_homes.rs:340`, `:417`). That runs `forget_persisted_window`, then `memory.affinity.forget_window` (`src/workspaces/engine/persistence/mod.rs:168-171`), which erases the width record (`src/workspaces/domain/display_setup.rs:144-147`). A re-add that logs `from=None` fits it: only a window with no workspace gives `None` (`src/app/reactor/space_affinity.rs:145-150`). Candidate (b), weaker: the `open-on-output` pin is re-applied on every settled topology (`src/workspaces/docs/workspaces-and-displays.md:110-111`), which moves homes, not widths | 4 of 11 resets in §4. VS Code 894/2891 full at the 15:08:52 display-off pass and reset 80s after the next wake. At 13:32:54, as the display turned off, `MainWindowChanged on unknown window` came for Chrome, Obsidian, Outlook and loginwindow (pid 431) in one pass (err.log:722-733). Karousel #82 reports the same symptom | Log every record erase at `info` with its caller (M0.5), reproduce with one sleep, then keep the record across a remove that is not a close (M0.6) |
 | 1 | **A new window of a running app gets 1/2** | Cmd+N, a new project window, reopening one window while siblings stay open | Siblings claim slots 0..N-1, so window N has none (`src/workspaces/engine/launch.rs:190-219`); `remember` replaces the set with the live windows, so a closed window's slot goes at the next save (`src/workspaces/domain/launch_memory.rs:154-170`) | By design: "A window beyond the remembered slots gets today's defaults" (`src/workspaces/docs/launch-memory.md:63`). No test covers it (`src/workspaces/engine/persistence/tests/launch_memory.rs` holds relaunch cases only). Fits VS Code 2402 at 09:58 and 2891 at 14:59 (inferred) | Fall back to the app's last width on this display (M0.3); keep closed windows' slots as a capped most-recent list |
-| 2 | **Any opening rule turns memory off for its app** | Slack, Outlook, Messages (`~/.config/rini/config.kdl:284-289`, `open-on-output "internal"`), at every relaunch and reboot | Memory is read only when `decision == AppRuleDecision::NoMatch` (`src/workspaces/engine/rules.rs:140`); the rule then assigns a workspace, so the second chance in `add_window_to_layout` (`src/workspaces/engine/discovery.rs:322-338`) is skipped too | Measured in `layout.ron`: Outlook's slots hold full width under 3 of 3 kept arrangements, written and never read. Slack's 11-03 13:42 reset comes 2 minutes after a cold start (err.log:1, :39) | Apply a rule property by property: only what the rule sets overrides the slot (M0.2) |
+| 2 | **Any opening rule turns memory off for its app** | Slack, Outlook, Messages (`~/.config/rini/config.kdl:284-289`, `open-on-output "internal"`), at every relaunch and reboot | Memory is read only when `decision == AppRuleDecision::NoMatch` (`src/workspaces/engine/rules.rs:140`); the rule then assigns a workspace, so the second chance in `add_window_to_layout` (`src/workspaces/engine/discovery.rs:322-338`) is skipped too | Measured in `layout.ron`: Outlook's slots hold full width under 5 of 5 arrangements, written and never read. Slack's 11-03 13:42 reset comes 2 minutes after a cold start (err.log:1, :39) | Apply a rule property by property: only what the rule sets overrides the slot (M0.2) |
 | 3 | **A re-added window takes its width from a record only commands write** | Undock, replug, leaving native fullscreen, the window server moving a window between spaces | `WindowRemovedPreserveFloating` records no width (`src/app/reactor/display_homes.rs:358`); the re-add reads `DisplayAffinity::window_width` (`src/workspaces/engine/affinity.rs:181-203`), which only width commands write (`src/workspaces/engine/commands/resize.rs:36,44`, `src/workspaces/engine/commands/floating.rs:67`, `src/workspaces/engine/moves.rs:219`). A drag never writes it (`src/workspaces/engine.rs:647-679`), nor does a rule's resize | Measured for Zen at 12:49 (err.log:646, 3s before the press). The current arrangement's record holds 8 of 14 live windows. **Not a test of undocking:** the docked arrangements' records are empty, but closed windows' records are dropped on every settled topology (`src/workspaces/docs/workspaces-and-displays.md:94-99`), the 11-03 13:38 reboot closed every window, and err.log names only `ScreenId(1)` since | Write the record before every remove-and-re-add and at drag end (M0.1), as `src/workspaces/engine/moves.rs:219` does |
-| 4 | **Memory is keyed by the whole set of displays** | Each new desk or meeting room starts empty; the laptop's widths alone do not carry to the same panel docked | `SetupId::of` (`src/workspaces/engine/launch.rs:171`); `specs/displays.md:43-55` keeps a window's records apart and, since Kai's answer 2, allows an app's width to carry | Measured: 3 kept arrangements in `layout.ron`, of 5 in the file | Fall back through this arrangement, then this display shape, then the default (M0.3) |
-| 5 | **Relaunch matching hands out the wrong slot** | Apps with several windows (Ghostty, Chrome, Obsidian) | Title first, against the title at first sighting, then ordinal (`src/workspaces/domain/launch_memory.rs:196-208`) | Measured: 43 of 83 kept slots (52%) hold no width; 6 are focuslab windows (`lab-A` to `lab-D`, opened as Ghostty windows by `tools/focuslab/lab.sh:16-17`), all under C5A3728A… | Drop lab windows from the record; match on the settled title (M0.5) |
-| 6 | **The slot's display differs from where the window opens** | Docked only | The width is stored under the slot's display (`src/workspaces/engine/rules.rs:165-167`) and read back under the display of the space the window opened on (`src/workspaces/engine/affinity.rs:189`) | Inferred from code. **Not verified:** 0 of 32 kept docked slots name an external display | Place the window on the slot's display, or key the stored width by where it lands |
-| 7 | Untouched widths are stored as no width | Any window never resized | By design (`src/workspaces/docs/launch-memory.md`, "Recording") | 43 of 83 kept slots | Moot once class defaults exist |
+| 4 | **Memory is keyed by the whole set of displays** | Each new desk or meeting room starts empty; the laptop's widths alone do not carry to the same panel docked | `SetupId::of` (`src/workspaces/engine/launch.rs:171`); `specs/displays.md:43-55` keeps a window's records apart and, since Kai's answer 2, allows an app's width to carry | Measured: 5 arrangements in `layout.ron` | Fall back through this arrangement, then this display shape, then the default (M0.3) |
+| 5 | **Relaunch matching hands out the wrong slot** | Apps with several windows (Ghostty, Chrome, Obsidian) | Title first, against the title at first sighting, then ordinal (`src/workspaces/domain/launch_memory.rs:196-208`) | Measured: 63 of 133 slots (47%) hold no width; 18 are focuslab windows (`lab-A` to `lab-D`, opened as Ghostty windows by `tools/focuslab/lab.sh:16-17`), 12 on the built-in display and 6 under C5A3728A… | Drop lab windows from the record; match on the settled title (M0.5) |
+| 6 | **The slot's display differs from where the window opens** | Docked only | The width is stored under the slot's display (`src/workspaces/engine/rules.rs:165-167`) and read back under the display of the space the window opened on (`src/workspaces/engine/affinity.rs:189`) | Inferred from code. **Not verified:** 0 of 82 docked slots name an external display | Place the window on the slot's display, or key the stored width by where it lands |
+| 7 | Untouched widths are stored as no width | Any window never resized | By design (`src/workspaces/docs/launch-memory.md`, "Recording") | 63 of 133 slots | Moot once class defaults exist |
 
 ```
-slot widths in ~/.rini/layout.ron, kept arrangements (n=83, measured 2026-11-04)
-none        █████████████████████▌ 43
-full        ██████████████ 28
-offset      ██████ 12
+slot widths in ~/.rini/layout.ron (n=133, measured 2026-11-04)
+none        ███████████████████████████████▌ 63
+full        ███████████████████████ 46
+offset      ████████████ 24
 ```
 
 **The give-up logs are invisible.** `src/workspaces/docs/launch-memory.md:111-114` says every way
@@ -296,11 +296,18 @@ be read from the log.
 - `specs/displays.md:57-59` already backs per-display widths: "a browser be full-width when the
   laptop is alone and half-width on the external".
 - `src/workspaces/docs/launch-memory.md:67-73` puts any applying rule above a slot, so a rule that
-  only names a display costs the app its width (failure 2). No spec covers placement-only rules.
-- `specs/displays.md:63-68` requires, from Kai's 2026-11-04 report, that a width the user set, by
+  only names a display costs the app its width (failure 2). `specs/displays.md:63-70` now forbids
+  that, below.
+- `specs/displays.md:63-70` requires, from Kai's 2026-11-04 report, that a width the user set, by
   a command or by dragging an edge, survive the display sleeping and waking, the window server
   removing and re-adding the window, a drag of the window, and a relaunch of an app an opening rule
-  matches. Not yet met: failures 8, 3 and 2.
+  matches, when the rule sets no width or has not changed it since. Not yet met: failures 8, 3 and
+  2.
+- `specs/displays.md:71-73` makes a rule's width that is added or changed win over a width
+  remembered before it. Met today only because a rule turns memory off (failure 2); M0.2 and M0.3
+  must keep it.
+- `specs/displays.md:74-78` requires a new window of a running app to open at the width the user
+  last gave that app on this display in this arrangement. Not yet met: failure 1.
 - Whether a rini restart with the apps alive keeps sizes is **not verified**.
 
 ## Prior art
@@ -353,9 +360,9 @@ be read from the log.
 | Piece | Fixes | Change | Size |
 |---|---|---|---|
 | M0.1 | 3 | Write the per-window width record before every remove-and-re-add and at drag end | S |
-| M0.2 | 2 | A rule overrides a launch slot only for the properties it sets | S |
-| M0.3 | 1, 4 | **App width memory keyed by (bundle id, display shape),** written at every width change, read when no per-window record or slot exists; `specs/displays.md:47-51` allows it since Kai's answer 2 | M |
-| M0.4 | per-display defaults | Store absolute widths: `ColumnWidth::Offset` is an offset from the configured ratio (`src/layout/domain/column_width.rs:16-17`), so a different default per display would read one record as two widths. Older rini still has to read the file (`specs/displays.md:69-71`) | M |
+| M0.2 | 2 | A rule overrides a launch slot only for the properties it sets, and its width only once the value changed since the slot was written (`specs/displays.md:63-73`) | S |
+| M0.3 | 1, 4 | **App width memory keyed by (bundle id, display shape),** written at every width change, read when no per-window record or slot exists. `specs/displays.md:74-78` requires it in this arrangement (failure 1); `specs/displays.md:47-51` allows it across arrangements since Kai's answer 2 (failure 4) | M |
+| M0.4 | per-display defaults | Store absolute widths: `ColumnWidth::Offset` is an offset from the configured ratio (`src/layout/domain/column_width.rs:16-17`), so a different default per display would read one record as two widths. Older rini still has to read the file (`specs/displays.md:79-81`) | M |
 | M0.5 | 5, 8, logs | Drop focuslab windows from the record; raise the give-up logs to `info`; log every width-record erase with its caller | S |
 | M0.6 | 8 | Once M0.5 names the path: keep the width record across a remove that is not a close, such as a window that is not `EffectivelyManageable` for a moment | S-M, after the measurement |
 
@@ -374,8 +381,9 @@ be read from the log.
 6. The built-in class default.
 7. `layout › default-column-width`.
 
-So that an edited rule is not silently beaten by memory, each memory record also stores the
-default it overrode, and a record made under an old rule value is dropped when the value changes.
+So that an edited rule is not silently beaten by memory (`specs/displays.md:71-73`), each memory
+record also stores the default it overrode, and a record made under an old rule value is dropped
+when the value changes.
 
 ### Models A, B and C
 
@@ -417,12 +425,12 @@ B, 3 targets                          ██████████████
 
 - **The 4 misses:** editor at the 5K2K (B 1/2, Kai 1/3 with "often 1/2"), browser at the 5K2K
   (B 1/2, Kai 1/3), terminal on the 32" (B 1/2, Kai "1/3 maybe"), and browser at 16" (B full, Kai
-  2/3). His records side with B on the last: 3 of 3 kept built-in Chrome slots and 2 of 2 Zen are
+  2/3). His records side with B on the last: 9 of 9 built-in Chrome slots and 4 of 4 Zen are
   full.
 - **No other three targets do better without taking the laptop's wide apps off full.** The best three (wide 1230 to
-  1360pt) reach 17/20, but put VS Code, Slack and Outlook at 2/3 on the 16", against 21 of 22 wide
+  1360pt) reach 17/20, but put VS Code, Slack and Outlook at 2/3 on the 16", against 37 of 38 wide
   records at full there. Splitting browsers from the wide class reaches 18/20 with four targets, at
-  the cost of browsers at 2/3 on the 16", against the same 5 records.
+  the cost of browsers at 2/3 on the 16", against the same 13 records.
 - **Two rules keyed on display width reach 18/20 instead:** browsers at 1/3 on displays at least
   3200pt wide, Ghostty at 1/3 on displays at least 2800pt wide (below). The last 2 misses are the
   editor at the 5K2K, where B gives Kai's "often 1/2", and the browser at 16", where B gives his
@@ -572,12 +580,14 @@ Kai, 2026-11-04, to the three questions this research asked: "1. it runs on 3360
 
 | # | Question | Answer | Decision |
 |---|---|---|---|
-| 1 | Does the 5K2K run at 3840x1620 looks-like, and what are the two 1920x1200 displays? | 3360x1418; discard the 1920x1200 displays | **The fit is recomputed at 3360x1418:** B reproduces 16 of 20 cells, 18 with two display-width rules. The 1920x1200 displays and the 50 slots under their 2 arrangements are out of every table. The 5K2K's pt/in stays unknown; B does not need it |
+| 1 | Does the 5K2K run at 3840x1620 looks-like, and what are the two 1920x1200 displays? | 3360x1418; discard the 1920x1200 displays | **The fit is recomputed at 3360x1418:** B reproduces 16 of 20 cells, 18 with two display-width rules. The 1920x1200 displays are out of every table and fit; no slot names one, so the laptop's slots while docked to them still count. The 5K2K's pt/in stays unknown; B does not need it |
 | 2 | May an app's width carry across arrangements, below the per-window record (M0.3)? | yes | **M0.3 goes ahead.** `specs/displays.md:43-55` is amended in place: a window's records still share nothing, and an app's width MAY carry below them |
 | 3 | Is a utility window floating in a corner (H2) acceptable, or must it stay in the strip (H1)? | yes | **H2 is the path for utility windows on big displays; H1 is deferred.** E5 now sets H2's size and corner |
 
-The same change adds Kai's report as a requirement: `specs/displays.md:63-68`, a width the user set
-survives a wake, a re-add, a drag and a relaunch under an opening rule.
+The same change adds Kai's report as requirements: `specs/displays.md:63-70`, a width the user set
+survives a wake, a re-add, a drag and a relaunch under an opening rule whose width has not changed;
+`:71-73`, a rule's added or changed width wins over older memory; and `:74-78`, a new window of a
+running app opens at the app's last width on that display.
 
 ## Needs checking
 
@@ -589,8 +599,7 @@ survives a wake, a re-add, a drag and a relaunch under an opening rule.
   columns are (inferred). Do not change it during the trials.
 - Only if H1 comes back: what `move-window-up` and `move-window-down` do on a lone window, which
   bears on H1's alignment keys.
-- Whether a title change runs a rule's width resize again, which a title rule for Obsidian would
-  need.
+- Whether a title change runs a rule's width resize again, which Obsidian's title rule needs.
 - The 5K2K's physical size, for the millimetre comparison only (34" or 40" moves leave-one-out
   between 16 and 15 of 20). B does not need it.
 

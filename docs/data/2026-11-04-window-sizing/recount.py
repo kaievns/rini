@@ -1,7 +1,9 @@
 import collections, csv, sys
 
 BUILT_IN = "37D8832A-2D66-02CA-B9F7-8F30A301B230"
-DISCARDED = ("64F4B5B7", "71A9490F")  # the two 1920x1200 displays, discarded by Kai on 2026-11-04
+# The two 1920x1200 displays, discarded by Kai on 2026-11-04. Only a slot that names one is dropped:
+# the laptop's own slots while docked to them are 16" widths and stay.
+DISCARDED = ("64F4B5B7", "71A9490F")
 CLASS = {
     "wide": ["com.microsoft.VSCode", "dev.kiro.desktop", "app.zen-browser.zen", "com.google.Chrome",
              "com.tinyspeck.slackmacgap", "com.microsoft.Outlook", "com.amazon.kiro.crew",
@@ -35,24 +37,27 @@ def kind(width):
 
 
 rows = list(csv.DictReader(open(sys.argv[1])))
-kept = [r for r in rows if not any(d in r["arrangement"] for d in DISCARDED)]
+kept = [r for r in rows if not r["display"].startswith(DISCARDED)]
 print(f"file: {len(rows)} slots, {len(set(r['arrangement'] for r in rows))} arrangements")
-print(f"kept: {len(kept)} slots, {len(set(r['arrangement'] for r in kept))} arrangements")
+print(f"naming a discarded display: {len(rows) - len(kept)}; counted: {len(kept)} slots, {len(set(r['arrangement'] for r in kept))} arrangements")
 for a, n in collections.Counter(r["arrangement"] for r in kept).most_common():
     print(f"  {n:3} {a}")
 built = [r for r in kept if r["display"] == BUILT_IN]
 alone = [r for r in built if "+" not in r["arrangement"]]
 print(f"built-in: {len(built)} ({len(alone)} laptop alone, {len(built) - len(alone)} docked); "
       f"other display: {len(kept) - len(built)}")
-print(f"lab windows: {sum(r['lab'] == 'yes' for r in kept)} kept, "
+print(f"lab windows: {sum(r['lab'] == 'yes' for r in kept)} counted, "
       f"{sum(r['lab'] == 'yes' for r in built)} on the built-in")
 docked = [r for r in kept if "+" in r["arrangement"]]
 print(f"docked slots naming an external display: "
       f"{sum(r['display'] != BUILT_IN for r in docked)} of {len(docked)}")
-print("width kinds, kept:", dict(collections.Counter(kind(r["width"]) for r in kept)))
-print("Outlook, kept:", [(r["arrangement"][:8] + ("+" if "+" in r["arrangement"] else ""), r["width"])
+print("width kinds, counted:", dict(collections.Counter(kind(r["width"]) for r in kept)))
+print("Outlook, counted:", [(r["arrangement"][:8] + ("+" if "+" in r["arrangement"] else ""), r["width"])
                          for r in kept if r["app"] == "com.microsoft.Outlook"])
-print("\nclass table: built-in, kept, non-lab")
+for app in ("com.google.Chrome", "app.zen-browser.zen"):
+    rs = [r for r in built if r["app"] == app and r["lab"] == "no"]
+    print(f"{app}, built-in: {sum(r['width'].startswith('FullWidth') for r in rs)} full of {len(rs)}")
+print("\nclass table: built-in, non-lab")
 sample = [r for r in built if r["lab"] == "no"]
 for c in list(CLASS) + ["unclassed"]:
     rs = [r for r in sample if APP_CLASS.get(r["app"], "unclassed") == c]

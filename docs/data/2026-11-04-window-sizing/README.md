@@ -7,8 +7,8 @@ The inputs and outputs behind `docs/window-sizing-research.md`. Run each script 
   parsed to the same 133 rows it held at 18:17, when the research first read it.
 - `slots.csv` is that output: app, arrangement, display, workspace, stored width, `width_dragged`.
 - `recount.py slots.csv` gives `recount.txt`: the slot counts, the width kinds and the class table
-  of the research's §1, with the two arrangements holding a 1920x1200 display left out, as Kai
-  asked.
+  of the research's §1. A slot naming one of the two 1920x1200 displays Kai discarded would be left
+  out; none does, so all 133 count.
 - `presses.py` and `births.py` read `~/Library/Logs/rini/transitions.jsonl` up to the research's
   baseline, `head -n 507423`, and give `presses.txt` and `births.txt`: width presses by day, birth
   events, and presses after a birth (§4).
