@@ -59,13 +59,15 @@ context is arranged differently depending on what is plugged in, and rini rememb
   rini that cannot read the file starts with no homes, widths or launch slots, and its next save
   writes that over the file, so going back a version would forget the machine.
 - A width the user set, by a command or by dragging an edge, MUST survive the display sleeping and
-  waking, the window server removing and re-adding the window, and a drag of the window. Each is a
-  moment the width is read again, and a width read back as the default undoes the user's choice
-  with nothing the user did to explain it. So only a close or the application quitting MAY erase a
-  window's widths. A minimize, a window briefly not manageable, one the window server leaves out of
-  a snapshot or moves to another space, a drag to another space and a rule that stops managing it
-  MUST each keep them, and a window that leaves native fullscreen under another id MUST hand them to
-  that id and be laid at them, though that id joins the strip before the old one leaves it. A width only the layout holds, as a drag's or a rule's, MUST be recorded before such a
+  waking, the window server removing and re-adding the window, a drag of the window, and its app's
+  relaunch under a rule that sets no width (`specs/workspaces.md`, "Relaunching an application").
+  Each is a moment the width is read again, and a width read back as the default undoes the user's
+  choice with nothing the user did to explain it. So only a close or the application quitting MAY
+  erase a window's widths. A minimize, a window briefly not manageable, one the window server leaves
+  out of a snapshot or moves to another space, a drag to another space and a rule that stops
+  managing it MUST each keep them, and a window that leaves native fullscreen under another id MUST
+  hand them to that id and be laid at them, though that id joins the strip before the old one leaves
+  it. A width only the layout holds, as a drag's or a rule's, MUST be recorded before such a
   removal, and a launch slot's width MUST NOT replace one the window has of its own.
 - A rule's width is a window's first. A width the window has of its own on a display MUST beat it
   when the window is laid out again, and the rule MUST NOT size the window again on its app's next

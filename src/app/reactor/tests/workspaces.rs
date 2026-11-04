@@ -350,25 +350,32 @@ fn launch_give_ups(
     })
 }
 
-/// An opening rule that applies to a window is placed over its remembered slot, and the log says
-/// that is why the slot went unread.
+/// Rules that set a remembered slot's workspace and width leave it nothing to give, and the log says that is why the slot went unread. A rule that sets less takes
+/// the slot for the rest, so it is not said.
 #[test]
-fn a_rule_placed_over_a_remembered_slot_says_so_at_info() {
-    let rule = crate::windows::domain::rules::WindowRule {
-        open_on_output: Some(crate::workspaces::domain::display_pin::DisplayRole::Internal),
-        ..crate::windows::domain::rules::WindowRule::when(
-            crate::windows::domain::rules::RuleMatch::app("com.testapp1"),
-        )
+fn rules_that_set_all_a_slot_holds_say_so_at_info() {
+    use crate::windows::domain::rules::{RuleMatch, WindowRule};
+    use crate::workspaces::domain::display_pin::DisplayRole;
+    let pin = WindowRule {
+        open_on_output: Some(DisplayRole::Internal),
+        ..WindowRule::when(RuleMatch::app("com.testapp1"))
     };
-    let logged = launch_give_ups(0, vec![rule]);
+    let everything = WindowRule {
+        open_on_workspace: Some("2".into()),
+        default_column_width: Some(400.0),
+        ..pin.clone()
+    };
+    let logged = launch_give_ups(0, vec![everything]);
     assert!(
-        logged.contains(&(tracing::Level::INFO, "RuleApplies".to_owned())),
+        logged.contains(&(tracing::Level::INFO, "RulesSetAll".to_owned())),
         "{logged:?}"
     );
-    assert!(
-        !launch_give_ups(0, vec![]).iter().any(|(_, why)| why == "RuleApplies"),
-        "and with no rule it is not said"
-    );
+    for rules in [vec![pin], vec![]] {
+        assert!(
+            !launch_give_ups(0, rules).iter().any(|(_, why)| why == "RulesSetAll"),
+            "and with a rule that sets less, or none, it is not said"
+        );
+    }
 }
 
 /// A remembered slot whose workspace the window cannot go to says so, rather than leaving the

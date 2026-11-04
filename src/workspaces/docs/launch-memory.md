@@ -75,13 +75,26 @@ and its default letters, so retitling the lab windows there fails it.
 
 ## Precedence
 
-Explicit configuration wins over anything learned:
+Explicit configuration wins over anything learned, one property at a time:
 
-1. A `window-rule` from the config file that applies to the window.
-2. A remembered slot for this topology. Its width is written only where the window has none of
-   its own on that display: a window the window server took away and gives back has no workspace,
-   so it looks up a slot too, and the slot it takes may be another window's.
+1. A `window-rule` from the config file that applies to the window, for what it sets: a workspace
+   (`open-on-workspace`) and a width (`default-column-width`). A display pin does not override the
+   slot's home here: the slot's home is one rini inferred, which `set_pinned_home` corrects
+   wherever homes are decided (`workspaces-and-displays.md`).
+2. A remembered slot for this topology, for the rest (`SlotOverrides`). Its width is written only
+   where the window has none of its own on that display: a window the window server took away and
+   gives back has no workspace, so it looks up a slot too, and the slot it takes may be another
+   window's.
 3. Today's default: active workspace, display under the cursor, configured column width.
+
+A rule once turned the slot off whole, so a rule that only pinned a display cost the app its
+remembered width at every relaunch: on 2026-11-04 Outlook's slots in `~/.rini/layout.ron` held a
+full width under 5 of its 5 arrangements, written and never read, behind Kai's
+`open-on-output "internal"` rule for Slack, Outlook and Messages.
+
+A rule's width beats the slot's even where the user widened the window since the rule sized it:
+the slot keeps no record of the rule's value it was written under, so telling a user's width from
+a rule's edited since is not built (`specs/workspaces.md`, "Relaunching an application").
 
 ## Recording
 
@@ -125,9 +138,9 @@ time a width went missing the reason had to be reconstructed from the layout fil
 `info`, the lowest level the service keeps (`RUST_LOG=error,warn,info` in the launch agent):
 at `debug`, `grep -c "remembered\|relaunched"` over the service's log on 2026-11-04 found 0.
 A missing topology is a `warn`, because nothing remembered can be found at all until it
-arrives. Two give-ups happen outside the lookup and are logged the same way: a window rule
-applying to a window whose application left slots (`RuleApplies`, the rule placed over the
-slot), and a slot whose workspace the window cannot go to (`WorkspaceRefused`).
+arrives. Two give-ups happen outside the lookup and are logged the same way: window rules that set
+both a workspace and a width for a window whose application left slots (`RulesSetAll`, all the
+slot would give), and a slot whose workspace the window cannot go to (`WorkspaceRefused`).
 
 Two lookups also have to be right, and both were wrong first time:
 

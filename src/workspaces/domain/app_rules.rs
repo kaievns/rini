@@ -1,7 +1,7 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::{SpaceId, WindowId};
 
-use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RelativeTo};
+use crate::windows::domain::rules::{AppRuleDecision, AppRuleSize, FloatingPosition, RelativeTo};
 use crate::workspaces::VirtualWorkspaceId;
 
 /// Complete result of applying a managed app rule to workspace policy.
@@ -83,6 +83,36 @@ impl AppRuleEffects {
             edited: last_gave.is_some(),
         })
     }
+}
+
+/// Which of a launch slot's properties the rules applying to a window set. Each one they set is
+/// theirs, and the slot gives the window the rest (`src/workspaces/docs/launch-memory.md`,
+/// "Precedence"). A display pin is not among them: the slot's home is one rini inferred, which
+/// the pin corrects where homes are decided.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SlotOverrides {
+    pub workspace: bool,
+    pub width: bool,
+}
+
+impl SlotOverrides {
+    /// What `decision` sets of a slot: nothing when no rule matches, everything when a rule stops
+    /// managing the window, and otherwise its workspace and its width each where the rule names
+    /// one. A height alone sets no width.
+    pub fn of(decision: &AppRuleDecision) -> Self {
+        match decision {
+            AppRuleDecision::NoMatch => Self::default(),
+            AppRuleDecision::Unmanaged => Self { workspace: true, width: true },
+            AppRuleDecision::Managed { workspace, size, .. } => Self {
+                workspace: workspace.is_some(),
+                width: size.is_some_and(|size| size.w.is_some()),
+            },
+        }
+    }
+
+    /// Whether the slot is left nothing a window takes from it: its home is the display it was
+    /// first seen on by then.
+    pub fn all(self) -> bool { self.workspace && self.width }
 }
 
 /// Workspace-policy result for one evaluated window.
@@ -279,6 +309,50 @@ mod tests {
             size: None,
             focus: false,
         })
+    }
+
+    /// A rule sets of a launch slot only what it names: a workspace the workspace, a width the
+    /// width, and a display pin, a height or a floating position neither.
+    #[test]
+    fn a_rule_sets_of_a_launch_slot_only_what_it_names() {
+        use crate::windows::domain::rules::WorkspaceSelector;
+        use crate::workspaces::domain::display_pin::DisplayRole;
+        let managed = |workspace, display, size| AppRuleDecision::Managed {
+            workspace,
+            floating: true,
+            position: Some(FloatingPosition::default()),
+            size,
+            focus: true,
+            display,
+        };
+        let set = |workspace, width| SlotOverrides { workspace, width };
+        let height = Some(AppRuleSize { w: None, h: Some(300.0) });
+        let width = Some(AppRuleSize { w: Some(234.0), h: None });
+        let named = Some(WorkspaceSelector::Name("comms".into()));
+
+        let cases = [
+            (AppRuleDecision::NoMatch, set(false, false)),
+            (managed(None, None, None), set(false, false)),
+            (
+                managed(None, Some(DisplayRole::Internal), None),
+                set(false, false),
+            ),
+            (managed(named.clone(), None, None), set(true, false)),
+            (managed(None, None, height), set(false, false)),
+            (
+                managed(None, Some(DisplayRole::Internal), width),
+                set(false, true),
+            ),
+            (
+                managed(named, Some(DisplayRole::External), width),
+                set(true, true),
+            ),
+            (AppRuleDecision::Unmanaged, set(true, true)),
+        ];
+        for (decision, sets) in cases {
+            assert_eq!(SlotOverrides::of(&decision), sets, "{decision:?}");
+            assert_eq!(sets.all(), sets == set(true, true));
+        }
     }
 
     /// Each verdict against each state the window was in, and the verdict each rule and last rule

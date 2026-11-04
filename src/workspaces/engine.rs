@@ -1032,7 +1032,7 @@ mod tests {
     use crate::layout::settings::LayoutSettings;
     use crate::layout::{ColumnWidth, ResizeOrientation, StripEnd};
     use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RuleMatch, WindowRule};
-    use crate::workspaces::domain::app_rules::AppRuleResize;
+    use crate::workspaces::domain::app_rules::{AppRuleOutcome, AppRuleResize};
     use crate::workspaces::settings::VirtualWorkspaceSettings;
 
     impl OnScreenEntry {
@@ -1568,6 +1568,119 @@ mod tests {
             fx.memory.affinity.window_width(&DisplayUuid::new("built-in"), window),
             record
         );
+    }
+
+    const SLACK: &str = "com.tinyspeck.slackmacgap";
+
+    /// Slack relaunched on a 1200pt laptop under `rule`, its one remembered slot full width in
+    /// "Development", as Kai's `open-on-output "internal"` rule meets it: the window and what its
+    /// first sighting asked of the rules.
+    fn slack_relaunched_under(
+        rule: WindowRule,
+    ) -> (EngineFixture, SpaceId, WindowId, AppRuleOutcome) {
+        use crate::workspaces::domain::display_setup::SetupId;
+        use crate::workspaces::domain::launch_memory::Slot;
+
+        let settings = VirtualWorkspaceSettings {
+            app_rules: vec![rule],
+            ..VirtualWorkspaceSettings::default()
+        };
+        let mut layout_settings = LayoutSettings::default();
+        layout_settings.scrolling.min_column_width_ratio = 0.1;
+        let mut fx = EngineFixture::with(&settings, &layout_settings);
+        let space = SpaceId::new(93);
+        let display = DisplayUuid::new("built-in");
+        fx.expose(space, CGSize::new(1200.0, 800.0));
+        fx.memory.affinity.set_display_space(&display, space);
+        fx.engine.set_connected_displays(vec![display.clone()]);
+        let topology = SetupId::of(std::slice::from_ref(&display));
+        fx.memory.launch.remember(SLACK, &topology, vec![
+            Slot {
+                title: None,
+                display_uuid: display,
+                workspace_index: 1,
+                width: Some(ColumnWidth::FullWidth),
+            }
+            .into(),
+        ]);
+        let window = WindowId::new(9, 1);
+        let entry = OnScreenEntry::plain(window).sized(500.0, 500.0);
+        let outcome = fx.open_app(space, vec![entry], app(SLACK));
+        (fx, space, window, outcome.app_rules)
+    }
+
+    fn pinned_to_the_laptop() -> WindowRule {
+        WindowRule {
+            open_on_output: Some(crate::workspaces::domain::display_pin::DisplayRole::Internal),
+            ..WindowRule::when(RuleMatch::app(SLACK))
+        }
+    }
+
+    /// `window`'s width on `space`'s active workspace: its frame, its column and its record.
+    fn laid_width(
+        fx: &mut EngineFixture,
+        space: SpaceId,
+        window: WindowId,
+    ) -> (f64, Option<ColumnWidth>, Option<ColumnWidth>) {
+        let ws = fx.engine.active_workspace(space).expect("an active workspace");
+        let layout = fx.engine.workspace_layouts.active(space, ws).expect("a layout");
+        let column = fx.engine.workspace_tree(ws).carried_width(layout, window);
+        let record = fx.memory.affinity.window_width(&DisplayUuid::new("built-in"), window);
+        (fx.frame(space, window).size.width, column, record)
+    }
+
+    /// A rule that pins a display sets no workspace and no width, so a relaunched window takes
+    /// both from its slot: Slack, Outlook and Messages opened at the default width at every
+    /// relaunch under Kai's pin, the slot written and never read (`specs/workspaces.md`).
+    #[test]
+    fn a_rule_that_only_pins_a_display_keeps_the_launch_slot_s_workspace_and_width() {
+        let (mut fx, space, window, outcome) = slack_relaunched_under(pinned_to_the_laptop());
+        let development = fx.workspaces(space)[1];
+
+        assert_eq!(fx.workspace_of(space, window), Some(development));
+        assert!(!outcome.has_resizes());
+        fx.show(space, development);
+        let (frame, column, record) = laid_width(&mut fx, space, window);
+        assert_eq!(column, Some(ColumnWidth::FullWidth));
+        assert_eq!(record, Some(ColumnWidth::FullWidth));
+        assert!(frame > 1100.0, "{frame} is the laptop's full width");
+    }
+
+    /// A rule that names a workspace takes the window there, and the slot still gives its width.
+    #[test]
+    fn a_rule_s_workspace_beats_the_launch_slot_s_and_the_slot_keeps_its_width() {
+        let (mut fx, space, window, _) = slack_relaunched_under(WindowRule {
+            open_on_workspace: Some("Utilities".into()),
+            ..pinned_to_the_laptop()
+        });
+        let utilities = fx.workspaces(space)[3];
+
+        assert_eq!(fx.workspace_of(space, window), Some(utilities));
+        fx.show(space, utilities);
+        let (_, column, record) = laid_width(&mut fx, space, window);
+        assert_eq!(column, Some(ColumnWidth::FullWidth));
+        assert_eq!(record, Some(ColumnWidth::FullWidth));
+    }
+
+    /// A rule that sets a width wins for the width: a relaunched window opens at the rule's, and
+    /// the slot gives it the workspace the rule leaves unset.
+    #[test]
+    fn a_rule_s_width_beats_the_launch_slot_s_and_the_slot_keeps_its_workspace() {
+        let (mut fx, space, window, outcome) = slack_relaunched_under(WindowRule {
+            default_column_width: Some(234.0),
+            ..pinned_to_the_laptop()
+        });
+        let development = fx.workspaces(space)[1];
+
+        assert_eq!(fx.workspace_of(space, window), Some(development));
+        let (_, resizes, _) = outcome.into_parts();
+        assert_eq!(resizes.len(), 1);
+        fx.show(space, development);
+        let _ = apply_rule_resize(&mut fx, space, resizes[0]);
+        let (frame, column, record) = laid_width(&mut fx, space, window);
+        assert_eq!(frame, 234.0);
+        assert_ne!(record, Some(ColumnWidth::FullWidth));
+        assert_eq!(record, column);
     }
 
     #[test]

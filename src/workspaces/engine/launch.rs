@@ -38,8 +38,8 @@ pub(super) enum NoLaunchSlot {
     /// The window is the `ordinal`th of its application, and none of the `of` slots is free for it,
     /// by title or by ordinal.
     NoFreeSlot { ordinal: usize, of: usize },
-    /// A window rule applies to it, and a rule is placed over a slot.
-    RuleApplies,
+    /// The window rules applying to it set its workspace and its width, all a slot would give it.
+    RulesSetAll,
     /// The slot's workspace, the `workspace_index`th, could not take the window.
     WorkspaceRefused { workspace_index: usize },
     /// The window is one focuslab opened, which neither leaves a slot nor takes one.
@@ -202,7 +202,7 @@ impl LayoutEngine {
             ),
             NoLaunchSlot::NothingRemembered
             | NoLaunchSlot::NoFreeSlot { .. }
-            | NoLaunchSlot::RuleApplies
+            | NoLaunchSlot::RulesSetAll
             | NoLaunchSlot::WorkspaceRefused { .. }
             | NoLaunchSlot::FocuslabWindow => info!(
                 idx = window.idx.get(),
