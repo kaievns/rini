@@ -176,6 +176,22 @@ field of its own beside `default_column_width`. Not met
 either: an existing window moved onto a display it has no width on takes the default there, not
 its application's.
 
+Not met, from "Why sizes reset today, ranked" in the window sizing research (branch
+`sizing/research`, not on `main`):
+
+- **Failure 5, matching on the title at first sighting.** `slot_for_window` matches a relaunched
+  window's title as it is when the window is first seen, before an app such as a browser or an
+  editor settles it, so a window can take its sibling's slot by ordinal. Matching on the settled
+  title is not built. The focuslab half of failure 5 is met (`is_focuslab_window`, above).
+- **Failure 6, the slot's display and the window's.** A slot's width is written under the slot's
+  display (`take_slot_home_and_width`) and read under the display of the space the window opens
+  on (`apply_remembered_column_width`), so a docked window that opens on another display than its
+  slot's takes the default there. Inferred from the code: on 2026-11-04, 0 of 82 docked slots in
+  `~/.rini/layout.ron` named an external display.
+- **Failure 7, an untouched width stored as none.** A window never given a width leaves a slot
+  with no width, by design ("Recording"); a default per class of application, above, is what
+  would fill it.
+
 ## Recording
 
 The memory is a projection of live state, computed when the layout is saved rather than

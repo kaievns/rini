@@ -124,7 +124,9 @@ moves along the strip within one workspace.
 
 - A window that takes no remembered place MUST say why in the log, at a level the running service
   keeps, because a window that comes back at the default width is otherwise not explained by
-  anything the service writes.
+  anything the service writes. A window a rule floats or leaves unmanaged is the exception: it
+  takes no place by design and MUST NOT be logged, since every modal would log a line at that
+  level (`src/workspaces/docs/launch-memory.md`, "Precedence").
 
 > **Found 2026-11-04, not reported.** Looking into Kai's report that day ("everything defaults to
 > 1/2 of my laptop screen, and even though we have the prevous sizes tracking it's buggy as fuck
