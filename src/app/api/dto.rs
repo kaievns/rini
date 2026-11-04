@@ -259,10 +259,11 @@ impl<'de> Deserialize<'de> for RuntimeDisplayData {
             name: helper.name,
             space: helper.space.map(SpaceId::new),
             scale: crate::displays::domain::screen::ASSUMED_SCALE,
-            // None of `is_builtin`, `bounds` and `scale` is on the wire: this is the IPC view of a
-            // display, and no client asks which screen is the machine's own, how much of it the menu
-            // bar takes or how dense its pixels are. Adding them to the protocol for internal rules
-            // is not worth a wire change.
+            physical: Default::default(),
+            // None of `is_builtin`, `bounds`, `scale` and `physical` is on the wire: this is the IPC
+            // view of a display, and no client asks which screen is the machine's own, how much of
+            // it the menu bar takes, how dense its pixels are or how big it is. Adding them to the
+            // protocol for internal rules is not worth a wire change.
         };
 
         Ok(RuntimeDisplayData {
@@ -333,6 +334,7 @@ mod tests {
             name: Some("Primary".to_string()),
             space: Some(SpaceId::new(42)),
             scale: 2.0,
+            physical: Default::default(),
         };
         let data = RuntimeDisplayData {
             info,

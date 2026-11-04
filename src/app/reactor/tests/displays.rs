@@ -1709,6 +1709,7 @@ fn arranging_one_setup_does_not_disturb_another() {
         display_uuid: uuid.into(),
         name: None,
         scale: 2.0,
+        physical: Default::default(),
     };
     let builtin = |space| screen("builtin", 0, builtin_frame, space);
     let studio = |space| screen("studio", 1, external_frame, space);
@@ -1809,6 +1810,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
             name: None,
             is_builtin,
             scale: 2.0,
+            physical: Default::default(),
         };
     let builtin = |space| screen("builtin", 0, builtin_frame, space, true);
     let studio = |space| screen("studio", 1, external_frame, space, false);
@@ -1880,6 +1882,7 @@ fn a_display_never_seen_before_takes_no_windows() {
         display_uuid: uuid.into(),
         name: None,
         scale: 2.0,
+        physical: Default::default(),
     };
     let builtin = |space| screen("builtin", 0, builtin_frame, space);
     let studio = |space| screen("studio", 1, external_frame, space);

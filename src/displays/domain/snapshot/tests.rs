@@ -15,6 +15,7 @@ fn screen(id: u32, display: &str, x: f64, width: f64, space: Option<u64>) -> Scr
         name: None,
         space: space.map(SpaceId::new),
         scale: 2.0,
+        physical: Default::default(),
     }
 }
 

@@ -342,6 +342,7 @@ fn fullscreen_space_in_screen_params_does_not_trigger_topology_relayout() {
             display_uuid: display_uuid.clone(),
             name: None,
             scale: 2.0,
+            physical: Default::default(),
         }]
     };
 
@@ -466,6 +467,7 @@ fn fullscreen_screen_params_preserves_window_layout() {
         display_uuid: "test-display-0".into(),
         name: None,
         scale: 2.0,
+        physical: Default::default(),
     }]));
     apps.simulate_until_quiet(&mut reactor);
 

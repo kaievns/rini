@@ -344,6 +344,7 @@ mod tests {
             name: None,
             space,
             scale: 2.0,
+            physical: Default::default(),
         }
     }
 

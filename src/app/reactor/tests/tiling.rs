@@ -1627,6 +1627,7 @@ impl Strip {
             space: Some(space),
             is_builtin: false,
             scale: 2.0,
+            physical: Default::default(),
         }]));
         make_active_app_with_count(&mut apps, &mut reactor, 1, count, Some(WindowId::new(1, 1)));
         let window = WindowId::new(1, 1);

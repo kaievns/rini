@@ -35,6 +35,39 @@ pub struct ScreenInfo {
     /// display's framebuffer is measured in.
     #[serde(default = "assumed_scale")]
     pub scale: f64,
+    /// How big the display is, as `CGDisplayScreenSize` reports it. Zero where it reports nothing,
+    /// as a projector can, and in a recording made before screens carried it.
+    #[serde(default)]
+    pub physical: PhysicalSize,
+}
+
+/// A display's physical size in millimetres, each side zero where the display reports none.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct PhysicalSize {
+    pub width_mm: f64,
+    pub height_mm: f64,
+}
+
+/// What a display is to a width remembered for it: the points left for windows and how wide it
+/// is physically. Two desks with the same model of monitor, which macOS names by two UUIDs, are one
+/// shape, and so is the same panel in two arrangements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DisplayShape {
+    /// `ScreenInfo::frame`'s width, to the point.
+    pub width_pt: u32,
+    /// `ScreenInfo::frame`'s height, to the point.
+    pub height_pt: u32,
+    /// The physical width to the nearest 10mm, 0 where the display reports none.
+    pub width_cm: u32,
+}
+
+/// `value` rounded to a whole number at or above zero, saturating where it runs past `u32`.
+fn whole(value: f64) -> u32 {
+    if value.is_finite() && value > 0.0 {
+        value.round().min(f64::from(u32::MAX)) as u32
+    } else {
+        0
+    }
 }
 
 /// The backing scale of a display whose own was never read: one in a recording made before screens
@@ -49,6 +82,15 @@ impl ScreenInfo {
     }
 
     pub fn display_uuid_owned(&self) -> Option<DisplayUuid> { self.display_uuid_opt().cloned() }
+
+    /// The display's shape: the points its frame leaves for windows, and its physical width.
+    pub fn shape(&self) -> DisplayShape {
+        DisplayShape {
+            width_pt: whole(self.frame.size.width),
+            height_pt: whole(self.frame.size.height),
+            width_cm: whole(self.physical.width_mm / 10.0),
+        }
+    }
 }
 
 pub fn menu_bar_inset(hidden: bool, height: f64, notch_height: f64) -> f64 {
@@ -193,6 +235,71 @@ mod tests {
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    fn screen_of(uuid: &str, frame: CGRect, physical: PhysicalSize) -> ScreenInfo {
+        ScreenInfo {
+            id: ScreenId::new(1),
+            frame,
+            bounds: frame,
+            display_uuid: uuid.into(),
+            name: None,
+            space: None,
+            is_builtin: false,
+            scale: 2.0,
+            physical,
+        }
+    }
+
+    /// A 16" built-in, about 345mm by 223mm, and the frame its menu bar leaves, 1728x1085.
+    fn built_in_16(uuid: &str) -> ScreenInfo {
+        let physical = PhysicalSize {
+            width_mm: 344.7,
+            height_mm: 222.9,
+        };
+        screen_of(uuid, rect(0.0, 32.0, 1728.0, 1085.0), physical)
+    }
+
+    /// Two displays of one model at two desks are one shape whatever UUIDs and positions macOS
+    /// gives them, and a difference of a few millimetres in what each reports is no difference.
+    #[test]
+    fn two_displays_of_one_model_are_one_shape() {
+        let mut other = built_in_16("another-uuid");
+        other.frame.origin = CGPoint::new(-1728.0, 0.0);
+        other.physical.width_mm = 342.0;
+        assert_eq!(built_in_16("a-uuid").shape(), other.shape());
+        assert_eq!(built_in_16("a-uuid").shape(), DisplayShape {
+            width_pt: 1728,
+            height_pt: 1085,
+            width_cm: 34,
+        });
+    }
+
+    /// The points left for windows and the physical width each make a shape of their own: a
+    /// 14" at 1512x949 is not the 16", nor is a panel of the 16"'s points 600mm wide.
+    #[test]
+    fn a_display_of_other_points_or_another_width_is_another_shape() {
+        let fourteen = screen_of("fourteen", rect(0.0, 32.0, 1512.0, 949.0), PhysicalSize {
+            width_mm: 302.1,
+            height_mm: 196.4,
+        });
+        let mut wide = built_in_16("wide");
+        wide.physical.width_mm = 600.0;
+        let sixteen = built_in_16("sixteen").shape();
+        assert_ne!(fourteen.shape(), sixteen);
+        assert_ne!(wide.shape(), sixteen);
+    }
+
+    /// A display that reports no size, as a projector can, keeps a shape: width 0, never a panic or
+    /// a NaN.
+    #[test]
+    fn a_display_that_reports_no_size_has_a_shape_of_no_width() {
+        let projector = screen_of("projector", rect(0.0, 0.0, 1920.0, 1080.0), PhysicalSize {
+            width_mm: f64::NAN,
+            height_mm: 0.0,
+        });
+        assert_eq!(projector.shape().width_cm, 0);
+        assert_eq!(projector.shape().width_pt, 1920);
     }
 
     #[test]

@@ -244,6 +244,7 @@ mod tests {
             name: None,
             space: space.map(SpaceId::new),
             scale: 2.0,
+            physical: Default::default(),
         }
     }
 

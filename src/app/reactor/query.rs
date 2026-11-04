@@ -734,6 +734,7 @@ mod tests {
                     name: None,
                     space: Some(SpaceId::new(space)),
                     scale: 2.0,
+                    physical: Default::default(),
                 })
                 .collect(),
             ..Default::default()
