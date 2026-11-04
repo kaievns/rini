@@ -470,6 +470,55 @@ fn a_relaunched_window_s_slot_beats_its_app_s_width() {
     assert_eq!(desk.width(beyond), two_thirds(), "no slot is left for it");
 }
 
+/// Two terminals given back their app's slots, a default then a full width, matched by order.
+fn two_terminals_in_their_slots() -> (Desk, WindowId, WindowId) {
+    let mut desk = Desk::new(BUILT_IN, SIXTEEN);
+    let slot = |width| Slot {
+        title: None,
+        display_uuid: desk.display.clone(),
+        workspace_index: 0,
+        width,
+    };
+    let slots = vec![slot(None).into(), slot(Some(ColumnWidth::FullWidth)).into()];
+    let topology = SetupId::of([&desk.display]);
+    desk.memory.launch.remember(GHOSTTY, &topology, slots);
+    let at_default = WindowId::new(400, 1);
+    let full = WindowId::new(400, 2);
+    desk.open(at_default, GHOSTTY, "~");
+    desk.open(full, GHOSTTY, "~/projects/rini");
+    assert_eq!(desk.width(at_default), None);
+    assert_eq!(desk.width(full), Some(ColumnWidth::FullWidth));
+    (desk, at_default, full)
+}
+
+/// A window the session has seen takes no launch slot's width when it comes back: with no home,
+/// it is matched after its sibling, to the sibling's full-width slot, and keeps the default it had.
+#[test]
+fn a_window_given_back_takes_no_width_from_a_launch_slot() {
+    let (mut desk, at_default, full) = two_terminals_in_their_slots();
+    let _ = desk.engine.handle_event(
+        &mut desk.windows,
+        &mut desk.memory,
+        LayoutEvent::WindowRemoved(at_default, Removal::LeftOutOfSnapshot),
+    );
+    desk.report(400, GHOSTTY);
+    assert_eq!(desk.width(at_default), None, "given back by its app's report");
+    assert_eq!(desk.width(full), Some(ColumnWidth::FullWidth));
+
+    let (mut desk, at_default, _) = two_terminals_in_their_slots();
+    let _ = desk.engine.handle_event(
+        &mut desk.windows,
+        &mut desk.memory,
+        LayoutEvent::WindowRemoved(at_default, Removal::Minimized),
+    );
+    desk.add(at_default);
+    assert_eq!(
+        desk.width(at_default),
+        None,
+        "added back before its app reports it"
+    );
+}
+
 /// A rule's width is the window's first, so the rule, not the app's width, sizes a window it
 /// matches, and a width given to a window a rule sized is not the app's.
 #[test]

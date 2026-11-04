@@ -89,8 +89,8 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   that apart needs the rule's value kept with the record, which is not built.
 - **A window's own width beats a launch slot's.** A window that comes back with
   no workspace looks up a launch slot, and the slot it takes may be another
-  window's, so its width is written only where the window has none
-  (`set_window_width_if_absent`).
+  window's, so its width is written only at a window's first sighting, where
+  the window has none (`SlotTaking`, `set_window_width_if_absent`).
 - **A window new to the session with no width of its own takes its app's.** A
   width command and a drag's end also write the width as the application's on
   the display's shape (`DisplayShape`), which carries across arrangements, and

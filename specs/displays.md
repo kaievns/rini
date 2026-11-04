@@ -92,7 +92,9 @@ context is arranged differently depending on what is plugged in, and rini rememb
   managing it MUST each keep them, and a window that leaves native fullscreen under another id MUST
   hand them to that id and be laid at them, though that id joins the strip before the old one leaves
   it. A width only the layout holds, as a drag's or a rule's, MUST be recorded before such a
-  removal, and a launch slot's width MUST NOT replace one the window has of its own.
+  removal, and a launch slot's width MUST NOT replace one the window has of its own, nor be
+  taken by a window the session has seen, which is matched to a slot after its siblings and can
+  take one of theirs.
 - A rule's width is a window's first. A width the window has of its own on a display MUST beat it
   when the window is laid out again, and the rule MUST NOT size the window again on its app's next
   report, unless the rule's width changed since it sized the window: an edit to a rule MUST show on

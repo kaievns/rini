@@ -155,7 +155,8 @@ impl LayoutEngine {
             };
             match decision {
                 AppRuleDecision::NoMatch => {
-                    if let Some(effects) = self.place_from_launch_slot(window_store, memory, launch)
+                    if let Some(effects) =
+                        self.place_from_launch_slot(window_store, memory, launch, first)
                     {
                         return Ok(AppRuleResult::Managed(effects));
                     }
@@ -169,7 +170,7 @@ impl LayoutEngine {
                             window_store,
                             memory,
                             launch,
-                            overrides,
+                            SlotTaking { overrides, first },
                         );
                         if first && !took && !overrides.width {
                             self.take_app_width(memory, launch);
@@ -188,12 +189,13 @@ impl LayoutEngine {
     }
 
     /// Puts `window` in the workspace its application's remembered slot names, with the slot's
-    /// home and width, or logs why it cannot.
+    /// home and, at its `first` sighting, its width, or logs why it cannot.
     fn place_from_launch_slot(
         &mut self,
         window_store: &mut WindowStore,
         memory: &mut DisplayMemory,
         window: NewWindow<'_>,
+        first: bool,
     ) -> Option<AppRuleEffects> {
         let slot = self.launch_slot_for_new_window(
             window_store,
@@ -203,7 +205,10 @@ impl LayoutEngine {
             window.title,
         )?;
         let workspace_id = self.assign_slot_workspace(window_store, window, &slot)?;
-        take_slot_home_and_width(memory, window.id, &slot, SlotOverrides::default());
+        take_slot_home_and_width(memory, window.id, &slot, SlotTaking {
+            overrides: SlotOverrides::default(),
+            first,
+        });
         Some(AppRuleEffects {
             workspace_id,
             floating: RuleFloating::as_is(self.floating.is_floating(window.id)),
@@ -214,16 +219,17 @@ impl LayoutEngine {
     }
 
     /// Gives `window` what its application's remembered slot holds that the rules applying to it
-    /// do not set (`overrides`): the slot's workspace and width, each only where the rules name
-    /// none, and its home, or logs why it takes nothing. Says whether it took the slot.
+    /// do not set (`taking.overrides`): the slot's workspace and width, each only where the rules
+    /// name none, the width only at a first sighting, and its home, or logs why it takes nothing.
+    /// Says whether it took the slot.
     fn take_launch_slot_under_rules(
         &mut self,
         window_store: &mut WindowStore,
         memory: &mut DisplayMemory,
         window: NewWindow<'_>,
-        overrides: SlotOverrides,
+        taking: SlotTaking,
     ) -> bool {
-        if overrides.all() {
+        if taking.overrides.all() {
             if self.has_launch_slots(memory, window.app_id) {
                 self.log_no_launch_slot(window.id, window.app_id, NoLaunchSlot::RulesSetAll);
             }
@@ -238,11 +244,12 @@ impl LayoutEngine {
         ) else {
             return false;
         };
-        if !overrides.workspace && self.assign_slot_workspace(window_store, window, &slot).is_none()
+        if !taking.overrides.workspace
+            && self.assign_slot_workspace(window_store, window, &slot).is_none()
         {
             return false;
         }
-        take_slot_home_and_width(memory, window.id, &slot, overrides);
+        take_slot_home_and_width(memory, window.id, &slot, taking);
         true
     }
 
@@ -383,16 +390,25 @@ pub(super) struct NewWindow<'a> {
     pub(super) title: Option<&'a str>,
 }
 
-/// Writes `slot`'s home and width for `window` where it has none of its own, but for the width
-/// when `overrides` sets it: a rule's width is the window's first.
-fn take_slot_home_and_width(
+/// What a window takes of a launch slot's width: none where its rules set one, and none where the
+/// session has seen the window before, whose width is its own or the default it had.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SlotTaking {
+    pub(super) overrides: SlotOverrides,
+    pub(super) first: bool,
+}
+
+/// Writes `slot`'s home for `window` where it has none, and its width where the window has none of
+/// its own, at its first sighting and where no rule sets one (`taking`): a rule's width is the
+/// window's first, and a window the session has seen may be matched to a sibling's slot.
+pub(super) fn take_slot_home_and_width(
     memory: &mut DisplayMemory,
     window: WindowId,
     slot: &Slot,
-    overrides: SlotOverrides,
+    taking: SlotTaking,
 ) {
     memory.affinity.set_window_home_if_absent(window, &slot.display_uuid);
-    let width = slot.width.filter(|_| !overrides.width);
+    let width = slot.width.filter(|_| taking.first && !taking.overrides.width);
     if let Some(width) = width {
         memory.affinity.set_window_width_if_absent(&slot.display_uuid, window, width);
     }
@@ -400,7 +416,7 @@ fn take_slot_home_and_width(
         idx = window.idx.get(),
         workspace = slot.workspace_index,
         ?width,
-        ?overrides,
+        ?taking,
         "placing a relaunched window where it was"
     );
 }

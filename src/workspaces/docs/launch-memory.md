@@ -83,9 +83,14 @@ Explicit configuration wins over anything learned, one property at a time:
    slot's home here: the slot's home is one rini inferred, which `set_pinned_home` corrects
    wherever homes are decided (`workspaces-and-displays.md`).
 2. A remembered slot for this topology, for the rest (`SlotOverrides`). Its width is written only
-   where the window has none of its own on that display: a window the window server took away and
-   gives back has no workspace, so it looks up a slot too, and the slot it takes may be another
-   window's.
+   at the window's first sighting in the session (`SlotTaking`), and only where the window has
+   none of its own on that display. A window the window server took away and gives back has no
+   workspace and no home, so it looks up a slot too and is matched after its siblings, to a slot
+   that may be another window's: it takes that slot's workspace, as it did before widths were
+   kept across a removal, and keeps its own width or the default it had
+   (`a_window_given_back_takes_no_width_from_a_launch_slot`). Not met: it can land on that
+   sibling's workspace, since a removal forgets the workspace; taking no slot at all would send
+   every window back from a wake to the active workspace instead.
 3. For a window new to the session that took no slot and whose rules set no width, the width
    its application was last given on a display of this shape ("An application's width").
 4. Today's default: active workspace, display under the cursor, configured column width.

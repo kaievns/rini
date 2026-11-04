@@ -9,10 +9,11 @@ use tracing::warn;
 use crate::layout::WindowLayoutConstraints;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{RuleState, WindowRuleContext};
-use crate::workspaces::domain::app_rules::{AppRuleOutcome, AppRuleWorkspaceFocus};
+use crate::workspaces::domain::app_rules::{AppRuleOutcome, AppRuleWorkspaceFocus, SlotOverrides};
 use crate::workspaces::domain::display_affinity::{Removal, RemovedWidths};
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
+use crate::workspaces::engine::rules::{SlotTaking, take_slot_home_and_width};
 use crate::workspaces::engine::{AppWindows, EventResponse, LayoutEngine, OnScreenEntry};
 use crate::workspaces::{AppRuleEffects, AppRuleResult, RuleFloating, WindowStore};
 
@@ -370,10 +371,10 @@ impl LayoutEngine {
                     workspace_id,
                 );
             }
-            memory.affinity.set_window_home_if_absent(wid, &slot.display_uuid);
-            if let Some(width) = slot.width {
-                memory.affinity.set_window_width_if_absent(&slot.display_uuid, wid, width);
-            }
+            take_slot_home_and_width(memory, wid, slot, SlotTaking {
+                overrides: SlotOverrides::default(),
+                first,
+            });
         } else if first && unassigned {
             self.take_app_width_unruled(window_store, memory, space, wid);
         }
