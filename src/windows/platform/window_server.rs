@@ -820,7 +820,7 @@ impl WindowServer for LiveWindowServer {
         describe(&window_list(true), titles)
     }
 
-    fn every_window(&self) -> Vec<Listed> { describe(&window_list(false), true) }
+    fn every_window(&self, titles: bool) -> Vec<Listed> { describe(&window_list(false), titles) }
 
     fn owner_name(&self, pid: pid_t) -> Option<String> { Some(application_name(pid)) }
 

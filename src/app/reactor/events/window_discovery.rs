@@ -426,13 +426,18 @@ pub(crate) struct EmitLayoutPayload<'a> {
     pub(crate) not_held: Vec<WindowId>,
 }
 
+/// Whether a discovery of `pid`'s is matched: one is only when the store holds a window of its.
+pub(crate) fn is_matched(state: &crate::app::reactor::state::RiniState, pid: pid_t) -> bool {
+    state.windows.iter_windows().any(|(wid, _)| wid.pid == pid)
+}
+
 pub(crate) fn emit_layout_events(
     state: &mut crate::app::reactor::state::RiniState,
     layout: &mut crate::workspaces::LayoutEngine,
     payload: EmitLayoutPayload<'_>,
 ) -> crate::app::reactor::events::EventOutcome {
     let mut outcome = crate::app::reactor::events::EventOutcome::default();
-    if !state.windows.iter_windows().any(|(wid, _)| wid.pid == payload.pid) {
+    if !is_matched(state, payload.pid) {
         return outcome;
     }
     let mut app_windows = windows_to_list(state, layout, &payload);

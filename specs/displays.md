@@ -95,26 +95,30 @@ context is arranged differently depending on what is plugged in, and rini rememb
   again, and a width read back as the default undoes the user's choice with nothing the user did to
   explain it. So only a close, the application quitting, or the window being gone MAY erase a
   window's widths: gone from the windows rini holds once this session has seen it, or from the
-  window server's windows for its process, asked as rini starts and as an application reports its
+  window server's windows for its process, asked as rini starts and as its application reports its
   windows. A live window rini has not held yet, as each is after a restart until its application
-  reports it, MUST keep them, homed or not. A minimize, a window briefly not manageable, one the window server leaves out of a snapshot or moves
-  to another space, a drag to another space and a rule that stops managing it MUST each keep them,
-  and a window that leaves native fullscreen under another id MUST hand them to that id and be laid
-  at them, though that id joins the strip before the old one leaves it. A width only the layout
-  holds, as a drag's or a rule's, MUST be recorded before such a removal, and a launch slot's width
-  MUST NOT replace one the window has of its own, nor be taken by a window the session has seen,
-  which is matched to a slot after its siblings and can take one of theirs. Not yet met at a
-  relaunch: a window can take a sibling's slot by order, its title matched as first seen, before its
-  app settles it, and a docked window that opens on another display than its slot's takes the
-  default there, inferred from the code (`src/workspaces/docs/launch-memory.md`, failures 5 and 6).
+  reports it, MUST keep them, homed or not. A minimize, a window briefly not manageable, one the
+  window server leaves out of a snapshot or moves to another space, a drag to another space and a
+  rule that stops managing it MUST each keep them, and a window that leaves native fullscreen under
+  another id MUST hand them to that id and be laid at them, though that id joins the strip before
+  the old one leaves it. A width only the layout holds, as a drag's or a rule's, MUST be recorded
+  before such a removal, and a launch slot's width MUST NOT replace one the window has of its own,
+  nor be taken by a window the session has seen, which is matched to a slot after its siblings and
+  can take one of theirs. Not yet met at a relaunch: a window can take a sibling's slot by order,
+  its title matched as first seen, before its app settles it, and a docked window that opens on
+  another display than its slot's takes the default there, inferred from the code
+  (`src/workspaces/docs/launch-memory.md`, failures 5 and 6).
 - A window's records MUST NOT outlive it into a window that takes its id. An id is the process id
   and the window server id, both reused after a reboot, and a removal that keeps the widths keeps
   them with no home, so a minimized window's width left in the file would size a different window
   opened under that id. At startup a record MUST be kept only for a window the restore can still
-  match or the window server still has for that process. Once an application's report is matched,
+  match or the window server still has for that process. Once its application's report is matched,
   a record of a window rini has not seen MUST be dropped when the window server no longer has it
   and no live window can still take it as a restore candidate. An application leaving the window
-  out of its report MUST NOT alone drop it, since a report can omit a window it has.
+  out of its report MUST NOT alone drop it, since a report can omit a window it has. A report of no
+  window is not matched, so an application still running with no window open MAY keep such a
+  record until it reports a window or quits: one that reports before its windows open, as one
+  launching does, would otherwise lose the candidates its windows are about to take.
 - A rule's width is a window's first. A width the window has of its own on a display MUST beat it
   when the window is laid out again, and the rule MUST NOT size the window again on its app's next
   report, unless the rule's width changed since it sized the window: an edit to a rule MUST show on

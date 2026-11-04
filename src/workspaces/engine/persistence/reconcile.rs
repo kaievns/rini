@@ -33,7 +33,7 @@ impl LayoutEngine {
             .iter()
             .copied()
             .filter(|window| {
-                self.is_candidate_of_app(*window, pid, app_id)
+                self.is_window_of_app(*window, pid, app_id)
                     && self
                         .restored_locations_for_window(*window)
                         .iter()
@@ -43,8 +43,14 @@ impl LayoutEngine {
         self.discard_candidates(discarded)
     }
 
-    /// Whether `window`, a restore candidate, is one of the app of `pid` or `app_id`'s.
-    fn is_candidate_of_app(&self, window: WindowId, pid: pid_t, app_id: Option<&str>) -> bool {
+    /// Whether `window` is one of the app of `pid`'s, or of `app_id`'s by its persistence
+    /// fingerprint, as a restore candidate saved under a pid since quit is.
+    pub(in crate::workspaces::engine) fn is_window_of_app(
+        &self,
+        window: WindowId,
+        pid: pid_t,
+        app_id: Option<&str>,
+    ) -> bool {
         window.pid == pid
             || app_id.is_some_and(|app_id| {
                 self.persistence
@@ -64,7 +70,7 @@ impl LayoutEngine {
         app_id: Option<&str>,
     ) -> bool {
         self.is_restore_candidate(window)
-            && (!self.is_candidate_of_app(window, pid, app_id)
+            && (!self.is_window_of_app(window, pid, app_id)
                 || !self.restored_locations_for_window(window).is_empty())
     }
 

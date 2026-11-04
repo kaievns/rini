@@ -89,10 +89,11 @@ thread, `src/decorations/docs/README.md`, and the pictures watches) looks the wi
 up among the process's own first, and waits on that window's connection only if it is one; for
 another application's window it waits on nothing. It is asked on the read connection all the same.
 
-`SLSGetWindowList`, every window on screen or not, waits on nothing (`every_window`, the menu
-extras' listing). A window's title is read off the query's reply (`SLSWindowIteratorCopyTitle`, the
-query asked with flag bit 0), and its owner's name from its application
-(`NSRunningApplication.localizedName`, else the process name).
+`SLSGetWindowList`, every window on screen or not, waits on nothing (`every_window`: the menu
+extras' listing, and untitled, an app's discovery asking after its unseen windows from the file,
+`src/workspaces/docs/workspaces-and-displays.md`). A window's title is read off the query's reply
+(`SLSWindowIteratorCopyTitle`, the query asked with flag bit 0), and its owner's name from its
+application (`NSRunningApplication.localizedName`, else the process name).
 
 **On the main connection**, each for its reason:
 

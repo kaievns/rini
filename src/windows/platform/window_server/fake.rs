@@ -30,6 +30,7 @@ pub struct FakeWindowServer {
     answers: Mutex<Answers>,
     commands: Mutex<Vec<Command>>,
     reads: AtomicUsize,
+    lists_of_every_window: AtomicUsize,
 }
 
 #[derive(Debug, Default)]
@@ -78,6 +79,11 @@ impl FakeWindowServer {
 
     /// How many reads have been answered so far, each a query the live window server would make.
     pub fn reads(&self) -> usize { self.reads.load(Ordering::Relaxed) }
+
+    /// How many of those reads were `every_window`'s, the list of every window in the session.
+    pub fn lists_of_every_window(&self) -> usize {
+        self.lists_of_every_window.load(Ordering::Relaxed)
+    }
 
     /// The commands given so far, in order.
     pub fn commands(&self) -> Vec<Command> { locked(&self.commands).clone() }
@@ -251,7 +257,16 @@ impl WindowServer for FakeWindowServer {
         })
     }
 
-    fn every_window(&self) -> Vec<Listed> { self.answer(|a| a.every.clone()) }
+    fn every_window(&self, titles: bool) -> Vec<Listed> {
+        self.lists_of_every_window.fetch_add(1, Ordering::Relaxed);
+        self.answer(|a| {
+            let mut listed = a.every.clone();
+            if !titles {
+                listed.iter_mut().for_each(|window| window.title = None);
+            }
+            listed
+        })
+    }
 
     fn owner_name(&self, pid: pid_t) -> Option<String> {
         self.answer(|a| a.owners.get(&pid).cloned())
@@ -314,7 +329,7 @@ mod tests {
         assert_eq!(ws.key_focused_window(space), None);
         assert_eq!(ws.key_focus_pid(), None);
         assert!(ws.on_screen_windows(true).is_empty());
-        assert!(ws.every_window().is_empty());
+        assert!(ws.every_window(true).is_empty());
         assert_eq!(ws.owner_name(1), None);
         assert!(ws.desktop_windows(&"display".into()).is_empty());
         assert!(!ws.focus_desktop(

@@ -1,7 +1,7 @@
 //! What belongs to a display: each window's home, the strip order a replug rebuilds, and the
 //! width each window has on each display.
 
-use rini_core::ids::{DisplayUuid, SpaceId, WindowId};
+use rini_core::ids::{DisplayUuid, SpaceId, WindowId, pid_t};
 use tracing::{debug, info};
 
 use crate::layout::{ColumnWidth, LayoutId};
@@ -137,18 +137,25 @@ impl LayoutEngine {
         }
     }
 
-    /// Every window with records that this session has not seen and the store does not hold: one
-    /// from the file its app has not reported yet, alive or not.
+    /// Every window with records of the app of `pid` or `app_id`'s that this session has not seen
+    /// and the store does not hold: one from the file its app has not reported yet, alive or not.
+    /// Another app's is judged at that app's report.
     pub fn unseen_remembered_windows(
         &self,
         window_store: &WindowStore,
         memory: &DisplayMemory,
+        pid: pid_t,
+        app_id: Option<&str>,
     ) -> Vec<WindowId> {
         memory
             .affinity
             .remembered_windows()
             .into_iter()
-            .filter(|window| !self.was_sighted(*window) && !window_store.contains_window(*window))
+            .filter(|window| {
+                self.is_window_of_app(*window, pid, app_id)
+                    && !self.was_sighted(*window)
+                    && !window_store.contains_window(*window)
+            })
             .collect()
     }
 

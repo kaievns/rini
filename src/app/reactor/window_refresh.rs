@@ -300,7 +300,7 @@ impl Reactor {
             .filter(|space| self.is_space_active(*space))
             .collect();
         let focused_window = self.focused_window_for_discovery(pid);
-        let not_held = self.unseen_windows_not_held();
+        let not_held = self.unseen_windows_not_held(pid, app_info);
         window_discovery::emit_layout_events(
             &mut self.state,
             &mut self.layout_engine,
@@ -317,15 +317,22 @@ impl Reactor {
         )
     }
 
-    /// The windows with records this session has not seen and no store holds that the window
-    /// server's list of every window does not hold. The list is asked only when there are some.
-    fn unseen_windows_not_held(&self) -> Vec<WindowId> {
-        let unseen = self
-            .layout_engine
-            .unseen_remembered_windows(&self.state.windows, &self.state.display_memory);
+    /// The windows of the app of `pid` with records this session has not seen and no store holds
+    /// that the window server's list of every window does not hold. The list, untitled, is asked
+    /// only when there are some and the discovery is matched.
+    fn unseen_windows_not_held(&self, pid: pid_t, app_info: &Option<AppInfo>) -> Vec<WindowId> {
+        if !window_discovery::is_matched(&self.state, pid) {
+            return Vec::new();
+        }
+        let unseen = self.layout_engine.unseen_remembered_windows(
+            &self.state.windows,
+            &self.state.display_memory,
+            pid,
+            app_info.as_ref().and_then(|info| info.bundle_id.as_deref()),
+        );
         if unseen.is_empty() {
             return Vec::new();
         }
-        window_discovery::not_held_by(&unseen, &self.reads.window_server.every_window())
+        window_discovery::not_held_by(&unseen, &self.reads.window_server.every_window(false))
     }
 }

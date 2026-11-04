@@ -425,3 +425,34 @@ fn a_window_from_the_file_its_app_reports_without_is_forgotten_once_the_window_s
         "no list is no answer"
     );
 }
+
+/// How many times the window server's list of every window is asked as rini starts on
+/// `restarted_with_a_width_on_record` and `reporting` reports `windows`.
+fn lists_asked_at_a_report(
+    reporting: rini_core::ids::pid_t,
+    windows: Vec<crate::windows::domain::info::WindowInfo>,
+) -> usize {
+    let mut reactor = restarted_with_a_width_on_record(sibling());
+    let mut apps = Apps::new();
+    reactor.handle_event(space_state_event(vec![SCREEN], vec![Some(space())]));
+    apps.make_app_and_settle(&mut reactor, reporting, windows);
+    reactor.window_server().lists_of_every_window()
+}
+
+/// Each space change sends a discovery of every app, so the list of every window in the session is
+/// asked only at the report of a window by the app the unseen windows from the file are of: not at
+/// another app's, nor at its own reporting none, which is not matched.
+#[test]
+fn only_an_app_s_report_of_a_window_asks_the_window_server_about_its_unseen_windows() {
+    assert_eq!(
+        lists_asked_at_a_report(FIRST_TO_REPORT, vec![make_window(3)]),
+        0,
+        "another app's report"
+    );
+    assert_eq!(
+        lists_asked_at_a_report(PID, Vec::new()),
+        0,
+        "a report of no window"
+    );
+    assert!(lists_asked_at_a_report(PID, make_windows(1)) > 0);
+}

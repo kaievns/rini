@@ -61,8 +61,8 @@ pub trait WindowServer: Any + Send + Sync {
     fn key_focus_pid(&self) -> Option<pid_t>;
     /// Every window on screen, front to back, the desktop's included; with `titles`, each title.
     fn on_screen_windows(&self, titles: bool) -> Vec<Listed>;
-    /// Every window the window server has, on screen or not, with titles.
-    fn every_window(&self) -> Vec<Listed>;
+    /// Every window the window server has, on screen or not; with `titles`, each title.
+    fn every_window(&self, titles: bool) -> Vec<Listed>;
     /// The name the owner of a window of `pid`'s goes by, as the window server's own window list
     /// names it: the application's, or its process's when it is none.
     fn owner_name(&self, pid: pid_t) -> Option<String>;

@@ -261,7 +261,7 @@ fn status_windows(
     let display =
         CGDisplayBounds(active_menu_bar_display_id().unwrap_or_else(|| CGMainDisplayID()));
     let windows: Vec<Listed> = server
-        .every_window()
+        .every_window(true)
         .into_iter()
         .filter(|window| window.level as isize == NSStatusWindowLevel)
         .collect();

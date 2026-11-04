@@ -85,8 +85,8 @@ pub enum LayoutEvent {
         app_id: Option<String>,
         /// The native spaces the batch covered.
         spaces: Vec<SpaceId>,
-        /// Windows with records, of any app, that this session has not seen and no store holds,
-        /// which the window server's list of every window answered without.
+        /// Windows with records, of this app's, that this session has not seen and no store
+        /// holds, which the window server's list of every window answered without.
         not_held: Vec<WindowId>,
     },
     AppClosed(pid_t),
