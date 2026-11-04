@@ -40,13 +40,31 @@ context is arranged differently depending on what is plugged in, and rini rememb
   its place in that display's strip order. An arrangement is the SET of attached displays, named by
   their UUIDs, so plugging a monitor in spreads the workspace and unplugging it gathers the windows
   back, each to a place remembered for that arrangement.
-- Arrangements MUST NOT share records. Rearranging while docked MUST NOT change how the laptop looks
-  alone, and the reverse. One record per window cannot express this: the last deliberate move won
-  everywhere, so moving a window onto the laptop while undocked silently cancelled its place at the
-  desk.
+- Arrangements MUST NOT share a window's records. Rearranging while docked MUST NOT change how the
+  laptop looks alone, and the reverse. One record per window cannot express this: the last
+  deliberate move won everywhere, so moving a window onto the laptop while undocked silently
+  cancelled its place at the desk.
+- An application's width MAY carry across arrangements, below the window's own records, as the next
+  requirement says. It MUST NOT override a width a window has recorded in this arrangement, so
+  rearranging at one desk still changes nothing at another.
+- A window new to the session, of an application already running or one opened at a desk not seen
+  before, MUST open at the width the user last gave that application on a display of the same
+  shape, where it has no width of its own on its display, takes no launch slot and no rule sets its
+  width. A display's shape is the points its frame leaves for windows and its physical width to the
+  nearest 10mm, so the same panel docked and alone, and one model of monitor at two desks, are one
+  shape. A width command and the end of a drag of an edge MUST record the application's width; a
+  rule's resize, a width given to a window a rule sized and a focuslab window MUST NOT, since a
+  rule's width written as the application's would size its other windows. A window the session has
+  seen before MUST NOT take the application's width when it comes back: a window the window server
+  removes and re-adds keeps its own width, or the default it had, not a sibling's. Not yet met: an
+  existing window moved onto a display it has no width on takes the default there.
+- An application's width MUST be kept with the `default-column-width` it overrode, and MUST NOT be
+  applied under another one: an edit to the default MUST show on the next new window, not be beaten
+  by a width chosen against the old value. One made under another value MUST be dropped when the
+  config is read. An application MUST keep at most 8 shapes, the most recently set.
 - An arrangement is identified by WHICH displays are attached, not how many. An external at home, one
   at the office and a meeting-room projector are three arrangements, and none inherits another's
-  layout.
+  layout beyond an application's width as above.
 - A display that has never held a window MUST take none when it is attached. Every window stays where
   it is and waits to be told, and the arrangement learns from where the user puts them.
 - Width MUST be remembered per (window, display), not per window. Half of 2338pt is comfortable and
@@ -54,7 +72,9 @@ context is arranged differently depending on what is plugged in, and rini rememb
   when the laptop is alone and half-width on the external.
 - Width MUST be remembered as the layout means it — a mode, a bounded ratio, or an unbounded ratio,
   which no display's width bounds hold, as a drag or `Mod+R`'s 100% gives — never in points, because the record is consulted exactly when the
-  display size differs.
+  display size differs. An application's width MUST be held as a fraction of the display rather
+  than an offset from `default-column-width`, so a default that differs on another display reads
+  it as the same width.
 - A remembered width MUST be written so a rini from before its kind existed still reads the file. A
   rini that cannot read the file starts with no homes, widths or launch slots, and its next save
   writes that over the file, so going back a version would forget the machine.
@@ -79,6 +99,15 @@ context is arranged differently depending on what is plugged in, and rini rememb
   otherwise not traceable to what erased it. A removal that erases nothing MUST log below that
   level: a window that stays unmanageable is removed again on every snapshot, and a line per
   snapshot buries the one removal that erased.
+
+> **Reported 2026-11-04, same session.** Asked whether an application's width may carry across
+> arrangements, below the per-window record, Kai answered "2. yes". The rule this amends said
+> "Arrangements MUST NOT share records", so that rearranging at one desk could not change another.
+> That reason holds for a window's own records, which still share nothing. Applied to every record,
+> it meant each desk or meeting room not seen before, and every new window of a running
+> application, opened at `default-column-width`. Two of the resets of Kai's report below, both
+> VS Code on 2026-11-04, fit a new window of the running editor opening at a half, inferred from
+> a `MainWindowChanged on unknown window` line for its pid 15s and 27s before each width press.
 
 > **Found 2026-11-04, not reported.** Looking into Kai's report that day ("i keep getting everything
 > resetting back to 1/2") found widths lost across a sleep and wake that the service's log could not
@@ -231,5 +260,8 @@ lifecycle holds, churn and refresh it keeps, `src/displays/domain/topology.rs`,
 `an_application_that_never_answers_is_given_up_on_at_the_deadline` in
 `src/windows/platform/ax/ask_again.rs` hold its asking again. `Removal::widths` in
 `src/workspaces/domain/display_affinity.rs` says which removals keep a width, and
-`src/app/reactor/tests/widths.rs` holds a width across a wake, a re-add and a drag. Measurements are in
+`src/app/reactor/tests/widths.rs` holds a width across a wake, a re-add and a drag, and a new
+window at its application's width. `src/workspaces/domain/app_widths.rs` keeps the applications'
+widths, `APP_WIDTHS_PER_APP` the cap, and `src/workspaces/engine/app_widths.rs` writes and gives
+them. Measurements are in
 `src/displays/docs/topology.md` and `src/workspaces/docs/workspaces-and-displays.md`.

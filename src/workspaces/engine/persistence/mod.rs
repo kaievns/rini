@@ -180,9 +180,11 @@ impl LayoutEngine {
             RemovedWidths::HandedTo(owner) => {
                 self.log_erased_widths(erase, &memory.affinity.hand_widths(window, owner));
                 self.log_erased_widths(erase, &memory.affinity.forget_window(window));
+                self.forget_sighting(window);
             }
             RemovedWidths::Erased => {
                 self.log_erased_widths(erase, &memory.affinity.forget_window(window));
+                self.forget_sighting(window);
             }
         }
         self.persistence.forget_window(window);
@@ -190,6 +192,7 @@ impl LayoutEngine {
 
     pub(super) fn forget_persisted_app(&mut self, memory: &mut DisplayMemory, pid: pid_t) {
         self.log_erased_widths(Erase::AppQuit, &memory.affinity.forget_app(pid));
+        self.forget_app_sightings(pid);
         self.persistence.forget_app(pid);
     }
 

@@ -78,6 +78,7 @@ impl PersistedLayout {
             virtual_workspace_manager: self.virtual_workspace_manager,
             layout_settings: LayoutSettings::default(),
             connected_displays: Vec::new(),
+            app_width_runtime: Default::default(),
             persistence: self.persistence,
             startup_restore_pending: false,
         }

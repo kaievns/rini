@@ -4,7 +4,7 @@
 use rini_core::ids::{DisplayUuid, SpaceId, WindowId};
 use tracing::{debug, info};
 
-use crate::layout::LayoutId;
+use crate::layout::{ColumnWidth, LayoutId};
 use crate::workspaces::WindowStore;
 use crate::workspaces::domain::display_affinity::{Erase, ErasedWidth};
 use crate::workspaces::domain::display_memory::DisplayMemory;
@@ -135,8 +135,8 @@ impl LayoutEngine {
 
     /// Record the width `window` now occupies on the display owning `space`.
     ///
-    /// Called after any command that deliberately sets a width. Width is remembered per
-    /// DISPLAY, so this is the only place the two are tied together; see
+    /// Called after a width command (`remember_given_width`) and before a move to another workspace.
+    /// Width is remembered per DISPLAY, so this is the only place the two are tied together; see
     /// `DisplayAffinity::window_width` for why the layout tree is the wrong home for it.
     pub(super) fn remember_column_width(
         &mut self,
@@ -166,47 +166,24 @@ impl LayoutEngine {
         }
     }
 
-    /// Record the width of whichever column the resize commands just acted on.
-    ///
-    /// Those commands operate on the selection and report nothing back, so the window has to
-    /// be looked up rather than taken from a return value.
-    pub(super) fn remember_selected_column_width(
-        &mut self,
-        memory: &mut DisplayMemory,
-        space: SpaceId,
-        workspace_id: VirtualWorkspaceId,
-        layout: LayoutId,
-    ) {
-        let Some(window) = self.workspace_tree(workspace_id).selected_window(layout) else {
-            return;
-        };
-        self.remember_column_width(memory, space, workspace_id, layout, window);
-    }
-
     /// Record the width `window`'s column has where it is laid out, when it has one: at a drag's end,
     /// and before a removal the window can come back from, so a width only the layout held is the
     /// one read back. A column at the default, or a window in no strip, writes nothing and erases
-    /// nothing, since the record may hold a width the layout has not been given yet.
-    pub fn remember_width_as_laid(
+    /// nothing, since the record may hold a width the layout has not been given yet. Says which
+    /// width it recorded, and on which space's display.
+    pub(super) fn remember_width_as_laid(
         &mut self,
         window_store: &WindowStore,
         memory: &mut DisplayMemory,
         window: WindowId,
-    ) {
-        let Some(assignment) = window_store.workspace_info_for_window(window) else {
-            return;
-        };
+    ) -> Option<(SpaceId, ColumnWidth)> {
+        let assignment = window_store.workspace_info_for_window(window)?;
         let (space, workspace_id) = (assignment.space, assignment.workspace_id);
-        let Some(layout) = self.workspace_layouts.active(space, workspace_id) else {
-            return;
-        };
-        let Some(width) = self.workspace_tree(workspace_id).carried_width(layout, window) else {
-            return;
-        };
-        let Some(display) = memory.affinity.display_for_space(space).cloned() else {
-            return;
-        };
+        let layout = self.workspace_layouts.active(space, workspace_id)?;
+        let width = self.workspace_tree(workspace_id).carried_width(layout, window)?;
+        let display = memory.affinity.display_for_space(space).cloned()?;
         memory.affinity.set_window_width(&display, window, width);
+        Some((space, width))
     }
 
     /// Lay `window`'s column at the width it has recorded on the display it is laid out on, when it
@@ -230,7 +207,8 @@ impl LayoutEngine {
         }
     }
 
-    /// Re-apply the width `window` last had on the display owning `space`.
+    /// Re-apply the width `window` last had on the display owning `space`, or, for a window new to
+    /// the session with none of its own there, the one its app last had on the display's shape.
     ///
     /// Called when a window ARRIVES in a strip — a new workspace, or a new display. A fresh
     /// column starts at the configured default, so without this a window sized to fill the
@@ -251,7 +229,8 @@ impl LayoutEngine {
             );
             return;
         };
-        let found = memory.affinity.window_width(&on_display, window);
+        let from_app = self.take_arrival_width(window, &on_display);
+        let found = memory.affinity.window_width(&on_display, window).or(from_app);
         debug!(idx = window.idx.get(), %on_display, width = ?found, "applying a remembered width");
         let Some(width) = found else {
             return;

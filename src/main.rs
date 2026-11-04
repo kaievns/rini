@@ -109,8 +109,9 @@ fn main() {
 
     execute_startup_commands(&config.settings.run_on_start);
 
-    let (mut layout, display_memory) = restored_layout(&config, opt.no_restore);
+    let (mut layout, mut display_memory) = restored_layout(&config, opt.no_restore);
     layout.finish_loading(&config.virtual_workspaces, &config.settings.layout);
+    layout.forget_app_widths_under_another_default(&mut display_memory);
     let (event_tap_tx, event_tap_rx) = rini::app::channels::channel();
     let window_tx_store = WindowTxStore::new();
     let (cursor_warp_tx, cursor_warp_rx) = rini::app::channels::channel();

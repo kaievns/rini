@@ -65,8 +65,8 @@ pub fn handle_mouse_up(
             needs_layout = true;
         } else if session.layout_dirty {
             // A width set by dragging an edge is the window's width, as a width command's is, so
-            // it is recorded where a window coming back reads it.
-            layout.remember_width_as_laid(&state.windows, &mut state.display_memory, window);
+            // it is recorded where a window coming back reads it, and as its app's.
+            layout.remember_dragged_width(&state.windows, &mut state.display_memory, window);
             drag.skip_layout_for_window = Some(window);
             needs_layout = true;
         }

@@ -13,6 +13,7 @@ use crate::displays::domain::space_activation::{
 };
 use crate::windows::domain::raise;
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::{EngineCommand, LayoutEngine, LayoutEvent};
 
 #[derive(Debug, Clone)]
@@ -114,11 +115,13 @@ pub fn handle_close_window(target: CloseTarget) -> anyhow::Result<EventOutcome> 
 pub fn handle_config_updated(
     config: &mut Config,
     layout: &mut LayoutEngine,
+    memory: &mut DisplayMemory,
     drag: &mut DragManager,
     new_config: Config,
 ) -> anyhow::Result<EventOutcome> {
     *config = new_config;
     layout.set_layout_settings(&config.settings.layout);
+    layout.forget_app_widths_under_another_default(memory);
 
     layout.update_virtual_workspace_settings(&config.virtual_workspaces);
 

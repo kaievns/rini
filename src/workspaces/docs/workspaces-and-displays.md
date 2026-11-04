@@ -67,7 +67,7 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
 - **Width comes from the layout, not only from commands.** The affinity map was
   once written only by explicit width commands, so a window whose width came
   from the layout never appeared in it and relaunched at the default. A width
-  command, a drag's end (`events::drag`, `remember_width_as_laid`) and a rule's
+  command, a drag's end (`events::drag`, `remember_dragged_width`) and a rule's
   resize (`apply_app_rule_resize`, below) each write it now, and so does every removal a
   window can come back from, before the layout lets go of the column: a re-added
   window reads the record, never the layout it left, so a width only the layout
@@ -91,6 +91,12 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   no workspace looks up a launch slot, and the slot it takes may be another
   window's, so its width is written only where the window has none
   (`set_window_width_if_absent`).
+- **A window new to the session with no width of its own takes its app's.** A
+  width command and a drag's end also write the width as the application's on
+  the display's shape (`DisplayShape`), which carries across arrangements, and
+  a window the session has not seen, that no launch slot or rule sizes, takes it
+  as it first joins a strip (`launch-memory.md`, "An application's width"). A
+  window seen before, re-added by the window server, does not.
 - **A home is written once, on first sighting or an explicit move.** The forced
   reassignment after an unplug must not write it: an unplug evacuates windows
   onto the remaining display, and recording that as home destroys the record

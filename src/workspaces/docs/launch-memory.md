@@ -60,7 +60,8 @@ one workspace at one size. Slots are matched in order:
    editor's is its project, a notes app's is its vault.
 2. **By ordinal.** The Nth window of the application to appear takes the Nth unclaimed
    slot. Covers applications whose titles are page titles and change every session.
-3. **Not at all.** A window beyond the remembered slots gets today's defaults.
+3. **Not at all.** A window beyond the remembered slots gets its application's width on
+   this display shape ("An application's width"), or today's defaults.
 
 A slot is claimed once, so two windows cannot both take it.
 
@@ -85,7 +86,9 @@ Explicit configuration wins over anything learned, one property at a time:
    where the window has none of its own on that display: a window the window server took away and
    gives back has no workspace, so it looks up a slot too, and the slot it takes may be another
    window's.
-3. Today's default: active workspace, display under the cursor, configured column width.
+3. For a window new to the session that took no slot and whose rules set no width, the width
+   its application was last given on a display of this shape ("An application's width").
+4. Today's default: active workspace, display under the cursor, configured column width.
 
 A window a rule floats (`open-floating true`) or leaves unmanaged takes nothing from a slot, and
 opens where today's default puts it (`SlotOverrides::of` gives `None`). Taken, the slot sent every
@@ -104,6 +107,49 @@ order departs on purpose from "Precedence, in KWin's words" in the window sizing
 yet on `main` (branch `sizing/research`), which puts the slot above a rule's default and lets a
 rule's width win only once its value changed. That order needs the rule's value stored with the slot, a file format
 change, and this list is rewritten to it when that record lands.
+
+## An application's width
+
+A slot holds one window under one arrangement, so a new window of a running application, a
+window past its siblings' slots, and every application at a desk not seen before opened at
+`default-column-width` (Kai's report of 2026-11-04, `specs/displays.md`). `AppWidths`
+(`src/workspaces/domain/app_widths.rs`) keeps, per bundle id, the width the user last gave the
+application on each `DisplayShape`: the points the display's frame leaves for windows and its
+physical width to the nearest 10mm, from `CGDisplayScreenSize`. The key names no arrangement and
+no display UUID, so the same panel docked and alone, and one model of monitor at two desks, share
+it. Kai allowed that on 2026-11-04 ("2. yes"); a window's own records still share nothing.
+
+- **Written** by a width command (the preset cycle, resize-by, the full-width toggle and a title
+  bar's zoom, through `remember_given_width`) and a drag's end (`remember_dragged_width`). A
+  width back at the default forgets the shape's width, so the next window opens at the default.
+  Not by a rule's resize, nor by a width given to a window a rule sized (`last_rule_size` holds a
+  width): a rule's width is the rule's, and written as the app's it would size the app's other
+  windows. Not by a focuslab window. Not before a removal or a move to another workspace, which
+  record a width but give none.
+- **Read** for a window the session has not seen (`first_sighting`), with no workspace yet, that
+  took no slot and whose rules set no width, as it first joins a strip on the display it was
+  first seen on (`take_app_width`, `take_arrival_width`), unless it has a width of its own there.
+  A window the window server takes away and gives back has been seen, so it keeps its own width
+  or the default it had rather than a sibling's since.
+- **Held apart from the window's record** until it arrives, so a width handed to it later, as a
+  window back from native fullscreen under a new id is handed its old id's, still wins.
+- **Absolute.** `AppWidth` is a fraction of the display, not an offset from
+  `default-column-width` as `ColumnWidth::Offset` is, so a different default on another display
+  reads it as the same width. The window records and the slots are still offsets.
+- **With the default it overrode** (`Overrode::DefaultColumnWidth`). A width made under another
+  value is not read, and is dropped when the config is read and at start
+  (`forget_app_widths_under_another_default`) and at the application's next write: an edited
+  default shows on new windows rather than being beaten by a width chosen against the old one.
+- **Capped** at `APP_WIDTHS_PER_APP`, 8 shapes per application, the most recently set first.
+- **In the file** as `display_memory.app_widths`, absent while empty, so a file with none is
+  written back as it was. A rini from before it skips the key and reads the rest
+  (`a_file_with_app_widths_is_read_whole_by_the_rini_before_them`).
+
+Not built: a rule's width per display, an application's width carried as points from a display
+of another shape, and a default per class of application, which the window sizing research names
+Model B. `Overrode` is where a rule's value would be stored for a rule to rank against. Not met
+either: an existing window moved onto a display it has no width on takes the default there, not
+its application's.
 
 ## Recording
 

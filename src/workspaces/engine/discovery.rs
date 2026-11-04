@@ -336,14 +336,16 @@ impl LayoutEngine {
         wid: WindowId,
     ) -> bool {
         let active_space_before = self.space_with_window(wid);
+        let first = self.first_sighting(wid);
 
         // Where this application's windows were the last time this set of displays was attached. Only
         // consulted for a window with no workspace yet, so it cannot override an explicit rule or a
         // window rini has already placed. See `src/workspaces/docs/launch-memory.md` (in this crate).
-        let remembered = self
+        let unassigned = self
             .virtual_workspace_manager
             .workspace_for_window(window_store, space, wid)
-            .is_none()
+            .is_none();
+        let remembered = unassigned
             .then(|| {
                 let state = window_store.window(wid)?;
                 let app_id = state.info.bundle_id.clone()?;
@@ -372,6 +374,8 @@ impl LayoutEngine {
             if let Some(width) = slot.width {
                 memory.affinity.set_window_width_if_absent(&slot.display_uuid, wid, width);
             }
+        } else if first && unassigned {
+            self.take_app_width_unruled(window_store, memory, space, wid);
         }
 
         let assigned_workspace =

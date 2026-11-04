@@ -400,3 +400,119 @@ fn a_schema_6_layout_file_writes_back_the_bytes_schema_6_writes() {
         16
     );
 }
+
+/// `SCHEMA_6_FILE` as this rini writes it with applications' widths remembered: a terminal at two
+/// thirds on the 16" built-in and a third on the 32", a browser full width and an editor dragged
+/// past the bounds, all under Kai's half default.
+const SCHEMA_6_APP_WIDTHS: &str = include_str!("layout-schema-6-app-widths.ron");
+
+/// What `DisplayMemory` and the file were to the rini before applications' widths were kept, so a
+/// test can read a new file as going back to that rini would.
+mod before_app_widths {
+    use serde::Deserialize;
+
+    use super::super::{FloatingManager, PersistenceState, WorkspaceLayouts};
+    use crate::workspaces::domain::display_affinity::DisplayAffinity;
+    use crate::workspaces::domain::launch_memory::LaunchMemory;
+    use crate::workspaces::{FloatingPositionStore, WorkspaceStore};
+
+    #[derive(Default, Deserialize)]
+    pub struct DisplayMemory {
+        #[serde(default)]
+        pub affinity: DisplayAffinity,
+        #[serde(default)]
+        pub launch: LaunchMemory,
+    }
+
+    #[derive(Deserialize)]
+    pub struct PersistedLayout {
+        #[serde(default)]
+        pub schema_version: u32,
+        pub workspace_layouts: WorkspaceLayouts,
+        pub floating: FloatingManager,
+        pub floating_positions: FloatingPositionStore,
+        pub virtual_workspace_manager: WorkspaceStore,
+        #[serde(default)]
+        pub display_memory: DisplayMemory,
+        #[serde(flatten)]
+        pub persistence: PersistenceState,
+    }
+}
+
+/// A rini from before applications' widths were kept reads a file that holds them, layout, homes,
+/// widths and launch slots and all: one that could not would start with none and write that over
+/// the file (`specs/displays.md`).
+#[test]
+fn a_file_with_app_widths_is_read_whole_by_the_rini_before_them() {
+    use crate::layout::ColumnWidth;
+
+    let old: before_app_widths::PersistedLayout =
+        ron::from_str(SCHEMA_6_APP_WIDTHS).expect("the rini before app widths reads it");
+    let display = DisplayUuid::new("37D8832A-2D66-02CA-B9F7-8F30A301B230");
+    assert_eq!(old.schema_version, 6);
+    assert_eq!(
+        old.display_memory.affinity.space_for_display(&display),
+        Some(SpaceId::new(52))
+    );
+    assert_eq!(
+        old.display_memory.affinity.window_width(&display, WindowId::new(901, 4)),
+        Some(ColumnWidth::FullWidth)
+    );
+    let alone = crate::workspaces::domain::display_setup::SetupId::of([&display]);
+    assert_eq!(
+        old.display_memory.launch.slots("com.mitchellh.ghostty", &alone).len(),
+        6
+    );
+    assert_eq!(old.persistence.windows.len(), 6);
+    assert_eq!(old.virtual_workspace_manager.workspace_count(), 4);
+    assert_eq!(old.workspace_layouts.spaces().len(), 1);
+    let (_, _) = (&old.floating, &old.floating_positions);
+}
+
+/// The widths the file holds are read back as they were written, and written back the same, its
+/// maps in their own order.
+#[test]
+fn a_file_with_app_widths_reads_them_back_and_writes_them_back_the_same() {
+    use crate::displays::domain::screen::DisplayShape;
+    use crate::workspaces::domain::app_widths::{AppWidth, Overrode};
+
+    let loaded = LayoutEngine::deserialize_file(SCHEMA_6_APP_WIDTHS).expect("the bytes parse");
+    let engine = loaded.layout.expect("the layout loads");
+    let half = Overrode::DefaultColumnWidth(0.5);
+    let sixteen = DisplayShape {
+        width_pt: 1728,
+        height_pt: 1085,
+        width_cm: 34,
+    };
+    let thirty_two = DisplayShape {
+        width_pt: 3008,
+        height_pt: 1660,
+        width_cm: 70,
+    };
+    let widths = &loaded.memory.app_widths;
+    let cases = [
+        ("com.mitchellh.ghostty", sixteen, AppWidth::Bounded(0.66667)),
+        ("com.mitchellh.ghostty", thirty_two, AppWidth::Bounded(0.33333)),
+        ("com.google.Chrome", sixteen, AppWidth::FullWidth),
+        ("com.microsoft.VSCode", sixteen, AppWidth::Unbounded(0.83797)),
+    ];
+    for (app, shape, width) in cases {
+        assert_eq!(widths.width(app, shape, half), Some(width), "{app} on {shape:?}");
+    }
+    let value = |text: &str| ron::from_str::<ron::Value>(text).expect("a RON value");
+    assert_eq!(
+        value(&engine.serialize_to_string(&loaded.memory)),
+        value(SCHEMA_6_APP_WIDTHS)
+    );
+}
+
+/// A file from before applications' widths were kept loads with none, and is written back as it
+/// was: an empty record adds nothing to the file.
+#[test]
+fn a_file_from_before_app_widths_loads_with_none_and_writes_back_without_them() {
+    let loaded = LayoutEngine::deserialize_file(SCHEMA_6_FILE).expect("the bytes parse");
+    assert!(loaded.memory.app_widths.is_empty());
+    let engine = loaded.layout.expect("the layout loads");
+    let rewritten = engine.serialize_to_string(&loaded.memory);
+    assert!(!rewritten.contains("app_widths"), "{rewritten}");
+}

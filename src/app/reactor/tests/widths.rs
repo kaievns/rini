@@ -210,3 +210,89 @@ fn a_width_only_the_layout_holds_survives_the_window_server_moving_the_window_aw
     moved_away_and_back(&mut reactor, window());
     assert_eq!(width_of(&mut reactor, window()), widened);
 }
+
+/// A window of `PID`'s app, with the bundle id its app has and its standard windows carry.
+fn terminal_window(idx: u32) -> crate::windows::domain::info::WindowInfo {
+    let frame = CGRect::new(
+        CGPoint::new(100.0 * f64::from(idx), 100.0),
+        CGSize::new(50.0, 50.0),
+    );
+    make_window_info(
+        frame,
+        Some(WindowServerId::new(idx)),
+        &format!("Window{idx}"),
+        Some(TERMINAL),
+    )
+}
+
+/// The bundle id `test_context`'s apps launch with.
+const TERMINAL: &str = "com.testapp1";
+
+/// The app's one window on the built-in display, focused, with its bundle id.
+fn one_terminal() -> (Apps, Reactor) {
+    let (mut apps, mut reactor) = test_context();
+    apps.make_app_and_settle_on_screen(&mut reactor, SCREEN, space(), PID, vec![terminal_window(
+        1,
+    )]);
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space(), window()));
+    apps.simulate_until_quiet(&mut reactor);
+    (apps, reactor)
+}
+
+/// The app creates its next window, as Cmd+N does, and the width that window is laid at.
+fn next_window_s_width(apps: &mut Apps, reactor: &mut Reactor) -> f64 {
+    reactor.handle_event(Event::WindowCreated {
+        window: sibling(),
+        info: terminal_window(2),
+        server_info: None,
+        mouse_state: Some(MouseState::Up),
+    });
+    apps.simulate_until_quiet(reactor);
+    width_of(reactor, sibling())
+}
+
+/// Cmd+N in a running app, end to end: the screens' shapes reach the engine, the preset cycle
+/// records the app's width on the display's shape, and the window the app creates next opens at it
+/// (`specs/displays.md`, Kai's 2026-11-04 report, failure 1).
+#[test]
+fn a_new_window_of_a_running_app_opens_at_the_width_its_app_last_had() {
+    let (mut apps, mut reactor) = one_terminal();
+    let default = width_of(&mut reactor, window());
+    reactor.handle_test_layout_command(LayoutCommand::CyclePresetColumnWidth);
+    apps.simulate_until_quiet(&mut reactor);
+    let given = width_of(&mut reactor, window());
+    assert_ne!(given, default, "the cycle gave the window a width");
+    assert_eq!(next_window_s_width(&mut apps, &mut reactor), given);
+}
+
+/// A width set by dragging an edge is the app's last width too, as the drag ends.
+#[test]
+fn a_new_window_of_a_running_app_opens_at_the_width_a_drag_gave_its_app() {
+    let (mut apps, mut reactor) = one_terminal();
+    let before = width_of(&mut reactor, window());
+    widen(&mut apps, &mut reactor, window(), 200., By::Drag);
+    let dragged = width_of(&mut reactor, window());
+    assert!(dragged > before + 150., "{before} -> {dragged}");
+    assert_eq!(next_window_s_width(&mut apps, &mut reactor), dragged);
+}
+
+/// An edit to `default-column-width` read from the config drops the application widths made under
+/// the old value, so none of them is written back to the file.
+#[test]
+fn an_edited_default_column_width_read_from_the_config_drops_the_app_widths_made_under_the_old() {
+    let (mut apps, mut reactor) = one_terminal();
+    reactor.handle_test_layout_command(LayoutCommand::CyclePresetColumnWidth);
+    apps.simulate_until_quiet(&mut reactor);
+    assert!(!reactor.rini_state().display_memory.app_widths.is_empty());
+
+    let mut unchanged = reactor.config().clone();
+    reactor.handle_event(Event::ConfigUpdated(Box::new(unchanged.clone())));
+    assert!(
+        !reactor.rini_state().display_memory.app_widths.is_empty(),
+        "the same default"
+    );
+
+    unchanged.settings.layout.scrolling.column_width_ratio -= 0.1;
+    reactor.handle_event(Event::ConfigUpdated(Box::new(unchanged)));
+    assert!(reactor.rini_state().display_memory.app_widths.is_empty());
+}

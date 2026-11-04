@@ -21,6 +21,7 @@ use crate::workspaces::domain::workspace_focus;
 use crate::workspaces::{FloatingPositionStore, WindowStore};
 
 mod affinity;
+mod app_widths;
 mod commands;
 mod discovery;
 mod frames;
@@ -161,6 +162,8 @@ pub struct LayoutEngine {
     /// Display UUIDs currently attached. Runtime only: it describes the machine right now, not the
     /// layout, and it is what the launch memory is keyed by.
     connected_displays: Vec<DisplayUuid>,
+    /// The displays' shapes, the windows seen and the app widths they wait to take. Runtime only.
+    app_width_runtime: app_widths::AppWidthRuntime,
     persistence: PersistenceState,
     /// Set only while a saved-file startup restore is waiting for the first display snapshot.
     startup_restore_pending: bool,
@@ -500,6 +503,7 @@ impl LayoutEngine {
             virtual_workspace_manager,
             layout_settings: layout_settings.clone(),
             connected_displays: Vec::new(),
+            app_width_runtime: Default::default(),
             persistence: PersistenceState::default(),
             startup_restore_pending: false,
         }
@@ -586,10 +590,11 @@ impl LayoutEngine {
                 self.on_window_resized(wid, drag, new_frame, screens);
             }
             LayoutEvent::WindowZoomed(space, wid) => {
-                let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
+                let Some((workspace, layout)) = self.workspace_and_layout(space) else {
                     return EventResponse::default();
                 };
-                return self.toggle_full_width(memory, space, ws_id, layout, wid);
+                let target = commands::CommandTarget { space, workspace, layout };
+                return self.toggle_full_width(window_store, memory, target, wid);
             }
         }
         EventResponse::default()
@@ -780,7 +785,7 @@ impl LayoutEngine {
                 )
             }),
             EngineCommand::Resize(command) => self.with_target(space, |engine, target| {
-                engine.handle_resize_command(memory, target, is_floating, command)
+                engine.handle_resize_command(window_store, memory, target, is_floating, command)
             }),
             EngineCommand::Strip(command) => self.with_target(space, |engine, target| {
                 engine.handle_strip_command(target, command)

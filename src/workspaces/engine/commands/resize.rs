@@ -6,11 +6,12 @@
 use super::CommandTarget;
 use crate::workspaces::domain::command::ResizeCommand;
 use crate::workspaces::domain::display_memory::DisplayMemory;
-use crate::workspaces::engine::{EventResponse, LayoutEngine};
+use crate::workspaces::engine::{EventResponse, LayoutEngine, WindowStore};
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_resize_command(
         &mut self,
+        window_store: &WindowStore,
         memory: &mut DisplayMemory,
         target: CommandTarget,
         is_floating: bool,
@@ -33,7 +34,9 @@ impl LayoutEngine {
                     amount,
                     orientation,
                 );
-                self.remember_selected_column_width(memory, space, workspace_id, layout);
+                if let Some(window) = self.workspace_tree(workspace_id).selected_window(layout) {
+                    self.remember_given_width(window_store, memory, target, window);
+                }
                 EventResponse::default()
             }
             ResizeCommand::CyclePresetWidth => {
@@ -41,7 +44,7 @@ impl LayoutEngine {
                 let raised =
                     self.workspace_tree_mut(workspace_id).cycle_preset_column_width(layout);
                 for window in &raised {
-                    self.remember_column_width(memory, space, workspace_id, layout, *window);
+                    self.remember_given_width(window_store, memory, target, *window);
                 }
                 Self::response_for_raised_windows(raised)
             }

@@ -135,9 +135,11 @@ impl LayoutEngine {
             app_bundle_id, window_title, ..
         } = window;
         let decision = self.app_rules.evaluate(window);
+        let first = self.first_sighting(window_id);
 
         // Where this application's windows were, for a window with no assignment already, but for
-        // what the rules set, and not at all for one they float or leave unmanaged. This is the
+        // what the rules set, and not at all for one they float or leave unmanaged; else, for a
+        // window new to the session, the width its app last had on this display shape. This is the
         // first sighting of a launching application's window, well before `WindowAdded`, so it is
         // the only place the answer can still be changed.
         let unassigned = self
@@ -157,10 +159,21 @@ impl LayoutEngine {
                     {
                         return Ok(AppRuleResult::Managed(effects));
                     }
+                    if first {
+                        self.take_app_width(memory, launch);
+                    }
                 }
                 AppRuleDecision::Managed { .. } | AppRuleDecision::Unmanaged => {
                     if let Some(overrides) = SlotOverrides::of(&decision) {
-                        self.take_launch_slot_under_rules(window_store, memory, launch, overrides);
+                        let took = self.take_launch_slot_under_rules(
+                            window_store,
+                            memory,
+                            launch,
+                            overrides,
+                        );
+                        if first && !took && !overrides.width {
+                            self.take_app_width(memory, launch);
+                        }
                     }
                 }
             }
@@ -202,19 +215,19 @@ impl LayoutEngine {
 
     /// Gives `window` what its application's remembered slot holds that the rules applying to it
     /// do not set (`overrides`): the slot's workspace and width, each only where the rules name
-    /// none, and its home, or logs why it takes nothing.
+    /// none, and its home, or logs why it takes nothing. Says whether it took the slot.
     fn take_launch_slot_under_rules(
         &mut self,
         window_store: &mut WindowStore,
         memory: &mut DisplayMemory,
         window: NewWindow<'_>,
         overrides: SlotOverrides,
-    ) {
+    ) -> bool {
         if overrides.all() {
             if self.has_launch_slots(memory, window.app_id) {
                 self.log_no_launch_slot(window.id, window.app_id, NoLaunchSlot::RulesSetAll);
             }
-            return;
+            return false;
         }
         let Some(slot) = self.launch_slot_for_new_window(
             window_store,
@@ -223,13 +236,14 @@ impl LayoutEngine {
             window.app_id,
             window.title,
         ) else {
-            return;
+            return false;
         };
         if !overrides.workspace && self.assign_slot_workspace(window_store, window, &slot).is_none()
         {
-            return;
+            return false;
         }
         take_slot_home_and_width(memory, window.id, &slot, overrides);
+        true
     }
 
     /// Assigns `window` to the workspace `slot` names, or logs that it could not.
@@ -362,11 +376,11 @@ impl LayoutEngine {
 
 /// A window seen for the first time, as the rules see it: before it is in the window store.
 #[derive(Debug, Clone, Copy)]
-struct NewWindow<'a> {
-    id: WindowId,
-    space: SpaceId,
-    app_id: &'a str,
-    title: Option<&'a str>,
+pub(super) struct NewWindow<'a> {
+    pub(super) id: WindowId,
+    pub(super) space: SpaceId,
+    pub(super) app_id: &'a str,
+    pub(super) title: Option<&'a str>,
 }
 
 /// Writes `slot`'s home and width for `window` where it has none of its own, but for the width

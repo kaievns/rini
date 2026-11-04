@@ -12,7 +12,9 @@ a restart. Sits above `windows`, `displays` and `layout`.
 | `engine/discovery.rs` | What an application reports of its windows on a space (`AppWindows`): each admitted under its rules (`admit_window`, an `Admitted`), whether its constraints change a layout (`constraints_change_layout`), and the strip's membership reconciled with the report (`sync_tiled_windows_for_app`); a window added or removed one at a time |
 | `engine/rules.rs` | A window's app rules: the decision, the workspace and layer it gives the window, a relaunched window's remembered slot taken for each property the rules applying to it leave unset (its workspace, its width), and not at all for a window they float, and the size a tiled rule asks for, once a value, under a width the window has of its own |
 | `engine/navigation.rs` | Focus moving along a strip, one column or row (`FocusStep::Toward`) or to an end of it (`FocusStep::ToEnd`), out of the floating layer into it, and to the display above or below, where a strip ends: `move_focus_internal`, which crosses with `focus_adjacent_space` and stops with `focus_strip_end` |
-| `engine/affinity.rs` | What belongs to a display, as the engine writes it into `DisplayMemory`: each window's home, set on intent and never by the settled-topology pass, the strip order a replug rebuilds, the windows to bring back, and the width each window has on each display, remembered on a width command, a drag's end, a rule's resize and before a removal it can come back from (`remember_width_as_laid`), applied on arrival in a strip or a hand-over |
+| `engine/affinity.rs` | What belongs to a display, as the engine writes it into `DisplayMemory`: each window's home, set on intent and never by the settled-topology pass, the strip order a replug rebuilds, and the windows to bring back |
+| `engine/affinity.rs`, continued | The width each window has on each display, remembered on a width command, a drag's end, a rule's resize and before a removal it can come back from (`remember_width_as_laid`), and applied as it arrives in a strip, a new window taking its app's where it has none, or is handed one |
+| `engine/app_widths.rs` | An application's width on a display shape: written as the user gives one of its windows a width, by a command or a drag's end (`remember_given_width`, `remember_dragged_width`), and given to a window the session has not seen, that no slot or rule sizes, as it first joins a strip (`take_app_width`); widths made under another default dropped (`forget_app_widths_under_another_default`) |
 | `engine/launch.rs` | Launch memory's projection, every live window's slot recorded under the attached displays before each save (`remember_launch_slots`), and its lookup, the slot a relaunched window takes or, logged at `info`, why it takes none (`launch_slot_for_new_window`, `NoLaunchSlot`) |
 | `engine/frames.rs` | The frames a layout pass writes for one space: the strip's columns, a column off the strip parked in the corner on its side, the floating layer kept where it is usable and centred where not, maximized floating windows over the tiling area, and every window of a workspace not showing parked bottom-right; `calculate_layout_for_workspace` for the reactor's passes spends what the strip held, `preview_layout_for_workspace` for a query leaves it; `strip_columns` reads the columns |
 | `engine/moves.rs` | A window moved to another workspace, to another display's space, and between the strip and the floating layer: all three take it out of its layer (`detach`) and put it into another (`attach`), and the two moves to a workspace go through `take_window` and `place_window`, which also reassign its workspace and put it back where it was when the destination cannot be assigned |
@@ -27,6 +29,7 @@ a restart. Sits above `windows`, `displays` and `layout`.
 | `domain/display_pin.rs` | `DisplayRole`: an app pinned to a display by its role, such as the built-in screen, resolved against whatever is attached (`display_for_role`), a default an explicit move beats |
 | `domain/display_setup.rs` | `Setup` per `SetupId`, the set of attached display UUIDs: each window's display, the strip order per display and the width per window and display, never shared between arrangements |
 | `domain/window_store.rs` | `WindowStore`: the window catalogue with each window's workspace assignment, the operations that touch both kept here so the two cannot disagree |
+| `domain/app_widths.rs` | `AppWidths`: the width each application was last given on each `DisplayShape`, as a fraction of the display (`AppWidth`) with the default it overrode (`Overrode`), the `APP_WIDTHS_PER_APP` most recent kept |
 | `domain/launch_memory.rs` | Where an application's windows belong, under a key that outlives the process, focuslab's lab windows left out (`is_focuslab_window`) |
 | `domain/floating.rs`, `domain/floating_position_store.rs` | Which windows float and where they sit |
 | `domain/hidden_window_placement.rs` | Where off-workspace windows park |
@@ -66,9 +69,10 @@ because collapsing those two erased remembered widths on the next autosave.
 
 ## What is layout and what is the machine
 
-`domain/display_affinity.rs` and `domain/launch_memory.rs` describe the MACHINE, not a
-layout: which monitor owns which space, which monitor a window belongs to, where an
-application's windows go when it comes back. They are one `DisplayMemory`
+`domain/display_affinity.rs`, `domain/launch_memory.rs` and `domain/app_widths.rs` describe
+the MACHINE, not a layout: which monitor owns which space, which monitor a window belongs to,
+where an application's windows go when it comes back, and how wide it was last made on a
+display like this one. They are one `DisplayMemory`
 (`domain/display_memory.rs`), owned by `app::reactor::RiniState` beside the window store
 and passed into engine methods the same way.
 
