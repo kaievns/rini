@@ -1,0 +1,2 @@
+all births 564 {'application_launched': 229, 'window_created': 76, 'windows_discovered': 259} followed<=60s 53 presses 359 presses>=10min after birth 227
+non-lab births 377 {'application_launched': 114, 'window_created': 56, 'windows_discovered': 207} followed<=60s 36 presses 45 presses>=10min after birth 17
