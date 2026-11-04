@@ -192,6 +192,15 @@ impl Desk {
         tree.carried_width(layout, window)
     }
 
+    /// `old` superseded by `owner`, as a window back from native fullscreen is.
+    fn hand_over(&mut self, old: WindowId, owner: WindowId) {
+        let _ = self.engine.handle_event(
+            &mut self.windows,
+            &mut self.memory,
+            LayoutEvent::WindowRemoved(old, Removal::OwnedByAnotherId(owner)),
+        );
+    }
+
     fn close(&mut self, window: WindowId) {
         self.windows.remove_window(window);
         let _ = self.engine.handle_event(
@@ -532,6 +541,85 @@ fn a_width_handed_to_a_new_window_beats_its_app_s() {
         LayoutEvent::WindowRemoved(old, Removal::OwnedByAnotherId(owner)),
     );
     assert_eq!(desk.width(owner), Some(ColumnWidth::FullWidth), "its old id's");
+}
+
+/// A window back from native fullscreen under a new id is a window the session has seen: one at
+/// the default goes back to the default, though its new id was first laid at the width a sibling
+/// gave the app.
+#[test]
+fn a_window_back_from_fullscreen_at_the_default_does_not_keep_its_app_s_width() {
+    let mut desk = Desk::new(BUILT_IN, SIXTEEN);
+    let (old, sibling) = (WindowId::new(400, 1), WindowId::new(400, 2));
+    desk.open(old, GHOSTTY, "~/projects/rini");
+    desk.open(sibling, GHOSTTY, "~");
+    desk.cycle(sibling, 1);
+
+    let owner = WindowId::new(400, 3);
+    desk.open(owner, GHOSTTY, "~/projects/rini");
+    assert_eq!(desk.width(owner), two_thirds(), "laid at the app's on arrival");
+    desk.hand_over(old, owner);
+    assert_eq!(desk.width(owner), None, "the default its old id had");
+    assert_eq!(desk.width(sibling), two_thirds());
+}
+
+/// A window handed its old id's widths before it first joins a strip arrives at its old id's
+/// width, or at the default its old id had, never at its app's, whether or not it was sighted
+/// with its app's width pending.
+#[test]
+fn a_window_handed_over_before_it_joins_a_strip_takes_its_old_id_s_width_not_its_app_s() {
+    for (full_width, sighted) in [(false, false), (false, true), (true, false), (true, true)] {
+        let case = format!("old id full width: {full_width}, sighted first: {sighted}");
+        let mut desk = Desk::new(BUILT_IN, SIXTEEN);
+        let (old, sibling) = (WindowId::new(400, 1), WindowId::new(400, 2));
+        desk.open(old, GHOSTTY, "~/projects/rini");
+        if full_width {
+            desk.cycle(old, 0);
+            desk.command(LayoutCommand::ToggleFullscreenWithinGaps);
+        }
+        desk.open(sibling, GHOSTTY, "~");
+        desk.cycle(sibling, if full_width { 3 } else { 1 });
+        assert_eq!(desk.width(sibling), two_thirds(), "{case}");
+
+        let owner = WindowId::new(400, 3);
+        desk.store(owner, GHOSTTY, "~/projects/rini");
+        if sighted {
+            assert!(desk.engine.first_sighting(owner));
+            desk.engine.take_app_width(&desk.memory, NewWindow {
+                id: owner,
+                space: desk.space,
+                app_id: GHOSTTY,
+                title: Some("~/projects/rini"),
+            });
+        }
+        desk.hand_over(old, owner);
+        desk.add(owner);
+        let expected = full_width.then_some(ColumnWidth::FullWidth);
+        assert_eq!(desk.width(owner), expected, "{case}");
+    }
+}
+
+/// A window's own width on its display beats its app's at the same arrival: a window that comes to
+/// its first strip with a record of its own there, as a launch slot writes one, keeps it.
+#[test]
+fn a_window_s_own_width_beats_its_app_s_at_the_same_arrival() {
+    let mut desk = Desk::new(BUILT_IN, SIXTEEN);
+    let sibling = WindowId::new(400, 1);
+    desk.open(sibling, GHOSTTY, "~");
+    desk.cycle(sibling, 1);
+
+    let window = WindowId::new(400, 2);
+    desk.store(window, GHOSTTY, "~/projects/rini");
+    desk.engine.take_app_width(&desk.memory, NewWindow {
+        id: window,
+        space: desk.space,
+        app_id: GHOSTTY,
+        title: Some("~/projects/rini"),
+    });
+    desk.memory
+        .affinity
+        .set_window_width(&desk.display, window, ColumnWidth::FullWidth);
+    desk.add(window);
+    assert_eq!(desk.width(window), Some(ColumnWidth::FullWidth));
 }
 
 /// The app's width is for the display the window was first seen on: arriving on another, the

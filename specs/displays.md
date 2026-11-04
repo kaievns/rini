@@ -57,7 +57,9 @@ context is arranged differently depending on what is plugged in, and rini rememb
   rule's width written as the application's would size its other windows, and neither MUST a
   resize that changes only a window's height. A window the session has
   seen before MUST NOT take the application's width when it comes back: a window the window server
-  removes and re-adds keeps its own width, or the default it had, not a sibling's. Not yet met: an
+  removes and re-adds keeps its own width, or the default it had, not a sibling's, and so does a
+  window back from native fullscreen under another id, though that id was first laid at the
+  application's width. Not yet met: an
   existing window moved onto a display it has no width on takes the default there.
 - An application's width MUST be kept with the `default-column-width` it overrode, and MUST NOT be
   applied under another one: an edit to the default MUST show on the next new window, not be beaten

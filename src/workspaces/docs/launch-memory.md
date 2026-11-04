@@ -133,8 +133,12 @@ it. Kai allowed that on 2026-11-04 ("2. yes"); a window's own records still shar
   first seen on (`take_app_width`, `take_arrival_width`), unless it has a width of its own there.
   A window the window server takes away and gives back has been seen, so it keeps its own width
   or the default it had rather than a sibling's since.
-- **Held apart from the window's record** until it arrives, so a width handed to it later, as a
-  window back from native fullscreen under a new id is handed its old id's, still wins.
+- **Held apart from the window's record** until it arrives, so a width of its own there wins at
+  that arrival (`a_window_s_own_width_beats_its_app_s_at_the_same_arrival`).
+- **Not for a window's new id.** A window back from native fullscreen under a new id is one the
+  session has seen. When the old id is removed as `OwnedByAnotherId`, the new id counts as seen
+  and drops any app width still pending (`hand_over_sighting`). Laid at its app's width already,
+  it goes back to the default unless its old id handed it a width there, which is laid instead.
 - **Absolute.** `AppWidth` is a fraction of the display, not an offset from
   `default-column-width` as `ColumnWidth::Offset` is, so a different default on another display
   reads it as the same width. The window records and the slots are still offsets.

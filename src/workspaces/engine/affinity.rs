@@ -230,7 +230,13 @@ impl LayoutEngine {
             return;
         };
         let from_app = self.take_arrival_width(window, &on_display);
-        let found = memory.affinity.window_width(&on_display, window).or(from_app);
+        let own = memory.affinity.window_width(&on_display, window);
+        if own.is_none()
+            && let Some(width) = from_app
+        {
+            self.note_laid_from_app(window, &on_display, width);
+        }
+        let found = own.or(from_app);
         debug!(idx = window.idx.get(), %on_display, width = ?found, "applying a remembered width");
         let Some(width) = found else {
             return;

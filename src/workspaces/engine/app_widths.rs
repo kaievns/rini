@@ -29,6 +29,9 @@ pub(super) struct AppWidthRuntime {
     /// Held apart from its own record, so a width it is handed later, as a window back from native
     /// fullscreen under a new id is, still wins.
     on_arrival: HashMap<WindowId, (DisplayUuid, ColumnWidth)>,
+    /// The app's width each window was laid at on arrival, and on which display, so a window found
+    /// later to be one the session has seen, under another id, can be put back at the default.
+    laid_from_app: HashMap<WindowId, (DisplayUuid, ColumnWidth)>,
 }
 
 impl LayoutEngine {
@@ -54,12 +57,14 @@ impl LayoutEngine {
     pub(super) fn forget_sighting(&mut self, window: WindowId) {
         self.app_width_runtime.seen.remove(&window);
         self.app_width_runtime.on_arrival.remove(&window);
+        self.app_width_runtime.laid_from_app.remove(&window);
     }
 
     /// Forgets every window of `pid`, which quit.
     pub(super) fn forget_app_sightings(&mut self, pid: pid_t) {
         self.app_width_runtime.seen.retain(|window| window.pid != pid);
         self.app_width_runtime.on_arrival.retain(|window, _| window.pid != pid);
+        self.app_width_runtime.laid_from_app.retain(|window, _| window.pid != pid);
     }
 
     /// Records `width`, `None` for the default, as the one the user last gave `window`'s app on the
@@ -204,6 +209,55 @@ impl LayoutEngine {
     ) -> Option<ColumnWidth> {
         let (on, width) = self.app_width_runtime.on_arrival.remove(&window)?;
         (on == *display).then_some(width)
+    }
+
+    /// Notes that `window` was laid at its app's `width` on arriving on `display`.
+    pub(super) fn note_laid_from_app(
+        &mut self,
+        window: WindowId,
+        display: &DisplayUuid,
+        width: ColumnWidth,
+    ) {
+        self.app_width_runtime.laid_from_app.insert(window, (display.clone(), width));
+    }
+
+    /// `owner` now owns a window the session has seen, as the id of a window back from native
+    /// fullscreen does: it is not new, so it takes no width from its app, and a width of its app's
+    /// it was laid at goes back to the default unless its old id handed it one there.
+    pub(super) fn hand_over_sighting(
+        &mut self,
+        window_store: &WindowStore,
+        memory: &DisplayMemory,
+        owner: WindowId,
+    ) {
+        self.app_width_runtime.seen.insert(owner);
+        self.app_width_runtime.on_arrival.remove(&owner);
+        let Some((on_display, width)) = self.app_width_runtime.laid_from_app.remove(&owner) else {
+            return;
+        };
+        if memory.affinity.window_width(&on_display, owner).is_some() {
+            return;
+        }
+        let Some(assignment) = window_store.workspace_info_for_window(owner) else {
+            return;
+        };
+        let (space, workspace) = (assignment.space, assignment.workspace_id);
+        if memory.affinity.display_for_space(space) != Some(&on_display) {
+            return;
+        }
+        let Some(layout) = self.workspace_layouts.active(space, workspace) else {
+            return;
+        };
+        if self.workspace_tree(workspace).carried_width(layout, owner) != Some(width) {
+            return;
+        }
+        info!(
+            idx = owner.idx.get(),
+            %on_display,
+            ?width,
+            "a window that owns one seen before goes back to the default its old id had, not its app's width"
+        );
+        self.workspace_tree_mut(workspace).clear_carried_width(layout, owner);
     }
 
     /// Drops every application width made under a `default-column-width` other than the one in

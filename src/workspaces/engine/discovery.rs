@@ -452,8 +452,9 @@ impl LayoutEngine {
                 self.virtual_workspace_manager.remove_window(window_store, wid);
                 self.floating_positions.remove_window(wid);
                 self.forget_persisted_window(memory, wid, why);
-                // The owner may already be laid out, at the default, when its old id goes.
+                // The owner may be laid out already, at the default or its app's width.
                 if let Removal::OwnedByAnotherId(owner) = why {
+                    self.hand_over_sighting(window_store, memory, owner);
                     self.apply_remembered_width_where_laid(window_store, memory, owner);
                 }
             }
