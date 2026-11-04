@@ -93,8 +93,8 @@ pub struct AppWidths {
 
 impl AppWidths {
     /// Records that the user gave `app` `width` on `shape` under the default `overrode`, `None`
-    /// for back at the default, which forgets the shape's width. Drops what `app` remembers under
-    /// any other default, and keeps the `APP_WIDTHS_PER_APP` most recent.
+    /// for back at the default, which forgets the shape's width under that default. What `app`
+    /// remembers under any other default is kept, and the `APP_WIDTHS_PER_APP` most recent stay.
     pub fn remember(
         &mut self,
         app: &str,
@@ -103,7 +103,7 @@ impl AppWidths {
         overrode: Overrode,
     ) {
         let records = self.apps.entry(app.to_owned()).or_default();
-        records.retain(|record| record.shape != shape && record.overrode.same(overrode));
+        records.retain(|record| !(record.shape == shape && record.overrode.same(overrode)));
         if let Some(width) = width.filter(|width| width.is_finite()) {
             records.insert(0, AppWidthRecord { shape, width, overrode });
             records.truncate(APP_WIDTHS_PER_APP);
@@ -295,27 +295,28 @@ mod tests {
     }
 
     #[test]
-    fn a_width_made_under_another_default_is_not_read_and_is_dropped_at_its_app_s_next_write() {
+    fn a_width_made_under_another_default_is_not_read_and_outlives_a_write_under_another() {
         let mut widths = AppWidths::default();
         widths.remember("app", shape(1728), Some(AppWidth::FullWidth), HALF);
-        widths.remember("other", shape(1728), Some(AppWidth::FullWidth), HALF);
+        widths.remember("app", shape(3008), Some(AppWidth::Bounded(0.33333)), HALF);
         let edited = Overrode::DefaultColumnWidth(0.66667);
         assert_eq!(widths.width("app", shape(1728), edited), None);
 
-        widths.remember("app", shape(3008), Some(AppWidth::Bounded(0.25)), edited);
+        widths.remember("app", shape(1728), Some(AppWidth::Bounded(0.25)), edited);
+        widths.remember("app", shape(3008), None, edited);
+        assert_eq!(
+            widths.width("app", shape(1728), edited),
+            Some(AppWidth::Bounded(0.25))
+        );
         assert_eq!(
             widths.width("app", shape(1728), HALF),
-            None,
-            "a new width drops the app's widths under the old default"
-        );
-        assert_eq!(
-            widths.width("other", shape(1728), HALF),
             Some(AppWidth::FullWidth),
-            "another app's is kept until its own next write"
+            "a write under another default keeps the shape's width under this one"
         );
         assert_eq!(
-            widths.width("app", shape(3008), edited),
-            Some(AppWidth::Bounded(0.25))
+            widths.width("app", shape(3008), HALF),
+            Some(AppWidth::Bounded(0.33333)),
+            "and every other shape's"
         );
     }
 

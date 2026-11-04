@@ -277,8 +277,9 @@ fn a_new_window_of_a_running_app_opens_at_the_width_a_drag_gave_its_app() {
 }
 
 /// A `default-column-width` read for a while, as the reference config's when the user's fails to
-/// parse or a `config set` trial's, costs no application width: once the user's default is back,
-/// the next window opens at the width its app last had under it (`specs/displays.md`).
+/// parse or a `config set` trial's, costs no application width, though a width command writes the
+/// app's width under it: once the user's default is back, the next window opens at the width its
+/// app last had under it (`specs/displays.md`).
 #[test]
 fn an_app_s_width_is_read_again_once_its_default_column_width_is_back() {
     let (mut apps, mut reactor) = one_terminal();
@@ -291,6 +292,13 @@ fn an_app_s_width_is_read_again_once_its_default_column_width_is_back() {
     another.settings.layout.scrolling.column_width_ratio += 0.2;
     reactor.handle_event(Event::ConfigUpdated(Box::new(another)));
     apps.simulate_until_quiet(&mut reactor);
+    reactor.handle_test_layout_command(LayoutCommand::CyclePresetColumnWidth);
+    apps.simulate_until_quiet(&mut reactor);
+    assert_ne!(
+        width_of(&mut reactor, window()),
+        given,
+        "the trial's width command gave another width"
+    );
     reactor.handle_event(Event::ConfigUpdated(Box::new(users)));
     apps.simulate_until_quiet(&mut reactor);
     assert_eq!(next_window_s_width(&mut apps, &mut reactor), given);

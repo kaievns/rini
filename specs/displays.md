@@ -64,9 +64,11 @@ context is arranged differently depending on what is plugged in, and rini rememb
 - An application's width MUST be kept with the `default-column-width` it overrode, and MUST NOT be
   applied under another one: an edit to the default MUST show on the next new window, not be beaten
   by a width chosen against the old value. One made under another value MUST NOT be read under
-  it, and MUST be kept until the application's next write: a default read for a while, as the
-  reference config's when the user's fails to parse or a `config set` trial's, MUST NOT cost the
-  widths made under the user's. An application MUST keep at most 8 shapes, the most recently set.
+  it, and MUST be kept: a write replaces only the width on its shape under its own default, so a
+  default read for a while, as the reference config's when the user's fails to parse or a
+  `config set` trial's, MUST NOT cost the widths made under the user's, even when a width command
+  or a drag writes under it. An application MUST keep at most 8 widths, each a shape under a
+  default, the most recently set.
 - An arrangement is identified by WHICH displays are attached, not how many. An external at home, one
   at the office and a meeting-room projector are three arrangements, and none inherits another's
   layout beyond an application's width as above.
