@@ -276,7 +276,8 @@ fn an_app_opened_on_a_display_of_another_shape_opens_at_the_default() {
 }
 
 /// A width chosen under one `default-column-width` is not the user's answer to another: after the
-/// default is edited a new window opens at the new default, and the old width is dropped.
+/// default is edited a new window opens at the new default, and the old width is kept for the
+/// default to come back to.
 #[test]
 fn an_edited_default_column_width_is_not_beaten_by_a_width_chosen_under_the_old_one() {
     let mut desk = Desk::new(BUILT_IN, SIXTEEN);
@@ -291,11 +292,10 @@ fn an_edited_default_column_width_is_not_beaten_by_a_width_chosen_under_the_old_
     desk.open(second, GHOSTTY, "~");
     assert_eq!(desk.width(second), None, "the edited default");
 
-    desk.engine.forget_app_widths_under_another_default(&mut desk.memory);
-    assert!(
-        desk.memory.app_widths.is_empty(),
-        "the width made under 0.5 is dropped"
-    );
+    desk.engine.set_layout_settings(&kais_layout());
+    let third = WindowId::new(400, 3);
+    desk.open(third, GHOSTTY, "~/notes");
+    assert_eq!(desk.width(third), two_thirds(), "the default back");
 }
 
 /// A window the window server takes away and gives back is not new: it keeps the default it had,

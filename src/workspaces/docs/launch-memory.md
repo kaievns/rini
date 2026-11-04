@@ -148,9 +148,11 @@ it. Kai allowed that on 2026-11-04 ("2. yes"); a window's own records still shar
   `default-column-width` as `ColumnWidth::Offset` is, so a different default on another display
   reads it as the same width. The window records and the slots are still offsets.
 - **With the default it overrode** (`Overrode::DefaultColumnWidth`). A width made under another
-  value is not read, and is dropped when the config is read and at start
-  (`forget_app_widths_under_another_default`) and at the application's next write: an edited
-  default shows on new windows rather than being beaten by a width chosen against the old one.
+  value is not read, so an edited default shows on new windows rather than being beaten by a width
+  chosen against the old one. It is kept until the application's next write, which drops it. It
+  was once dropped as the config was read and at start, so a default read for a while, the
+  reference config's 0.7 when Kai's 0.5 failed to parse or a `config set` trial, erased every
+  application's width for good, inferred from the code and not seen (`an_app_s_width_is_read_again_once_its_default_column_width_is_back`).
 - **Capped** at `APP_WIDTHS_PER_APP`, 8 shapes per application, the most recently set first.
 - **In the file** as `display_memory.app_widths`, absent while empty, so a file with none is
   written back as it was. A rini from before it skips the key and reads the rest

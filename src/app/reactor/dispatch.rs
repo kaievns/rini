@@ -320,7 +320,6 @@ impl Reactor {
             Event::ConfigUpdated(new_cfg) => command::handle_config_updated(
                 &mut self.config,
                 &mut self.layout_engine,
-                &mut self.state.display_memory,
                 &mut self.drag_manager,
                 *new_cfg,
             ),

@@ -259,19 +259,6 @@ impl LayoutEngine {
         );
         self.workspace_tree_mut(workspace).clear_carried_width(layout, owner);
     }
-
-    /// Drops every application width made under a `default-column-width` other than the one in
-    /// force, so an edited default is not beaten by a width chosen against the old one.
-    pub fn forget_app_widths_under_another_default(&self, memory: &mut DisplayMemory) {
-        let dropped = memory.app_widths.forget_made_under_another(self.default_overridden());
-        if dropped > 0 {
-            info!(
-                dropped,
-                default = ?self.default_overridden(),
-                "dropping application widths made under another default-column-width"
-            );
-        }
-    }
 }
 
 #[cfg(test)]

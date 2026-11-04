@@ -276,23 +276,22 @@ fn a_new_window_of_a_running_app_opens_at_the_width_a_drag_gave_its_app() {
     assert_eq!(next_window_s_width(&mut apps, &mut reactor), dragged);
 }
 
-/// An edit to `default-column-width` read from the config drops the application widths made under
-/// the old value, so none of them is written back to the file.
+/// A `default-column-width` read for a while, as the reference config's when the user's fails to
+/// parse or a `config set` trial's, costs no application width: once the user's default is back,
+/// the next window opens at the width its app last had under it (`specs/displays.md`).
 #[test]
-fn an_edited_default_column_width_read_from_the_config_drops_the_app_widths_made_under_the_old() {
+fn an_app_s_width_is_read_again_once_its_default_column_width_is_back() {
     let (mut apps, mut reactor) = one_terminal();
     reactor.handle_test_layout_command(LayoutCommand::CyclePresetColumnWidth);
     apps.simulate_until_quiet(&mut reactor);
-    assert!(!reactor.rini_state().display_memory.app_widths.is_empty());
+    let given = width_of(&mut reactor, window());
 
-    let mut unchanged = reactor.config().clone();
-    reactor.handle_event(Event::ConfigUpdated(Box::new(unchanged.clone())));
-    assert!(
-        !reactor.rini_state().display_memory.app_widths.is_empty(),
-        "the same default"
-    );
-
-    unchanged.settings.layout.scrolling.column_width_ratio -= 0.1;
-    reactor.handle_event(Event::ConfigUpdated(Box::new(unchanged)));
-    assert!(reactor.rini_state().display_memory.app_widths.is_empty());
+    let users = reactor.config().clone();
+    let mut another = users.clone();
+    another.settings.layout.scrolling.column_width_ratio += 0.2;
+    reactor.handle_event(Event::ConfigUpdated(Box::new(another)));
+    apps.simulate_until_quiet(&mut reactor);
+    reactor.handle_event(Event::ConfigUpdated(Box::new(users)));
+    apps.simulate_until_quiet(&mut reactor);
+    assert_eq!(next_window_s_width(&mut apps, &mut reactor), given);
 }

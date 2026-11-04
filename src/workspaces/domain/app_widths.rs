@@ -122,18 +122,6 @@ impl AppWidths {
             .map(|record| record.width)
     }
 
-    /// Drops every width made under a default other than `current`, and says how many.
-    pub fn forget_made_under_another(&mut self, current: Overrode) -> usize {
-        let mut dropped = 0;
-        for records in self.apps.values_mut() {
-            let before = records.len();
-            records.retain(|record| record.overrode.same(current));
-            dropped += before - records.len();
-        }
-        self.apps.retain(|_, records| !records.is_empty());
-        dropped
-    }
-
     pub fn is_empty(&self) -> bool { self.apps.is_empty() }
 }
 
@@ -307,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn a_width_made_under_another_default_is_not_read_and_is_dropped() {
+    fn a_width_made_under_another_default_is_not_read_and_is_dropped_at_its_app_s_next_write() {
         let mut widths = AppWidths::default();
         widths.remember("app", shape(1728), Some(AppWidth::FullWidth), HALF);
         widths.remember("other", shape(1728), Some(AppWidth::FullWidth), HALF);
@@ -320,8 +308,11 @@ mod tests {
             None,
             "a new width drops the app's widths under the old default"
         );
-        assert_eq!(widths.forget_made_under_another(edited), 1);
-        assert_eq!(widths.width("other", shape(1728), HALF), None);
+        assert_eq!(
+            widths.width("other", shape(1728), HALF),
+            Some(AppWidth::FullWidth),
+            "another app's is kept until its own next write"
+        );
         assert_eq!(
             widths.width("app", shape(3008), edited),
             Some(AppWidth::Bounded(0.25))
