@@ -28,17 +28,16 @@ use crate::workspaces::{LayoutCommand, LayoutEngine, WorkspaceCommand};
 
 impl Reactor {
     pub fn new_for_test(layout: LayoutEngine) -> Reactor {
+        Reactor::new_for_test_remembering(layout, DisplayMemory::default())
+    }
+
+    /// A reactor started on `layout` and the `memory` a file held, as a launch starts one.
+    pub fn new_for_test_remembering(layout: LayoutEngine, memory: DisplayMemory) -> Reactor {
         let mut config = Config::reference();
         config.settings.activate_spaces_by_default = true;
         config.settings.animate = false;
         let reads = SystemReads::fake(Arc::new(FakeWindowServer::default()));
-        let mut reactor = Reactor::with_reads(
-            config,
-            layout,
-            DisplayMemory::default(),
-            WindowTxStore::new(),
-            reads,
-        );
+        let mut reactor = Reactor::with_reads(config, layout, memory, WindowTxStore::new(), reads);
         // Never let the suite write to the real layout file. Almost every test drives
         // `update_layout`, which autosaves; a test that wants to exercise autosave sets a temp path.
         reactor.autosave_path = None;

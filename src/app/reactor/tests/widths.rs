@@ -303,3 +303,125 @@ fn an_app_s_width_is_read_again_once_its_default_column_width_is_back() {
     apps.simulate_until_quiet(&mut reactor);
     assert_eq!(next_window_s_width(&mut apps, &mut reactor), given);
 }
+
+/// The app that reports first after the restart, as Slack did at 21:28:12 on 2026-11-04.
+const FIRST_TO_REPORT: rini_core::ids::pid_t = 2;
+
+/// `PID`'s two windows tiled and saved, `on` with a full width on record that its column does not
+/// carry, as a width it was given on another display is, and rini started again on that file with
+/// both still alive and their app not yet reported.
+fn restarted_with_a_width_on_record(on: WindowId) -> Reactor {
+    let (_, mut saved) = two_windows();
+    let display = rini_core::ids::DisplayUuid::new("test-display-0");
+    saved.display_affinity_mut().set_window_width(
+        &display,
+        on,
+        crate::layout::ColumnWidth::FullWidth,
+    );
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("layout.ron");
+    saved.save_layout_before_exit(path.clone()).expect("the file is written");
+
+    let (mut layout, memory) =
+        crate::workspaces::LayoutEngine::load_for_startup_restore(path, |_, _| true, |_| true)
+            .expect("the file loads");
+    layout.finish_loading(
+        &crate::app::config::VirtualWorkspaceSettings::default(),
+        &crate::app::config::LayoutSettings::default(),
+    );
+    assert_eq!(memory.affinity.window_home(on), Some(&display));
+    Reactor::new_for_test_remembering(layout, memory)
+}
+
+/// After rini restarts, the topology settles and another app reports before a live window's own app
+/// does: that window is in no store yet, and its home and width on record are kept for when its app
+/// reports it, where the settled-topology pass erased them as gone (the 7 `why=Gone` lines of
+/// 2026-11-04 21:28:12 in the service log). Once its app reports it, a removal and re-add reads the
+/// record back.
+#[test]
+fn a_live_window_s_records_survive_a_settled_topology_before_its_app_reports_it() {
+    let mut reactor = restarted_with_a_width_on_record(window());
+    let mut apps = Apps::new();
+    reactor.handle_event(space_state_event(vec![SCREEN], vec![Some(space())]));
+    apps.make_app_and_settle(&mut reactor, FIRST_TO_REPORT, vec![make_window(3)]);
+    assert_eq!(
+        recorded_width(&reactor, window()),
+        Some(crate::layout::ColumnWidth::FullWidth)
+    );
+    assert!(reactor.display_affinity().window_home(window()).is_some());
+
+    apps.make_app_and_settle(&mut reactor, PID, make_windows(2));
+    let reported = width_of(&mut reactor, window());
+    let others = [
+        (server_id(sibling()), Some(space())),
+        (WindowServerId::new(3), Some(space())),
+    ];
+    reactor.refresh_windows_after_mission_control_with_active_windows(others.to_vec());
+    apps.simulate_until_quiet(&mut reactor);
+    assert_eq!(
+        laid_out_frame(&mut reactor, space(), SCREEN, window()),
+        None,
+        "the snapshot that leaves the window out takes it out"
+    );
+    let mut all = others.to_vec();
+    all.push((server_id(window()), Some(space())));
+    reactor.refresh_windows_after_mission_control_with_active_windows(all);
+    apps.simulate_until_quiet(&mut reactor);
+    reconcile(&mut reactor);
+    let readded = width_of(&mut reactor, window());
+    assert!(
+        readded > SCREEN.size.width * 0.9,
+        "laid at the full width on record: {reported} as reported, {readded} re-added"
+    );
+}
+
+/// A window the window server's list of every window holds, as `pid`'s window `idx`.
+fn listed(pid: rini_core::ids::pid_t, idx: u32) -> crate::windows::platform::window_server::Listed {
+    crate::windows::platform::window_server::Listed {
+        id: WindowServerId::new(idx),
+        level: 0,
+        pid,
+        bounds: SCREEN,
+        title: None,
+    }
+}
+
+/// `restarted_with_a_width_on_record`'s app reporting one window, not `sibling()`, the window
+/// server listing `every` window, and the width `sibling()` keeps on record after.
+fn width_on_record_after_its_app_reports_without_it(
+    every: Vec<crate::windows::platform::window_server::Listed>,
+) -> Option<crate::layout::ColumnWidth> {
+    let mut reactor = restarted_with_a_width_on_record(sibling());
+    reactor.window_server().set_every_window(every);
+    let mut apps = Apps::new();
+    reactor.handle_event(space_state_event(vec![SCREEN], vec![Some(space())]));
+    apps.make_app_and_settle(&mut reactor, PID, make_windows(1));
+    recorded_width(&reactor, sibling())
+}
+
+/// A window from the file that its app reports without, and that the window server lacks now,
+/// closed after rini started and before its app reported: its records go then. One the window
+/// server still has, on another space or minimized, keeps them, as one does when the window server
+/// gives no list.
+#[test]
+fn a_window_from_the_file_its_app_reports_without_is_forgotten_once_the_window_server_lacks_it() {
+    let (window_idx, sibling_idx) = (window().idx.get(), sibling().idx.get());
+    assert_eq!(
+        width_on_record_after_its_app_reports_without_it(vec![listed(PID, window_idx)]),
+        None
+    );
+    let full = Some(crate::layout::ColumnWidth::FullWidth);
+    assert_eq!(
+        width_on_record_after_its_app_reports_without_it(vec![
+            listed(PID, window_idx),
+            listed(PID, sibling_idx),
+        ]),
+        full,
+        "the window server still has it"
+    );
+    assert_eq!(
+        width_on_record_after_its_app_reports_without_it(Vec::new()),
+        full,
+        "no list is no answer"
+    );
+}

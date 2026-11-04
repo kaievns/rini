@@ -2469,6 +2469,65 @@ fn closed_windows_do_not_keep_their_display_affinity() {
     );
 }
 
+/// A window this session saw, homed to the external with a width there, that closes while the
+/// external is unplugged leaves no home and no width once the topology settles: the display change
+/// took it out of the layout keeping its records, so no removal erased them.
+#[test]
+fn a_seen_window_closed_while_its_display_was_unplugged_leaves_no_records() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let (builtin_space, external_space) = (SpaceId::new(1), SpaceId::new(479));
+    let (doomed, survivor) = (WindowId::new(1, 1), WindowId::new(1, 2));
+    let external_uuid = DisplayUuid::new("test-display-1");
+    let both = || {
+        space_state_event(vec![builtin, external], vec![
+            Some(builtin_space),
+            Some(external_space),
+        ])
+    };
+
+    set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[901, 902])]);
+    reactor.handle_event(both());
+    reactor.add_test_app(1);
+    let external_workspace = reactor.test_workspace(external_space, 0);
+    for (window, wsid) in [(doomed, 901u32), (survivor, 902)] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(external_space), external);
+        assert!(reactor.assign_test_window_to_workspace(
+            external_space,
+            window,
+            external_workspace
+        ));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(external_space, window));
+    }
+    reactor.handle_event(both());
+    reactor.display_affinity_mut().set_window_width(
+        &external_uuid,
+        doomed,
+        crate::layout::ColumnWidth::FullWidth,
+    );
+    assert_eq!(
+        reactor.display_affinity().window_home(doomed),
+        Some(&external_uuid)
+    );
+
+    reactor.handle_event(space_state_event(vec![builtin], vec![Some(builtin_space)]));
+    reactor.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(doomed));
+    reactor.windows_mut().remove_window(doomed);
+    set_space_membership(&reactor, &[(builtin_space, &[]), (external_space, &[902])]);
+    reactor.handle_event(both());
+
+    assert_eq!(reactor.display_affinity().window_home(doomed), None);
+    assert_eq!(
+        reactor.display_affinity().window_width(&external_uuid, doomed),
+        None
+    );
+    assert_eq!(
+        reactor.display_affinity().window_home(survivor),
+        Some(&external_uuid)
+    );
+}
+
 /// The diagnostics dump must report every space, not just the queried one.
 ///
 /// This is the tool-level defect that made three diagnoses wrong in a row:

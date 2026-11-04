@@ -117,27 +117,55 @@ impl LayoutEngine {
 
     /// Drop affinity for windows that have gone. Called on every settled topology: the removal
     /// paths alone miss windows closed while their display was unplugged. A window the store does
-    /// not hold is gone when it has a home in the arrangement in force, or when this session saw
-    /// it, as a minimized window it saw and kept only the widths of. One from the file this session
-    /// has not seen is left to its app's report: `forget_windows_gone_since_the_save` judged it.
+    /// not hold is gone when this session saw it, homed or not. One from the file this session has
+    /// not seen is not in the store until its app reports it, however alive: the startup restore
+    /// judged it (`forget_windows_gone_since_the_save`), and each app's discovery judges it again
+    /// (`forget_unseen_windows_not_held`).
     pub fn forget_affinity_for_dead_windows(
         &mut self,
         window_store: &WindowStore,
         memory: &mut DisplayMemory,
     ) {
-        let mut stale: Vec<WindowId> = memory.affinity.homed_windows();
-        stale.extend(
-            memory
-                .affinity
-                .remembered_windows()
-                .into_iter()
-                .filter(|window| self.was_sighted(*window)),
-        );
-        stale.sort_unstable();
-        stale.dedup();
-        stale.retain(|window| !window_store.contains_window(*window));
+        let stale: Vec<WindowId> = memory
+            .affinity
+            .remembered_windows()
+            .into_iter()
+            .filter(|window| self.was_sighted(*window) && !window_store.contains_window(*window))
+            .collect();
         for window in stale {
             self.log_erased_widths(Erase::Gone, &memory.affinity.forget_window(window));
+        }
+    }
+
+    /// Every window with records that this session has not seen and the store does not hold: one
+    /// from the file its app has not reported yet, alive or not.
+    pub fn unseen_remembered_windows(
+        &self,
+        window_store: &WindowStore,
+        memory: &DisplayMemory,
+    ) -> Vec<WindowId> {
+        memory
+            .affinity
+            .remembered_windows()
+            .into_iter()
+            .filter(|window| !self.was_sighted(*window) && !window_store.contains_window(*window))
+            .collect()
+    }
+
+    /// Forgets each of `not_held`, windows from `unseen_remembered_windows` the window server lacks
+    /// and no live window may still take as a restore candidate, that this session has still not
+    /// seen once an app's discovery is matched: a window from the file closed before its app
+    /// reported it, or one no live window took.
+    pub(super) fn forget_unseen_windows_not_held(
+        &mut self,
+        memory: &mut DisplayMemory,
+        not_held: &[WindowId],
+    ) {
+        for window in not_held.iter().copied() {
+            if self.was_sighted(window) {
+                continue;
+            }
+            self.log_erased_widths(Erase::GoneSinceTheSave, &memory.affinity.forget_window(window));
         }
     }
 

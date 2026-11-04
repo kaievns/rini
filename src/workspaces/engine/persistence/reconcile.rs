@@ -33,13 +33,7 @@ impl LayoutEngine {
             .iter()
             .copied()
             .filter(|window| {
-                (window.pid == pid
-                    || app_id.is_some_and(|app_id| {
-                        self.persistence
-                            .fingerprint(*window)
-                            .and_then(|fingerprint| fingerprint.app_id.as_deref())
-                            == Some(app_id)
-                    }))
+                self.is_candidate_of_app(*window, pid, app_id)
                     && self
                         .restored_locations_for_window(*window)
                         .iter()
@@ -47,6 +41,31 @@ impl LayoutEngine {
             })
             .collect();
         self.discard_candidates(discarded)
+    }
+
+    /// Whether `window`, a restore candidate, is one of the app of `pid` or `app_id`'s.
+    fn is_candidate_of_app(&self, window: WindowId, pid: pid_t, app_id: Option<&str>) -> bool {
+        window.pid == pid
+            || app_id.is_some_and(|app_id| {
+                self.persistence
+                    .fingerprint(window)
+                    .and_then(|fingerprint| fingerprint.app_id.as_deref())
+                    == Some(app_id)
+            })
+    }
+
+    /// Whether `window` is a restore candidate a live window may still take, once the discovery of
+    /// the app of `pid` or `app_id` is matched and its unmatched candidates there discarded: one of
+    /// another app's, or one of its own still placed on a space the discovery did not cover.
+    pub(in crate::workspaces::engine) fn awaits_a_match(
+        &self,
+        window: WindowId,
+        pid: pid_t,
+        app_id: Option<&str>,
+    ) -> bool {
+        self.is_restore_candidate(window)
+            && (!self.is_candidate_of_app(window, pid, app_id)
+                || !self.restored_locations_for_window(window).is_empty())
     }
 
     pub(super) fn discard_unmatchable_startup_candidates(

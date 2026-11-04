@@ -12,7 +12,7 @@ use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::domain::manageable::{Facts, Liveness, looks_gone, manageable};
 use crate::windows::domain::state::{WindowFilter, WindowState};
 use crate::windows::domain::transaction::WindowTxStore;
-use crate::windows::platform::window_server::WindowServer;
+use crate::windows::platform::window_server::{Listed, WindowServer};
 use crate::workspaces::AppRuleResult;
 use crate::workspaces::domain::app_rules::AfterRules;
 use crate::workspaces::domain::virtual_workspace::WorkspaceError;
@@ -422,6 +422,8 @@ pub(crate) struct EmitLayoutPayload<'a> {
     pub(crate) authoritative_spaces: HashMap<WindowId, SpaceId>,
     pub(crate) active_spaces: Vec<SpaceId>,
     pub(crate) focused_window: Option<(SpaceId, WindowId)>,
+    /// The windows `not_held_by` found gone, for the engine to forget once the batch is matched.
+    pub(crate) not_held: Vec<WindowId>,
 }
 
 pub(crate) fn emit_layout_events(
@@ -448,6 +450,7 @@ pub(crate) fn emit_layout_events(
         app_info,
         active_spaces,
         focused_window,
+        not_held,
         ..
     } = payload;
     let discovered_spaces = active_spaces.to_vec();
@@ -499,11 +502,12 @@ pub(crate) fn emit_layout_events(
     // Matching is allowed to observe every native-space slice for this application before stale
     // saved identities are discarded. Cleaning after an individual slice would incorrectly drop
     // windows that are discovered on a later space in the same batch.
-    outcome = outcome.with_layout_event(LayoutEvent::WindowDiscoveryCompleted(
+    outcome = outcome.with_layout_event(LayoutEvent::WindowDiscoveryCompleted {
         pid,
-        app_info.as_ref().and_then(|info| info.bundle_id.clone()),
-        discovered_spaces,
-    ));
+        app_id: app_info.as_ref().and_then(|info| info.bundle_id.clone()),
+        spaces: discovered_spaces,
+        not_held,
+    });
 
     if let Some((space, main_window)) = focused_window {
         outcome = outcome.with_layout_event(LayoutEvent::WindowFocused(space, main_window));
@@ -602,6 +606,22 @@ fn windows_to_list(
 }
 
 /// Each window to list assigned by the app rules on the space it was discovered on.
+/// Which of `unseen` the window server's list of every window, `listed`, holds for none of their
+/// processes: a window id is its process id and the window server id it carries. An empty list is
+/// no answer, which is no evidence, so it finds none gone.
+pub(crate) fn not_held_by(unseen: &[WindowId], listed: &[Listed]) -> Vec<WindowId> {
+    if listed.is_empty() {
+        return Vec::new();
+    }
+    let held: HashSet<(pid_t, u32)> =
+        listed.iter().map(|window| (window.pid, window.id.as_u32())).collect();
+    unseen
+        .iter()
+        .copied()
+        .filter(|window| !held.contains(&(window.pid, window.idx.get())))
+        .collect()
+}
+
 fn assign_by_rules(
     state: &mut crate::app::reactor::state::RiniState,
     layout: &mut crate::workspaces::LayoutEngine,
@@ -687,6 +707,7 @@ mod tests {
             authoritative_spaces: authoritative.iter().copied().collect(),
             active_spaces: vec![space],
             focused_window: None,
+            not_held: Vec::new(),
         })
     }
 
@@ -895,5 +916,31 @@ mod tests {
             stale.is_empty(),
             "nothing visible and nothing listed teaches nothing"
         );
+    }
+
+    fn listing(pid: pid_t, id: u32) -> Listed {
+        Listed {
+            id: WindowServerId::new(id),
+            level: 0,
+            pid,
+            bounds: frame(),
+            title: None,
+        }
+    }
+
+    /// A window the list of every window holds, on screen or not, is not gone; one it holds under
+    /// another process is a window that took its id, and does not keep it.
+    #[test]
+    fn a_window_not_held_is_one_the_list_has_for_none_of_its_processes() {
+        let (held, closed, id_taken) = (wid(1, 40), wid(1, 41), wid(2, 42));
+        let listed = [listing(1, 40), listing(3, 42), listing(1, 99)];
+        assert_eq!(not_held_by(&[held, closed, id_taken], &listed), [
+            closed, id_taken
+        ]);
+    }
+
+    #[test]
+    fn an_unanswered_list_finds_no_window_gone() {
+        assert!(not_held_by(&[wid(1, 40)], &[]).is_empty());
     }
 }

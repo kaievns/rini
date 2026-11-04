@@ -80,7 +80,15 @@ pub fn on_screen_entry(wid: WindowId, window: Option<&WindowState>) -> OnScreenE
 pub enum LayoutEvent {
     WindowsOnScreenUpdated(SpaceId, AppWindows),
     /// The complete cross-space discovery batch for one application has been applied.
-    WindowDiscoveryCompleted(pid_t, Option<String>, Vec<SpaceId>),
+    WindowDiscoveryCompleted {
+        pid: pid_t,
+        app_id: Option<String>,
+        /// The native spaces the batch covered.
+        spaces: Vec<SpaceId>,
+        /// Windows with records, of any app, that this session has not seen and no store holds,
+        /// which the window server's list of every window answered without.
+        not_held: Vec<WindowId>,
+    },
     AppClosed(pid_t),
     WindowAdded(SpaceId, WindowId),
     /// The window is out of every layout and its records are forgotten, for the reason given.
@@ -559,20 +567,22 @@ impl LayoutEngine {
                     app_rule_outcome,
                 );
             }
-            LayoutEvent::WindowDiscoveryCompleted(pid, app_id, discovered_spaces) => {
-                let ignored = self.discard_unmatched_candidates_for_app(
-                    pid,
-                    app_id.as_deref(),
-                    &discovered_spaces,
-                );
+            LayoutEvent::WindowDiscoveryCompleted { pid, app_id, spaces, not_held } => {
+                let ignored =
+                    self.discard_unmatched_candidates_for_app(pid, app_id.as_deref(), &spaces);
                 if ignored > 0 {
                     tracing::info!(
                         pid,
-                        native_spaces = discovered_spaces.len(),
+                        native_spaces = spaces.len(),
                         windows_ignored = ignored,
                         "Ignored unmatched persisted windows after application discovery"
                     );
                 }
+                let not_held: Vec<WindowId> = not_held
+                    .into_iter()
+                    .filter(|window| !self.awaits_a_match(*window, pid, app_id.as_deref()))
+                    .collect();
+                self.forget_unseen_windows_not_held(memory, &not_held);
             }
             LayoutEvent::AppClosed(pid) => self.remove_app(window_store, memory, pid),
             LayoutEvent::WindowAdded(space, wid) => {

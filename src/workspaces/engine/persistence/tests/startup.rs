@@ -107,7 +107,12 @@ fn completed_app_discovery_discards_a_ghost_from_a_dormant_display_size() {
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
-        LayoutEvent::WindowDiscoveryCompleted(ghost.pid, None, vec![space]),
+        LayoutEvent::WindowDiscoveryCompleted {
+            pid: ghost.pid,
+            app_id: None,
+            spaces: vec![space],
+            not_held: Vec::new(),
+        },
     );
 
     for (_, workspace, layout) in engine.workspace_layouts.all_layouts() {
@@ -175,7 +180,12 @@ fn completed_app_discovery_discards_unmatched_startup_ghosts() {
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
-        LayoutEvent::WindowDiscoveryCompleted(ghost.pid, None, vec![space]),
+        LayoutEvent::WindowDiscoveryCompleted {
+            pid: ghost.pid,
+            app_id: None,
+            spaces: vec![space],
+            not_held: Vec::new(),
+        },
     );
 
     assert!(!engine.workspace_tree(workspace).contains_window(layout, ghost));
@@ -508,7 +518,9 @@ fn startup_restore_forgets_the_records_of_windows_gone_since_the_save() {
         app_id: Some("com.example.52".into()),
     });
     for window in [candidate, open, minimized, gone] {
-        memory.affinity.set_window_width(&display, window, ColumnWidth::FullWidth);
+        memory
+            .affinity
+            .set_window_width(&display, window, crate::layout::ColumnWidth::FullWidth);
     }
     memory.affinity.set_window_home(gone, &display);
     let (_dir, path) = layout_file();
@@ -527,4 +539,72 @@ fn startup_restore_forgets_the_records_of_windows_gone_since_the_save() {
     assert_eq!(width(minimized), None, "gone since");
     assert_eq!(width(gone), None, "gone since, with a home");
     assert_eq!(memory.affinity.window_home(gone), None);
+}
+
+/// What a completed discovery of the app of pid 1, `com.example.1`, over `shown` alone, leaves of
+/// the width on record for each window the window server lacks: a candidate of its own
+/// placed on `shown`, one placed on a space the discovery did not cover, one of its own placed
+/// nowhere now, one of another app's, and a window this session has seen since.
+#[test]
+fn a_completed_discovery_forgets_only_the_unseen_windows_no_live_window_may_still_take() {
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let display = DisplayUuid::new("built-in");
+    let (shown, elsewhere) = (SpaceId::new(1), SpaceId::new(2));
+    let on_shown = WindowId::new(1, 40);
+    let on_elsewhere = WindowId::new(1, 41);
+    let placed_nowhere = WindowId::new(1, 42);
+    let another_app_s = WindowId::new(2, 43);
+    let size = CGSize::new(1200.0, 800.0);
+    for (space, windows) in [
+        (shown, vec![on_shown, another_app_s]),
+        (elsewhere, vec![on_elsewhere]),
+    ] {
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::SpaceExposed(space, size),
+        );
+        let workspace = engine.active_workspace(space).unwrap();
+        let layout = engine.workspace_layouts.active(space, workspace).unwrap();
+        for window in windows {
+            engine.workspace_tree_mut(workspace).add_window_after_selection(layout, window);
+        }
+    }
+    let seen = WindowId::new(1, 44);
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::WindowAdded(shown, seen),
+    );
+    let all = [on_shown, on_elsewhere, placed_nowhere, another_app_s, seen];
+    memory.affinity.set_display_space(&display, shown);
+    for window in all {
+        engine.persistence.windows.insert(window, WindowFingerprint {
+            window_server_id: Some(window.idx.get()),
+            title: None,
+            width: 600.0,
+            height: 800.0,
+            app_id: Some(format!("com.example.{}", window.pid)),
+        });
+        engine.persistence.pending_windows.insert(window);
+        memory
+            .affinity
+            .set_window_width(&display, window, crate::layout::ColumnWidth::FullWidth);
+    }
+
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::WindowDiscoveryCompleted {
+            pid: 1,
+            app_id: Some("com.example.1".into()),
+            spaces: vec![shown],
+            not_held: all.to_vec(),
+        },
+    );
+
+    let kept = all.map(|window| memory.affinity.window_width(&display, window).is_some());
+    assert_eq!(kept, [false, true, false, true, true]);
 }

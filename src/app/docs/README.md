@@ -36,7 +36,7 @@ knows the features and converts what they emit.
 | `reactor/events/space.rs` | The window server's windows appearing and going, native Mission Control entered and left, and space lifecycle, with the fullscreen departure and last-known user space rules |
 | `reactor/events/system.rs` | Menus opening and closing, waking from sleep, a raise completing or timing out, and the controller's sender registering |
 | `reactor/events/window.rs` | One window's events: created, destroyed, minimized and back, its frame changing (`classify_window_frame_change`), its title, and the mouse moving over it |
-| `reactor/events/window_discovery.rs` | An application's window list: which known windows are stale and leave, which are new, and the layout events they make |
+| `reactor/events/window_discovery.rs` | An application's window list: which known windows are stale and leave, which are new, and the layout events they make, with which unseen windows from the file the window server's list of every window lacks (`not_held_by`) |
 | `reactor/commands.rs` | What a command MEANS before it is carried out: which window "index 3" is, which display "next" is |
 | `reactor/observations.rs` | The other half of the inbox: what the system reported, gathered and handed over settled |
 | `reactor/space_affinity.rs` | Which space a window is on — the gathering |

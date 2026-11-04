@@ -401,9 +401,12 @@ fn rejected_fuzzy_candidate_is_removed_when_discovery_finishes() {
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
-        LayoutEvent::WindowDiscoveryCompleted(live.pid, Some("com.example.app".into()), vec![
-            space,
-        ]),
+        LayoutEvent::WindowDiscoveryCompleted {
+            pid: live.pid,
+            app_id: Some("com.example.app".into()),
+            spaces: vec![space],
+            not_held: Vec::new(),
+        },
     );
     let workspace = engine.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, workspace).unwrap();

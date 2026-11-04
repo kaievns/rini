@@ -62,10 +62,10 @@ pub enum Erase {
     Removed(Removal),
     /// Its application quit.
     AppQuit,
-    /// The window store does not hold it, found on a settled topology.
+    /// The window store does not hold it, found on a settled topology, and this session saw it.
     Gone,
     /// Saved under an id no window the startup restore can match holds, and no window the window
-    /// server has now: a new window may take that id.
+    /// server has now, found at startup or at an app's report: a new window may take that id.
     GoneSinceTheSave,
     /// A width command put its column back at the display's default.
     AtDefault,

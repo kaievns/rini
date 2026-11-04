@@ -318,7 +318,12 @@ be read from the log.
   not running.
 - `specs/displays.md` requires a new window of a running app to open at the width the user last
   gave that app on a display of the same shape. M0 meets it (failure 1).
-- Whether a rini restart with the apps alive keeps sizes is **not verified**.
+- A rini restart with the apps alive, at 21:28 UTC on 2026-11-04 after `f401aef8` was deployed,
+  laid every strip at the width the saved layout held, checked after the deploy for VS Code, Slack,
+  Outlook, Zen, Ghostty and Messages. It also erased 7 of those live windows' width records before
+  their apps reported them (`specs/displays.md`, Found 2026-11-05). The records now survive in tests
+  (`a_live_window_s_records_survive_a_settled_topology_before_its_app_reports_it`,
+  `src/app/reactor/tests/widths.rs`); not verified on a restart.
 
 ### After M0
 

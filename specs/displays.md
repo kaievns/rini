@@ -93,9 +93,11 @@ context is arranged differently depending on what is plugged in, and rini rememb
   relaunch under a rule that sets no width, or one whose width has not changed since the user set
   theirs (`specs/workspaces.md`, "Relaunching an application"). Each is a moment the width is read
   again, and a width read back as the default undoes the user's choice with nothing the user did to
-  explain it. So only a close, the application quitting, or the window being gone, from the windows
-  rini holds or, at startup, from the window server since the save, MAY erase a window's widths. A
-  minimize, a window briefly not manageable, one the window server leaves out of a snapshot or moves
+  explain it. So only a close, the application quitting, or the window being gone MAY erase a
+  window's widths: gone from the windows rini holds once this session has seen it, or from the
+  window server's windows for its process, asked as rini starts and as an application reports its
+  windows. A live window rini has not held yet, as each is after a restart until its application
+  reports it, MUST keep them, homed or not. A minimize, a window briefly not manageable, one the window server leaves out of a snapshot or moves
   to another space, a drag to another space and a rule that stops managing it MUST each keep them,
   and a window that leaves native fullscreen under another id MUST hand them to that id and be laid
   at them, though that id joins the strip before the old one leaves it. A width only the layout
@@ -109,7 +111,10 @@ context is arranged differently depending on what is plugged in, and rini rememb
   and the window server id, both reused after a reboot, and a removal that keeps the widths keeps
   them with no home, so a minimized window's width left in the file would size a different window
   opened under that id. At startup a record MUST be kept only for a window the restore can still
-  match or the window server still has for that process.
+  match or the window server still has for that process. Once an application's report is matched,
+  a record of a window rini has not seen MUST be dropped when the window server no longer has it
+  and no live window can still take it as a restore candidate. An application leaving the window
+  out of its report MUST NOT alone drop it, since a report can omit a window it has.
 - A rule's width is a window's first. A width the window has of its own on a display MUST beat it
   when the window is laid out again, and the rule MUST NOT size the window again on its app's next
   report, unless the rule's width changed since it sized the window: an edit to a rule MUST show on
@@ -189,6 +194,15 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > found a minimized window's width record, with no home, reached by no clean-up and saved to
 > `~/.rini/layout.ron`, and read by any window opened under its id after a reboot. Inferred from
 > the code, not seen.
+
+> **Found 2026-11-05, not reported.** The service's log after `f401aef8` was deployed, rini
+> restarting at 21:28:12 UTC on 2026-11-04, showed 7 `why=Gone` erases of live windows' width
+> records 0.3s after the file loaded, while Slack, the first application, reported its windows: 3
+> VS Code windows, a Ghostty, a Chrome, Outlook and Zen, all alive under the same ids afterwards.
+> The settled-topology pass judged a window homed in the arrangement in force gone when no store
+> held it, and none does until its application reports it. Their strips came back from the saved
+> layout, so no width was seen lost; a re-add or another display's width would have read the erased
+> record.
 
 ## Pinning an app to a display
 

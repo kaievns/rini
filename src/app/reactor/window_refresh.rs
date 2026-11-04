@@ -300,6 +300,7 @@ impl Reactor {
             .filter(|space| self.is_space_active(*space))
             .collect();
         let focused_window = self.focused_window_for_discovery(pid);
+        let not_held = self.unseen_windows_not_held();
         window_discovery::emit_layout_events(
             &mut self.state,
             &mut self.layout_engine,
@@ -311,7 +312,20 @@ impl Reactor {
                 authoritative_spaces,
                 active_spaces,
                 focused_window,
+                not_held,
             },
         )
+    }
+
+    /// The windows with records this session has not seen and no store holds that the window
+    /// server's list of every window does not hold. The list is asked only when there are some.
+    fn unseen_windows_not_held(&self) -> Vec<WindowId> {
+        let unseen = self
+            .layout_engine
+            .unseen_remembered_windows(&self.state.windows, &self.state.display_memory);
+        if unseen.is_empty() {
+            return Vec::new();
+        }
+        window_discovery::not_held_by(&unseen, &self.reads.window_server.every_window())
     }
 }
