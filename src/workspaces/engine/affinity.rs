@@ -2,10 +2,11 @@
 //! width each window has on each display.
 
 use rini_core::ids::{DisplayUuid, SpaceId, WindowId};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::layout::LayoutId;
 use crate::workspaces::WindowStore;
+use crate::workspaces::domain::display_affinity::{Erase, ErasedWidth};
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::LayoutEngine;
@@ -128,7 +129,7 @@ impl LayoutEngine {
             .filter(|window| !window_store.contains_window(*window))
             .collect();
         for window in stale {
-            memory.affinity.forget_window(window);
+            log_erased_widths(Erase::Gone, &memory.affinity.forget_window(window));
         }
     }
 
@@ -152,7 +153,16 @@ impl LayoutEngine {
             Some(width) => memory.affinity.set_window_width(&display, window, width),
             // Toggled back to the default. Forget rather than pin, so the window follows
             // each display's configured ratio again.
-            None => memory.affinity.clear_window_width(&display, window),
+            None => {
+                if let Some(width) = memory.affinity.clear_window_width(&display, window) {
+                    log_erased_widths(Erase::AtDefault, &[ErasedWidth {
+                        window,
+                        setup: memory.affinity.current_setup().clone(),
+                        display,
+                        width,
+                    }]);
+                }
+            }
         }
     }
 
@@ -200,5 +210,21 @@ impl LayoutEngine {
             return;
         };
         self.workspace_tree_mut(workspace_id).set_carried_width(layout, window, width);
+    }
+}
+
+/// Logs each width record erased, with why: a width that comes back at the default is explained by
+/// the last of these for its window (`src/workspaces/docs/workspaces-and-displays.md`).
+pub(super) fn log_erased_widths(why: Erase, erased: &[ErasedWidth]) {
+    for record in erased {
+        info!(
+            pid = record.window.pid,
+            idx = record.window.idx.get(),
+            setup = %record.setup,
+            display = %record.display,
+            width = ?record.width,
+            ?why,
+            "erasing a window's width record"
+        );
     }
 }

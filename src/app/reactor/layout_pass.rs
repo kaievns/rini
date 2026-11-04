@@ -23,7 +23,7 @@ impl Reactor {
         };
         let focus_desktop = matches!(
             event,
-            LayoutEvent::WindowRemoved(wid)
+            LayoutEvent::WindowRemoved(wid, _)
                 if self.layout_engine.focused_window() == Some(wid)
         );
         let event_clone = event.clone();

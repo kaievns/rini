@@ -52,7 +52,10 @@ pub fn handle_mouse_up(
         let window = session.window;
         if session.origin_space != payload.final_space {
             if session.origin_space.is_some() {
-                outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(window));
+                outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(
+                    window,
+                    crate::workspaces::Removal::DraggedToAnotherSpace,
+                ));
             }
             if let Some(space) = payload.final_space {
                 drop_on_space(state, layout, window, space);

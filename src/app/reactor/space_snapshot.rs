@@ -567,8 +567,10 @@ impl Reactor {
         if owner != original_window
             && self.affinity().assigned_space_for_window_id(original_window).is_some()
         {
-            *outcome = std::mem::take(outcome)
-                .with_layout_event(LayoutEvent::WindowRemoved(original_window));
+            *outcome = std::mem::take(outcome).with_layout_event(LayoutEvent::WindowRemoved(
+                original_window,
+                crate::workspaces::Removal::OwnedByAnotherId,
+            ));
         }
         *outcome = std::mem::take(outcome).with_app_request(owner.pid, Request::GetVisibleWindows);
         Some(

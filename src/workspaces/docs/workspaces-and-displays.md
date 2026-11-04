@@ -97,6 +97,17 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   Measured: the external's affinity list held three closed windows while all
   fourteen live windows were homed to the built-in; repatriation reported
   `homed=[3 windows] to_move=[]` and the external came back empty every time.
+- **Every erase of a width record is logged at `info` with why** (`log_erased_widths`,
+  its `Erase`): the window's removal from every layout with its `Removal`, its app
+  quitting, the sweep above, or a width command putting the column back at the default.
+  `WindowRemoved` carries the `Removal`, and forgets every record of the window, so it
+  erases widths on more paths than a close: a minimize, a drag to another native space,
+  a window turning unmanageable on a refresh, a rule that no longer manages it, an id
+  superseded on leaving native fullscreen, a window left out of an authoritative
+  snapshot, and the two removals in `reactor/display_homes.rs` of a window found not
+  `EffectivelyManageable`, which log the window's role, title and state as well. The
+  service's log on 2026-11-04 could not say which path erased a width lost across a
+  sleep, because none of them was logged.
 - **A pin beats an observation and loses to a choice.** A window rule naming
   `open-on-output "internal"` decides where a window belongs when the arrangement has
   not been told otherwise. That needs three levels, not two, so `Setup` records

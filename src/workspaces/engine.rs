@@ -14,6 +14,7 @@ use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::AppRuleEngine;
 use crate::windows::domain::state::WindowState;
 use crate::workspaces::domain::app_rules::AppRuleOutcome;
+use crate::workspaces::domain::display_affinity::Removal;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
 use crate::workspaces::domain::workspace_focus;
@@ -29,6 +30,7 @@ mod navigation;
 mod persistence;
 mod rules;
 
+use discovery::Keeping;
 use persistence::PersistenceState;
 pub use rini_ipc::protocol::LayoutCommand;
 
@@ -80,7 +82,8 @@ pub enum LayoutEvent {
     WindowDiscoveryCompleted(pid_t, Option<String>, Vec<SpaceId>),
     AppClosed(pid_t),
     WindowAdded(SpaceId, WindowId),
-    WindowRemoved(WindowId),
+    /// The window is out of every layout and its records are forgotten, for the reason given.
+    WindowRemoved(WindowId, Removal),
     WindowRemovedPreserveFloating(WindowId),
     WindowFocused(SpaceId, WindowId),
     /// The window's frame changed size. `drag` is the mouse drag on its edges that did it, and `None`
@@ -572,11 +575,11 @@ impl LayoutEngine {
                 self.debug_tree(space);
                 self.add_window_to_layout(window_store, memory, space, wid);
             }
-            LayoutEvent::WindowRemoved(wid) => {
-                self.remove_window_internal(window_store, memory, wid, false);
+            LayoutEvent::WindowRemoved(wid, why) => {
+                self.remove_window_internal(window_store, memory, wid, Keeping::Nothing(why));
             }
             LayoutEvent::WindowRemovedPreserveFloating(wid) => {
-                self.remove_window_internal(window_store, memory, wid, true);
+                self.remove_window_internal(window_store, memory, wid, Keeping::Records);
             }
             LayoutEvent::WindowFocused(space, wid) => return self.on_window_focused(space, wid),
             LayoutEvent::WindowResized { wid, drag, new_frame, screens } => {
@@ -2232,7 +2235,7 @@ mod tests {
 
         let _ = fx.open(space_b, vec![info(b1)]);
         let _ = fx.windows.remove_window_assignment(b1);
-        let _ = fx.event(LayoutEvent::WindowRemoved(b1));
+        let _ = fx.event(LayoutEvent::WindowRemoved(b1, Removal::Closed));
 
         assert_eq!(
             fx.frames(space_a),
@@ -2255,7 +2258,10 @@ mod tests {
         let _ = fx.command(space, LayoutCommand::MoveNode(Direction::Up));
         let modified = fx.frames(space);
 
-        let _ = fx.event(LayoutEvent::WindowRemoved(WindowId::new(9999, 1)));
+        let _ = fx.event(LayoutEvent::WindowRemoved(
+            WindowId::new(9999, 1),
+            Removal::Closed,
+        ));
 
         assert_eq!(fx.frames(space), modified);
     }

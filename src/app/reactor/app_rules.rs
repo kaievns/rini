@@ -191,7 +191,10 @@ impl Reactor {
                 match engine.settle_app_rule(&mut self.state.windows, wid, space, before, &result) {
                     AfterRules::RefreshLayout => windows_needing_layout_refresh.push(wid),
                     AfterRules::RemoveFromLayout => {
-                        self.send_layout_event(LayoutEvent::WindowRemoved(wid));
+                        self.send_layout_event(LayoutEvent::WindowRemoved(
+                            wid,
+                            crate::workspaces::Removal::RuleUnmanages,
+                        ));
                     }
                     AfterRules::Settled => {}
                 }

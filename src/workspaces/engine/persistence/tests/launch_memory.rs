@@ -139,7 +139,10 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
-        LayoutEvent::WindowRemoved(before_quit),
+        LayoutEvent::WindowRemoved(
+            before_quit,
+            crate::workspaces::domain::display_affinity::Removal::Closed,
+        ),
     );
 
     insert(&mut window_store, after_relaunch);
@@ -668,7 +671,10 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
-        LayoutEvent::WindowRemoved(before_quit),
+        LayoutEvent::WindowRemoved(
+            before_quit,
+            crate::workspaces::domain::display_affinity::Removal::Closed,
+        ),
     );
     insert(&mut window_store, after_relaunch);
     let _ = engine.handle_event(

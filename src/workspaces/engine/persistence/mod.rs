@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use super::{FloatingManager, LayoutEngine, OnScreenEntry, WorkspaceLayouts};
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleEngine;
+use crate::workspaces::domain::display_affinity::Erase;
 use crate::workspaces::domain::display_memory::DisplayMemory;
+use crate::workspaces::engine::affinity::log_erased_widths;
 use crate::workspaces::settings::VirtualWorkspaceSettings;
 use crate::workspaces::{FloatingPositionStore, VirtualWorkspaceId, WindowStore, WorkspaceStore};
 
@@ -165,14 +167,19 @@ impl LayoutEngine {
         self.note_window_display_home(memory, window, space);
     }
 
-    pub(super) fn forget_persisted_window(&mut self, memory: &mut DisplayMemory, window: WindowId) {
+    pub(super) fn forget_persisted_window(
+        &mut self,
+        memory: &mut DisplayMemory,
+        window: WindowId,
+        why: Erase,
+    ) {
         self.persistence.forget_window(window);
-        memory.affinity.forget_window(window);
+        log_erased_widths(why, &memory.affinity.forget_window(window));
     }
 
     pub(super) fn forget_persisted_app(&mut self, memory: &mut DisplayMemory, pid: pid_t) {
         self.persistence.forget_app(pid);
-        memory.affinity.forget_app(pid);
+        log_erased_widths(Erase::AppQuit, &memory.affinity.forget_app(pid));
     }
 
     pub(super) fn transfer_persisted_window_identity(

@@ -58,6 +58,14 @@ context is arranged differently depending on what is plugged in, and rini rememb
 - A remembered width MUST be written so a rini from before its kind existed still reads the file. A
   rini that cannot read the file starts with no homes, widths or launch slots, and its next save
   writes that over the file, so going back a version would forget the machine.
+- Every erase of a window's remembered width MUST be logged with why, at a level the running
+  service keeps, because a width that comes back at the default is otherwise not traceable to
+  what erased it.
+
+> **Found 2026-11-04, not reported.** Looking into Kai's report that day ("i keep getting everything
+> resetting back to 1/2") found widths lost across a sleep and wake that the service's log could not
+> explain: neither the window's removal from the layout nor the erase of its width was logged.
+
 - A window's display MUST be written only by intent: an explicit move, a drag, a first sighting, or a
   restore. The forced reassignment that follows an unplug MUST NOT write it, because that record is the
   only thing that brings the window back.

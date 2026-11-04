@@ -10,6 +10,7 @@ use crate::layout::WindowLayoutConstraints;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{RuleState, WindowRuleContext};
 use crate::workspaces::domain::app_rules::{AppRuleOutcome, AppRuleWorkspaceFocus};
+use crate::workspaces::domain::display_affinity::{Erase, Removal};
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::{AppWindows, EventResponse, LayoutEngine, OnScreenEntry};
@@ -45,6 +46,15 @@ pub(super) struct Admitted {
     pub(super) window: WindowId,
     pub(super) was_floating: bool,
     pub(super) result: AppRuleResult,
+}
+
+/// What taking a window out of every layout keeps of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Keeping {
+    /// Its floating state, workspace and records, as a window coming straight back needs.
+    Records,
+    /// Nothing: every record of it is forgotten, for the reason given.
+    Nothing(Removal),
 }
 
 impl LayoutEngine {
@@ -411,20 +421,18 @@ impl LayoutEngine {
         window_store: &mut WindowStore,
         memory: &mut DisplayMemory,
         wid: WindowId,
-        preserve_floating: bool,
+        keeping: Keeping,
     ) {
         self.remove_window_layout_membership(window_store, wid);
 
-        if preserve_floating {
-            self.floating.remove_active_for_window(wid);
-        } else {
-            self.floating.remove_floating(wid);
-        }
-
-        if !preserve_floating {
-            self.virtual_workspace_manager.remove_window(window_store, wid);
-            self.floating_positions.remove_window(wid);
-            self.forget_persisted_window(memory, wid);
+        match keeping {
+            Keeping::Records => self.floating.remove_active_for_window(wid),
+            Keeping::Nothing(why) => {
+                self.floating.remove_floating(wid);
+                self.virtual_workspace_manager.remove_window(window_store, wid);
+                self.floating_positions.remove_window(wid);
+                self.forget_persisted_window(memory, wid, Erase::Removed(why));
+            }
         }
 
         if self.focused_window == Some(wid) {

@@ -135,28 +135,40 @@ impl Setup {
         self.home_by_intent.contains(&window)
     }
 
-    pub fn forget_window(&mut self, window: WindowId) {
+    /// Forgets `window`, and says which widths it had here, by display.
+    pub fn forget_window(&mut self, window: WindowId) -> Vec<(DisplayUuid, ColumnWidth)> {
         self.window_home.remove(&window);
         self.home_by_intent.remove(&window);
         for strip in self.display_strip.values_mut() {
             strip.retain(|candidate| *candidate != window);
         }
-        for widths in self.window_width.values_mut() {
-            widths.remove(&window);
+        let mut erased = Vec::new();
+        for (display, widths) in &mut self.window_width {
+            erased.extend(widths.remove(&window).map(|width| (display.clone(), width)));
         }
         self.window_width.retain(|_, widths| !widths.is_empty());
+        erased
     }
 
-    pub fn forget_app(&mut self, pid: pid_t) {
+    /// Forgets every window of `pid`, and says which widths they had here.
+    pub fn forget_app(&mut self, pid: pid_t) -> Vec<(WindowId, DisplayUuid, ColumnWidth)> {
         self.window_home.retain(|window, _| window.pid != pid);
         self.home_by_intent.retain(|window| window.pid != pid);
         for strip in self.display_strip.values_mut() {
             strip.retain(|window| window.pid != pid);
         }
-        for widths in self.window_width.values_mut() {
-            widths.retain(|window, _| window.pid != pid);
+        let mut erased = Vec::new();
+        for (display, widths) in &mut self.window_width {
+            widths.retain(|window, width| {
+                let keep = window.pid != pid;
+                if !keep {
+                    erased.push((*window, display.clone(), *width));
+                }
+                keep
+            });
         }
         self.window_width.retain(|_, widths| !widths.is_empty());
+        erased
     }
 
     pub fn rekey_window(&mut self, from: WindowId, to: WindowId) {

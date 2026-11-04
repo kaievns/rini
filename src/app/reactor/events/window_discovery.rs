@@ -71,8 +71,9 @@ fn sync_existing_window_state(
                 existing.is_manageable = manageable;
             }
             if was_manageable && !manageable {
-                crate::app::reactor::events::EventOutcome::default()
-                    .with_layout_event(LayoutEvent::WindowRemoved(wid))
+                crate::app::reactor::events::EventOutcome::default().with_layout_event(
+                    LayoutEvent::WindowRemoved(wid, crate::workspaces::Removal::TurnedUnmanageable),
+                )
             } else {
                 crate::app::reactor::events::EventOutcome::default()
             }
@@ -466,7 +467,10 @@ pub(crate) fn emit_layout_events(
                 if layout.settle_app_rule(&mut state.windows, wid, space, before, &assign_result)
                     == AfterRules::RemoveFromLayout
                 {
-                    outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(wid));
+                    outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(
+                        wid,
+                        crate::workspaces::Removal::RuleUnmanages,
+                    ));
                 }
             }
         }
