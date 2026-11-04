@@ -137,9 +137,9 @@ const FOCUSLAB_APP: &str = "com.mitchellh.ghostty";
 /// and width to a terminal of Kai's.
 pub fn is_focuslab_window(app_id: &str, title: Option<&str>) -> bool {
     app_id == FOCUSLAB_APP
-        && title.and_then(|title| title.strip_prefix("lab-")).is_some_and(|letter| {
-            !letter.is_empty() && letter.chars().all(|c| c.is_ascii_alphanumeric())
-        })
+        && title
+            .and_then(|title| title.strip_prefix("lab-"))
+            .is_some_and(|letter| matches!(letter.as_bytes(), [c] if c.is_ascii_alphabetic()))
 }
 
 type Apps = HashMap<String, HashMap<SetupId, Vec<Slot>>>;
@@ -561,12 +561,39 @@ mod tests {
             Some("~/p/rini"),
             Some("lab-"),
             Some("lab-A ~/p/rini"),
+            Some("lab-notes"),
+            Some("lab-AB"),
+            Some("lab-box1"),
+            Some("lab-2024"),
+            Some("lab-1"),
             Some("lab"),
             None,
         ] {
             assert!(!is_focuslab_window(GHOSTTY, title), "{title:?}");
         }
         assert!(!is_focuslab_window("com.apple.Terminal", Some("lab-A")));
+    }
+
+    /// The matcher reads the title `tools/focuslab/lab.sh` gives its windows, in the app it opens
+    /// them in, with its default letters: a change there leaves lab windows in launch memory.
+    #[test]
+    fn lab_sh_titles_its_ghostty_windows_lab_and_a_letter() {
+        let lab = include_str!("../../../tools/focuslab/lab.sh");
+        assert!(lab.contains("open -na /Applications/Ghostty.app"), "{lab}");
+        assert!(lab.contains(r#"--title="lab-$L""#), "{lab}");
+        let defaults = lab
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("LETTERS=(\"$@\"); [ ${#LETTERS[@]} -gt 0 ] || LETTERS=(")
+            })
+            .and_then(|rest| rest.strip_suffix(')'))
+            .expect("lab.sh names its default letters");
+        for letter in defaults.split_whitespace() {
+            assert!(
+                is_focuslab_window(FOCUSLAB_APP, Some(&format!("lab-{letter}"))),
+                "lab-{letter}"
+            );
+        }
     }
 
     /// A focuslab window leaves no slot, so a relaunched terminal cannot take a lab window's
