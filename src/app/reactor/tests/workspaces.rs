@@ -350,8 +350,9 @@ fn launch_give_ups(
     })
 }
 
-/// Rules that set a remembered slot's workspace and width leave it nothing to give, and the log says that is why the slot went unread. A rule that sets less takes
-/// the slot for the rest, so it is not said.
+/// Rules that set a remembered slot's workspace and width leave it nothing to give, and the log
+/// says that is why the slot went unread. A rule that sets less takes the slot for the rest, and a
+/// rule that floats the window takes no slot at all, as every modal does, so neither is said.
 #[test]
 fn rules_that_set_all_a_slot_holds_say_so_at_info() {
     use crate::windows::domain::rules::{RuleMatch, WindowRule};
@@ -365,15 +366,19 @@ fn rules_that_set_all_a_slot_holds_say_so_at_info() {
         default_column_width: Some(400.0),
         ..pin.clone()
     };
+    let floated = WindowRule {
+        open_floating: Some(true),
+        ..everything.clone()
+    };
     let logged = launch_give_ups(0, vec![everything]);
     assert!(
         logged.contains(&(tracing::Level::INFO, "RulesSetAll".to_owned())),
         "{logged:?}"
     );
-    for rules in [vec![pin], vec![]] {
+    for rules in [vec![pin], vec![floated], vec![]] {
         assert!(
             !launch_give_ups(0, rules).iter().any(|(_, why)| why == "RulesSetAll"),
-            "and with a rule that sets less, or none, it is not said"
+            "and with a rule that sets less, floats the window, or none, it is not said"
         );
     }
 }

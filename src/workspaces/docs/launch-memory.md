@@ -87,6 +87,11 @@ Explicit configuration wins over anything learned, one property at a time:
    window's.
 3. Today's default: active workspace, display under the cursor, configured column width.
 
+A window a rule floats (`open-floating true`) or leaves unmanaged takes nothing from a slot, and
+opens where today's default puts it (`SlotOverrides::of` gives `None`). Taken, the slot sent every
+floated modal and System Settings window to the slot's workspace, out of view. It is not logged:
+every modal would log it at `info`.
+
 A rule once turned the slot off whole, so a rule that only pinned a display cost the app its
 remembered width at every relaunch: on 2026-11-04 Outlook's slots in `~/.rini/layout.ron` held a
 full width under 5 of its 5 arrangements, written and never read, behind Kai's
@@ -94,7 +99,11 @@ full width under 5 of its 5 arrangements, written and never read, behind Kai's
 
 A rule's width beats the slot's even where the user widened the window since the rule sized it:
 the slot keeps no record of the rule's value it was written under, so telling a user's width from
-a rule's edited since is not built (`specs/workspaces.md`, "Relaunching an application").
+a rule's edited since is not built (`specs/workspaces.md`, "Relaunching an application"). This
+order departs on purpose from "Precedence, in KWin's words" in the window sizing research, not
+yet on `main` (branch `sizing/research`), which puts the slot above a rule's default and lets a
+rule's width win only once its value changed. That order needs the rule's value stored with the slot, a file format
+change, and this list is rewritten to it when that record lands.
 
 ## Recording
 

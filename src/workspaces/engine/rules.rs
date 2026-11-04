@@ -137,8 +137,9 @@ impl LayoutEngine {
         let decision = self.app_rules.evaluate(window);
 
         // Where this application's windows were, for a window with no assignment already, but for
-        // what the rules set. This is the first sighting of a launching application's window, well
-        // before `WindowAdded`, so it is the only place the answer can still be changed.
+        // what the rules set, and not at all for one they float or leave unmanaged. This is the
+        // first sighting of a launching application's window, well before `WindowAdded`, so it is
+        // the only place the answer can still be changed.
         let unassigned = self
             .virtual_workspace_manager
             .workspace_for_window(window_store, space, window_id)
@@ -157,13 +158,11 @@ impl LayoutEngine {
                         return Ok(AppRuleResult::Managed(effects));
                     }
                 }
-                AppRuleDecision::Managed { .. } => self.take_launch_slot_under_rules(
-                    window_store,
-                    memory,
-                    launch,
-                    SlotOverrides::of(&decision),
-                ),
-                AppRuleDecision::Unmanaged => {}
+                AppRuleDecision::Managed { .. } | AppRuleDecision::Unmanaged => {
+                    if let Some(overrides) = SlotOverrides::of(&decision) {
+                        self.take_launch_slot_under_rules(window_store, memory, launch, overrides);
+                    }
+                }
             }
         }
 

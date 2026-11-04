@@ -96,17 +96,18 @@ pub struct SlotOverrides {
 }
 
 impl SlotOverrides {
-    /// What `decision` sets of a slot: nothing when no rule matches, everything when a rule stops
-    /// managing the window, and otherwise its workspace and its width each where the rule names
-    /// one. A height alone sets no width.
-    pub fn of(decision: &AppRuleDecision) -> Self {
+    /// What `decision` sets of a slot: nothing when no rule matches, and otherwise its workspace
+    /// and its width each where the rule names one. A height alone sets no width. `None` where
+    /// the window takes no slot at all: a rule stops managing it, or floats it, so a modal or a
+    /// settings window opens where today's default puts it, not on the slot's workspace.
+    pub fn of(decision: &AppRuleDecision) -> Option<Self> {
         match decision {
-            AppRuleDecision::NoMatch => Self::default(),
-            AppRuleDecision::Unmanaged => Self { workspace: true, width: true },
-            AppRuleDecision::Managed { workspace, size, .. } => Self {
+            AppRuleDecision::NoMatch => Some(Self::default()),
+            AppRuleDecision::Unmanaged | AppRuleDecision::Managed { floating: true, .. } => None,
+            AppRuleDecision::Managed { workspace, size, .. } => Some(Self {
                 workspace: workspace.is_some(),
                 width: size.is_some_and(|size| size.w.is_some()),
-            },
+            }),
         }
     }
 
@@ -312,46 +313,52 @@ mod tests {
     }
 
     /// A rule sets of a launch slot only what it names: a workspace the workspace, a width the
-    /// width, and a display pin, a height or a floating position neither.
+    /// width, and a display pin or a height neither. A rule that floats the window, or stops
+    /// managing it, leaves it no slot to take, whatever else it names.
     #[test]
     fn a_rule_sets_of_a_launch_slot_only_what_it_names() {
         use crate::windows::domain::rules::WorkspaceSelector;
         use crate::workspaces::domain::display_pin::DisplayRole;
-        let managed = |workspace, display, size| AppRuleDecision::Managed {
+        let opened = |floating, workspace, display, size| AppRuleDecision::Managed {
             workspace,
-            floating: true,
-            position: Some(FloatingPosition::default()),
+            floating,
+            position: floating.then(FloatingPosition::default),
             size,
             focus: true,
             display,
         };
-        let set = |workspace, width| SlotOverrides { workspace, width };
+        let tiled = |workspace, display, size| opened(false, workspace, display, size);
+        let floated = |workspace, display, size| opened(true, workspace, display, size);
+        let set = |workspace, width| Some(SlotOverrides { workspace, width });
         let height = Some(AppRuleSize { w: None, h: Some(300.0) });
         let width = Some(AppRuleSize { w: Some(234.0), h: None });
         let named = Some(WorkspaceSelector::Name("comms".into()));
+        let laptop = Some(DisplayRole::Internal);
 
         let cases = [
             (AppRuleDecision::NoMatch, set(false, false)),
-            (managed(None, None, None), set(false, false)),
+            (tiled(None, None, None), set(false, false)),
+            (tiled(None, laptop, None), set(false, false)),
+            (tiled(named.clone(), None, None), set(true, false)),
+            (tiled(None, None, height), set(false, false)),
+            (tiled(None, laptop, width), set(false, true)),
             (
-                managed(None, Some(DisplayRole::Internal), None),
-                set(false, false),
-            ),
-            (managed(named.clone(), None, None), set(true, false)),
-            (managed(None, None, height), set(false, false)),
-            (
-                managed(None, Some(DisplayRole::Internal), width),
-                set(false, true),
-            ),
-            (
-                managed(named, Some(DisplayRole::External), width),
+                tiled(named.clone(), Some(DisplayRole::External), width),
                 set(true, true),
             ),
-            (AppRuleDecision::Unmanaged, set(true, true)),
+            (floated(None, None, None), None),
+            (floated(None, laptop, height), None),
+            (floated(named, None, width), None),
+            (AppRuleDecision::Unmanaged, None),
         ];
         for (decision, sets) in cases {
             assert_eq!(SlotOverrides::of(&decision), sets, "{decision:?}");
-            assert_eq!(sets.all(), sets == set(true, true));
+            if let Some(sets) = sets {
+                assert_eq!(
+                    sets.all(),
+                    sets == SlotOverrides { workspace: true, width: true }
+                );
+            }
         }
     }
 

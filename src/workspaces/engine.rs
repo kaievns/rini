@@ -1683,6 +1683,25 @@ mod tests {
         assert_eq!(record, column);
     }
 
+    /// A rule that floats a window takes nothing from the slot: a modal or a settings window opens
+    /// where today's default puts it, on the workspace on screen, not out of view on the slot's,
+    /// and at no width of the slot's.
+    #[test]
+    fn a_rule_that_floats_a_window_takes_nothing_from_the_launch_slot() {
+        let (mut fx, space, window, outcome) = slack_relaunched_under(WindowRule {
+            open_floating: Some(true),
+            ..WindowRule::when(RuleMatch::app(SLACK))
+        });
+        let on_screen = fx.workspaces(space)[0];
+
+        assert_eq!(fx.engine.active_workspace(space), Some(on_screen));
+        assert_eq!(fx.workspace_of(space, window), Some(on_screen));
+        assert!(fx.engine.floating.is_floating(window));
+        assert!(!outcome.has_resizes());
+        let laptop = DisplayUuid::new("built-in");
+        assert_eq!(fx.memory.affinity.window_width(&laptop, window), None);
+    }
+
     #[test]
     fn tiled_membership_sync_does_not_rebalance_other_spaces() {
         let mut fx = EngineFixture::new();

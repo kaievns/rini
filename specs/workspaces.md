@@ -95,10 +95,13 @@ moves along the strip within one workspace.
 - A relaunched window MUST return to its remembered workspace AND its remembered width.
 - A window rule MUST override a remembered place only for what it sets. A rule that pins a display
   or names a workspace MUST leave the window its remembered width, and one that names no workspace
-  its remembered workspace. A rule's width MUST win over the remembered one, as a rule's width is a
-  window's first (`specs/displays.md`). Not yet met: a width the user gave a window a rule sizes is
-  lost at its app's relaunch, though the rule's width has not changed since: telling the two apart
-  needs the rule's value kept with the place.
+  its remembered workspace. A rule that floats a window or stops managing it MUST take nothing
+  from a remembered place: the window opens where it would with none remembered, on the workspace
+  on screen. A modal or a settings window has no column to keep, and the place its app left can be
+  on another workspace, where it would open out of view. A rule's width MUST win over the
+  remembered one, as a rule's width is a window's first (`specs/displays.md`). Not yet met: a width
+  the user gave a window a rule sizes is lost at its app's relaunch, though the rule's width has
+  not changed since: telling the two apart needs the rule's value kept with the place.
 
 > **Reported 2026-11-04.** "everything defaults to 1/2 of my laptop screen, and even though we
 > have the prevous sizes tracking it's buggy as fuck and doesn't work all that well, so i keep
@@ -106,6 +109,11 @@ moves along the strip within one workspace.
 > place off for its app: Kai's `open-on-output "internal"` rule for Slack, Outlook and Messages
 > sets no width, and Outlook's places held a full width under 5 of its 5 arrangements, written and
 > never read. Slack reset 2 minutes after a cold start on 2026-11-03 (inferred to be this).
+
+> **Found 2026-11-04, not reported.** Review found that taking the place under every rule sent a
+> floated window to its place's workspace, with nothing switching the view to it. Kai's rules
+> float every modal, Zoom, 1Password, System Settings and Finder's dialogs, and System Settings'
+> places sit on workspace 2 ("comms") in `~/.rini/layout.ron`. A floated window now takes no place.
 - A window a screen test opens MUST NOT leave a remembered place or take one, and a place one left
   in a file MUST be dropped as the file is read. A test's windows are not the user's, and matched
   by order, the place a test window left hands its workspace and width to the user's next window
