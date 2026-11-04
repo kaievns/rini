@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::displays::domain::screen::DisplayShape;
 use crate::layout::ColumnWidth;
 
-/// How many display shapes each application keeps a width for, the most recently set first. The
-/// sizing research found 3 shapes among Kai's desks on 2026-11-04, so 8 keeps every desk and a few
-/// rooms besides.
+/// How many records each application keeps, each a display shape under a default, the most recently
+/// set first whatever default it was made under. The sizing research found 3 shapes among Kai's
+/// desks on 2026-11-04, so 8 keeps every desk under the user's default and a trial's besides.
 pub const APP_WIDTHS_PER_APP: usize = 8;
 
 /// A width as a fraction of the display's usable width, absolute rather than an offset from
@@ -318,6 +318,27 @@ mod tests {
             Some(AppWidth::Bounded(0.33333)),
             "and every other shape's"
         );
+    }
+
+    /// The user's widths on 3 shapes, then 2 trials writing on each of them: the 9th record pushes
+    /// out the user's oldest, and the rest stay.
+    #[test]
+    fn the_cap_counts_every_default_s_records_and_drops_the_oldest() {
+        let mut widths = AppWidths::default();
+        let shapes = [shape(1728), shape(3008), shape(3360)];
+        for each in shapes {
+            widths.remember("app", each, Some(AppWidth::FullWidth), HALF);
+        }
+        for trial in [0.6, 0.7] {
+            for each in shapes {
+                let under = Overrode::DefaultColumnWidth(trial);
+                widths.remember("app", each, Some(AppWidth::Bounded(0.25)), under);
+            }
+        }
+        let kept: Vec<_> =
+            shapes.iter().map(|each| widths.width("app", *each, HALF).is_some()).collect();
+        assert_eq!(kept, [false, true, true]);
+        assert_eq!(widths.apps["app"].len(), APP_WIDTHS_PER_APP);
     }
 
     /// The fraction stored is the width on screen: an offset from one default read under another

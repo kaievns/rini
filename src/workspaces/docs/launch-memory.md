@@ -165,7 +165,9 @@ it. Kai allowed that on 2026-11-04 ("2. yes"); a window's own records still shar
   not seen (`an_app_s_width_is_read_again_once_its_default_column_width_is_back`).
 - **Capped** at `APP_WIDTHS_PER_APP`, 8 records per application, each a shape under a default,
   the most recently set first. Records under a default no longer in force are never read and
-  leave as newer ones push them past the cap.
+  leave as newer ones push them past the cap, and the cap counts every default's: records written
+  under trials push out the user's oldest once they outnumber the room left
+  (`the_cap_counts_every_default_s_records_and_drops_the_oldest`).
 - **In the file** as `display_memory.app_widths`, absent while empty, so a file with none is
   written back as it was. A rini from before it skips the key and reads the rest
   (`a_file_with_app_widths_is_read_whole_by_the_rini_before_them`).

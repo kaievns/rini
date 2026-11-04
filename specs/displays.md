@@ -68,7 +68,9 @@ context is arranged differently depending on what is plugged in, and rini rememb
   default read for a while, as the reference config's when the user's fails to parse or a
   `config set` trial's, MUST NOT cost the widths made under the user's, even when a width command
   or a drag writes under it. An application MUST keep at most 8 widths, each a shape under a
-  default, the most recently set.
+  default, the most recently set whatever default it was made under. The cap alone MAY cost a width
+  made under the user's: writes under other defaults on other shapes push out the oldest, as 2
+  trials that each write on 3 shapes do beside the user's 3.
 - An arrangement is identified by WHICH displays are attached, not how many. An external at home, one
   at the office and a meeting-room projector are three arrangements, and none inherits another's
   layout beyond an application's width as above.
