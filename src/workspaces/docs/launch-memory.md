@@ -195,8 +195,8 @@ Not met, from "Why sizes reset today, ranked" in `docs/window-sizing-research.md
 - **Failure 6, the slot's display and the window's.** A slot's width is written under the slot's
   display (`take_slot_home_and_width`) and read under the display of the space the window opens
   on (`apply_remembered_column_width`), so a docked window that opens on another display than its
-  slot's takes the default there. Inferred from the code: on 2026-11-04, 0 of the 32 docked slots
-  under the arrangements kept in `~/.rini/layout.ron` named an external display
+  slot's takes the default there. Inferred from the code: on 2026-11-04, 0 of the 82 docked slots
+  in `~/.rini/layout.ron` named an external display
   (`docs/data/2026-11-04-window-sizing/recount.txt`).
 - **Failure 7, an untouched width stored as none.** A window never given a width leaves a slot
   with no width, by design ("Recording"); a default per class of application, above, is what

@@ -1,20 +1,24 @@
 file: 133 slots, 5 arrangements
-kept: 83 slots, 3 arrangements
+naming a discarded display: 0; counted: 133 slots, 5 arrangements
    32 37D8832A-2D66-02CA-B9F7-8F30A301B230+B5E7ECDB-94D9-4565-949D-5F22F78D104A
    29 37D8832A-2D66-02CA-B9F7-8F30A301B230
+   27 37D8832A-2D66-02CA-B9F7-8F30A301B230+64F4B5B7-913B-4BCC-ABA0-2CAC1086D5B1
+   23 37D8832A-2D66-02CA-B9F7-8F30A301B230+71A9490F-FD4B-4AFD-A651-E24AA7CD5817
    22 C5A3728A-FF86-4397-B19C-5C8D6EB3EC34
-built-in: 61 (29 laptop alone, 32 docked); other display: 22
-lab windows: 6 kept, 0 on the built-in
-docked slots naming an external display: 0 of 32
-width kinds, kept: {'none': 43, 'full': 28, 'offset': 12}
-Outlook, kept: [('37D8832A', 'FullWidth)'), ('37D8832A+', 'FullWidth)'), ('C5A3728A', 'FullWidth)')]
+built-in: 111 (29 laptop alone, 82 docked); other display: 22
+lab windows: 18 counted, 12 on the built-in
+docked slots naming an external display: 0 of 82
+width kinds, counted: {'none': 63, 'full': 46, 'offset': 24}
+Outlook, counted: [('37D8832A+', 'FullWidth)'), ('37D8832A+', 'FullWidth)'), ('37D8832A', 'FullWidth)'), ('37D8832A+', 'FullWidth)'), ('C5A3728A', 'FullWidth)')]
+com.google.Chrome, built-in: 9 full of 9
+app.zen-browser.zen, built-in: 4 full of 4
 
-class table: built-in, kept, non-lab
-  wide        22  {'full': 20, 'full dragged': 1, 'default 1/2': 1}  
-  terminal     9  {'default 1/2': 5, '2/3': 4}  
-  narrow      19  {'default 1/2': 19}  
-  per window   4  {'default 1/2': 3, 'full': 1}  
-  floating     6  {'default 1/2': 6}  
+class table: built-in, non-lab
+  wide        38  {'full': 36, 'full dragged': 1, 'default 1/2': 1}  
+  terminal    23  {'default 1/2': 13, '2/3': 7, '1/2': 2, '0.533': 1}  
+  narrow      21  {'default 1/2': 21}  
+  per window   8  {'default 1/2': 5, 'full': 3}  
+  floating     8  {'default 1/2': 8}  
   unclassed    1  {'2/3': 1}  ['com.apple.Preview']
-  total 61
-effective width, built-in non-lab: {'default 1/2': 34, 'full': 21, '2/3': 5, 'full dragged': 1}
+  total 99
+effective width, built-in non-lab: {'default 1/2': 48, 'full': 39, '2/3': 8, '1/2': 2, 'full dragged': 1, '0.533': 1}

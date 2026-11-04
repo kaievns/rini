@@ -88,21 +88,23 @@ context is arranged differently depending on what is plugged in, and rini rememb
   application's width a rini cannot read MUST cost that record alone, not the file.
 - A width the user set, by a command or by dragging an edge, MUST survive the display sleeping and
   waking, the window server removing and re-adding the window, a drag of the window, and its app's
-  relaunch under a rule that sets no width (`specs/workspaces.md`, "Relaunching an application").
-  Each is a moment the width is read again, and a width read back as the default undoes the user's
-  choice with nothing the user did to explain it. So only a close, the application quitting, or
-  the window being gone, from the windows rini holds or, at startup, from the window server since
-  the save, MAY erase a window's widths. A minimize, a window briefly not manageable, one the
-  window server leaves out of a snapshot or moves to another space, a drag to another space and a
-  rule that stops managing it MUST each keep them, and a window that leaves native fullscreen
-  under another id MUST hand them to that id and be laid at them, though that id joins the strip
-  before the old one leaves it. A width only the layout holds, as a drag's or a rule's, MUST be
-  recorded before such a removal, and a launch slot's width MUST NOT replace one the window has of
-  its own, nor be taken by a window the session has seen, which is matched to a slot after its
-  siblings and can take one of theirs. Not yet met at a relaunch: a window can take a sibling's
-  slot by order, its title matched as first seen, before its app settles it, and a docked window
-  that opens on another display than its slot's takes the default there, inferred from the code
-  (`src/workspaces/docs/launch-memory.md`, failures 5 and 6).
+  relaunch under a rule that sets no width, or one whose width has not changed since the user set
+  theirs (`specs/workspaces.md`, "Relaunching an application"). Each is a moment the width is read
+  again, and a width read back as the default undoes the user's choice with nothing the user did to
+  explain it. So only a close, the application quitting, or the window being gone, from the windows
+  rini holds or, at startup, from the window server since the save, MAY erase a window's widths. A
+  minimize, a window briefly not manageable, one the window server leaves out of a snapshot or moves
+  to another space, a drag to another space and a rule that stops managing it MUST each keep them,
+  and a window that leaves native fullscreen under another id MUST hand them to that id and be laid
+  at them, though that id joins the strip before the old one leaves it. A width only the layout
+  holds, as a drag's or a rule's, MUST be recorded before such a removal, and a launch slot's width
+  MUST NOT replace one the window has of its own, nor be taken by a window the session has seen,
+  which is matched to a slot after its siblings and can take one of theirs. Not yet met at a
+  relaunch: a window can take a sibling's slot by order, its title matched as first seen, before its
+  app settles it, and a docked window that opens on another display than its slot's takes the
+  default there, inferred from the code (`src/workspaces/docs/launch-memory.md`, failures 5 and 6).
+  Nor under a rule that sets a width: the rule's width wins at a relaunch, changed or not
+  (`specs/workspaces.md`, "Relaunching an application").
 - A window's records MUST NOT outlive it into a window that takes its id. An id is the process id
   and the window server id, both reused after a reboot, and a removal that keeps the widths keeps
   them with no home, so a minimized window's width left in the file would size a different window
@@ -154,10 +156,10 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > everything resetting back to 1/2 which is annoying". 11 resets on 2026-11-03 and 2026-11-04 were
 > tied to the service log: 4 after a wake (1 measured at both ends, the window laid full as the
 > display turned off and pressed back to full 80s after the wake, 3 by timing alone), 1 at a re-add
-> by the window server 3s before the press, 1 at Slack's relaunch, which an opening rule matches, 2
-> at a new window of a running app, and 3 unexplained (`docs/window-sizing-research.md`, "Why sizes
-> reset today, ranked"). Every removal from the layout erased the window's widths, and a re-added
-> window read a record a drag never wrote.
+> by the window server 3s before the press, 1 at Slack's relaunch, which an opening rule matches
+> (inferred), 2 at a new window of a running app (inferred), and 3 unexplained
+> (`docs/window-sizing-research.md`, "Why sizes reset today, ranked"). Every removal from the
+> layout erased the window's widths, and a re-added window read a record a drag never wrote.
 
 > **Reported 2026-11-04, same session.** Asked whether an application's width may carry across
 > arrangements, below the per-window record, Kai answered "2. yes". The rule this amends said
@@ -175,6 +177,13 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > **Found 2026-11-04, not reported.** A window an app rule sized went back to the rule's width on
 > every report of its app, a re-add among them: an editor widened to 474pt went back to the rule's
 > 234pt. Kai's config sets no rule width.
+
+> **Found 2026-11-04, not reported.** A review of the requirement that a user-set width survives a
+> relaunch under a rule: without a limit, a width remembered before a rule gained or changed its own
+> width would beat it, so adding `fixed 1500` to a rule (the research's experiments E2 and E3) would
+> do nothing for an application with a record. A rule's width now beats a launch slot's and an
+> application's width, and shows once on a window it sized when its value changes
+> (`specs/workspaces.md`, "Relaunching an application").
 
 > **Found 2026-11-05, not reported.** A review of the change that keeps widths across a removal
 > found a minimized window's width record, with no home, reached by no clean-up and saved to
