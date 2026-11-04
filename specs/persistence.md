@@ -6,7 +6,8 @@ A saved file holds two records with different lifetimes, and they MUST be readab
 
 - **The layout** — which windows are in which columns, in which workspaces, at what widths.
 - **The machine's memory** — which display owns which space, which display each window belongs to,
-  and where each application's windows go when it comes back.
+  where each application's windows go when it comes back, and the width each application was last
+  given on each display shape.
 
 A layout that cannot be trusted MUST NOT cost the machine's memory. Re-homing every window from
 scratch and landing every relaunched application in a default slot is a worse outcome than laying out

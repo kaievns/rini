@@ -140,6 +140,7 @@ impl Reactor {
             };
             let new_frame = resize.resized_frame(window.frame_monotonic);
             self.layout_engine.apply_app_rule_resize(
+                &mut self.state.display_memory,
                 resize,
                 new_frame,
                 screen.frame,
@@ -191,7 +192,10 @@ impl Reactor {
                 match engine.settle_app_rule(&mut self.state.windows, wid, space, before, &result) {
                     AfterRules::RefreshLayout => windows_needing_layout_refresh.push(wid),
                     AfterRules::RemoveFromLayout => {
-                        self.send_layout_event(LayoutEvent::WindowRemoved(wid));
+                        self.send_layout_event(LayoutEvent::WindowRemoved(
+                            wid,
+                            crate::workspaces::Removal::RuleUnmanages,
+                        ));
                     }
                     AfterRules::Settled => {}
                 }

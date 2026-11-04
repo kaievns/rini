@@ -60,17 +60,147 @@ one workspace at one size. Slots are matched in order:
    editor's is its project, a notes app's is its vault.
 2. **By ordinal.** The Nth window of the application to appear takes the Nth unclaimed
    slot. Covers applications whose titles are page titles and change every session.
-3. **Not at all.** A window beyond the remembered slots gets today's defaults.
+3. **Not at all.** A window beyond the remembered slots gets its application's width on
+   this display shape ("An application's width"), or today's defaults.
 
 A slot is claimed once, so two windows cannot both take it.
 
+A focuslab window, a Ghostty window `tools/focuslab/lab.sh` titled `lab-` and one ASCII
+letter (`is_focuslab_window`), leaves no slot and takes none, and the lookup counts it as no
+sibling, since it left no slot to claim. The slots a file already holds for one are dropped as it
+loads. On 2026-11-04 `~/.rini/layout.ron` held 18 of them among Ghostty's 47 slots, under 3 of its 5
+arrangements, each after the terminals' own, so a terminal opened past its siblings' slots
+would take a lab window's by ordinal: its workspace and its width. A longer title, `lab-notes`
+or `lab-AB`, can be a terminal's own and keeps its slot. A test reads `lab.sh` for the title
+and its default letters, so retitling the lab windows there fails it.
+
 ## Precedence
 
-Explicit configuration wins over anything learned:
+Explicit configuration wins over anything learned, one property at a time:
 
-1. A `window-rule` from the config file that applies to the window.
-2. A remembered slot for this topology.
-3. Today's default: active workspace, display under the cursor, configured column width.
+1. A `window-rule` from the config file that applies to the window, for what it sets: a workspace
+   (`open-on-workspace`) and a width (`default-column-width`). A display pin does not override the
+   slot's home here: the slot's home is one rini inferred, which `set_pinned_home` corrects
+   wherever homes are decided (`workspaces-and-displays.md`).
+2. A remembered slot for this topology, for the rest (`SlotOverrides`). Its width is written only
+   at the window's first sighting in the session (`SlotTaking`), and only where the window has
+   none of its own on that display. A window the window server took away and gives back has no
+   workspace and no home, so it looks up a slot too and is matched after its siblings, to a slot
+   that may be another window's: it takes that slot's workspace, as it did before widths were
+   kept across a removal, and keeps its own width or the default it had
+   (`a_window_given_back_takes_no_width_from_a_launch_slot`). Not met: it can land on that
+   sibling's workspace, since a removal forgets the workspace; taking no slot at all would send
+   every window back from a wake to the active workspace instead. Not met either: the windows the
+   session has seen start empty when rini restarts, so a window minimized at the default, which
+   has no width record for the startup sweep to keep, counts as a first sighting once restored and
+   takes a sibling's slot width by ordinal, or its application's where no slot matches. Not built:
+   counting as seen at startup the windows the window server still holds for their process, the
+   check `forget_windows_gone_since_the_save` already makes.
+3. For a window new to the session that took no slot and whose rules set no width, the width
+   its application was last given on a display of this shape ("An application's width").
+4. Today's default: active workspace, display under the cursor, configured column width.
+
+A window a rule floats (`open-floating true`) or leaves unmanaged takes nothing from a slot, and
+opens where today's default puts it (`SlotOverrides::of` gives `None`). Taken, the slot sent every
+floated modal and System Settings window to the slot's workspace, out of view. It is not logged:
+every modal would log it at `info`.
+
+A rule once turned the slot off whole, so a rule that only pinned a display cost the app its
+remembered width at every relaunch: on 2026-11-04 Outlook's slots in `~/.rini/layout.ron` held a
+full width under 5 of its 5 arrangements, written and never read, behind Kai's
+`open-on-output "internal"` rule for Slack, Outlook and Messages.
+
+A rule's width beats the slot's even where the user widened the window since the rule sized it:
+the slot keeps no record of the rule's value it was written under, so telling a user's width from
+a rule's edited since is not built (`specs/workspaces.md`, "Relaunching an application"). This
+order departs on purpose from "Precedence, in KWin's words" in
+`docs/window-sizing-research.md`, which puts the slot above a rule's default and lets a rule's
+width win only once its value changed. That order needs the rule's value stored with the
+slot, a file format change, and this list is rewritten to it when that record lands.
+
+## An application's width
+
+A slot holds one window under one arrangement, so a new window of a running application, a
+window past its siblings' slots, and every application at a desk not seen before opened at
+`default-column-width` (Kai's report of 2026-11-04, `specs/displays.md`). `AppWidths`
+(`src/workspaces/domain/app_widths.rs`) keeps, per bundle id, the width the user last gave the
+application on each `DisplayShape`: the points the display's frame leaves for windows and its
+physical width to the nearest 10mm, from `CGDisplayScreenSize`. The key names no arrangement and
+no display UUID, so the same panel docked and alone, and one model of monitor at two desks, share
+it. Kai allowed that on 2026-11-04 ("2. yes"); a window's own records still share nothing.
+
+- **Written** by a width command (the preset cycle, resize-by, the full-width toggle and a title
+  bar's zoom, through `remember_given_width`) and a drag's end (`remember_dragged_width`). A
+  width back at the default forgets the shape's width, so the next window opens at the default.
+  Resize-by writes only when the column's width changed: a height key, or `Smart` in a stack,
+  changes a row's height, and writing the column's default would forget the app's width.
+  Not by a rule's resize, nor by a width given to a window a rule sized (`last_rule_size` holds a
+  width): a rule's width is the rule's, and written as the app's it would size the app's other
+  windows. Not by a focuslab window. Not before a removal or a move to another workspace, which
+  record a width but give none.
+- **Read** for a window the session has not seen (`first_sighting`), with no workspace yet, that
+  took no slot and whose rules set no width, as it first joins a strip on the display it was
+  first seen on (`take_app_width`, `take_arrival_width`), unless it has a width of its own there.
+  A window the window server takes away and gives back has been seen, so it keeps its own width
+  or the default it had rather than a sibling's since. A window the reactor adds before its app
+  reports it has its rules asked under the app's name as it last reported its windows
+  (`note_app_name`). Not met: a window of an app that has reported none is asked under no name,
+  so a rule matching on `app-name` alone cannot keep the app's width off it.
+- **Held apart from the window's record** until it arrives, so a width of its own there wins at
+  that arrival (`a_window_s_own_width_beats_its_app_s_at_the_same_arrival`).
+- **Not for a window's new id.** A window back from native fullscreen under a new id is one the
+  session has seen. When the old id is removed as `OwnedByAnotherId`, the new id counts as seen
+  and drops any app width still pending (`hand_over_sighting`). Laid at its app's width already,
+  it goes back to the default unless its old id handed it a width there, which is laid instead.
+- **Absolute.** `AppWidth` is a fraction of the display, not an offset from
+  `default-column-width` as `ColumnWidth::Offset` is, so a different default on another display
+  reads it as the same width. The window records and the slots are still offsets.
+- **With the default it overrode** (`Overrode::DefaultColumnWidth`). A width made under another
+  value is not read, so an edited default shows on new windows rather than being beaten by a width
+  chosen against the old one. It is kept: a write replaces only the record on its shape under
+  its own default (`AppWidths::remember`). It was once dropped as the config was read and at
+  start, and then at the application's next write, so a default read for a while, the reference
+  config's 0.7 when Kai's 0.5 failed to parse or a `config set` trial, erased every application's
+  width for good, the second once a width key or a drag wrote under it. Inferred from the code,
+  not seen (`an_app_s_width_is_read_again_once_its_default_column_width_is_back`).
+- **Capped** at `APP_WIDTHS_PER_APP`, 8 records per application, each a shape under a default,
+  the most recently set first. Records under a default no longer in force are never read and
+  leave as newer ones push them past the cap.
+- **In the file** as `display_memory.app_widths`, absent while empty, so a file with none is
+  written back as it was. A rini from before it skips the key and reads the rest
+  (`a_file_with_app_widths_is_read_whole_by_the_rini_before_them`).
+- **Readable past additions.** Each record is a struct of optional fields with no enum in it
+  (`StoredRecord`): a width is `(fraction:Some(0.66667))`, `(fraction:..,unbounded:true)` or
+  `(full:true)`, and its default `(default_column_width:Some(0.5))`. A field a later rini adds is
+  skipped. A record left without a field this rini reads, as a width held only in points or one
+  made under a rule rather than the default, is dropped alone, and the file loads with every
+  other record, home and slot
+  (`a_file_from_a_later_rini_loads_every_app_width_it_can_read_and_everything_else`).
+  A later kind MUST leave those fields empty rather than fill them with a value this rini would
+  misread. The dropped records are not written back by this rini.
+
+Not built: a rule's width per display, an application's width carried as points from a display
+of another shape, and a default per class of application, which the window sizing research names
+Model B. `Overrode` is where a rule's value would be stored for a rule to rank against, in a
+field of its own beside `default_column_width`. Not met
+either: an existing window moved onto a display it has no width on takes the default there, not
+its application's.
+
+Not met, from "Why sizes reset today, ranked" in `docs/window-sizing-research.md`:
+
+- **Failure 5, matching on the title at first sighting.** `slot_for_window` matches a relaunched
+  window's title as it is when the window is first seen, before an app such as a browser or an
+  editor settles it, so a window can take its sibling's slot by ordinal. Matching on the settled
+  title is not built. The focuslab half of failure 5 is met (`is_focuslab_window`, above).
+- **Failure 6, the slot's display and the window's.** A slot's width is written under the slot's
+  display (`take_slot_home_and_width`) and read under the display of the space the window opens
+  on (`apply_remembered_column_width`), so a docked window that opens on another display than its
+  slot's takes the default there. Inferred from the code: on 2026-11-04, 0 of the 32 docked slots
+  under the arrangements kept in `~/.rini/layout.ron` named an external display
+  (`docs/data/2026-11-04-window-sizing/recount.txt`).
+- **Failure 7, an untouched width stored as none.** A window never given a width leaves a slot
+  with no width, by design ("Recording"); a default per class of application, above, is what
+  would fill it.
 
 ## Recording
 
@@ -108,10 +238,15 @@ active display size (`width_from_layouts` over `configurations_for`). A workspac
 strip per display size, so a window made full width on the external is recorded in that
 size's layout, and while the built-in is showing, the active layout knows nothing about it.
 
-Every way the lookup can give up is logged, which it was not: `launch_slot_for_new_window`
-returned `None` for four different reasons in silence, so each time a width went missing
-the reason had to be reconstructed from the layout file. A missing topology is a `warn`,
-because nothing remembered can be found at all until it arrives.
+Every way the lookup can give up is logged, as a `NoLaunchSlot` in the `gave_up` field:
+`launch_slot_for_new_window` returned `None` for four different reasons in silence, so each
+time a width went missing the reason had to be reconstructed from the layout file. They are
+`info`, the lowest level the service keeps (`RUST_LOG=error,warn,info` in the launch agent):
+at `debug`, `grep -c "remembered\|relaunched"` over the service's log on 2026-11-04 found 0.
+A missing topology is a `warn`, because nothing remembered can be found at all until it
+arrives. Two give-ups happen outside the lookup and are logged the same way: window rules that set
+both a workspace and a width for a window whose application left slots (`RulesSetAll`, all the
+slot would give), and a slot whose workspace the window cannot go to (`WorkspaceRefused`).
 
 Two lookups also have to be right, and both were wrong first time:
 
@@ -155,9 +290,10 @@ something the user has just changed.
 
 Two things follow from this that are easy to get wrong again:
 
-- A width is read from the window's own layout, not from the affinity record. That record is
-  only written by explicit width COMMANDS, so a window whose width came from the layout never
-  appeared in it — the file read `window_width:{}` while every window on screen had a width.
+- A width is read from the window's own layout, not from the affinity record. That record
+  holds a width only where something recorded one (a width command, a drag's end, a rule's
+  resize, a removal; `workspaces-and-displays.md`), and when it was written by width commands
+  alone the file read `window_width:{}` while every window on screen had a width.
 - `is_window_full_width` and the tree's `is_fullscreen_within_gaps` are the same flag under
   two names. `ColumnWidth::FullWidth` is that flag, not a ratio.
 

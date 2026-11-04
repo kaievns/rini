@@ -93,6 +93,7 @@ fn make_screen(space: Option<SpaceId>) -> ScreenInfo {
         name: Some("Display".to_string()),
         space,
         scale: 2.0,
+        physical: Default::default(),
     }
 }
 
@@ -112,6 +113,7 @@ fn make_screen_with(
         name: Some(display_uuid.to_string()),
         space,
         scale: 2.0,
+        physical: Default::default(),
     }
 }
 

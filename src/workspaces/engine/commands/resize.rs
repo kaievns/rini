@@ -6,11 +6,12 @@
 use super::CommandTarget;
 use crate::workspaces::domain::command::ResizeCommand;
 use crate::workspaces::domain::display_memory::DisplayMemory;
-use crate::workspaces::engine::{EventResponse, LayoutEngine};
+use crate::workspaces::engine::{EventResponse, LayoutEngine, WindowStore};
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_resize_command(
         &mut self,
+        window_store: &WindowStore,
         memory: &mut DisplayMemory,
         target: CommandTarget,
         is_floating: bool,
@@ -28,12 +29,23 @@ impl LayoutEngine {
                 }
 
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
+                let selected = self.workspace_tree(workspace_id).selected_window(layout);
+                let width_of = |engine: &Self, window| {
+                    engine.workspace_tree(workspace_id).carried_width(layout, window)
+                };
+                let before = selected.map(|window| width_of(self, window));
                 self.workspace_tree_mut(workspace_id).resize_selection_by(
                     layout,
                     amount,
                     orientation,
                 );
-                self.remember_selected_column_width(memory, space, workspace_id, layout);
+                // A height key, or `Smart` in a stack, changes no width, so it writes none: at the
+                // default, writing would forget the app's width.
+                if let Some(window) = selected
+                    && before != Some(width_of(self, window))
+                {
+                    self.remember_given_width(window_store, memory, target, window);
+                }
                 EventResponse::default()
             }
             ResizeCommand::CyclePresetWidth => {
@@ -41,7 +53,7 @@ impl LayoutEngine {
                 let raised =
                     self.workspace_tree_mut(workspace_id).cycle_preset_column_width(layout);
                 for window in &raised {
-                    self.remember_column_width(memory, space, workspace_id, layout, *window);
+                    self.remember_given_width(window_store, memory, target, *window);
                 }
                 Self::response_for_raised_windows(raised)
             }

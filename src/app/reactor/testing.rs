@@ -449,6 +449,12 @@ impl Reactor {
         &mut self.state.display_memory.affinity
     }
 
+    pub(crate) fn launch_memory_mut(
+        &mut self,
+    ) -> &mut crate::workspaces::domain::launch_memory::LaunchMemory {
+        &mut self.state.display_memory.launch
+    }
+
     pub(crate) fn config(&self) -> &Config { &self.config }
 
     pub(crate) fn config_mut(&mut self) -> &mut Config { &mut self.config }
@@ -757,6 +763,7 @@ pub fn make_screen_snapshots(frames: Vec<CGRect>, spaces: Vec<Option<SpaceId>>) 
             display_uuid: format!("test-display-{idx}").into(),
             name: None,
             scale: 2.0,
+            physical: Default::default(),
         })
         .collect()
 }
@@ -828,6 +835,7 @@ pub fn fullscreen_startup_space_state(
         display_uuid,
         name: None,
         scale: 2.0,
+        physical: Default::default(),
     }]);
     state.fullscreen_spaces.insert(fullscreen_space);
     state.has_seen_display_set = true;

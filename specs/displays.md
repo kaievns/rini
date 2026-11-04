@@ -44,11 +44,31 @@ context is arranged differently depending on what is plugged in, and rini rememb
   laptop looks alone, and the reverse. One record per window cannot express this: the last
   deliberate move won everywhere, so moving a window onto the laptop while undocked silently
   cancelled its place at the desk.
-- An application's width MAY carry across arrangements, below the window's own record. A window
-  with no width recorded for this arrangement and no launch slot MAY take the width the user last
-  gave that application on the same display, or on one of the same size, in another arrangement.
-  It MUST NOT override a width the window has recorded here, so rearranging at one desk still
-  changes nothing at another.
+- An application's width MAY carry across arrangements, below the window's own records, as the next
+  requirement says. It MUST NOT override a width a window has recorded in this arrangement, so
+  rearranging at one desk still changes nothing at another.
+- A window new to the session, of an application already running or one opened at a desk not seen
+  before, MUST open at the width the user last gave that application on a display of the same
+  shape, where it has no width of its own on its display, takes no launch slot and no rule sets its
+  width. A display's shape is the points its frame leaves for windows and its physical width to the
+  nearest 10mm, so the same panel docked and alone, and one model of monitor at two desks, are one
+  shape. A width command and the end of a drag of an edge MUST record the application's width; a
+  rule's resize, a width given to a window a rule sized and a focuslab window MUST NOT, since a
+  rule's width written as the application's would size its other windows, and neither MUST a
+  resize that changes only a window's height. A window the session has
+  seen before MUST NOT take the application's width when it comes back: a window the window server
+  removes and re-adds keeps its own width, or the default it had, not a sibling's, and so does a
+  window back from native fullscreen under another id, though that id was first laid at the
+  application's width. Not yet met: an
+  existing window moved onto a display it has no width on takes the default there.
+- An application's width MUST be kept with the `default-column-width` it overrode, and MUST NOT be
+  applied under another one: an edit to the default MUST show on the next new window, not be beaten
+  by a width chosen against the old value. One made under another value MUST NOT be read under
+  it, and MUST be kept: a write replaces only the width on its shape under its own default, so a
+  default read for a while, as the reference config's when the user's fails to parse or a
+  `config set` trial's, MUST NOT cost the widths made under the user's, even when a width command
+  or a drag writes under it. An application MUST keep at most 8 widths, each a shape under a
+  default, the most recently set.
 - An arrangement is identified by WHICH displays are attached, not how many. An external at home, one
   at the office and a meeting-room projector are three arrangements, and none inherits another's
   layout beyond an application's width as above.
@@ -59,16 +79,45 @@ context is arranged differently depending on what is plugged in, and rini rememb
   when the laptop is alone and half-width on the external.
 - Width MUST be remembered as the layout means it — a mode, a bounded ratio, or an unbounded ratio,
   which no display's width bounds hold, as a drag or `Mod+R`'s 100% gives — never in points, because the record is consulted exactly when the
-  display size differs.
-- A width the user set, by a command or by dragging an edge, MUST survive the display sleeping and
-  waking, the window server removing and re-adding the window, a drag of the window, and a relaunch
-  of an application an opening rule matches. Each is a moment the width is read again, and a width
-  read back as the default undoes the user's choice with nothing the user did to explain it. Not yet
-  met: a wake, a re-add and a relaunch under a rule each reset a width to the default on 2026-11-03
-  and 2026-11-04, and a width set by dragging an edge is not what a re-added window reads back.
+  display size differs. An application's width MUST be held as a fraction of the display rather
+  than an offset from `default-column-width`, so a default that differs on another display reads
+  it as the same width.
 - A remembered width MUST be written so a rini from before its kind existed still reads the file. A
   rini that cannot read the file starts with no homes, widths or launch slots, and its next save
-  writes that over the file, so going back a version would forget the machine.
+  writes that over the file, so going back a version would forget the machine. An
+  application's width a rini cannot read MUST cost that record alone, not the file.
+- A width the user set, by a command or by dragging an edge, MUST survive the display sleeping and
+  waking, the window server removing and re-adding the window, a drag of the window, and its app's
+  relaunch under a rule that sets no width (`specs/workspaces.md`, "Relaunching an application").
+  Each is a moment the width is read again, and a width read back as the default undoes the user's
+  choice with nothing the user did to explain it. So only a close, the application quitting, or
+  the window being gone, from the windows rini holds or, at startup, from the window server since
+  the save, MAY erase a window's widths. A minimize, a window briefly not manageable, one the
+  window server leaves out of a snapshot or moves to another space, a drag to another space and a
+  rule that stops managing it MUST each keep them, and a window that leaves native fullscreen
+  under another id MUST hand them to that id and be laid at them, though that id joins the strip
+  before the old one leaves it. A width only the layout holds, as a drag's or a rule's, MUST be
+  recorded before such a removal, and a launch slot's width MUST NOT replace one the window has of
+  its own, nor be taken by a window the session has seen, which is matched to a slot after its
+  siblings and can take one of theirs. Not yet met at a relaunch: a window can take a sibling's
+  slot by order, its title matched as first seen, before its app settles it, and a docked window
+  that opens on another display than its slot's takes the default there, inferred from the code
+  (`src/workspaces/docs/launch-memory.md`, failures 5 and 6).
+- A window's records MUST NOT outlive it into a window that takes its id. An id is the process id
+  and the window server id, both reused after a reboot, and a removal that keeps the widths keeps
+  them with no home, so a minimized window's width left in the file would size a different window
+  opened under that id. At startup a record MUST be kept only for a window the restore can still
+  match or the window server still has for that process.
+- A rule's width is a window's first. A width the window has of its own on a display MUST beat it
+  when the window is laid out again, and the rule MUST NOT size the window again on its app's next
+  report, unless the rule's width changed since it sized the window: an edit to a rule MUST show on
+  the windows it sizes, once. Not yet met: a rule edited while its window was out of every strip, or
+  while rini was not running, is beaten by the window's own width.
+- Every erase of a window's remembered width MUST be logged with why and the window's app and
+  title, at a level the running service keeps, because a width that comes back at the default is
+  otherwise not traceable to what erased it. A removal that erases nothing MUST log below that
+  level: a window that stays unmanageable is removed again on every snapshot, and a line per
+  snapshot buries the one removal that erased.
 - A window's display MUST be written only by intent: an explicit move, a drag, a first sighting, or a
   restore. The forced reassignment that follows an unplug MUST NOT write it, because that record is the
   only thing that brings the window back.
@@ -95,24 +144,42 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > before — a window on the SAME display in two arrangements wanting a different width in each — is the
 > one this answers.
 
+> **Found 2026-10-15, not reported.** The explicit move and the return on replug placed a window with
+> two copies of one rule that disagreed on a window larger than the display: the move kept its
+> bottom-right corner on the display, which put its title bar above and left of it, and the return kept
+> its top-left. Both now keep the top-left.
+
 > **Reported 2026-11-04.** "everything defaults to 1/2 of my laptop screen, and even though we have
 > the prevous sizes tracking it's buggy as fuck and doesn't work all that well, so i keep getting
 > everything resetting back to 1/2 which is annoying". 11 resets on 2026-11-03 and 2026-11-04 were
-> tied to the service log: 4 after a wake (1 measured at both ends, 3 by timing alone), 1 at a
-> re-add, 1 at Slack's relaunch, which an opening rule matches, 2 at a new window of a running app,
-> and 3 unexplained (`docs/window-sizing-research.md`, "Why sizes reset today, ranked").
+> tied to the service log: 4 after a wake (1 measured at both ends, the window laid full as the
+> display turned off and pressed back to full 80s after the wake, 3 by timing alone), 1 at a re-add
+> by the window server 3s before the press, 1 at Slack's relaunch, which an opening rule matches, 2
+> at a new window of a running app, and 3 unexplained (`docs/window-sizing-research.md`, "Why sizes
+> reset today, ranked"). Every removal from the layout erased the window's widths, and a re-added
+> window read a record a drag never wrote.
 
 > **Reported 2026-11-04, same session.** Asked whether an application's width may carry across
 > arrangements, below the per-window record, Kai answered "2. yes". The rule this amends said
 > "Arrangements MUST NOT share records", so that rearranging at one desk could not change another.
 > That reason holds for a window's own records, which still share nothing. Applied to every record,
-> it meant each desk or meeting room not seen before opened every window at the default width, one
-> of the paths behind the report above.
+> it meant each desk or meeting room not seen before, and every new window of a running
+> application, opened at `default-column-width`. The 2 resets at a new window in the report above,
+> both VS Code on 2026-11-04, fit a new window of the running editor opening at a half, inferred
+> from a `MainWindowChanged on unknown window` line for its pid 15s and 27s before each width press.
 
-> **Found 2026-10-15, not reported.** The explicit move and the return on replug placed a window with
-> two copies of one rule that disagreed on a window larger than the display: the move kept its
-> bottom-right corner on the display, which put its title bar above and left of it, and the return kept
-> its top-left. Both now keep the top-left.
+> **Found 2026-11-04, not reported.** Looking into Kai's report that day ("i keep getting everything
+> resetting back to 1/2") found widths lost across a sleep and wake that the service's log could not
+> explain: neither the window's removal from the layout nor the erase of its width was logged.
+
+> **Found 2026-11-04, not reported.** A window an app rule sized went back to the rule's width on
+> every report of its app, a re-add among them: an editor widened to 474pt went back to the rule's
+> 234pt. Kai's config sets no rule width.
+
+> **Found 2026-11-05, not reported.** A review of the change that keeps widths across a removal
+> found a minimized window's width record, with no home, reached by no clean-up and saved to
+> `~/.rini/layout.ron`, and read by any window opened under its id after a reboot. Inferred from
+> the code, not seen.
 
 ## Pinning an app to a display
 
@@ -216,6 +283,11 @@ lifecycle holds, churn and refresh it keeps, `src/displays/domain/topology.rs`,
 `a_subscription_the_dock_is_too_busy_to_answer_is_left_for_the_next_ask` there and
 `an_application_too_busy_to_answer_is_asked_again_until_it_answers` and
 `an_application_that_never_answers_is_given_up_on_at_the_deadline` in
-`src/windows/platform/ax/ask_again.rs` hold its asking again. Measurements are in
-`src/displays/docs/topology.md` and `src/workspaces/docs/workspaces-and-displays.md`; why widths
-reset, and the evidence for the width requirements of 2026-11-04, in `docs/window-sizing-research.md`.
+`src/windows/platform/ax/ask_again.rs` hold its asking again. `Removal::widths` in
+`src/workspaces/domain/display_affinity.rs` says which removals keep a width, and
+`src/app/reactor/tests/widths.rs` holds a width across a wake, a re-add and a drag, and a new
+window at its application's width. `src/workspaces/domain/app_widths.rs` keeps the applications'
+widths, `APP_WIDTHS_PER_APP` the cap, and `src/workspaces/engine/app_widths.rs` writes and gives
+them. Measurements are in `src/displays/docs/topology.md` and
+`src/workspaces/docs/workspaces-and-displays.md`; why widths reset, and the evidence for the width
+requirements of 2026-11-04, in `docs/window-sizing-research.md`.

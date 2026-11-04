@@ -52,7 +52,10 @@ pub fn handle_mouse_up(
         let window = session.window;
         if session.origin_space != payload.final_space {
             if session.origin_space.is_some() {
-                outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(window));
+                outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(
+                    window,
+                    crate::workspaces::Removal::DraggedToAnotherSpace,
+                ));
             }
             if let Some(space) = payload.final_space {
                 drop_on_space(state, layout, window, space);
@@ -61,6 +64,9 @@ pub fn handle_mouse_up(
             drag.skip_layout_for_window = Some(window);
             needs_layout = true;
         } else if session.layout_dirty {
+            // A width set by dragging an edge is the window's width, as a width command's is, so
+            // it is recorded where a window coming back reads it, and as its app's.
+            layout.remember_dragged_width(&state.windows, &mut state.display_memory, window);
             drag.skip_layout_for_window = Some(window);
             needs_layout = true;
         }

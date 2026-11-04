@@ -426,41 +426,26 @@ fn overlap_x(a: CGRect, b: CGRect) -> f64 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WarpScreen {
     pub frame: CGRect,
-    /// Physical height in millimetres, from `CGDisplayScreenSize`. Zero when unknown, in which case
+    /// Physical height in millimetres, `ScreenInfo::physical`'s. Zero when unknown, in which case
     /// the mapping falls back to proportional.
     pub physical_height_mm: f64,
 }
 
 /// Every attached screen with its physical height, for `Request::ScreensChanged`.
 pub fn screens_of(screens: &[ScreenInfo]) -> Vec<WarpScreen> {
-    warp_screens(screens, |id| CGDisplayBounds(id.as_u32()), physical_height_mm)
+    warp_screens(screens, |id| CGDisplayBounds(id.as_u32()))
 }
 
 /// Each screen as the pointer can reach it: the display's whole bounds, not `ScreenInfo::frame`,
 /// which is what the menu bar, the bar's band and the Dock leave for windows.
-fn warp_screens(
-    screens: &[ScreenInfo],
-    bounds_of: impl Fn(ScreenId) -> CGRect,
-    height_mm_of: impl Fn(ScreenId) -> f64,
-) -> Vec<WarpScreen> {
+fn warp_screens(screens: &[ScreenInfo], bounds_of: impl Fn(ScreenId) -> CGRect) -> Vec<WarpScreen> {
     screens
         .iter()
         .map(|screen| WarpScreen {
             frame: bounds_of(screen.id),
-            physical_height_mm: height_mm_of(screen.id),
+            physical_height_mm: screen.physical.height_mm,
         })
         .collect()
-}
-
-/// Physical height of a display in millimetres, or 0.0 when the display does not report it.
-fn physical_height_mm(id: ScreenId) -> f64 {
-    // SAFETY: an integer argument only; the size comes back by value.
-    let size = unsafe { rini_skylight_sys::CGDisplayScreenSize(id.as_u32()) };
-    if size.height.is_finite() && size.height > 0.0 {
-        size.height
-    } else {
-        0.0
-    }
 }
 
 #[cfg(test)]
@@ -468,6 +453,7 @@ mod tests {
     use objc2_core_foundation::CGSize;
 
     use super::*;
+    use crate::displays::domain::screen::PhysicalSize;
 
     fn rect(x: f64, y: f64, width: f64, height: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(width, height))
@@ -747,6 +733,14 @@ mod tests {
             space: None,
             is_builtin: id == 1,
             scale: 2.0,
+            physical: PhysicalSize {
+                width_mm: 0.0,
+                height_mm: if id == 1 {
+                    built_in().physical_height_mm
+                } else {
+                    external().physical_height_mm
+                },
+            },
         };
         vec![
             screen(1, rect(0.0, 32.0, 1728.0, 1085.0)),
@@ -761,21 +755,11 @@ mod tests {
         }
     }
 
-    fn height_mm(id: ScreenId) -> f64 {
-        match id.as_u32() {
-            1 => built_in().physical_height_mm,
-            _ => external().physical_height_mm,
-        }
-    }
-
     /// The pointer goes where the display is, band and all, so the warp takes the display's
     /// bounds rather than the frame windows are kept in.
     #[test]
     fn a_banded_screen_warps_over_its_whole_bounds() {
-        assert_eq!(warp_screens(&banded(), bounds, height_mm), vec![
-            built_in(),
-            external()
-        ]);
+        assert_eq!(warp_screens(&banded(), bounds), vec![built_in(), external()]);
     }
 
     /// With whole bounds the built-in's top row, y = 0, is also the external's bottom edge. It is
@@ -794,7 +778,7 @@ mod tests {
     /// crosses onto the built-in.
     #[test]
     fn the_top_band_still_warps() {
-        let screens = warp_screens(&banded(), bounds, height_mm);
+        let screens = warp_screens(&banded(), bounds);
         let cursor = CGPoint::new(external().frame.max().x - 1.0, -1680.0);
         let target = warp(&screens, cursor).expect("should warp");
         assert_eq!(target.x, built_in().frame.origin.x + ENTRY_INSET);

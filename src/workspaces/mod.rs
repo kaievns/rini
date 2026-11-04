@@ -12,6 +12,7 @@ pub use domain::command::{
     ArrangeCommand, EngineCommand, FloatingCommand, FocusCommand, ResizeCommand, StripCommand,
     WorkspaceCommand,
 };
+pub use domain::display_affinity::Removal;
 pub use domain::floating::FloatingManager;
 pub use domain::floating_position_store::FloatingPositionStore;
 pub use domain::hidden_window_placement::{HiddenWindowPlacement, HideCorner};

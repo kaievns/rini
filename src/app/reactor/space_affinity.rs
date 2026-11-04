@@ -313,6 +313,7 @@ mod tests {
                     name: None,
                     space: Some(SpaceId::new(i as u64 + 1)),
                     scale: 2.0,
+                    physical: Default::default(),
                 })
                 .collect(),
             ..Default::default()

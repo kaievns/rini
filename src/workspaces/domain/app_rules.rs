@@ -1,7 +1,7 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::{SpaceId, WindowId};
 
-use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RelativeTo};
+use crate::windows::domain::rules::{AppRuleDecision, AppRuleSize, FloatingPosition, RelativeTo};
 use crate::workspaces::VirtualWorkspaceId;
 
 /// Complete result of applying a managed app rule to workspace policy.
@@ -64,19 +64,56 @@ impl AppRuleEffects {
         )
     }
 
+    /// The resize the rule asks of tiled `window`, given the size it `last_gave` the window: none
+    /// when the window floats, the rule sets no size, or the rule already gave the window this one,
+    /// since an app reports its windows on every refresh and a rule's size is the window's first.
     pub fn tiled_resize(
         self,
         window: WindowId,
         space: SpaceId,
         was_floating: bool,
+        last_gave: Option<AppRuleSize>,
     ) -> Option<AppRuleResize> {
-        (!self.should_float(was_floating)).then_some(AppRuleResize {
+        let size = self.size?;
+        (!self.should_float(was_floating) && last_gave != Some(size)).then_some(AppRuleResize {
             window,
             space,
             workspace_id: self.workspace_id,
-            size: self.size?,
+            size,
+            edited: last_gave.is_some(),
         })
     }
+}
+
+/// Which of a launch slot's properties the rules applying to a window set. Each one they set is
+/// theirs, and the slot gives the window the rest (`src/workspaces/docs/launch-memory.md`,
+/// "Precedence"). A display pin is not among them: the slot's home is one rini inferred, which
+/// the pin corrects where homes are decided.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SlotOverrides {
+    pub workspace: bool,
+    pub width: bool,
+}
+
+impl SlotOverrides {
+    /// What `decision` sets of a slot: nothing when no rule matches, and otherwise its workspace
+    /// and its width each where the rule names one. A height alone sets no width. `None` where
+    /// the window takes no slot at all: a rule stops managing it, or floats it, so a modal or a
+    /// settings window opens where today's default puts it, not on the slot's workspace.
+    pub fn of(decision: &AppRuleDecision) -> Option<Self> {
+        match decision {
+            AppRuleDecision::NoMatch => Some(Self::default()),
+            AppRuleDecision::Unmanaged | AppRuleDecision::Managed { floating: true, .. } => None,
+            AppRuleDecision::Managed { workspace, size, .. } => Some(Self {
+                workspace: workspace.is_some(),
+                width: size.is_some_and(|size| size.w.is_some()),
+            }),
+        }
+    }
+
+    /// Whether the slot is left nothing a window takes from it: its home is the display it was
+    /// first seen on by then.
+    pub fn all(self) -> bool { self.workspace && self.width }
 }
 
 /// Workspace-policy result for one evaluated window.
@@ -178,6 +215,9 @@ pub struct AppRuleResize {
     pub space: SpaceId,
     pub workspace_id: VirtualWorkspaceId,
     pub size: AppRuleSize,
+    /// The rule gave the window another size before: its width wins over the window's own, which
+    /// otherwise beats a rule's (`specs/displays.md`).
+    pub edited: bool,
 }
 
 impl AppRuleResize {
@@ -272,6 +312,56 @@ mod tests {
         })
     }
 
+    /// A rule sets of a launch slot only what it names: a workspace the workspace, a width the
+    /// width, and a display pin or a height neither. A rule that floats the window, or stops
+    /// managing it, leaves it no slot to take, whatever else it names.
+    #[test]
+    fn a_rule_sets_of_a_launch_slot_only_what_it_names() {
+        use crate::windows::domain::rules::WorkspaceSelector;
+        use crate::workspaces::domain::display_pin::DisplayRole;
+        let opened = |floating, workspace, display, size| AppRuleDecision::Managed {
+            workspace,
+            floating,
+            position: floating.then(FloatingPosition::default),
+            size,
+            focus: true,
+            display,
+        };
+        let tiled = |workspace, display, size| opened(false, workspace, display, size);
+        let floated = |workspace, display, size| opened(true, workspace, display, size);
+        let set = |workspace, width| Some(SlotOverrides { workspace, width });
+        let height = Some(AppRuleSize { w: None, h: Some(300.0) });
+        let width = Some(AppRuleSize { w: Some(234.0), h: None });
+        let named = Some(WorkspaceSelector::Name("comms".into()));
+        let laptop = Some(DisplayRole::Internal);
+
+        let cases = [
+            (AppRuleDecision::NoMatch, set(false, false)),
+            (tiled(None, None, None), set(false, false)),
+            (tiled(None, laptop, None), set(false, false)),
+            (tiled(named.clone(), None, None), set(true, false)),
+            (tiled(None, None, height), set(false, false)),
+            (tiled(None, laptop, width), set(false, true)),
+            (
+                tiled(named.clone(), Some(DisplayRole::External), width),
+                set(true, true),
+            ),
+            (floated(None, None, None), None),
+            (floated(None, laptop, height), None),
+            (floated(named, None, width), None),
+            (AppRuleDecision::Unmanaged, None),
+        ];
+        for (decision, sets) in cases {
+            assert_eq!(SlotOverrides::of(&decision), sets, "{decision:?}");
+            if let Some(sets) = sets {
+                assert_eq!(
+                    sets.all(),
+                    sets == SlotOverrides { workspace: true, width: true }
+                );
+            }
+        }
+    }
+
     /// Each verdict against each state the window was in, and the verdict each rule and last rule
     /// gives.
     #[test]
@@ -338,11 +428,38 @@ mod tests {
             space: SpaceId::new(1),
             workspace_id: VirtualWorkspaceId::default(),
             size: AppRuleSize { w: Some(500.0), h: None },
+            edited: false,
         };
         let current = CGRect::new(CGPoint::new(10.0, 20.0), CGSize::new(300.0, 400.0));
         let frame = resize.resized_frame(current);
         assert_eq!(frame.origin, current.origin);
         assert_eq!(frame.size, CGSize::new(500.0, 400.0));
+    }
+
+    /// A rule gives a tiled window each size once, and says when it gave another before.
+    #[test]
+    fn a_rule_asks_a_tiled_window_for_each_size_once() {
+        let size = |w| AppRuleSize { w: Some(w), h: None };
+        let effects = AppRuleEffects {
+            workspace_id: VirtualWorkspaceId::default(),
+            floating: RuleFloating::Keep,
+            position: None,
+            size: Some(size(234.0)),
+            focus: false,
+        };
+        let (window, space) = (WindowId::new(1, 1), SpaceId::new(1));
+        let asks = |last_gave| {
+            effects
+                .tiled_resize(window, space, false, last_gave)
+                .map(|resize| (resize.size, resize.edited))
+        };
+
+        assert_eq!(asks(None), Some((size(234.0), false)), "first");
+        assert_eq!(asks(Some(size(234.0))), None, "again");
+        assert_eq!(asks(Some(size(300.0))), Some((size(234.0), true)), "edited");
+        assert_eq!(effects.tiled_resize(window, space, true, None), None, "floating");
+        let no_size = AppRuleEffects { size: None, ..effects };
+        assert_eq!(no_size.tiled_resize(window, space, false, None), None, "no size");
     }
 
     #[test]

@@ -7,7 +7,8 @@ scripts, their per-slot, per-day and per-reset outputs and the Model B fit are i
 `docs/data/2026-11-04-window-sizing/`, whose README names each file; each table names its source
 and how it was counted. Kai answered the research's three questions the same day ("Kai's answers"),
 and every figure they touch is recomputed with them: the 5K2K at 3360x1418 points, and the two
-1920x1200 displays discarded, with the 50 launch slots filed under them.
+1920x1200 displays discarded, with the 50 launch slots filed under them. Line numbers in `src/` are
+at `eb596883`, before M0; "After M0" says which failures M0 fixed and which remain.
 
 ## Verdict
 
@@ -27,6 +28,10 @@ two rules keyed on display width bring it to 18, and the last 2 side with his re
 columns in the strip (H1) are deferred. rini can read a display's physical size:
 `physical_height_mm` calls `CGDisplayScreenSize` today
 (`src/displays/platform/cursor_warp.rs:455-458`). Model B does not need it.
+
+**M0 is built:** failures 8, 3, 2 and 1 are fixed in the reactor's and the engine's tests, failure
+4 for displays of one shape, and the focuslab half of failure 5. Open: failure 5's title matching,
+failures 6 and 7, and every piece of Model B and H2 ("After M0").
 
 ## Kai's patterns, tested
 
@@ -268,7 +273,7 @@ again under "Model M0".
 | 1 | **A new window of a running app gets 1/2** | Cmd+N, a new project window, reopening one window while siblings stay open | Siblings claim slots 0..N-1, so window N has none (`src/workspaces/engine/launch.rs:190-219`); `remember` replaces the set with the live windows, so a closed window's slot goes at the next save (`src/workspaces/domain/launch_memory.rs:154-170`) | By design: "A window beyond the remembered slots gets today's defaults" (`src/workspaces/docs/launch-memory.md:63`). No test covers it (`src/workspaces/engine/persistence/tests/launch_memory.rs` holds relaunch cases only). Fits VS Code 2402 at 09:58 and 2891 at 14:59 (inferred) | Fall back to the app's last width on this display (M0.3); keep closed windows' slots as a capped most-recent list |
 | 2 | **Any opening rule turns memory off for its app** | Slack, Outlook, Messages (`~/.config/rini/config.kdl:284-289`, `open-on-output "internal"`), at every relaunch and reboot | Memory is read only when `decision == AppRuleDecision::NoMatch` (`src/workspaces/engine/rules.rs:140`); the rule then assigns a workspace, so the second chance in `add_window_to_layout` (`src/workspaces/engine/discovery.rs:322-338`) is skipped too | Measured in `layout.ron`: Outlook's slots hold full width under 3 of 3 kept arrangements, written and never read. Slack's 11-03 13:42 reset comes 2 minutes after a cold start (err.log:1, :39) | Apply a rule property by property: only what the rule sets overrides the slot (M0.2) |
 | 3 | **A re-added window takes its width from a record only commands write** | Undock, replug, leaving native fullscreen, the window server moving a window between spaces | `WindowRemovedPreserveFloating` records no width (`src/app/reactor/display_homes.rs:358`); the re-add reads `DisplayAffinity::window_width` (`src/workspaces/engine/affinity.rs:181-203`), which only width commands write (`src/workspaces/engine/commands/resize.rs:36,44`, `src/workspaces/engine/commands/floating.rs:67`, `src/workspaces/engine/moves.rs:219`). A drag never writes it (`src/workspaces/engine.rs:647-679`), nor does a rule's resize | Measured for Zen at 12:49 (err.log:646, 3s before the press). The current arrangement's record holds 8 of 14 live windows. **Not a test of undocking:** the docked arrangements' records are empty, but closed windows' records are dropped on every settled topology (`src/workspaces/docs/workspaces-and-displays.md:94-99`), the 11-03 13:38 reboot closed every window, and err.log names only `ScreenId(1)` since | Write the record before every remove-and-re-add and at drag end (M0.1), as `src/workspaces/engine/moves.rs:219` does |
-| 4 | **Memory is keyed by the whole set of displays** | Each new desk or meeting room starts empty; the laptop's widths alone do not carry to the same panel docked | `SetupId::of` (`src/workspaces/engine/launch.rs:171`); `specs/displays.md:43-55` keeps a window's records apart and, since Kai's answer 2, allows an app's width to carry | Measured: 3 kept arrangements in `layout.ron`, of 5 in the file | Fall back through this arrangement, then this display shape, then the default (M0.3) |
+| 4 | **Memory is keyed by the whole set of displays** | Each new desk or meeting room starts empty; the laptop's widths alone do not carry to the same panel docked | `SetupId::of` (`src/workspaces/engine/launch.rs:171`); `specs/displays.md`, "One work context, arranged differently per display", keeps a window's records apart and, since Kai's answer 2, allows an app's width to carry | Measured: 3 kept arrangements in `layout.ron`, of 5 in the file | Fall back through this arrangement, then this display shape, then the default (M0.3) |
 | 5 | **Relaunch matching hands out the wrong slot** | Apps with several windows (Ghostty, Chrome, Obsidian) | Title first, against the title at first sighting, then ordinal (`src/workspaces/domain/launch_memory.rs:196-208`) | Measured: 43 of 83 kept slots (52%) hold no width; 6 are focuslab windows (`lab-A` to `lab-D`, opened as Ghostty windows by `tools/focuslab/lab.sh:16-17`), all under C5A3728A… | Drop lab windows from the record; match on the settled title (M0.5) |
 | 6 | **The slot's display differs from where the window opens** | Docked only | The width is stored under the slot's display (`src/workspaces/engine/rules.rs:165-167`) and read back under the display of the space the window opened on (`src/workspaces/engine/affinity.rs:189`) | Inferred from code. **Not verified:** 0 of 32 kept docked slots name an external display | Place the window on the slot's display, or key the stored width by where it lands |
 | 7 | Untouched widths are stored as no width | Any window never resized | By design (`src/workspaces/docs/launch-memory.md`, "Recording") | 43 of 83 kept slots | Moot once class defaults exist |
@@ -280,7 +285,8 @@ full        ██████████████ 28
 offset      ██████ 12
 ```
 
-**The give-up logs are invisible.** `src/workspaces/docs/launch-memory.md:111-114` says every way
+**The give-up logs were invisible at `eb596883`; M0 raised them to `info`.**
+`src/workspaces/docs/launch-memory.md` said every way
 the lookup gives up is logged, but those lines are `debug!`
 (`src/workspaces/engine/launch.rs:183,211`) and the service runs at `RUST_LOG=error,warn,info`
 (`plutil -p ~/Library/LaunchAgents/git.kaievns.rini.plist`).
@@ -290,18 +296,51 @@ be read from the log.
 
 **What the specs promise against this:**
 
-- `specs/displays.md:39-42` says a window remembers its column width per arrangement, and
-  `specs/displays.md:60-62` includes a drag's unbounded ratio. **Partly met:** a drag reaches launch
+- `specs/displays.md` says a window remembers its column width per arrangement, a drag's
+  unbounded ratio included. **Partly met at `eb596883`, met after M0:** a drag reached launch
   memory through the saved layout, never the record a re-add reads (failure 3).
-- `specs/displays.md:57-59` already backs per-display widths: "a browser be full-width when the
-  laptop is alone and half-width on the external".
-- `src/workspaces/docs/launch-memory.md:67-73` puts any applying rule above a slot, so a rule that
-  only names a display costs the app its width (failure 2). No spec covers placement-only rules.
-- `specs/displays.md:63-68` requires, from Kai's 2026-11-04 report, that a width the user set, by
-  a command or by dragging an edge, survive the display sleeping and waking, the window server
+- `specs/displays.md` already backs per-display widths: "a browser be full-width when the laptop is
+  alone and half-width on the external".
+- `src/workspaces/docs/launch-memory.md` put any applying rule above a slot, so a rule that only
+  names a display cost the app its width (failure 2), and no spec covered placement-only rules.
+  After M0, `specs/workspaces.md`, "Relaunching an application", does.
+- `specs/displays.md` requires, from Kai's 2026-11-04 report, that a width the user set, by a
+  command or by dragging an edge, survive the display sleeping and waking, the window server
   removing and re-adding the window, a drag of the window, and a relaunch of an app an opening rule
-  matches. Not yet met: failures 8, 3 and 2.
+  matches. M0 narrows the last to a rule that sets no width, since a rule's width is a window's
+  first, and meets it but for failures 5 and 6 at a relaunch.
 - Whether a rini restart with the apps alive keeps sizes is **not verified**.
+
+### After M0
+
+M0 is M0.1 to M0.6 below, built and merged after this research. M0.6 was built before the one
+sleep M0.5's logs were to measure: every removal but a close now keeps a window's widths, so the
+erase behind candidate (a) of failure 8 no longer happens on any removal path. Whether a wake takes
+that path is still not verified. Each test named is the one that pins the fix; none was run
+against the live service.
+
+| # | After M0 | Held by |
+|---|---|---|
+| 8 | **Fixed in tests, not verified on a wake.** Only a close, the app quitting or the window being gone erases a window's widths; a minimize, a window briefly not manageable, one left out of a snapshot or moved to another space keep them. Every erase is logged at `info` with why | `a_full_width_window_keeps_its_width_across_the_display_sleeping_and_waking` (`src/app/reactor/tests/widths.rs`), `a_window_turned_unmanageable_or_minimized_keeps_its_width` and `every_erase_of_a_width_record_says_why_at_info` (`src/app/reactor/tests/displays.rs`), `a_removal_erases_widths_only_when_the_window_closed` (`src/workspaces/domain/display_affinity.rs`) |
+| 1 | **Fixed.** A new window of a running app opens at the width the user last gave the app on a display of that shape, by a width command or a drag | `a_new_window_of_a_running_app_opens_at_the_width_its_app_last_had`, `a_new_window_of_a_running_app_opens_at_the_width_a_drag_gave_its_app` (`src/app/reactor/tests/widths.rs`) |
+| 2 | **Fixed.** A rule overrides a launch slot only for what it sets, so Kai's `open-on-output "internal"` rules keep the slot's workspace and width. A rule's width still beats the slot's, even where the user widened the window since (`specs/workspaces.md`, "Relaunching an application", not yet met) | `a_rule_that_only_pins_a_display_keeps_the_launch_slot_s_workspace_and_width` (`src/workspaces/engine.rs`), `a_rule_sets_of_a_launch_slot_only_what_it_names` (`src/workspaces/domain/app_rules.rs`) |
+| 3 | **Fixed.** A width only the layout holds, as a drag's, is recorded before a removal, and a re-added window, or one back from native fullscreen under another id, is laid at it | `a_window_the_window_server_removes_and_re_adds_keeps_its_width`, `a_width_set_by_a_drag_is_recorded_and_survives_the_window_being_taken_away_and_given_back`, `a_width_only_the_layout_holds_survives_the_window_server_moving_the_window_away_and_back` (`src/app/reactor/tests/widths.rs`), `a_window_back_from_fullscreen_under_another_id_is_laid_at_the_width_its_old_id_had` (`src/app/reactor/tests/fullscreen.rs`) |
+| 4 | **Fixed for a display of the same shape** (usable points and physical width to 10mm). Open: a display of another shape opens at the default, and an existing window moved onto a display it has no width on takes the default there (`specs/displays.md`, not yet met) | `an_app_opened_at_a_desk_not_seen_before_on_a_display_of_the_same_shape_takes_its_width`, `an_app_opened_on_a_display_of_another_shape_opens_at_the_default` (`src/workspaces/engine/app_widths/tests.rs`) |
+| 5 | **Half fixed.** focuslab windows leave no slot and take none, and a file's lab slots are dropped as it loads. **Open:** a relaunched window's title is matched as first seen, before its app settles it | `a_focuslab_window_leaves_no_slot`, `a_file_with_focuslab_slots_loads_without_them_and_writes_what_an_older_rini_reads` (`src/workspaces/domain/launch_memory.rs`) |
+| 6 | **Open.** A slot's width is still written under the slot's display and read under the window's (`src/workspaces/docs/launch-memory.md`, "Not met") | — |
+| 7 | **Open,** by design until a default per class of app exists (Model B) | — |
+
+- **The give-up logs are at `info`,** so the service's log names every way a window takes no
+  launch slot: `a_window_that_takes_no_remembered_slot_says_why_at_info`
+  (`src/app/reactor/tests/workspaces.rs`).
+- **Only an application's width is absolute (M0.4):**
+  `a_width_is_stored_as_a_fraction_of_the_display_not_an_offset`
+  (`src/workspaces/domain/app_widths.rs`). A window's records and launch slots are still offsets
+  from `default-column-width`.
+- **Of the 3 unexplained resets in §4,** Zen's at 14:23, a record written by `Mod+F` and laid at
+  860 after a re-add, fits an erase at a removal, which M0 no longer makes (inferred). Outlook's at
+  10:01 and Slack's preset cycle at 14:12 stay unexplained; the `info` logs name the erase or the
+  give-up if either comes again.
 
 ## Prior art
 
@@ -354,8 +393,8 @@ be read from the log.
 |---|---|---|---|
 | M0.1 | 3 | Write the per-window width record before every remove-and-re-add and at drag end | S |
 | M0.2 | 2 | A rule overrides a launch slot only for the properties it sets | S |
-| M0.3 | 1, 4 | **App width memory keyed by (bundle id, display shape),** written at every width change, read when no per-window record or slot exists; `specs/displays.md:47-51` allows it since Kai's answer 2 | M |
-| M0.4 | per-display defaults | Store absolute widths: `ColumnWidth::Offset` is an offset from the configured ratio (`src/layout/domain/column_width.rs:16-17`), so a different default per display would read one record as two widths. Older rini still has to read the file (`specs/displays.md:69-71`) | M |
+| M0.3 | 1, 4 | **App width memory keyed by (bundle id, display shape),** written at every width change, read when no per-window record or slot exists; `specs/displays.md` allows it since Kai's answer 2 | M |
+| M0.4 | per-display defaults | Store absolute widths: `ColumnWidth::Offset` is an offset from the configured ratio (`src/layout/domain/column_width.rs:16-17`), so a different default per display would read one record as two widths. Older rini still has to read the file (`specs/displays.md`) | M |
 | M0.5 | 5, 8, logs | Drop focuslab windows from the record; raise the give-up logs to `info`; log every width-record erase with its caller | S |
 | M0.6 | 8 | Once M0.5 names the path: keep the width record across a remove that is not a close, such as a window that is not `EffectivelyManageable` for a moment | S-M, after the measurement |
 
@@ -471,9 +510,9 @@ on the display is matched after `open-on-output` has placed the window, and a ru
 
 **Spec changes B and M0 need:**
 
-- Made: `specs/displays.md:43-55` now keeps a window's records apart and allows an app's width to
+- Made: `specs/displays.md` now keeps a window's records apart and allows an app's width to
   carry across arrangements below them (M0.3), on Kai's answer 2.
-- Kai's call: `specs/displays.md:60-62`, a width is never remembered in points. B stores a target in
+- Kai's call: `specs/displays.md`, a width is never remembered in points. B stores a target in
   points; the reason the line gives (the display size differs) is the case B's snap handles.
 
 ### Heights: H1, H2, H3
@@ -520,8 +559,10 @@ alone and merged into a copy of Kai's `~/.config/rini/config.kdl` the way `confi
 | E5 | valid |
 | Model B | refused, as expected: `fixed` in `layout › min-column-width`, `near` in every width and height, `output-min-width`, and `proportion` in a rule's width. The block as it stands, with the browser rule, was checked again with a debug build of this branch |
 
-**Cost of every rule trial:** a rule on an app turns launch memory off for it (failure 2), so
-VS Code, Zen, Chrome and Ghostty lose relaunch memory while E2 or E3 runs.
+**Cost of every rule trial:** a rule's width beats a launch slot's and a window it sizes neither
+takes nor leaves its app's width, so VS Code, Zen, Chrome and Ghostty open at the rule's width
+while E2 or E3 runs, and a width Kai gives one of them is lost at its next relaunch. The slot's
+workspace is kept. At `eb596883`, before M0, a rule turned the whole slot off (failure 2).
 
 **Baseline:** journal line 507423 of `~/Library/Logs/rini/transitions.jsonl` (2026-11-04). Count
 width presses since then with:
@@ -573,16 +614,17 @@ Kai, 2026-11-04, to the three questions this research asked: "1. it runs on 3360
 | # | Question | Answer | Decision |
 |---|---|---|---|
 | 1 | Does the 5K2K run at 3840x1620 looks-like, and what are the two 1920x1200 displays? | 3360x1418; discard the 1920x1200 displays | **The fit is recomputed at 3360x1418:** B reproduces 16 of 20 cells, 18 with two display-width rules. The 1920x1200 displays and the 50 slots under their 2 arrangements are out of every table. The 5K2K's pt/in stays unknown; B does not need it |
-| 2 | May an app's width carry across arrangements, below the per-window record (M0.3)? | yes | **M0.3 goes ahead.** `specs/displays.md:43-55` is amended in place: a window's records still share nothing, and an app's width MAY carry below them |
+| 2 | May an app's width carry across arrangements, below the per-window record (M0.3)? | yes | **M0.3 goes ahead.** `specs/displays.md` is amended in place: a window's records still share nothing, and an app's width MAY carry below them |
 | 3 | Is a utility window floating in a corner (H2) acceptable, or must it stay in the strip (H1)? | yes | **H2 is the path for utility windows on big displays; H1 is deferred.** E5 now sets H2's size and corner |
 
-The same change adds Kai's report as a requirement: `specs/displays.md:63-68`, a width the user set
+The same change adds Kai's report as a requirement: `specs/displays.md`, a width the user set
 survives a wake, a re-add, a drag and a relaunch under an opening rule.
 
 ## Needs checking
 
-- What erases or skips a width record across a sleep and wake (failure 8). With M0.5's logging in
-  place, one sleep on the laptop alone with a window at full width answers it.
+- Whether M0 holds a width across a real sleep and wake (failure 8). Its tests drive candidate
+  (a); one sleep on the laptop alone with a window at full width, read against the `info` erase
+  and give-up lines, answers it.
 - Why no docked slot names the 32". Next time docked, compare each window's `home_display` in
   `rini-cli query diagnostics` with the display it sits on.
 - Saved launch-slot offsets are not shifted when `default-column-width` changes live, while live

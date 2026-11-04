@@ -129,11 +129,40 @@ pub fn resolve_width(
     }
 }
 
+/// The application `tools/focuslab/lab.sh` opens its windows in.
+const FOCUSLAB_APP: &str = "com.mitchellh.ghostty";
+
+/// Whether a window is one `tools/focuslab/lab.sh` opened: a Ghostty window titled `lab-` and its
+/// letter. A lab window is a fixture of a screen test, and a slot it left would hand its workspace
+/// and width to a terminal of Kai's.
+pub fn is_focuslab_window(app_id: &str, title: Option<&str>) -> bool {
+    app_id == FOCUSLAB_APP
+        && title
+            .and_then(|title| title.strip_prefix("lab-"))
+            .is_some_and(|letter| matches!(letter.as_bytes(), [c] if c.is_ascii_alphabetic()))
+}
+
+type Apps = HashMap<String, HashMap<SetupId, Vec<Slot>>>;
+
+/// The slots a file holds, but for focuslab windows': a file written before they were left out
+/// holds them, and they would take a terminal's slot by ordinal.
+fn without_focuslab_windows<'de, D: serde::Deserializer<'de>>(read: D) -> Result<Apps, D::Error> {
+    let mut apps = Apps::deserialize(read)?;
+    for (app_id, topologies) in &mut apps {
+        for slots in topologies.values_mut() {
+            slots.retain(|slot| !is_focuslab_window(app_id, slot.title.as_deref()));
+        }
+        topologies.retain(|_, slots| !slots.is_empty());
+    }
+    apps.retain(|_, topologies| !topologies.is_empty());
+    Ok(apps)
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct LaunchMemory {
     /// Slots per application, per arrangement of displays.
-    #[serde(default)]
-    apps: HashMap<String, HashMap<SetupId, Vec<Slot>>>,
+    #[serde(default, deserialize_with = "without_focuslab_windows")]
+    apps: Apps,
 }
 
 impl LaunchMemory {
@@ -151,7 +180,15 @@ impl LaunchMemory {
     /// The same rule applies per FIELD, not just per application: a slot whose width the projection
     /// could not work out keeps the width already remembered (`resolve_width`). Replacing the set
     /// wholesale with `width: None` is how a full-width window came back half sized.
-    pub fn remember(&mut self, app_id: &str, topology: &SetupId, projected: Vec<ProjectedSlot>) {
+    ///
+    /// A focuslab window leaves no slot (`is_focuslab_window`).
+    pub fn remember(
+        &mut self,
+        app_id: &str,
+        topology: &SetupId,
+        mut projected: Vec<ProjectedSlot>,
+    ) {
+        projected.retain(|slot| !is_focuslab_window(app_id, slot.title.as_deref()));
         if projected.is_empty() {
             return;
         }
@@ -512,5 +549,128 @@ mod tests {
                 "an unreadable projection must not erase the width"
             );
         }
+    }
+
+    /// `tools/focuslab/lab.sh` titles its Ghostty windows `lab-` and a letter; nothing else is one.
+    #[test]
+    fn a_focuslab_window_is_a_ghostty_window_titled_lab_and_a_letter() {
+        const GHOSTTY: &str = "com.mitchellh.ghostty";
+        assert!(is_focuslab_window(GHOSTTY, Some("lab-A")));
+        assert!(is_focuslab_window(GHOSTTY, Some("lab-D")));
+        for title in [
+            Some("~/p/rini"),
+            Some("lab-"),
+            Some("lab-A ~/p/rini"),
+            Some("lab-notes"),
+            Some("lab-AB"),
+            Some("lab-box1"),
+            Some("lab-2024"),
+            Some("lab-1"),
+            Some("lab"),
+            None,
+        ] {
+            assert!(!is_focuslab_window(GHOSTTY, title), "{title:?}");
+        }
+        assert!(!is_focuslab_window("com.apple.Terminal", Some("lab-A")));
+    }
+
+    /// The matcher reads the title `tools/focuslab/lab.sh` gives its windows, in the app it opens
+    /// them in, with its default letters: a change there leaves lab windows in launch memory.
+    #[test]
+    fn lab_sh_titles_its_ghostty_windows_lab_and_a_letter() {
+        let lab = include_str!("../../../tools/focuslab/lab.sh");
+        assert!(lab.contains("open -na /Applications/Ghostty.app"), "{lab}");
+        assert!(lab.contains(r#"--title="lab-$L""#), "{lab}");
+        let defaults = lab
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("LETTERS=(\"$@\"); [ ${#LETTERS[@]} -gt 0 ] || LETTERS=(")
+            })
+            .and_then(|rest| rest.strip_suffix(')'))
+            .expect("lab.sh names its default letters");
+        for letter in defaults.split_whitespace() {
+            assert!(
+                is_focuslab_window(FOCUSLAB_APP, Some(&format!("lab-{letter}"))),
+                "lab-{letter}"
+            );
+        }
+    }
+
+    /// A focuslab window leaves no slot, so a relaunched terminal cannot take a lab window's
+    /// workspace and width. An arrangement only lab windows were in keeps what it had.
+    #[test]
+    fn a_focuslab_window_leaves_no_slot() {
+        const GHOSTTY: &str = "com.mitchellh.ghostty";
+        let mut memory = LaunchMemory::default();
+        memory.remember(GHOSTTY, &alone(), vec![
+            slot("~/p/rini", BUILT_IN, 1).into(),
+            slot("lab-A", BUILT_IN, 2).into(),
+            slot("~/w/status", BUILT_IN, 1).into(),
+        ]);
+        assert_eq!(memory.slots(GHOSTTY, &alone()), [
+            slot("~/p/rini", BUILT_IN, 1),
+            slot("~/w/status", BUILT_IN, 1)
+        ]);
+
+        memory.remember(GHOSTTY, &alone(), vec![slot("lab-B", BUILT_IN, 2).into()]);
+        assert_eq!(
+            memory.slots(GHOSTTY, &alone()).len(),
+            2,
+            "lab windows alone change nothing"
+        );
+    }
+
+    /// Ghostty's slots under one arrangement in `~/.rini/layout.ron` on 2026-11-04, six of them
+    /// focuslab windows'.
+    const GHOSTTY_WITH_LAB_WINDOWS: &str = r#"(apps:{"com.mitchellh.ghostty":{"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34":[(title:Some("caffeinate -di ~/p/rini"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:0,width:None),(title:Some("~/p/rini"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:1,width:Some(Offset(0.5999999999999999))),(title:Some("~/w/status"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:1,width:None),(title:Some("~/w/metrics"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:1,width:Some(Offset(1.7666699999999997))),(title:Some("~/w/status"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:1,width:None),(title:Some("~/w/status"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:1,width:None),(title:Some("lab-A"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:2,width:Some(Offset(1.1666699999999999))),(title:Some("lab-B"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:2,width:None),(title:Some("lab-C"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:2,width:Some(Offset(0.4333299999999999))),(title:Some("lab-D"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:2,width:None),(title:Some("lab-B"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:2,width:Some(Offset(0.5)),width_dragged:true),(title:Some("lab-B"),display_uuid:"C5A3728A-FF86-4397-B19C-5C8D6EB3EC34",workspace_index:2,width:Some(Offset(-0.16666999999999998)))]}})"#;
+
+    /// `LaunchMemory` as a rini from before focuslab windows were left out read it.
+    mod before_focuslab_windows {
+        use rustc_hash::FxHashMap as HashMap;
+        use serde::Deserialize;
+
+        use crate::workspaces::domain::display_setup::SetupId;
+
+        #[derive(Deserialize)]
+        pub struct LaunchMemory {
+            #[serde(default)]
+            pub apps: HashMap<String, HashMap<SetupId, Vec<super::Slot>>>,
+        }
+    }
+
+    /// A file written before focuslab windows were left out loads without their slots, keeping
+    /// every other slot in its order, and what is written back a rini from before reads.
+    #[test]
+    fn a_file_with_focuslab_slots_loads_without_them_and_writes_what_an_older_rini_reads() {
+        const GHOSTTY: &str = "com.mitchellh.ghostty";
+        let arrangement = SetupId::of(&[DisplayUuid::new("C5A3728A-FF86-4397-B19C-5C8D6EB3EC34")]);
+        let memory: LaunchMemory =
+            ron::from_str(GHOSTTY_WITH_LAB_WINDOWS).expect("the bytes parse");
+        let titles: Vec<_> = memory
+            .slots(GHOSTTY, &arrangement)
+            .iter()
+            .map(|slot| slot.title.as_deref().unwrap_or_default())
+            .collect();
+        assert_eq!(titles, [
+            "caffeinate -di ~/p/rini",
+            "~/p/rini",
+            "~/w/status",
+            "~/w/metrics",
+            "~/w/status",
+            "~/w/status"
+        ]);
+        assert_eq!(
+            memory.slots(GHOSTTY, &arrangement)[3].width,
+            Some(ColumnWidth::Offset(1.7666699999999997))
+        );
+
+        let written = ron::ser::to_string(&memory).unwrap();
+        assert!(!written.contains("lab-"), "{written}");
+        let old: before_focuslab_windows::LaunchMemory =
+            ron::from_str(&written).expect("an older rini reads it");
+        assert_eq!(
+            old.apps[GHOSTTY][&arrangement],
+            memory.slots(GHOSTTY, &arrangement)
+        );
     }
 }

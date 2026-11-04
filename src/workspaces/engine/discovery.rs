@@ -9,9 +9,11 @@ use tracing::warn;
 use crate::layout::WindowLayoutConstraints;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{RuleState, WindowRuleContext};
-use crate::workspaces::domain::app_rules::{AppRuleOutcome, AppRuleWorkspaceFocus};
+use crate::workspaces::domain::app_rules::{AppRuleOutcome, AppRuleWorkspaceFocus, SlotOverrides};
+use crate::workspaces::domain::display_affinity::{Removal, RemovedWidths};
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
+use crate::workspaces::engine::rules::{SlotTaking, take_slot_home_and_width};
 use crate::workspaces::engine::{AppWindows, EventResponse, LayoutEngine, OnScreenEntry};
 use crate::workspaces::{AppRuleEffects, AppRuleResult, RuleFloating, WindowStore};
 
@@ -47,6 +49,26 @@ pub(super) struct Admitted {
     pub(super) result: AppRuleResult,
 }
 
+/// What taking a window out of every layout keeps of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Keeping {
+    /// Its floating state, workspace and records, as a window coming straight back needs.
+    Records,
+    /// What the removal given keeps: its widths, unless it closed (`Removal::widths`). Its floating
+    /// state, workspace, home and place in the strip are forgotten.
+    Removed(Removal),
+}
+
+impl Keeping {
+    /// Whether the window's widths outlive the removal, under its id or the one that owns it now.
+    fn keeps_widths(self) -> bool {
+        match self {
+            Self::Records => true,
+            Self::Removed(why) => why.widths() != RemovedWidths::Erased,
+        }
+    }
+}
+
 impl LayoutEngine {
     /// Every window an app has on a space, as the app itself reports them.
     ///
@@ -72,6 +94,9 @@ impl LayoutEngine {
         // Floating windows are left out: it is the strip's membership.
         let mut tiled_by_workspace: HashMap<VirtualWorkspaceId, Vec<WindowId>> = HashMap::default();
         let app_bundle_id = app_info.as_ref().and_then(|info| info.bundle_id.as_deref());
+        if let Some(name) = app_info.as_ref().and_then(|info| info.localized_name.as_deref()) {
+            self.note_app_name(pid, name);
+        }
         let mut focus_request = None;
 
         for entry in windows_with_titles {
@@ -315,14 +340,16 @@ impl LayoutEngine {
         wid: WindowId,
     ) -> bool {
         let active_space_before = self.space_with_window(wid);
+        let first = self.first_sighting(wid);
 
         // Where this application's windows were the last time this set of displays was attached. Only
         // consulted for a window with no workspace yet, so it cannot override an explicit rule or a
         // window rini has already placed. See `src/workspaces/docs/launch-memory.md` (in this crate).
-        let remembered = self
+        let unassigned = self
             .virtual_workspace_manager
             .workspace_for_window(window_store, space, wid)
-            .is_none()
+            .is_none();
+        let remembered = unassigned
             .then(|| {
                 let state = window_store.window(wid)?;
                 let app_id = state.info.bundle_id.clone()?;
@@ -347,10 +374,12 @@ impl LayoutEngine {
                     workspace_id,
                 );
             }
-            memory.affinity.set_window_home_if_absent(wid, &slot.display_uuid);
-            if let Some(width) = slot.width {
-                memory.affinity.set_window_width(&slot.display_uuid, wid, width);
-            }
+            take_slot_home_and_width(memory, wid, slot, SlotTaking {
+                overrides: SlotOverrides::default(),
+                first,
+            });
+        } else if first && unassigned {
+            self.take_app_width_unruled(window_store, memory, space, wid);
         }
 
         let assigned_workspace =
@@ -411,20 +440,28 @@ impl LayoutEngine {
         window_store: &mut WindowStore,
         memory: &mut DisplayMemory,
         wid: WindowId,
-        preserve_floating: bool,
+        keeping: Keeping,
     ) {
+        // A width only the layout holds, from a drag or a rule, is written down before the layout
+        // lets go of it, since what comes back reads the record.
+        if keeping.keeps_widths() {
+            self.remember_width_as_laid(window_store, memory, wid);
+        }
         self.remove_window_layout_membership(window_store, wid);
 
-        if preserve_floating {
-            self.floating.remove_active_for_window(wid);
-        } else {
-            self.floating.remove_floating(wid);
-        }
-
-        if !preserve_floating {
-            self.virtual_workspace_manager.remove_window(window_store, wid);
-            self.floating_positions.remove_window(wid);
-            self.forget_persisted_window(memory, wid);
+        match keeping {
+            Keeping::Records => self.floating.remove_active_for_window(wid),
+            Keeping::Removed(why) => {
+                self.floating.remove_floating(wid);
+                self.virtual_workspace_manager.remove_window(window_store, wid);
+                self.floating_positions.remove_window(wid);
+                self.forget_persisted_window(memory, wid, why);
+                // The owner may be laid out already, at the default or its app's width.
+                if let Removal::OwnedByAnotherId(owner) = why {
+                    self.hand_over_sighting(window_store, memory, owner);
+                    self.apply_remembered_width_where_laid(window_store, memory, owner);
+                }
+            }
         }
 
         if self.focused_window == Some(wid) {

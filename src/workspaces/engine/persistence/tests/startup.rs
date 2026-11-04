@@ -470,3 +470,61 @@ fn startup_restore_keeps_the_saved_windows_its_reads_still_find() {
     let saved = |window| restored.persistence.windows.contains_key(&window);
     assert_eq!((saved(gone), saved(open), saved(restarted)), (false, true, true));
 }
+
+/// The records a file holds for a window go with it at startup unless the window can still be
+/// restored or is still there: a candidate the restore may match keeps them for its rekey, a window
+/// the window server still has keeps them under its id, and one neither, a window minimized and
+/// gone since among them, leaves none for a window that takes its id.
+#[test]
+fn startup_restore_forgets_the_records_of_windows_gone_since_the_save() {
+    use crate::layout::ColumnWidth;
+
+    let space = SpaceId::new(631);
+    let display = DisplayUuid::new("37D8832A-2D66-02CA-B9F7-8F30A301B230");
+    let (candidate, open, minimized, gone) = (
+        WindowId::new(52, 3),
+        WindowId::new(51, 2),
+        WindowId::new(53, 4),
+        WindowId::new(50, 1),
+    );
+    let mut snapshot = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut store = WindowStore::default();
+    let _ = snapshot.handle_event(
+        &mut store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
+    );
+    let _ = snapshot.handle_event(
+        &mut store,
+        &mut memory,
+        LayoutEvent::WindowAdded(space, candidate),
+    );
+    snapshot.persistence.windows.insert(candidate, WindowFingerprint {
+        window_server_id: Some(candidate.idx.get()),
+        title: None,
+        width: 600.0,
+        height: 400.0,
+        app_id: Some("com.example.52".into()),
+    });
+    for window in [candidate, open, minimized, gone] {
+        memory.affinity.set_window_width(&display, window, ColumnWidth::FullWidth);
+    }
+    memory.affinity.set_window_home(gone, &display);
+    let (_dir, path) = layout_file();
+    snapshot.save(&memory, path.clone()).unwrap();
+
+    let (_, memory) = LayoutEngine::load_for_startup_restore(
+        path,
+        |window, id| window == open && id == open.idx.get(),
+        |app| app == "com.example.52",
+    )
+    .unwrap();
+
+    let width = |window| memory.affinity.window_width(&display, window);
+    assert_eq!(width(candidate), Some(ColumnWidth::FullWidth), "a candidate");
+    assert_eq!(width(open), Some(ColumnWidth::FullWidth), "still there");
+    assert_eq!(width(minimized), None, "gone since");
+    assert_eq!(width(gone), None, "gone since, with a home");
+    assert_eq!(memory.affinity.window_home(gone), None);
+}

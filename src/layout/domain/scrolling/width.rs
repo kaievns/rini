@@ -46,6 +46,23 @@ impl ScrollingLayoutSystem {
         }
     }
 
+    /// Put `wid`'s column back at the default ratio, out of full width where it stands: undoes a
+    /// width `set_carried_width` laid it at that turned out not to be its own.
+    pub fn clear_carried_width(&mut self, layout: LayoutId, wid: WindowId) {
+        let Some(state) = self.layout_state_mut(layout) else {
+            return;
+        };
+        let Some((col_idx, _)) = state.locate(wid) else {
+            return;
+        };
+        if state.fullscreen_within_gaps.contains(&wid) {
+            state.leave_full_width_in_place(wid);
+        }
+        if let Some(column) = state.columns.get_mut(col_idx) {
+            column.width = None;
+        }
+    }
+
     /// Whether this window's column occupies the whole viewport width.
     ///
     /// Full width is a MODE rather than a ratio: it stays full on a display of any size, so it

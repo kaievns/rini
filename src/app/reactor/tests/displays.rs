@@ -1709,6 +1709,7 @@ fn arranging_one_setup_does_not_disturb_another() {
         display_uuid: uuid.into(),
         name: None,
         scale: 2.0,
+        physical: Default::default(),
     };
     let builtin = |space| screen("builtin", 0, builtin_frame, space);
     let studio = |space| screen("studio", 1, external_frame, space);
@@ -1809,6 +1810,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
             name: None,
             is_builtin,
             scale: 2.0,
+            physical: Default::default(),
         };
     let builtin = |space| screen("builtin", 0, builtin_frame, space, true);
     let studio = |space| screen("studio", 1, external_frame, space, false);
@@ -1880,6 +1882,7 @@ fn a_display_never_seen_before_takes_no_windows() {
         display_uuid: uuid.into(),
         name: None,
         scale: 2.0,
+        physical: Default::default(),
     };
     let builtin = |space| screen("builtin", 0, builtin_frame, space);
     let studio = |space| screen("studio", 1, external_frame, space);
@@ -2179,6 +2182,213 @@ fn replug_rebuilds_strip_adjacency() {
         strip_after, strip_before,
         "the strip must come back in the order it was left, keeping adjacent windows adjacent"
     );
+}
+
+/// One app's two windows settled on one screen, the first with a full width recorded there, and why
+/// each width record `act` erased, as logged.
+fn erases_while(
+    act: impl FnOnce(&mut Apps, &mut Reactor, WindowId),
+) -> Vec<(tracing::Level, String)> {
+    logged_while("why", act)
+}
+
+/// `field` of every line logged while `act` runs over `erases_while`'s windows.
+fn logged_while(
+    field: &'static str,
+    act: impl FnOnce(&mut Apps, &mut Reactor, WindowId),
+) -> Vec<(tracing::Level, String)> {
+    let (mut apps, mut reactor) = test_context();
+    apps.make_app_and_settle_on_screen(&mut reactor, screen(), SpaceId::new(1), 1, make_windows(2));
+    let window = WindowId::new(1, 1);
+    reactor.display_affinity_mut().set_window_width(
+        &DisplayUuid::new("test-display-0"),
+        window,
+        crate::layout::ColumnWidth::FullWidth,
+    );
+    logged(field, || act(&mut apps, &mut reactor, window))
+}
+
+fn info(why: &str) -> (tracing::Level, String) { (tracing::Level::INFO, why.to_owned()) }
+
+/// The screen `erases_while`'s windows are settled on.
+fn screen() -> CGRect { CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.)) }
+
+/// Every erase of a window's width record is logged at `info` with why, so a width that comes back
+/// at the default can be traced in the service's log to the path that erased it.
+#[test]
+fn every_erase_of_a_width_record_says_why_at_info() {
+    let closed = erases_while(|_, reactor, window| {
+        reactor.handle_event(Event::WindowDestroyed(window));
+    });
+    assert_eq!(closed, [info("Removed(Closed)")]);
+
+    let quit = erases_while(|_, reactor, _| {
+        reactor.handle_event(Event::ApplicationThreadTerminated(1));
+    });
+    assert_eq!(quit, [info("Removed(Closed)")], "its windows close first");
+    let quit = erases_while(|_, reactor, _| {
+        reactor.send_layout_event(LayoutEvent::AppClosed(1));
+    });
+    assert_eq!(quit, [info("AppQuit")]);
+
+    let gone = erases_while(|_, reactor, window| {
+        reactor
+            .display_affinity_mut()
+            .set_window_home(window, &DisplayUuid::new("test-display-0"));
+        reactor.windows_mut().remove_window(window);
+        reactor.sync_display_affinity_from_live_layout();
+    });
+    assert_eq!(gone, [info("Gone")]);
+
+    let back_to_default = erases_while(|_, reactor, _| {
+        reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
+        reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
+    });
+    assert!(
+        back_to_default.contains(&info("AtDefault")),
+        "{back_to_default:?}"
+    );
+}
+
+/// The erase line names the window's app and title, so a width back at the default can be tied to
+/// the app it came back in without joining its pid through other lines.
+#[test]
+fn an_erased_width_names_the_window_s_app_and_title() {
+    let close = |_: &mut Apps, reactor: &mut Reactor, window| {
+        reactor.handle_event(Event::WindowDestroyed(window));
+    };
+    assert_eq!(logged_while("app_id", close), [info("\"com.testapp1\"")]);
+    assert_eq!(logged_while("title", close), [info("\"Window1\"")]);
+}
+
+/// Widths written before any arrangement was named, which a known arrangement does not adopt, are
+/// logged as erased like every other width.
+#[test]
+fn widths_a_known_arrangement_does_not_adopt_are_logged_as_erased() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(SpaceId::new(1))]));
+    let display = DisplayUuid::new("test-display-0");
+    let written = ron::to_string(reactor.display_affinity()).expect("the affinity is written");
+    let none_in_force = written.replace(r#"current:"test-display-0""#, "");
+    assert_ne!(
+        none_in_force, written,
+        "a file that names no arrangement in force"
+    );
+    *reactor.display_affinity_mut() = ron::from_str(&none_in_force).expect(&none_in_force);
+    reactor.display_affinity_mut().set_window_width(
+        &display,
+        WindowId::new(1, 1),
+        crate::layout::ColumnWidth::FullWidth,
+    );
+
+    let erases = logged("why", || {
+        reactor.handle_event(space_state_event_with(
+            vec![screen],
+            vec![Some(SpaceId::new(1))],
+            |state| state.topology = Topology::Changed,
+        ));
+    });
+    assert_eq!(erases, [info("Unadopted")]);
+}
+
+/// A window found not manageable where the window server has it is taken out of every layout, which
+/// forgets its workspace and home and keeps its widths: the removal says which of the two paths did
+/// it, and nothing is erased.
+#[test]
+fn a_window_removed_as_not_manageable_says_which_path_and_why() {
+    let unmanageable = |reactor: &mut Reactor, window: WindowId| {
+        reactor
+            .windows_mut()
+            .window_mut(window)
+            .expect("the window is tracked")
+            .is_manageable = false;
+    };
+    let reassigned = erases_while(|_, reactor, window| {
+        unmanageable(reactor, window);
+        reactor.reassign_window_to_authoritative_space(window, SpaceId::new(1));
+    });
+    assert_eq!(reassigned, [info("UnmanageableWhenReassigned")]);
+
+    let restored = erases_while(|_, reactor, window| {
+        unmanageable(reactor, window);
+        reactor.restore_window_to_active_layout_if_visible(window, SpaceId::new(1));
+    });
+    assert_eq!(restored, [info("UnmanageableWhenRestored")]);
+}
+
+/// A window that turns unmanageable, found by a refresh or by its app, or that is minimized, is
+/// taken out of every layout and keeps its width: it still exists, and reads the width back when it
+/// is laid out again.
+#[test]
+fn a_window_turned_unmanageable_or_minimized_keeps_its_width() {
+    let kept = |reactor: &Reactor, window| {
+        reactor
+            .display_affinity()
+            .window_width(&DisplayUuid::new("test-display-0"), window)
+    };
+    let on_refresh = erases_while(|_, reactor, window| {
+        let tracked = &reactor.windows().window(window).expect("tracked").info;
+        let (server_id, frame) = (
+            tracked.sys_id.expect("the window has a server id"),
+            tracked.frame,
+        );
+        reactor.update_partial_window_server_info(vec![WindowServerInfo {
+            id: server_id,
+            pid: window.pid,
+            layer: 3,
+            frame,
+            min_frame: CGSize::ZERO,
+            max_frame: CGSize::ZERO,
+        }]);
+        assert!(!has_window_in_layout(reactor, SpaceId::new(1), screen(), window));
+        assert_eq!(
+            kept(reactor, window),
+            Some(crate::layout::ColumnWidth::FullWidth)
+        );
+    });
+    assert_eq!(on_refresh, [], "a refresh");
+
+    let on_discovery = erases_while(|_, reactor, window| {
+        let mut info = reactor.windows().window(window).expect("tracked").info.clone();
+        info.is_standard = false;
+        reactor.discover_test_windows(window.pid, vec![(window, info)], vec![]);
+        assert!(!has_window_in_layout(reactor, SpaceId::new(1), screen(), window));
+        assert_eq!(
+            kept(reactor, window),
+            Some(crate::layout::ColumnWidth::FullWidth)
+        );
+    });
+    assert_eq!(on_discovery, [], "its app");
+
+    let minimized = erases_while(|_, reactor, window| {
+        reactor.handle_event(Event::WindowMinimized(window));
+        assert!(!has_window_in_layout(reactor, SpaceId::new(1), screen(), window));
+        assert_eq!(
+            kept(reactor, window),
+            Some(crate::layout::ColumnWidth::FullWidth)
+        );
+    });
+    assert_eq!(minimized, [], "a minimize");
+}
+
+/// A window that stays unmanageable comes through every authoritative snapshot: only the pass that
+/// takes it out of a layout says so at `info`, so the one removal is not buried under a line a pass.
+#[test]
+fn a_window_that_stays_unmanageable_is_logged_at_info_only_when_removed() {
+    let passes = erases_while(|_, reactor, window| {
+        let state = reactor.windows_mut().window_mut(window).expect("the window is tracked");
+        state.is_manageable = false;
+        let server_id = state.info.sys_id.expect("the window has a server id");
+        for _ in 0..2 {
+            reactor.windows_mut().set_window_server_space(server_id, Some(SpaceId::new(1)));
+            let _ = reactor.reconcile_windows_with_authoritative_spaces();
+        }
+    });
+    assert_eq!(passes, [
+        info("UnmanageableWhenReassigned"),
+        (tracing::Level::DEBUG, "UnmanageableWhenReassigned".to_owned()),
+    ]);
 }
 
 /// A closed window must not keep its display affinity.

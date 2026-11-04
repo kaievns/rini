@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::{FloatingManager, LayoutEngine, OnScreenEntry, WorkspaceLayouts};
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleEngine;
+use crate::workspaces::domain::display_affinity::{Erase, Removal, RemovedWidths};
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::settings::VirtualWorkspaceSettings;
 use crate::workspaces::{FloatingPositionStore, VirtualWorkspaceId, WindowStore, WorkspaceStore};
@@ -165,14 +166,46 @@ impl LayoutEngine {
         self.note_window_display_home(memory, window, space);
     }
 
-    pub(super) fn forget_persisted_window(&mut self, memory: &mut DisplayMemory, window: WindowId) {
+    /// Forgets what `window`'s removal for `why` takes with it: its widths only when it closed, given
+    /// to the id that owns it now when another does, and kept otherwise.
+    pub(super) fn forget_persisted_window(
+        &mut self,
+        memory: &mut DisplayMemory,
+        window: WindowId,
+        why: Removal,
+    ) {
+        let erase = Erase::Removed(why);
+        match why.widths() {
+            RemovedWidths::Kept => memory.affinity.forget_place(window),
+            RemovedWidths::HandedTo(owner) => {
+                self.log_erased_widths(erase, &memory.affinity.hand_widths(window, owner));
+                self.log_erased_widths(erase, &memory.affinity.forget_window(window));
+                self.forget_sighting(window);
+            }
+            RemovedWidths::Erased => {
+                self.log_erased_widths(erase, &memory.affinity.forget_window(window));
+                self.forget_sighting(window);
+            }
+        }
         self.persistence.forget_window(window);
-        memory.affinity.forget_window(window);
     }
 
     pub(super) fn forget_persisted_app(&mut self, memory: &mut DisplayMemory, pid: pid_t) {
+        self.log_erased_widths(Erase::AppQuit, &memory.affinity.forget_app(pid));
+        self.forget_app_sightings(pid);
         self.persistence.forget_app(pid);
-        memory.affinity.forget_app(pid);
+    }
+
+    /// Whether `window` is a saved window the startup restore may still match to a live one.
+    pub(super) fn is_restore_candidate(&self, window: WindowId) -> bool {
+        self.persistence.pending_windows.contains(&window)
+    }
+
+    /// The app and title `window` had when last seen, for a log line about it.
+    pub(super) fn recorded_identity(&self, window: WindowId) -> (Option<&str>, Option<&str>) {
+        self.persistence.fingerprint(window).map_or((None, None), |fingerprint| {
+            (fingerprint.app_id.as_deref(), fingerprint.title.as_deref())
+        })
     }
 
     pub(super) fn transfer_persisted_window_identity(

@@ -1,6 +1,7 @@
 //! What a workspace owns and what rini decides about it, with no macOS in it.
 
 pub mod app_rules;
+pub mod app_widths;
 pub mod assignment;
 pub mod command;
 pub mod display_affinity;

@@ -46,6 +46,92 @@ pub struct DisplayAffinity {
     current: SetupId,
 }
 
+/// A width record erased: the window's width on `display` under the arrangement `setup`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ErasedWidth {
+    pub window: WindowId,
+    pub setup: SetupId,
+    pub display: DisplayUuid,
+    pub width: ColumnWidth,
+}
+
+/// Why a window's width records are erased, which every erase logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Erase {
+    /// The window was taken out of every layout, for the reason given.
+    Removed(Removal),
+    /// Its application quit.
+    AppQuit,
+    /// The window store does not hold it, found on a settled topology.
+    Gone,
+    /// Saved under an id no window the startup restore can match holds, and no window the window
+    /// server has now: a new window may take that id.
+    GoneSinceTheSave,
+    /// A width command put its column back at the display's default.
+    AtDefault,
+    /// Written before any arrangement was named, and the first one named was already known, so it
+    /// kept its own records rather than adopting these.
+    Unadopted,
+}
+
+/// Why the reactor takes a window out of every layout, forgetting its workspace, home and place in
+/// the strip with it. Its widths go only with the window itself (`Removal::widths`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+    /// The window was destroyed.
+    Closed,
+    /// The window was minimized.
+    Minimized,
+    /// A refresh of the window server's facts found a manageable window turned unmanageable.
+    TurnedUnmanageableOnRefresh,
+    /// Its app reporting the window again found a manageable window turned unmanageable.
+    TurnedUnmanageableOnDiscovery,
+    /// Reassigning the window to the space the window server has it on found it not manageable.
+    UnmanageableWhenReassigned,
+    /// Putting the window back in its space's active layout found it not manageable.
+    UnmanageableWhenRestored,
+    /// Its app rules, applied again, say not to manage it.
+    RuleUnmanages,
+    /// Leaving native fullscreen, another window id, the one given, turned out to own it.
+    OwnedByAnotherId(WindowId),
+    /// An authoritative snapshot of the active spaces left it out, and the window server confirms
+    /// no other space for it.
+    LeftOutOfSnapshot,
+    /// A mouse drag carried it to another space.
+    DraggedToAnotherSpace,
+}
+
+/// What a removal does with the window's width records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemovedWidths {
+    /// Kept: the window still exists, and reads them back when it is laid out again.
+    Kept,
+    /// Given to the window id that owns the window now, where that id has none of its own.
+    HandedTo(WindowId),
+    /// Erased with the window.
+    Erased,
+}
+
+impl Removal {
+    /// What this removal does with the window's widths. Only a close erases them: every other
+    /// removal is of a window that can come back, and one that comes back at the default width
+    /// undoes the user's width with nothing the user did to explain it (`specs/displays.md`).
+    pub fn widths(self) -> RemovedWidths {
+        match self {
+            Self::Closed => RemovedWidths::Erased,
+            Self::OwnedByAnotherId(owner) => RemovedWidths::HandedTo(owner),
+            Self::Minimized
+            | Self::TurnedUnmanageableOnRefresh
+            | Self::TurnedUnmanageableOnDiscovery
+            | Self::UnmanageableWhenReassigned
+            | Self::UnmanageableWhenRestored
+            | Self::RuleUnmanages
+            | Self::LeftOutOfSnapshot
+            | Self::DraggedToAnotherSpace => RemovedWidths::Kept,
+        }
+    }
+}
+
 /// A `ColumnWidth` as a file holds it: the two variants every rini reads. An unbounded width is
 /// held as its offset, and the mark beside it in a field an older rini skips, so going back to one
 /// keeps every width rather than refusing the file and the machine's memory with it.
@@ -157,14 +243,21 @@ impl DisplayAffinity {
     /// An arrangement of no displays is refused outright — macOS reports an empty screen list
     /// mid-reconfiguration, and switching to it would hand out the empty arrangement's records and
     /// then adopt the evacuation as the layout.
-    pub fn use_setup(&mut self, displays: impl IntoIterator<Item = DisplayUuid>) -> SetupChange {
+    ///
+    /// Says which widths written before any arrangement was named it erased: a known arrangement
+    /// keeps its own records rather than adopting them, which happens only when a file names
+    /// arrangements and none in force.
+    pub fn use_setup(
+        &mut self,
+        displays: impl IntoIterator<Item = DisplayUuid>,
+    ) -> (SetupChange, Vec<ErasedWidth>) {
         let owned: Vec<DisplayUuid> = displays.into_iter().collect();
         let id = SetupId::of(&owned);
         if id.is_empty() {
-            return SetupChange::Refused;
+            return (SetupChange::Refused, Vec::new());
         }
         if id == self.current && self.setups.contains_key(&id) {
-            return SetupChange::Unchanged;
+            return (SetupChange::Unchanged, Vec::new());
         }
 
         let unnamed = self.take_unnamed();
@@ -172,16 +265,27 @@ impl DisplayAffinity {
         let known = matches!(entry, std::collections::hash_map::Entry::Occupied(_));
         let setup = entry.or_default();
         let mut adopted = false;
+        let mut unadopted = Vec::new();
         if !known && setup.is_empty() && !unnamed.is_empty() {
             *setup = unnamed;
             adopted = true;
+        } else {
+            for (display, widths) in unnamed.window_width {
+                unadopted.extend(widths.into_iter().map(|(window, width)| ErasedWidth {
+                    window,
+                    setup: SetupId::default(),
+                    display: display.clone(),
+                    width,
+                }));
+            }
         }
         self.current = id;
-        match (known, adopted) {
+        let change = match (known, adopted) {
             (true, _) => SetupChange::Known,
             (false, true) => SetupChange::Adopted,
             (false, false) => SetupChange::New,
-        }
+        };
+        (change, unadopted)
     }
 
     /// The arrangement in force.
@@ -323,18 +427,40 @@ impl DisplayAffinity {
             .insert(window, width);
     }
 
+    /// Record `width` for `window` on `display` unless it already has one there: a window's own
+    /// record beats a launch slot's, which may be another window's.
+    pub fn set_window_width_if_absent(
+        &mut self,
+        display: &DisplayUuid,
+        window: WindowId,
+        width: ColumnWidth,
+    ) {
+        self.setup_mut()
+            .window_width
+            .entry(display.clone())
+            .or_default()
+            .entry(window)
+            .or_insert(width);
+    }
+
     /// Forget any remembered width, so the window adopts the display's default.
     ///
     /// Distinct from never having had one: toggling a deliberate width back off is an
     /// instruction to stop pinning it, not to keep the old value.
-    pub fn clear_window_width(&mut self, display: &DisplayUuid, window: WindowId) {
+    ///
+    /// Says which width it forgot, if there was one.
+    pub fn clear_window_width(
+        &mut self,
+        display: &DisplayUuid,
+        window: WindowId,
+    ) -> Option<ColumnWidth> {
         let setup = self.setup_mut();
-        if let Some(widths) = setup.window_width.get_mut(display) {
-            widths.remove(&window);
-            if widths.is_empty() {
-                setup.window_width.remove(display);
-            }
+        let widths = setup.window_width.get_mut(display)?;
+        let cleared = widths.remove(&window);
+        if widths.is_empty() {
+            setup.window_width.remove(display);
         }
+        cleared
     }
 
     /// The width `window` last had on `display`, if it ever had a deliberate one.
@@ -349,22 +475,82 @@ impl DisplayAffinity {
         windows
     }
 
+    /// Every window any arrangement holds a home, a strip place or a width for, once each.
+    pub fn remembered_windows(&self) -> Vec<WindowId> {
+        let mut windows: Vec<WindowId> = self.setups.values().flat_map(Setup::windows).collect();
+        windows.sort_unstable();
+        windows.dedup();
+        windows
+    }
+
+    /// Whether any arrangement holds a home or a place in a strip for `window`, which a removal
+    /// forgets (`forget_place`).
+    pub fn remembers_place(&self, window: WindowId) -> bool {
+        self.setups.values().any(|setup| setup.remembers_place(window))
+    }
+
+    /// Forget `window`'s home and place in each strip in EVERY arrangement, keeping its widths:
+    /// what a removal of a window that still exists forgets.
+    pub fn forget_place(&mut self, window: WindowId) {
+        for setup in self.setups.values_mut() {
+            setup.forget_place(window);
+        }
+    }
+
+    /// Give `from`'s widths to `to` in every arrangement, on each display where `to` has none, and
+    /// say which of `from`'s widths that dropped, since `to` had its own there.
+    pub fn hand_widths(&mut self, from: WindowId, to: WindowId) -> Vec<ErasedWidth> {
+        let mut dropped = Vec::new();
+        for (setup_id, setup) in &mut self.setups {
+            dropped.extend(setup.hand_widths(from, to).into_iter().map(|(display, width)| {
+                ErasedWidth {
+                    window: from,
+                    setup: setup_id.clone(),
+                    display,
+                    width,
+                }
+            }));
+        }
+        dropped
+    }
+
     /// Forget a window in EVERY arrangement, not only the one in force.
     ///
     /// A `WindowId` dies with its window, so a record of it under another arrangement is a record
     /// that can never match again — and the arrangement it belongs to is not attached to be cleaned
     /// up later. Leaving them is how the lists filled with closed windows while an external was
     /// unplugged, which made repatriation report homes for three dead windows and bring nothing back.
-    pub fn forget_window(&mut self, window: WindowId) {
-        for setup in self.setups.values_mut() {
-            setup.forget_window(window);
+    ///
+    /// Says which widths it erased, in every arrangement, so the caller can log them.
+    pub fn forget_window(&mut self, window: WindowId) -> Vec<ErasedWidth> {
+        let mut erased = Vec::new();
+        for (setup_id, setup) in &mut self.setups {
+            erased.extend(setup.forget_window(window).into_iter().map(|(display, width)| {
+                ErasedWidth {
+                    window,
+                    setup: setup_id.clone(),
+                    display,
+                    width,
+                }
+            }));
         }
+        erased
     }
 
-    pub fn forget_app(&mut self, pid: pid_t) {
-        for setup in self.setups.values_mut() {
-            setup.forget_app(pid);
+    /// Forget every window of `pid` in every arrangement, and say which widths that erased.
+    pub fn forget_app(&mut self, pid: pid_t) -> Vec<ErasedWidth> {
+        let mut erased = Vec::new();
+        for (setup_id, setup) in &mut self.setups {
+            erased.extend(
+                setup.forget_app(pid).into_iter().map(|(window, display, width)| ErasedWidth {
+                    window,
+                    setup: setup_id.clone(),
+                    display,
+                    width,
+                }),
+            );
         }
+        erased
     }
 
     /// Carry a window's records across an identity change (an app relaunching into a new
@@ -487,7 +673,7 @@ mod tests {
         affinity.use_setup(laptop());
         affinity.set_window_home(win(1), &uuid("builtin"));
 
-        let change = affinity.use_setup(vec![uuid("builtin"), uuid("projector")]);
+        let (change, _) = affinity.use_setup(vec![uuid("builtin"), uuid("projector")]);
         assert_eq!(change, SetupChange::New);
         assert!(
             !change.restores_windows(),
@@ -507,7 +693,7 @@ mod tests {
         affinity.set_window_home(win(1), &uuid("studio"));
 
         affinity.use_setup(laptop());
-        let change = affinity.use_setup(docked());
+        let (change, _) = affinity.use_setup(docked());
         assert_eq!(change, SetupChange::Known);
         assert!(change.restores_windows());
         assert_eq!(affinity.windows_homed_to(&uuid("studio")), vec![win(1)]);
@@ -521,7 +707,7 @@ mod tests {
         affinity.use_setup(docked());
         affinity.set_window_home(win(1), &uuid("studio"));
 
-        assert_eq!(affinity.use_setup(Vec::new()), SetupChange::Refused);
+        assert_eq!(affinity.use_setup(Vec::new()).0, SetupChange::Refused);
         assert_eq!(
             affinity.window_home(win(1)),
             Some(&uuid("studio")),
@@ -537,7 +723,7 @@ mod tests {
         affinity.set_window_home(win(1), &uuid("builtin"));
         affinity.set_window_width(&uuid("builtin"), win(1), ColumnWidth::FullWidth);
 
-        let change = affinity.use_setup(laptop());
+        let (change, _) = affinity.use_setup(laptop());
         assert_eq!(change, SetupChange::Adopted);
         assert!(change.restores_windows());
         assert_eq!(affinity.window_home(win(1)), Some(&uuid("builtin")));
@@ -555,8 +741,34 @@ mod tests {
         affinity.set_window_home(win(1), &uuid("builtin"));
         affinity.use_setup(laptop());
 
-        assert_eq!(affinity.use_setup(docked()), SetupChange::New);
+        assert_eq!(affinity.use_setup(docked()).0, SetupChange::New);
         assert_eq!(affinity.window_home(win(1)), None);
+    }
+
+    /// A known arrangement keeps its own records, so the unnamed ones are erased, and it says which
+    /// widths went. Only a file that names arrangements and none in force gets here.
+    #[test]
+    fn a_known_arrangement_says_which_unnamed_widths_it_did_not_adopt() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(laptop());
+        affinity.set_window_home(win(2), &uuid("builtin"));
+        affinity.current = SetupId::default();
+        affinity.set_window_home(win(1), &uuid("builtin"));
+        affinity.set_window_width(&uuid("builtin"), win(1), ColumnWidth::FullWidth);
+
+        let (change, unadopted) = affinity.use_setup(laptop());
+        assert_eq!(change, SetupChange::Known);
+        assert_eq!(unadopted, [ErasedWidth {
+            window: win(1),
+            setup: SetupId::default(),
+            display: uuid("builtin"),
+            width: ColumnWidth::FullWidth,
+        }]);
+        assert_eq!(affinity.window_width(&uuid("builtin"), win(1)), None);
+
+        let mut adopting = DisplayAffinity::default();
+        adopting.set_window_width(&uuid("builtin"), win(1), ColumnWidth::FullWidth);
+        assert_eq!(adopting.use_setup(laptop()), (SetupChange::Adopted, Vec::new()));
     }
 
     /// A dead window's id can never match again, and the arrangement it is recorded under may not be
@@ -602,14 +814,14 @@ mod tests {
     fn naming_the_arrangement_in_force_is_unchanged() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(docked());
-        let change = affinity.use_setup(docked());
+        let (change, _) = affinity.use_setup(docked());
         assert_eq!(change, SetupChange::Unchanged);
         assert!(
             change.restores_windows(),
             "a quick unplug and replug with nothing named in between still restores"
         );
         assert_eq!(
-            affinity.use_setup(vec![uuid("studio"), uuid("builtin")]),
+            affinity.use_setup(vec![uuid("studio"), uuid("builtin")]).0,
             SetupChange::Unchanged,
             "and the order the screens are reported in is not a change"
         );
@@ -783,6 +995,49 @@ mod tests {
         );
     }
 
+    /// Each erase says what it erased, under which arrangement and display, so its caller can log
+    /// it: the log is the only trace a width record leaves once it is gone.
+    #[test]
+    fn every_erase_says_which_widths_it_erased() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(laptop());
+        affinity.set_window_width(&uuid("builtin"), win(1), ColumnWidth::FullWidth);
+        affinity.use_setup(docked());
+        affinity.set_window_width(&uuid("studio"), win(1), ColumnWidth::Offset(0.25));
+        affinity.set_window_width(&uuid("studio"), win(2), ColumnWidth::Offset(0.5));
+        let erased = |setup: Vec<DisplayUuid>, display: &str, window, width| ErasedWidth {
+            window,
+            setup: SetupId::of(&setup),
+            display: uuid(display),
+            width,
+        };
+
+        let mut by_window = affinity.forget_window(win(1));
+        by_window.sort_by(|a, b| a.setup.cmp(&b.setup));
+        assert_eq!(by_window, [
+            erased(laptop(), "builtin", win(1), ColumnWidth::FullWidth),
+            erased(docked(), "studio", win(1), ColumnWidth::Offset(0.25))
+        ]);
+        assert!(
+            affinity.forget_window(win(1)).is_empty(),
+            "nothing is left to erase"
+        );
+
+        assert_eq!(affinity.forget_app(1), [erased(
+            docked(),
+            "studio",
+            win(2),
+            ColumnWidth::Offset(0.5)
+        )]);
+
+        affinity.set_window_width(&uuid("studio"), win(3), ColumnWidth::FullWidth);
+        assert_eq!(
+            affinity.clear_window_width(&uuid("studio"), win(3)),
+            Some(ColumnWidth::FullWidth)
+        );
+        assert_eq!(affinity.clear_window_width(&uuid("studio"), win(3)), None);
+    }
+
     /// An app relaunching into a new WindowId must keep the size the user gave it, for the
     /// same reason its home display carries across.
     #[test]
@@ -844,6 +1099,104 @@ mod tests {
 
         assert_eq!(affinity.setup().display_strip[&uuid("external")], vec![win(2)]);
         assert_eq!(affinity.window_home(win(1)), None);
+    }
+
+    /// Only a close erases a window's widths; leaving native fullscreen under another id gives them
+    /// to that id, and every other removal keeps them, since the window can come back.
+    #[test]
+    fn a_removal_erases_widths_only_when_the_window_closed() {
+        assert_eq!(Removal::Closed.widths(), RemovedWidths::Erased);
+        assert_eq!(
+            Removal::OwnedByAnotherId(win(7)).widths(),
+            RemovedWidths::HandedTo(win(7))
+        );
+        for kept in [
+            Removal::Minimized,
+            Removal::TurnedUnmanageableOnRefresh,
+            Removal::TurnedUnmanageableOnDiscovery,
+            Removal::UnmanageableWhenReassigned,
+            Removal::UnmanageableWhenRestored,
+            Removal::RuleUnmanages,
+            Removal::LeftOutOfSnapshot,
+            Removal::DraggedToAnotherSpace,
+        ] {
+            assert_eq!(kept.widths(), RemovedWidths::Kept, "{kept:?}");
+        }
+    }
+
+    /// Forgetting a window's place takes its home and strip places in every arrangement and leaves
+    /// its widths.
+    #[test]
+    fn forgetting_a_window_s_place_keeps_its_widths() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(docked());
+        affinity.set_window_home(win(1), &uuid("studio"));
+        affinity.set_window_width(&uuid("studio"), win(1), ColumnWidth::FullWidth);
+        affinity.use_setup(laptop());
+        affinity.set_window_home(win(1), &uuid("builtin"));
+        affinity.set_window_width(&uuid("builtin"), win(1), ColumnWidth::Offset(0.1));
+
+        affinity.forget_place(win(1));
+
+        assert!(!affinity.remembers_place(win(1)));
+        assert_eq!(affinity.window_home(win(1)), None);
+        assert_eq!(
+            affinity.window_width(&uuid("builtin"), win(1)),
+            Some(ColumnWidth::Offset(0.1))
+        );
+        affinity.use_setup(docked());
+        assert_eq!(affinity.window_home(win(1)), None);
+        assert_eq!(
+            affinity.window_width(&uuid("studio"), win(1)),
+            Some(ColumnWidth::FullWidth)
+        );
+    }
+
+    /// Widths handed to the id that owns a window now go where that id has none, and one it has of
+    /// its own is kept, the old id's there said dropped.
+    #[test]
+    fn handing_widths_over_keeps_the_new_owner_s_own() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(docked());
+        affinity.set_window_width(&uuid("studio"), win(1), ColumnWidth::FullWidth);
+        affinity.set_window_width(&uuid("builtin"), win(1), ColumnWidth::Offset(0.1));
+        affinity.set_window_width(&uuid("builtin"), win(7), ColumnWidth::Offset(-0.2));
+
+        let dropped = affinity.hand_widths(win(1), win(7));
+
+        assert_eq!(dropped, [ErasedWidth {
+            window: win(1),
+            setup: SetupId::of(&docked()),
+            display: uuid("builtin"),
+            width: ColumnWidth::Offset(0.1),
+        }]);
+        assert_eq!(
+            affinity.window_width(&uuid("studio"), win(7)),
+            Some(ColumnWidth::FullWidth)
+        );
+        assert_eq!(
+            affinity.window_width(&uuid("builtin"), win(7)),
+            Some(ColumnWidth::Offset(-0.2))
+        );
+        assert_eq!(affinity.window_width(&uuid("studio"), win(1)), None);
+        assert_eq!(affinity.window_width(&uuid("builtin"), win(1)), None);
+    }
+
+    /// A launch slot's width is written only where the window has none of its own.
+    #[test]
+    fn a_width_written_if_absent_leaves_the_window_s_own() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_width(&uuid("builtin"), win(1), ColumnWidth::Offset(0.1));
+        affinity.set_window_width_if_absent(&uuid("builtin"), win(1), ColumnWidth::FullWidth);
+        affinity.set_window_width_if_absent(&uuid("builtin"), win(2), ColumnWidth::FullWidth);
+        assert_eq!(
+            affinity.window_width(&uuid("builtin"), win(1)),
+            Some(ColumnWidth::Offset(0.1))
+        );
+        assert_eq!(
+            affinity.window_width(&uuid("builtin"), win(2)),
+            Some(ColumnWidth::FullWidth)
+        );
     }
 }
 

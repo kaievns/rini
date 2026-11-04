@@ -14,12 +14,14 @@ use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::AppRuleEngine;
 use crate::windows::domain::state::WindowState;
 use crate::workspaces::domain::app_rules::AppRuleOutcome;
+use crate::workspaces::domain::display_affinity::Removal;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
 use crate::workspaces::domain::workspace_focus;
 use crate::workspaces::{FloatingPositionStore, WindowStore};
 
 mod affinity;
+mod app_widths;
 mod commands;
 mod discovery;
 mod frames;
@@ -29,6 +31,7 @@ mod navigation;
 mod persistence;
 mod rules;
 
+use discovery::Keeping;
 use persistence::PersistenceState;
 pub use rini_ipc::protocol::LayoutCommand;
 
@@ -80,7 +83,8 @@ pub enum LayoutEvent {
     WindowDiscoveryCompleted(pid_t, Option<String>, Vec<SpaceId>),
     AppClosed(pid_t),
     WindowAdded(SpaceId, WindowId),
-    WindowRemoved(WindowId),
+    /// The window is out of every layout and its records are forgotten, for the reason given.
+    WindowRemoved(WindowId, Removal),
     WindowRemovedPreserveFloating(WindowId),
     WindowFocused(SpaceId, WindowId),
     /// The window's frame changed size. `drag` is the mouse drag on its edges that did it, and `None`
@@ -158,6 +162,8 @@ pub struct LayoutEngine {
     /// Display UUIDs currently attached. Runtime only: it describes the machine right now, not the
     /// layout, and it is what the launch memory is keyed by.
     connected_displays: Vec<DisplayUuid>,
+    /// The displays' shapes, the windows seen and the app widths they wait to take. Runtime only.
+    app_width_runtime: app_widths::AppWidthRuntime,
     persistence: PersistenceState,
     /// Set only while a saved-file startup restore is waiting for the first display snapshot.
     startup_restore_pending: bool,
@@ -497,6 +503,7 @@ impl LayoutEngine {
             virtual_workspace_manager,
             layout_settings: layout_settings.clone(),
             connected_displays: Vec::new(),
+            app_width_runtime: Default::default(),
             persistence: PersistenceState::default(),
             startup_restore_pending: false,
         }
@@ -572,21 +579,22 @@ impl LayoutEngine {
                 self.debug_tree(space);
                 self.add_window_to_layout(window_store, memory, space, wid);
             }
-            LayoutEvent::WindowRemoved(wid) => {
-                self.remove_window_internal(window_store, memory, wid, false);
+            LayoutEvent::WindowRemoved(wid, why) => {
+                self.remove_window_internal(window_store, memory, wid, Keeping::Removed(why));
             }
             LayoutEvent::WindowRemovedPreserveFloating(wid) => {
-                self.remove_window_internal(window_store, memory, wid, true);
+                self.remove_window_internal(window_store, memory, wid, Keeping::Records);
             }
             LayoutEvent::WindowFocused(space, wid) => return self.on_window_focused(space, wid),
             LayoutEvent::WindowResized { wid, drag, new_frame, screens } => {
                 self.on_window_resized(wid, drag, new_frame, screens);
             }
             LayoutEvent::WindowZoomed(space, wid) => {
-                let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
+                let Some((workspace, layout)) = self.workspace_and_layout(space) else {
                     return EventResponse::default();
                 };
-                return self.toggle_full_width(memory, space, ws_id, layout, wid);
+                let target = commands::CommandTarget { space, workspace, layout };
+                return self.toggle_full_width(window_store, memory, target, wid);
             }
         }
         EventResponse::default()
@@ -777,7 +785,7 @@ impl LayoutEngine {
                 )
             }),
             EngineCommand::Resize(command) => self.with_target(space, |engine, target| {
-                engine.handle_resize_command(memory, target, is_floating, command)
+                engine.handle_resize_command(window_store, memory, target, is_floating, command)
             }),
             EngineCommand::Strip(command) => self.with_target(space, |engine, target| {
                 engine.handle_strip_command(target, command)
@@ -1027,8 +1035,9 @@ mod tests {
     use super::*;
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::settings::LayoutSettings;
-    use crate::layout::{ResizeOrientation, StripEnd};
+    use crate::layout::{ColumnWidth, ResizeOrientation, StripEnd};
     use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RuleMatch, WindowRule};
+    use crate::workspaces::domain::app_rules::{AppRuleOutcome, AppRuleResize};
     use crate::workspaces::settings::VirtualWorkspaceSettings;
 
     impl OnScreenEntry {
@@ -1384,8 +1393,8 @@ mod tests {
         assert!(fx.engine.is_window_floating(window));
     }
 
-    #[test]
-    fn tiled_app_rule_size_sets_scrolling_column_width() {
+    /// An editor a rule gives 234pt opened on a 1200pt screen, and the resize the rule asks for.
+    fn rule_sized_editor() -> (EngineFixture, SpaceId, WindowId, AppRuleResize) {
         let settings = VirtualWorkspaceSettings {
             app_rules: vec![WindowRule {
                 default_column_width: Some(234.0),
@@ -1399,7 +1408,6 @@ mod tests {
         let space = SpaceId::new(91);
         let window = WindowId::new(8, 1);
         fx.expose(space, CGSize::new(1200.0, 800.0));
-        let screen = fx.screens[&space];
         let entry = OnScreenEntry::plain(window).sized(500.0, 500.0);
         let outcome = fx.open_app(space, vec![entry], app("com.example.Editor"));
 
@@ -1408,9 +1416,23 @@ mod tests {
         assert_eq!(workspace_focus, None);
         assert_eq!(resizes.len(), 1);
         assert_eq!((resizes[0].size.w, resizes[0].size.h), (Some(234.0), None));
-        let old_frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(500.0, 500.0));
-        let new_frame = CGRect::new(old_frame.origin, CGSize::new(234.0, 500.0));
-        fx.engine.apply_app_rule_resize(resizes[0], new_frame, screen, None);
+        (fx, space, window, resizes[0])
+    }
+
+    /// The rule's resize carried out, as the reactor carries it out: the window reports its frame
+    /// with the dimensions the rule names.
+    fn apply_rule_resize(fx: &mut EngineFixture, space: SpaceId, resize: AppRuleResize) -> CGRect {
+        let screen = fx.screens[&space];
+        let new_frame = resize.resized_frame(fx.frame(space, resize.window));
+        fx.engine.apply_app_rule_resize(&mut fx.memory, resize, new_frame, screen, None);
+        new_frame
+    }
+
+    #[test]
+    fn tiled_app_rule_size_sets_scrolling_column_width() {
+        let (mut fx, space, window, resize) = rule_sized_editor();
+        let screen = fx.screens[&space];
+        let new_frame = apply_rule_resize(&mut fx, space, resize);
         assert_eq!(fx.frame(space, window).size.width, 234.0);
 
         let user_frame = CGRect::new(new_frame.origin, CGSize::new(400.0, new_frame.size.height));
@@ -1421,6 +1443,268 @@ mod tests {
             screens: vec![(space, screen, None)],
         });
         assert_eq!(fx.frame(space, window).size.width, 400.0);
+    }
+
+    /// The width a rule gives a tiled window is recorded as the window's width on its display, as a
+    /// width command's is, so the window reads it back wherever it is laid out again.
+    #[test]
+    fn a_rule_s_width_is_recorded_as_the_window_s_width_on_its_display() {
+        let (mut fx, space, window, resize) = rule_sized_editor();
+        let display = DisplayUuid::new("built-in");
+        fx.memory.affinity.set_display_space(&display, space);
+        assert_eq!(fx.memory.affinity.window_width(&display, window), None);
+
+        let _ = apply_rule_resize(&mut fx, space, resize);
+        let recorded = fx.memory.affinity.window_width(&display, window);
+        let ws = fx.engine.active_workspace(space).expect("an active workspace");
+        let layout = fx.engine.workspace_layouts.active(space, ws).expect("a layout");
+        assert_eq!(
+            recorded,
+            fx.engine.workspace_tree(ws).carried_width(layout, window)
+        );
+        assert!(recorded.is_some(), "the rule's width");
+    }
+
+    /// `rule_sized_editor` given the rule's width, widened by the user on the display it reports as
+    /// "built-in": the width and the record it was given.
+    fn rule_sized_editor_widened_by_the_user()
+    -> (EngineFixture, SpaceId, WindowId, f64, Option<ColumnWidth>) {
+        let (mut fx, space, window, resize) = rule_sized_editor();
+        let display = DisplayUuid::new("built-in");
+        fx.memory.affinity.set_display_space(&display, space);
+        let _ = apply_rule_resize(&mut fx, space, resize);
+        let _ = fx.event(LayoutEvent::WindowFocused(space, window));
+        let _ = fx.command(space, widen());
+        let widened = fx.frame(space, window).size.width;
+        assert!(widened > 234.0, "{widened} over the rule's 234");
+        let record = fx.memory.affinity.window_width(&display, window);
+        assert!(record.is_some(), "the width command's record");
+        (fx, space, window, widened, record)
+    }
+
+    /// The editor's app reporting its window again, and the rule's resizes that report asks for
+    /// carried out; how many there were.
+    fn report_the_editor_again(fx: &mut EngineFixture, space: SpaceId, window: WindowId) -> usize {
+        let entry = OnScreenEntry::plain(window).sized(500.0, 500.0);
+        let outcome = fx.open_app(space, vec![entry], app("com.example.Editor"));
+        let (_, resizes, _) = outcome.app_rules.into_parts();
+        for resize in &resizes {
+            let _ = apply_rule_resize(fx, space, *resize);
+        }
+        resizes.len()
+    }
+
+    /// A rule's width is the window's first: a width the user gave the window afterwards beats it
+    /// when the window comes back, in the layout and in the record, since the window's own record
+    /// ranks above a rule's default.
+    #[test]
+    fn a_width_the_user_gave_a_rule_sized_window_survives_a_re_add() {
+        let (mut fx, space, window, widened, record) = rule_sized_editor_widened_by_the_user();
+
+        let _ = fx.event(LayoutEvent::WindowRemoved(window, Removal::LeftOutOfSnapshot));
+        let _ = report_the_editor_again(&mut fx, space, window);
+
+        assert_eq!(fx.frame(space, window).size.width, widened);
+        assert_eq!(
+            fx.memory.affinity.window_width(&DisplayUuid::new("built-in"), window),
+            record
+        );
+    }
+
+    /// An app reports its windows on every refresh, and a rule's width it has already given a window
+    /// is not asked for again, so a width the user gave it since stays.
+    #[test]
+    fn a_rule_does_not_size_a_window_again_on_its_app_s_next_report() {
+        let (mut fx, space, window, widened, record) = rule_sized_editor_widened_by_the_user();
+
+        assert_eq!(report_the_editor_again(&mut fx, space, window), 0);
+
+        assert_eq!(fx.frame(space, window).size.width, widened);
+        assert_eq!(
+            fx.memory.affinity.window_width(&DisplayUuid::new("built-in"), window),
+            record
+        );
+    }
+
+    /// A rule's width changed since it sized a window wins over the width the window has, once: an
+    /// edit to a rule shows on the windows it sizes rather than being beaten by what they remember.
+    #[test]
+    fn a_rule_s_width_changed_since_it_sized_a_window_wins_over_the_window_s_own() {
+        let (mut fx, space, window, _, record) = rule_sized_editor_widened_by_the_user();
+        fx.engine.update_virtual_workspace_settings(&VirtualWorkspaceSettings {
+            app_rules: vec![WindowRule {
+                default_column_width: Some(300.0),
+                ..WindowRule::when(RuleMatch::app("com.example.Editor"))
+            }],
+            ..VirtualWorkspaceSettings::default()
+        });
+
+        assert_eq!(report_the_editor_again(&mut fx, space, window), 1);
+
+        assert_eq!(fx.frame(space, window).size.width, 300.0);
+        let edited = fx.memory.affinity.window_width(&DisplayUuid::new("built-in"), window);
+        assert_ne!(edited, record);
+        let ws = fx.engine.active_workspace(space).expect("an active workspace");
+        let layout = fx.engine.workspace_layouts.active(space, ws).expect("a layout");
+        assert_eq!(
+            edited,
+            fx.engine.workspace_tree(ws).carried_width(layout, window)
+        );
+        assert_eq!(report_the_editor_again(&mut fx, space, window), 0, "once");
+    }
+
+    /// A rule edited to set a height alone sets no width, so the width the window has of its own
+    /// stands, in the layout and in the record.
+    #[test]
+    fn a_rule_edited_to_set_no_width_leaves_the_window_s_own() {
+        let (mut fx, space, window, widened, record) = rule_sized_editor_widened_by_the_user();
+        fx.engine.update_virtual_workspace_settings(&VirtualWorkspaceSettings {
+            app_rules: vec![WindowRule {
+                default_window_height: Some(300.0),
+                ..WindowRule::when(RuleMatch::app("com.example.Editor"))
+            }],
+            ..VirtualWorkspaceSettings::default()
+        });
+
+        assert_eq!(report_the_editor_again(&mut fx, space, window), 1);
+
+        assert_eq!(fx.frame(space, window).size.width, widened);
+        assert_eq!(
+            fx.memory.affinity.window_width(&DisplayUuid::new("built-in"), window),
+            record
+        );
+    }
+
+    const SLACK: &str = "com.tinyspeck.slackmacgap";
+
+    /// Slack relaunched on a 1200pt laptop under `rule`, its one remembered slot full width in
+    /// "Development", as Kai's `open-on-output "internal"` rule meets it: the window and what its
+    /// first sighting asked of the rules.
+    fn slack_relaunched_under(
+        rule: WindowRule,
+    ) -> (EngineFixture, SpaceId, WindowId, AppRuleOutcome) {
+        use crate::workspaces::domain::display_setup::SetupId;
+        use crate::workspaces::domain::launch_memory::Slot;
+
+        let settings = VirtualWorkspaceSettings {
+            app_rules: vec![rule],
+            ..VirtualWorkspaceSettings::default()
+        };
+        let mut layout_settings = LayoutSettings::default();
+        layout_settings.scrolling.min_column_width_ratio = 0.1;
+        let mut fx = EngineFixture::with(&settings, &layout_settings);
+        let space = SpaceId::new(93);
+        let display = DisplayUuid::new("built-in");
+        fx.expose(space, CGSize::new(1200.0, 800.0));
+        fx.memory.affinity.set_display_space(&display, space);
+        fx.engine.set_connected_displays(vec![display.clone()]);
+        let topology = SetupId::of(std::slice::from_ref(&display));
+        fx.memory.launch.remember(SLACK, &topology, vec![
+            Slot {
+                title: None,
+                display_uuid: display,
+                workspace_index: 1,
+                width: Some(ColumnWidth::FullWidth),
+            }
+            .into(),
+        ]);
+        let window = WindowId::new(9, 1);
+        let entry = OnScreenEntry::plain(window).sized(500.0, 500.0);
+        let outcome = fx.open_app(space, vec![entry], app(SLACK));
+        (fx, space, window, outcome.app_rules)
+    }
+
+    fn pinned_to_the_laptop() -> WindowRule {
+        WindowRule {
+            open_on_output: Some(crate::workspaces::domain::display_pin::DisplayRole::Internal),
+            ..WindowRule::when(RuleMatch::app(SLACK))
+        }
+    }
+
+    /// `window`'s width on `space`'s active workspace: its frame, its column and its record.
+    fn laid_width(
+        fx: &mut EngineFixture,
+        space: SpaceId,
+        window: WindowId,
+    ) -> (f64, Option<ColumnWidth>, Option<ColumnWidth>) {
+        let ws = fx.engine.active_workspace(space).expect("an active workspace");
+        let layout = fx.engine.workspace_layouts.active(space, ws).expect("a layout");
+        let column = fx.engine.workspace_tree(ws).carried_width(layout, window);
+        let record = fx.memory.affinity.window_width(&DisplayUuid::new("built-in"), window);
+        (fx.frame(space, window).size.width, column, record)
+    }
+
+    /// A rule that pins a display sets no workspace and no width, so a relaunched window takes
+    /// both from its slot: Slack, Outlook and Messages opened at the default width at every
+    /// relaunch under Kai's pin, the slot written and never read (`specs/workspaces.md`).
+    #[test]
+    fn a_rule_that_only_pins_a_display_keeps_the_launch_slot_s_workspace_and_width() {
+        let (mut fx, space, window, outcome) = slack_relaunched_under(pinned_to_the_laptop());
+        let development = fx.workspaces(space)[1];
+
+        assert_eq!(fx.workspace_of(space, window), Some(development));
+        assert!(!outcome.has_resizes());
+        fx.show(space, development);
+        let (frame, column, record) = laid_width(&mut fx, space, window);
+        assert_eq!(column, Some(ColumnWidth::FullWidth));
+        assert_eq!(record, Some(ColumnWidth::FullWidth));
+        assert!(frame > 1100.0, "{frame} is the laptop's full width");
+    }
+
+    /// A rule that names a workspace takes the window there, and the slot still gives its width.
+    #[test]
+    fn a_rule_s_workspace_beats_the_launch_slot_s_and_the_slot_keeps_its_width() {
+        let (mut fx, space, window, _) = slack_relaunched_under(WindowRule {
+            open_on_workspace: Some("Utilities".into()),
+            ..pinned_to_the_laptop()
+        });
+        let utilities = fx.workspaces(space)[3];
+
+        assert_eq!(fx.workspace_of(space, window), Some(utilities));
+        fx.show(space, utilities);
+        let (_, column, record) = laid_width(&mut fx, space, window);
+        assert_eq!(column, Some(ColumnWidth::FullWidth));
+        assert_eq!(record, Some(ColumnWidth::FullWidth));
+    }
+
+    /// A rule that sets a width wins for the width: a relaunched window opens at the rule's, and
+    /// the slot gives it the workspace the rule leaves unset.
+    #[test]
+    fn a_rule_s_width_beats_the_launch_slot_s_and_the_slot_keeps_its_workspace() {
+        let (mut fx, space, window, outcome) = slack_relaunched_under(WindowRule {
+            default_column_width: Some(234.0),
+            ..pinned_to_the_laptop()
+        });
+        let development = fx.workspaces(space)[1];
+
+        assert_eq!(fx.workspace_of(space, window), Some(development));
+        let (_, resizes, _) = outcome.into_parts();
+        assert_eq!(resizes.len(), 1);
+        fx.show(space, development);
+        let _ = apply_rule_resize(&mut fx, space, resizes[0]);
+        let (frame, column, record) = laid_width(&mut fx, space, window);
+        assert_eq!(frame, 234.0);
+        assert_ne!(record, Some(ColumnWidth::FullWidth));
+        assert_eq!(record, column);
+    }
+
+    /// A rule that floats a window takes nothing from the slot: a modal or a settings window opens
+    /// where today's default puts it, on the workspace on screen, not out of view on the slot's,
+    /// and at no width of the slot's.
+    #[test]
+    fn a_rule_that_floats_a_window_takes_nothing_from_the_launch_slot() {
+        let (mut fx, space, window, outcome) = slack_relaunched_under(WindowRule {
+            open_floating: Some(true),
+            ..WindowRule::when(RuleMatch::app(SLACK))
+        });
+        let on_screen = fx.workspaces(space)[0];
+
+        assert_eq!(fx.engine.active_workspace(space), Some(on_screen));
+        assert_eq!(fx.workspace_of(space, window), Some(on_screen));
+        assert!(fx.engine.floating.is_floating(window));
+        assert!(!outcome.has_resizes());
+        let laptop = DisplayUuid::new("built-in");
+        assert_eq!(fx.memory.affinity.window_width(&laptop, window), None);
     }
 
     #[test]
@@ -2232,13 +2516,67 @@ mod tests {
 
         let _ = fx.open(space_b, vec![info(b1)]);
         let _ = fx.windows.remove_window_assignment(b1);
-        let _ = fx.event(LayoutEvent::WindowRemoved(b1));
+        let _ = fx.event(LayoutEvent::WindowRemoved(b1, Removal::Closed));
 
         assert_eq!(
             fx.frames(space_a),
             before,
             "removing a window must not rebalance layouts in other workspaces"
         );
+    }
+
+    /// Leaving native fullscreen under another id, the window's widths go to that id: it is the
+    /// same window, so it keeps the width it had.
+    #[test]
+    fn a_window_owned_by_another_id_hands_its_width_to_that_id() {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(97);
+        let (old, owner) = (WindowId::new(5156, 1), WindowId::new(5156, 2));
+        let display = DisplayUuid::new("built-in");
+        fx.expose(space, CGSize::new(1000.0, 1000.0));
+        fx.memory.affinity.set_display_space(&display, space);
+        let _ = fx.open(space, vec![OnScreenEntry::plain(old).sized(500.0, 500.0)]);
+        fx.memory.affinity.set_window_width(&display, old, ColumnWidth::FullWidth);
+
+        let _ = fx.event(LayoutEvent::WindowRemoved(old, Removal::OwnedByAnotherId(owner)));
+
+        assert_eq!(
+            fx.memory.affinity.window_width(&display, owner),
+            Some(ColumnWidth::FullWidth)
+        );
+        assert_eq!(fx.memory.affinity.window_width(&display, old), None);
+    }
+
+    /// The id that owns a window back from native fullscreen is laid out before its old id goes, at
+    /// the default: the width handed to it reaches its column, not only its record.
+    #[test]
+    fn a_width_handed_to_an_id_already_laid_out_is_the_width_it_is_laid_at() {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(98);
+        let (old, owner) = (WindowId::new(5157, 1), WindowId::new(5157, 2));
+        let display = DisplayUuid::new("built-in");
+        fx.expose(space, CGSize::new(1000.0, 1000.0));
+        fx.memory.affinity.set_display_space(&display, space);
+        let _ = fx.open(space, vec![OnScreenEntry::plain(old).sized(500.0, 500.0)]);
+        let _ = fx.event(LayoutEvent::WindowFocused(space, old));
+        let _ = fx.command(space, LayoutCommand::ToggleFullscreenWithinGaps);
+        let width_of = |fx: &mut EngineFixture, window| {
+            fx.frames(space)
+                .into_iter()
+                .find(|(laid, _)| *laid == window)
+                .map(|(_, frame)| frame.size.width)
+        };
+        let full = width_of(&mut fx, old).expect("the old id is laid out");
+        let _ = fx.open(space, vec![
+            OnScreenEntry::plain(old).sized(500.0, 500.0),
+            OnScreenEntry::plain(owner).sized(500.0, 500.0),
+        ]);
+        let default = width_of(&mut fx, owner).expect("the owner is laid out");
+        assert!(full > default, "{full} over {default}");
+
+        let _ = fx.event(LayoutEvent::WindowRemoved(old, Removal::OwnedByAnotherId(owner)));
+
+        assert_eq!(width_of(&mut fx, owner), Some(full));
     }
 
     #[test]
@@ -2255,7 +2593,10 @@ mod tests {
         let _ = fx.command(space, LayoutCommand::MoveNode(Direction::Up));
         let modified = fx.frames(space);
 
-        let _ = fx.event(LayoutEvent::WindowRemoved(WindowId::new(9999, 1)));
+        let _ = fx.event(LayoutEvent::WindowRemoved(
+            WindowId::new(9999, 1),
+            Removal::Closed,
+        ));
 
         assert_eq!(fx.frames(space), modified);
     }

@@ -15,6 +15,7 @@
 //! are different arrangements, and a projector in a meeting room is a third. None of them inherits
 //! the others' layout, and a display nobody has seen before starts with no claim on any window.
 
+use std::collections::hash_map::Entry;
 use std::fmt;
 
 use rini_core::ids::{DisplayUuid, WindowId, pid_t};
@@ -135,28 +136,78 @@ impl Setup {
         self.home_by_intent.contains(&window)
     }
 
-    pub fn forget_window(&mut self, window: WindowId) {
+    /// Whether this arrangement holds a home or a strip place for `window`.
+    pub fn remembers_place(&self, window: WindowId) -> bool {
+        self.window_home.contains_key(&window)
+            || self.display_strip.values().any(|strip| strip.contains(&window))
+    }
+
+    /// Every window this arrangement holds a home, a strip place or a width for.
+    pub fn windows(&self) -> impl Iterator<Item = WindowId> + '_ {
+        self.window_home
+            .keys()
+            .copied()
+            .chain(self.display_strip.values().flatten().copied())
+            .chain(self.window_width.values().flat_map(|widths| widths.keys().copied()))
+    }
+
+    /// Forgets `window`'s home and its place in each strip, keeping its widths.
+    pub fn forget_place(&mut self, window: WindowId) {
         self.window_home.remove(&window);
         self.home_by_intent.remove(&window);
         for strip in self.display_strip.values_mut() {
             strip.retain(|candidate| *candidate != window);
         }
-        for widths in self.window_width.values_mut() {
-            widths.remove(&window);
-        }
-        self.window_width.retain(|_, widths| !widths.is_empty());
     }
 
-    pub fn forget_app(&mut self, pid: pid_t) {
+    /// Forgets `window`, and says which widths it had here, by display.
+    pub fn forget_window(&mut self, window: WindowId) -> Vec<(DisplayUuid, ColumnWidth)> {
+        self.forget_place(window);
+        let mut erased = Vec::new();
+        for (display, widths) in &mut self.window_width {
+            erased.extend(widths.remove(&window).map(|width| (display.clone(), width)));
+        }
+        self.window_width.retain(|_, widths| !widths.is_empty());
+        erased
+    }
+
+    /// Forgets every window of `pid`, and says which widths they had here.
+    pub fn forget_app(&mut self, pid: pid_t) -> Vec<(WindowId, DisplayUuid, ColumnWidth)> {
         self.window_home.retain(|window, _| window.pid != pid);
         self.home_by_intent.retain(|window| window.pid != pid);
         for strip in self.display_strip.values_mut() {
             strip.retain(|window| window.pid != pid);
         }
-        for widths in self.window_width.values_mut() {
-            widths.retain(|window, _| window.pid != pid);
+        let mut erased = Vec::new();
+        for (display, widths) in &mut self.window_width {
+            widths.retain(|window, width| {
+                let keep = window.pid != pid;
+                if !keep {
+                    erased.push((*window, display.clone(), *width));
+                }
+                keep
+            });
         }
         self.window_width.retain(|_, widths| !widths.is_empty());
+        erased
+    }
+
+    /// Moves `from`'s width on each display to `to` where `to` has none, and says which of `from`'s
+    /// widths it dropped, by display, since `to` had its own there.
+    pub fn hand_widths(&mut self, from: WindowId, to: WindowId) -> Vec<(DisplayUuid, ColumnWidth)> {
+        let mut dropped = Vec::new();
+        for (display, widths) in &mut self.window_width {
+            let Some(width) = widths.remove(&from) else {
+                continue;
+            };
+            match widths.entry(to) {
+                Entry::Occupied(_) => dropped.push((display.clone(), width)),
+                Entry::Vacant(vacant) => {
+                    vacant.insert(width);
+                }
+            }
+        }
+        dropped
     }
 
     pub fn rekey_window(&mut self, from: WindowId, to: WindowId) {

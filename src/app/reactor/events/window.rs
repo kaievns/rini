@@ -116,7 +116,10 @@ pub fn handle_window_destroyed(
     Ok(EventOutcome::window_membership_changed()
         .with_window_destroyed()
         .with_forgotten_window(wid)
-        .with_layout_event(LayoutEvent::WindowRemoved(wid)))
+        .with_layout_event(LayoutEvent::WindowRemoved(
+            wid,
+            crate::workspaces::Removal::Closed,
+        )))
 }
 
 pub fn handle_window_minimized(
@@ -138,8 +141,9 @@ pub fn handle_window_minimized(
         state.windows.mark_window_hidden(ws_id);
     }
     Ok(
-        crate::app::reactor::events::EventOutcome::window_membership_changed()
-            .with_layout_event(LayoutEvent::WindowRemoved(wid)),
+        crate::app::reactor::events::EventOutcome::window_membership_changed().with_layout_event(
+            LayoutEvent::WindowRemoved(wid, crate::workspaces::Removal::Minimized),
+        ),
     )
 }
 

@@ -12,7 +12,6 @@ use super::CommandTarget;
 use crate::workspaces::domain::command::FloatingCommand;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::engine::{EventResponse, LayoutEngine, WindowStore};
-use crate::workspaces::{LayoutId, VirtualWorkspaceId};
 
 impl LayoutEngine {
     pub(in crate::workspaces::engine) fn handle_floating_command(
@@ -31,11 +30,8 @@ impl LayoutEngine {
                 self.toggle_floating_maximized(window_store, space)
             }
             FloatingCommand::Maximize => self.with_target(space, |engine, target| {
-                let CommandTarget { space, workspace, layout } = target;
-                match engine.workspace_tree(workspace).selected_window(layout) {
-                    Some(window) => {
-                        engine.toggle_full_width(memory, space, workspace, layout, window)
-                    }
+                match engine.workspace_tree(target.workspace).selected_window(target.layout) {
+                    Some(window) => engine.toggle_full_width(window_store, memory, target, window),
                     None => EventResponse::default(),
                 }
             }),
@@ -55,16 +51,18 @@ impl LayoutEngine {
     /// display.
     pub(in crate::workspaces::engine) fn toggle_full_width(
         &mut self,
+        window_store: &WindowStore,
         memory: &mut DisplayMemory,
-        space: SpaceId,
-        workspace_id: VirtualWorkspaceId,
-        layout: LayoutId,
+        target: CommandTarget,
         window: WindowId,
     ) -> EventResponse {
-        if !self.workspace_tree_mut(workspace_id).toggle_full_width(layout, window) {
+        if !self
+            .workspace_tree_mut(target.workspace)
+            .toggle_full_width(target.layout, window)
+        {
             return EventResponse::default();
         }
-        self.remember_column_width(memory, space, workspace_id, layout, window);
+        self.remember_given_width(window_store, memory, target, window);
         EventResponse {
             changed: true,
             raise_windows: vec![window],

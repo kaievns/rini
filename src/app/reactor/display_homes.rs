@@ -8,9 +8,9 @@ use tracing::{debug, info};
 use super::events::EventOutcome;
 use super::{Reactor, ScreenInfo, WindowFilter};
 use crate::windows::domain::rules::AppRuleDecision;
-use crate::workspaces::LayoutEvent;
-use crate::workspaces::domain::display_affinity::SetupChange;
+use crate::workspaces::domain::display_affinity::{Erase, SetupChange};
 use crate::workspaces::domain::display_pin::display_for_role;
+use crate::workspaces::{LayoutEvent, Removal};
 
 impl Reactor {
     /// Put the arrangement the attached displays form in force, and say what that turned out to be.
@@ -25,7 +25,8 @@ impl Reactor {
             .iter()
             .filter_map(|screen| screen.display_uuid_owned())
             .collect();
-        let change = self.state.display_memory.affinity.use_setup(attached);
+        let (change, unadopted) = self.state.display_memory.affinity.use_setup(attached);
+        self.layout_engine.log_erased_widths(Erase::Unadopted, &unadopted);
         if !matches!(change, SetupChange::Unchanged | SetupChange::Refused) {
             info!(
                 setup = %self.state.display_memory.affinity.current_setup(),
@@ -337,7 +338,7 @@ impl Reactor {
             .is_some_and(|window| window.matches_filter(WindowFilter::EffectivelyManageable))
         {
             let changed_space = self.affinity().assigned_space_for_window_id(wid);
-            self.send_layout_event(LayoutEvent::WindowRemoved(wid));
+            self.remove_unmanageable(wid, authoritative_space, Removal::UnmanageableWhenReassigned);
             return changed_space.is_some_and(|space| self.is_space_active(space));
         }
 
@@ -414,7 +415,7 @@ impl Reactor {
         // WindowServer id may be a transient fullscreen projection. Do not let
         // visibility alone add it back to the active layout.
         if !window.matches_filter(WindowFilter::EffectivelyManageable) {
-            self.send_layout_event(LayoutEvent::WindowRemoved(wid));
+            self.remove_unmanageable(wid, authoritative_space, Removal::UnmanageableWhenRestored);
             return false;
         }
 
@@ -428,6 +429,41 @@ impl Reactor {
         let was_on_active_space = self.is_window_on_active_space(wid);
         self.send_layout_event(LayoutEvent::WindowAdded(authoritative_space, wid));
         !was_on_active_space && self.is_window_on_active_space(wid)
+    }
+
+    /// Takes `wid`, found not manageable on `space`, out of every layout, and logs it with why: the
+    /// removal forgets its workspace, home and place in the strip, which nothing but this line
+    /// otherwise explains. At `info` only when it takes something away, since a window that stays
+    /// unmanageable comes through here on every authoritative snapshot.
+    fn remove_unmanageable(&mut self, wid: WindowId, space: SpaceId, why: Removal) {
+        let assigned = self.affinity().assigned_space_for_window_id(wid);
+        let takes_away = assigned.is_some()
+            || self.layout_engine.is_window_floating(wid)
+            || self.state.display_memory.affinity.remembers_place(wid);
+        let window = self.state.windows.window(wid);
+        macro_rules! log_removal {
+            ($level:ident) => {
+                $level!(
+                    pid = wid.pid,
+                    idx = wid.idx.get(),
+                    ?space,
+                    ?assigned,
+                    title = window.map(|window| window.info.title.as_str()),
+                    role = window.and_then(|window| window.info.ax_role.as_deref()),
+                    subrole = window.and_then(|window| window.info.ax_subrole.as_deref()),
+                    minimized = window.map(|window| window.info.is_minimized),
+                    manageable = window.map(|window| window.is_manageable),
+                    ?why,
+                    "taking a window that is not manageable out of every layout"
+                )
+            };
+        }
+        if takes_away {
+            log_removal!(info);
+        } else {
+            log_removal!(debug);
+        }
+        self.send_layout_event(LayoutEvent::WindowRemoved(wid, why));
     }
 
     pub(super) fn reconcile_windows_with_authoritative_spaces(&mut self) -> bool {

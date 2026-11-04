@@ -139,7 +139,10 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
-        LayoutEvent::WindowRemoved(before_quit),
+        LayoutEvent::WindowRemoved(
+            before_quit,
+            crate::workspaces::domain::display_affinity::Removal::Closed,
+        ),
     );
 
     insert(&mut window_store, after_relaunch);
@@ -668,7 +671,10 @@ fn the_cycle_s_full_viewport_is_remembered_as_a_width_for_a_relaunch() {
     let _ = engine.handle_event(
         &mut window_store,
         &mut memory,
-        LayoutEvent::WindowRemoved(before_quit),
+        LayoutEvent::WindowRemoved(
+            before_quit,
+            crate::workspaces::domain::display_affinity::Removal::Closed,
+        ),
     );
     insert(&mut window_store, after_relaunch);
     let _ = engine.handle_event(
@@ -873,5 +879,198 @@ fn the_layouts_tell_a_carried_width_from_the_default_and_from_a_window_none_hold
     assert_eq!(
         engine.width_from_layouts(space, ws_id, held),
         LayoutWidth::Carried(ColumnWidth::FullWidth)
+    );
+}
+
+/// A Ghostty window titled `title`, the store's `sys_id`th.
+fn terminal(title: &str, sys_id: u32) -> WindowState {
+    let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
+    WindowState {
+        info: WindowInfo {
+            is_standard: true,
+            is_root: true,
+            is_minimized: false,
+            is_resizable: true,
+            min_size: None,
+            max_size: None,
+            title: title.into(),
+            frame,
+            sys_id: Some(WindowServerId::new(sys_id)),
+            bundle_id: Some("com.mitchellh.ghostty".into()),
+            path: None,
+            ax_role: None,
+            ax_subrole: None,
+            is_modal: false,
+        },
+        frame_monotonic: frame,
+        is_manageable: true,
+        ignore_app_rule: false,
+    }
+}
+
+/// Each way the lookup gives up names itself, so the log says why a window got today's defaults.
+#[test]
+fn the_lookup_says_why_a_window_takes_no_remembered_slot() {
+    use crate::workspaces::domain::display_setup::SetupId;
+    use crate::workspaces::domain::launch_memory::Slot;
+    use crate::workspaces::engine::launch::NoLaunchSlot;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    const GHOSTTY: &str = "com.mitchellh.ghostty";
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let (first, second) = (WindowId::new(700, 1), WindowId::new(700, 2));
+    window_store.insert_window(first, terminal("~/p/rini", 7001));
+    window_store.insert_window(second, terminal("~/w/status", 7002));
+    let find = |engine: &LayoutEngine, memory: &DisplayMemory, window, title| {
+        engine.find_launch_slot(&window_store, memory, window, GHOSTTY, Some(title))
+    };
+
+    assert_eq!(
+        find(&engine, &memory, first, "~/p/rini"),
+        Err(NoLaunchSlot::NoTopology)
+    );
+
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
+    assert_eq!(
+        find(&engine, &memory, first, "~/p/rini"),
+        Err(NoLaunchSlot::NothingRemembered)
+    );
+
+    let slot = Slot {
+        title: Some("~/p/rini".into()),
+        display_uuid: DisplayUuid::new(DISPLAY),
+        workspace_index: 1,
+        width: None,
+    };
+    let topology = SetupId::of(&[DisplayUuid::new(DISPLAY)]);
+    memory.launch.remember(GHOSTTY, &topology, vec![slot.clone().into()]);
+    assert_eq!(find(&engine, &memory, first, "~/p/rini"), Ok(slot));
+
+    memory.affinity.set_window_home(first, &DisplayUuid::new(DISPLAY));
+    assert_eq!(
+        find(&engine, &memory, second, "~/w/status"),
+        Err(NoLaunchSlot::NoFreeSlot { ordinal: 1, of: 1 }),
+        "the first window, placed, holds the one slot"
+    );
+}
+
+/// A focuslab window takes no slot and is no sibling: counted, the lab window placed before a
+/// terminal would push the terminal past the one slot it left.
+#[test]
+fn a_focuslab_window_takes_no_slot_and_pushes_no_terminal_off_its_own() {
+    use crate::workspaces::domain::display_setup::SetupId;
+    use crate::workspaces::domain::launch_memory::Slot;
+    use crate::workspaces::engine::launch::NoLaunchSlot;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    const GHOSTTY: &str = "com.mitchellh.ghostty";
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let (lab, terminal_window) = (WindowId::new(700, 1), WindowId::new(700, 2));
+    window_store.insert_window(lab, terminal("lab-A", 7001));
+    window_store.insert_window(terminal_window, terminal("", 7002));
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
+    let slot = Slot {
+        title: Some("~/p/rini".into()),
+        display_uuid: DisplayUuid::new(DISPLAY),
+        workspace_index: 1,
+        width: None,
+    };
+    let topology = SetupId::of(&[DisplayUuid::new(DISPLAY)]);
+    memory.launch.remember(GHOSTTY, &topology, vec![slot.clone().into()]);
+
+    assert_eq!(
+        engine.find_launch_slot(&window_store, &memory, lab, GHOSTTY, Some("lab-A")),
+        Err(NoLaunchSlot::FocuslabWindow)
+    );
+    memory.affinity.set_window_home(lab, &DisplayUuid::new(DISPLAY));
+    assert_eq!(
+        engine.find_launch_slot(&window_store, &memory, terminal_window, GHOSTTY, None),
+        Ok(slot),
+        "the terminal is the first of its app's windows, so it takes the first slot"
+    );
+}
+
+/// A terminal with a width of its own on the laptop, and its app's one slot, full width, which the
+/// terminal takes: the state a window the window server took away and gives back is in.
+fn a_terminal_with_its_own_width_and_a_full_width_slot()
+-> (LayoutEngine, DisplayMemory, WindowStore, SpaceId, WindowId) {
+    use crate::layout::ColumnWidth;
+    use crate::workspaces::domain::display_setup::SetupId;
+    use crate::workspaces::domain::launch_memory::Slot;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(41);
+    let window = WindowId::new(700, 1);
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
+    );
+    engine.update_space_display(&mut memory, space, Some(DisplayUuid::new(DISPLAY)));
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
+    window_store.insert_window(window, terminal("~/p/rini", 7001));
+    memory
+        .affinity
+        .set_window_width(&DisplayUuid::new(DISPLAY), window, ColumnWidth::Offset(-0.1));
+    let topology = SetupId::of(&[DisplayUuid::new(DISPLAY)]);
+    memory.launch.remember("com.mitchellh.ghostty", &topology, vec![
+        Slot {
+            title: Some("~/p/rini".into()),
+            display_uuid: DisplayUuid::new(DISPLAY),
+            workspace_index: 1,
+            width: Some(ColumnWidth::FullWidth),
+        }
+        .into(),
+    ]);
+    (engine, memory, window_store, space, window)
+}
+
+/// A window's own width beats the launch slot it takes, on both paths a slot is taken: the slot may
+/// be another window's, and a window taken away and given back reads its own record first
+/// (`src/workspaces/docs/launch-memory.md`, "Precedence").
+#[test]
+fn a_window_s_own_width_beats_the_launch_slot_it_takes() {
+    use crate::layout::ColumnWidth;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    let own = Some(ColumnWidth::Offset(-0.1));
+
+    let (mut engine, mut memory, mut window_store, space, window) =
+        a_terminal_with_its_own_width_and_a_full_width_slot();
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::WindowAdded(space, window),
+    );
+    assert_eq!(
+        memory.affinity.window_width(&DisplayUuid::new(DISPLAY), window),
+        own,
+        "added"
+    );
+
+    let (mut engine, mut memory, mut window_store, space, window) =
+        a_terminal_with_its_own_width_and_a_full_width_slot();
+    let _ = engine.assign_window_with_app_info(
+        &mut window_store,
+        &mut memory,
+        window,
+        space,
+        WindowRuleContext {
+            app_bundle_id: Some("com.mitchellh.ghostty"),
+            window_title: Some("~/p/rini"),
+            ..WindowRuleContext::default()
+        },
+    );
+    assert_eq!(
+        memory.affinity.window_width(&DisplayUuid::new(DISPLAY), window),
+        own,
+        "placed by the rules' first sighting"
     );
 }

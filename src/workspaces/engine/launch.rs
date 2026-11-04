@@ -4,11 +4,13 @@
 
 use rini_core::ids::{DisplayUuid, SpaceId, WindowId};
 use rustc_hash::FxHashMap as HashMap;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::layout::ColumnWidth;
 use crate::workspaces::WindowStore;
 use crate::workspaces::domain::display_memory::DisplayMemory;
+use crate::workspaces::domain::display_setup::SetupId;
+use crate::workspaces::domain::launch_memory::{Slot, is_focuslab_window, slot_for_window};
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::LayoutEngine;
 
@@ -24,6 +26,24 @@ pub(super) enum LayoutWidth {
     AtDefault,
     /// No layout of the workspace holds the window.
     NotHeld,
+}
+
+/// Why a window takes no remembered slot, which the lookup logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NoLaunchSlot {
+    /// No display is attached yet, so there is no arrangement to look under.
+    NoTopology,
+    /// The application left no slot under the displays attached now.
+    NothingRemembered,
+    /// The window is the `ordinal`th of its application, and none of the `of` slots is free for it,
+    /// by title or by ordinal.
+    NoFreeSlot { ordinal: usize, of: usize },
+    /// The window rules applying to it set its workspace and its width, all a slot would give it.
+    RulesSetAll,
+    /// The slot's workspace, the `workspace_index`th, could not take the window.
+    WorkspaceRefused { workspace_index: usize },
+    /// The window is one focuslab opened, which neither leaves a slot nor takes one.
+    FocuslabWindow,
 }
 
 impl LayoutEngine {
@@ -45,7 +65,6 @@ impl LayoutEngine {
         memory: &mut DisplayMemory,
         connected: &[DisplayUuid],
     ) {
-        use crate::workspaces::domain::display_setup::SetupId;
         use crate::workspaces::domain::launch_memory::{ProjectedSlot, ProjectedWidth};
 
         let topology = SetupId::of(connected);
@@ -145,12 +164,8 @@ impl LayoutEngine {
         }
     }
 
-    /// The slot a window appearing for the first time should take, if its application left one.
-    ///
-    /// The window's position among its application's windows, and which slots its siblings already took,
-    /// are recomputed from the siblings themselves rather than tracked. Placement order is window server
-    /// id order, so replaying the same matching over the siblings gives the same answers it gave them,
-    /// and two windows cannot land on one slot.
+    /// The slot a window appearing for the first time should take, if its application left one,
+    /// with the reason logged when it takes none.
     pub(super) fn launch_slot_for_new_window(
         &self,
         window_store: &WindowStore,
@@ -158,41 +173,85 @@ impl LayoutEngine {
         window: WindowId,
         app_id: &str,
         title: Option<&str>,
-    ) -> Option<crate::workspaces::domain::launch_memory::Slot> {
-        use crate::workspaces::domain::display_setup::SetupId;
-        use crate::workspaces::domain::launch_memory::slot_for_window;
+    ) -> Option<Slot> {
+        match self.find_launch_slot(window_store, memory, window, app_id, title) {
+            Ok(slot) => Some(slot),
+            Err(gave_up) => {
+                self.log_no_launch_slot(window, app_id, gave_up);
+                None
+            }
+        }
+    }
 
-        // Identity comes from the caller, not from the window store. The first sighting of a launching
-        // application's window happens while the rules are being applied, and the window is not in the
-        // store yet at that point — reading it there is why this silently did nothing.
-        // Every way of giving up here is logged. The first three times a remembered full width was
-        // lost, the reason had to be reconstructed from the layout file, because this returned `None`
-        // for four different reasons without saying which.
+    /// Whether `app_id` left any slot under the displays attached now.
+    pub(super) fn has_launch_slots(&self, memory: &DisplayMemory, app_id: &str) -> bool {
+        !memory.launch.slots(app_id, &SetupId::of(&self.connected_displays)).is_empty()
+    }
+
+    /// Logs why `window` takes no remembered slot. Every way the lookup gives up is logged at a level
+    /// the service keeps (`src/workspaces/docs/launch-memory.md`).
+    pub(super) fn log_no_launch_slot(&self, window: WindowId, app_id: &str, gave_up: NoLaunchSlot) {
         let topology = SetupId::of(&self.connected_displays);
-        if topology.is_empty() {
-            warn!(
+        match gave_up {
+            NoLaunchSlot::NoTopology => warn!(
                 idx = window.idx.get(),
                 app_id,
+                ?gave_up,
                 "no display topology yet, so nothing remembered can be looked up: this window gets \
                  today's defaults"
-            );
-            return None;
+            ),
+            NoLaunchSlot::NothingRemembered
+            | NoLaunchSlot::NoFreeSlot { .. }
+            | NoLaunchSlot::RulesSetAll
+            | NoLaunchSlot::WorkspaceRefused { .. }
+            | NoLaunchSlot::FocuslabWindow => info!(
+                idx = window.idx.get(),
+                app_id,
+                %topology,
+                ?gave_up,
+                "no remembered slot for this window; it gets today's defaults"
+            ),
+        }
+    }
+
+    /// The slot `window` takes, or why it takes none.
+    ///
+    /// The window's position among its application's windows, and which slots its siblings already took,
+    /// are recomputed from the siblings themselves rather than tracked. Placement order is window server
+    /// id order, so replaying the same matching over the siblings gives the same answers it gave them,
+    /// and two windows cannot land on one slot.
+    ///
+    /// Identity comes from the caller, not from the window store: the first sighting of a launching
+    /// application's window happens while the rules are being applied, before the window is in the
+    /// store.
+    pub(super) fn find_launch_slot(
+        &self,
+        window_store: &WindowStore,
+        memory: &DisplayMemory,
+        window: WindowId,
+        app_id: &str,
+        title: Option<&str>,
+    ) -> Result<Slot, NoLaunchSlot> {
+        let topology = SetupId::of(&self.connected_displays);
+        if topology.is_empty() {
+            return Err(NoLaunchSlot::NoTopology);
+        }
+        if is_focuslab_window(app_id, title) {
+            return Err(NoLaunchSlot::FocuslabWindow);
         }
         let slots = memory.launch.slots(app_id, &topology);
         if slots.is_empty() {
-            debug!(
-                idx = window.idx.get(),
-                app_id, %topology, "nothing remembered for this application under this topology"
-            );
-            return None;
+            return Err(NoLaunchSlot::NothingRemembered);
         }
 
-        // Siblings already placed, in the order they were placed.
+        // Siblings already placed, in the order they were placed. A focuslab window left no slot, so
+        // it is no sibling either: counted, it would shift every ordinal after it.
         let mut siblings: Vec<(u32, WindowId)> = window_store
             .iter_windows()
             .filter(|(other, state)| {
                 *other != window
                     && state.info.bundle_id.as_deref() == Some(app_id)
+                    && !is_focuslab_window(app_id, Some(&state.info.title))
                     && memory.affinity.window_home(*other).is_some()
             })
             .map(|(other, _)| (other.idx.get(), other))
@@ -207,24 +266,18 @@ impl LayoutEngine {
             }
         }
 
-        let Some(index) = slot_for_window(slots, title, siblings.len(), &claimed) else {
-            debug!(
-                idx = window.idx.get(),
-                app_id,
-                ordinal = siblings.len(),
-                of = slots.len(),
-                "no free remembered slot for this window; it gets today's defaults"
-            );
-            return None;
-        };
+        let ordinal = siblings.len();
+        let (index, slot) = slot_for_window(slots, title, ordinal, &claimed)
+            .and_then(|index| Some((index, slots.get(index)?)))
+            .ok_or(NoLaunchSlot::NoFreeSlot { ordinal, of: slots.len() })?;
         debug!(
             idx = window.idx.get(),
             app_id,
             slot = index,
             of = slots.len(),
-            width = ?slots.get(index).and_then(|slot| slot.width),
+            width = ?slot.width,
             "a relaunched window matched a remembered slot"
         );
-        slots.get(index).cloned()
+        Ok(slot.clone())
     }
 }

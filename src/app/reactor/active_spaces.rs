@@ -257,7 +257,10 @@ impl Reactor {
             // the old assignment lets later discovery/MC refresh rebuild the
             // origin layout from stale workspace state.
             self.state.windows.set_window_server_space(wsid, None);
-            self.send_layout_event(LayoutEvent::WindowRemoved(wid));
+            self.send_layout_event(LayoutEvent::WindowRemoved(
+                wid,
+                crate::workspaces::Removal::LeftOutOfSnapshot,
+            ));
         }
     }
 

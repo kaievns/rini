@@ -10,12 +10,14 @@ use crate::layout::domain::scrolling::ResizeReport;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{AppRuleDecision, RuleState, WindowRuleContext};
 use crate::workspaces::domain::app_rules::{
-    AfterRules, AppRuleOutcome, AppRuleResize, BeforeRules,
+    AfterRules, AppRuleOutcome, AppRuleResize, BeforeRules, SlotOverrides,
 };
 use crate::workspaces::domain::display_memory::DisplayMemory;
+use crate::workspaces::domain::launch_memory::Slot;
 use crate::workspaces::domain::virtual_workspace::{VirtualWorkspaceId, WorkspaceError};
 use crate::workspaces::engine::LayoutEngine;
 use crate::workspaces::engine::discovery::Admitted;
+use crate::workspaces::engine::launch::NoLaunchSlot;
 use crate::workspaces::{AppRuleEffects, AppRuleResult, RuleFloating, WindowStore};
 
 impl LayoutEngine {
@@ -133,52 +135,49 @@ impl LayoutEngine {
             app_bundle_id, window_title, ..
         } = window;
         let decision = self.app_rules.evaluate(window);
+        let first = self.first_sighting(window_id);
 
-        // Where this application's windows were, but only when the config had nothing to say and the
-        // window has no assignment already. This is the first sighting of a launching application's
-        // window, well before `WindowAdded`, so it is the only place the answer can still be changed.
-        if decision == AppRuleDecision::NoMatch
-            && self
-                .virtual_workspace_manager
-                .workspace_for_window(window_store, space, window_id)
-                .is_none()
-            && let Some(app_id) = app_bundle_id
-            && let Some(slot) = self.launch_slot_for_new_window(
-                window_store,
-                memory,
-                window_id,
-                app_id,
-                window_title,
-            )
-            && let Some(workspace_id) = self
-                .virtual_workspace_manager
-                .list_workspaces(space)
-                .get(slot.workspace_index)
-                .map(|(id, _)| *id)
-            && self.virtual_workspace_manager.assign_window_to_workspace(
-                window_store,
+        // Where this application's windows were, for a window with no assignment already, but for
+        // what the rules set, and not at all for one they float or leave unmanaged; else, for a
+        // window new to the session, the width its app last had on this display shape. This is the
+        // first sighting of a launching application's window, well before `WindowAdded`, so it is
+        // the only place the answer can still be changed.
+        let unassigned = self
+            .virtual_workspace_manager
+            .workspace_for_window(window_store, space, window_id)
+            .is_none();
+        if unassigned && let Some(app_id) = app_bundle_id {
+            let launch = NewWindow {
+                id: window_id,
                 space,
-                window_id,
-                workspace_id,
-            )
-        {
-            memory.affinity.set_window_home_if_absent(window_id, &slot.display_uuid);
-            if let Some(width) = slot.width {
-                memory.affinity.set_window_width(&slot.display_uuid, window_id, width);
+                app_id,
+                title: window_title,
+            };
+            match decision {
+                AppRuleDecision::NoMatch => {
+                    if let Some(effects) =
+                        self.place_from_launch_slot(window_store, memory, launch, first)
+                    {
+                        return Ok(AppRuleResult::Managed(effects));
+                    }
+                    if first {
+                        self.take_app_width(memory, launch);
+                    }
+                }
+                AppRuleDecision::Managed { .. } | AppRuleDecision::Unmanaged => {
+                    if let Some(overrides) = SlotOverrides::of(&decision) {
+                        let took = self.take_launch_slot_under_rules(
+                            window_store,
+                            memory,
+                            launch,
+                            SlotTaking { overrides, first },
+                        );
+                        if first && !took && !overrides.width {
+                            self.take_app_width(memory, launch);
+                        }
+                    }
+                }
             }
-            debug!(
-                idx = window_id.idx.get(),
-                workspace = slot.workspace_index,
-                width = ?slot.width,
-                "placing a relaunched window where it was"
-            );
-            return Ok(AppRuleResult::Managed(AppRuleEffects {
-                workspace_id,
-                floating: RuleFloating::as_is(self.floating.is_floating(window_id)),
-                position: None,
-                size: None,
-                focus: false,
-            }));
         }
 
         self.virtual_workspace_manager.apply_app_rule_decision(
@@ -187,6 +186,99 @@ impl LayoutEngine {
             space,
             decision,
         )
+    }
+
+    /// Puts `window` in the workspace its application's remembered slot names, with the slot's
+    /// home and, at its `first` sighting, its width, or logs why it cannot.
+    fn place_from_launch_slot(
+        &mut self,
+        window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
+        window: NewWindow<'_>,
+        first: bool,
+    ) -> Option<AppRuleEffects> {
+        let slot = self.launch_slot_for_new_window(
+            window_store,
+            memory,
+            window.id,
+            window.app_id,
+            window.title,
+        )?;
+        let workspace_id = self.assign_slot_workspace(window_store, window, &slot)?;
+        take_slot_home_and_width(memory, window.id, &slot, SlotTaking {
+            overrides: SlotOverrides::default(),
+            first,
+        });
+        Some(AppRuleEffects {
+            workspace_id,
+            floating: RuleFloating::as_is(self.floating.is_floating(window.id)),
+            position: None,
+            size: None,
+            focus: false,
+        })
+    }
+
+    /// Gives `window` what its application's remembered slot holds that the rules applying to it
+    /// do not set (`taking.overrides`): the slot's workspace and width, each only where the rules
+    /// name none, the width only at a first sighting, and its home, or logs why it takes nothing.
+    /// Says whether it took the slot.
+    fn take_launch_slot_under_rules(
+        &mut self,
+        window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
+        window: NewWindow<'_>,
+        taking: SlotTaking,
+    ) -> bool {
+        if taking.overrides.all() {
+            if self.has_launch_slots(memory, window.app_id) {
+                self.log_no_launch_slot(window.id, window.app_id, NoLaunchSlot::RulesSetAll);
+            }
+            return false;
+        }
+        let Some(slot) = self.launch_slot_for_new_window(
+            window_store,
+            memory,
+            window.id,
+            window.app_id,
+            window.title,
+        ) else {
+            return false;
+        };
+        if !taking.overrides.workspace
+            && self.assign_slot_workspace(window_store, window, &slot).is_none()
+        {
+            return false;
+        }
+        take_slot_home_and_width(memory, window.id, &slot, taking);
+        true
+    }
+
+    /// Assigns `window` to the workspace `slot` names, or logs that it could not.
+    fn assign_slot_workspace(
+        &mut self,
+        window_store: &mut WindowStore,
+        window: NewWindow<'_>,
+        slot: &Slot,
+    ) -> Option<VirtualWorkspaceId> {
+        let placed = self
+            .virtual_workspace_manager
+            .list_workspaces(window.space)
+            .get(slot.workspace_index)
+            .map(|(id, _)| *id)
+            .filter(|workspace_id| {
+                self.virtual_workspace_manager.assign_window_to_workspace(
+                    window_store,
+                    window.space,
+                    window.id,
+                    *workspace_id,
+                )
+            });
+        if placed.is_none() {
+            self.log_no_launch_slot(window.id, window.app_id, NoLaunchSlot::WorkspaceRefused {
+                workspace_index: slot.workspace_index,
+            });
+        }
+        placed
     }
 
     pub(super) fn apply_app_rule_outcome(
@@ -211,7 +303,10 @@ impl LayoutEngine {
 
         if let Some(placement) = effects.floating_placement(window, space) {
             app_rule_outcome.push_placement(placement);
-        } else if let Some(resize) = effects.tiled_resize(window, space, was_floating) {
+        } else if let Some(resize) =
+            effects.tiled_resize(window, space, was_floating, window_store.last_rule_size(window))
+        {
+            window_store.set_last_rule_size(window, resize.size);
             app_rule_outcome.push_resize(resize);
         }
 
@@ -228,8 +323,13 @@ impl LayoutEngine {
         effects.focus.then_some((window, effects.workspace_id))
     }
 
+    /// The size a rule asks of a tiled window, taken as its column's width and recorded as the
+    /// window's width on this display, so the window reads it back when it is laid out again. A width
+    /// the window has of its own there beats the rule's and keeps its column, unless the rule's size
+    /// was edited since it last sized the window; the rule's height is taken either way.
     pub fn apply_app_rule_resize(
         &mut self,
+        memory: &mut DisplayMemory,
         resize: AppRuleResize,
         new_frame: CGRect,
         screen_frame: CGRect,
@@ -238,6 +338,10 @@ impl LayoutEngine {
         let Some(layout) = self.workspace_layouts.active(resize.space, resize.workspace_id) else {
             return;
         };
+        let display = memory.affinity.display_for_space(resize.space).cloned();
+        let own_width = display
+            .as_ref()
+            .and_then(|display| memory.affinity.window_width(display, resize.window));
         let gaps = self.layout_settings.gaps.effective_for_display(display_uuid);
         let previous_selection = self.workspace_tree(resize.workspace_id).selected_window(layout);
         let border = self.borders.of(resize.window);
@@ -257,7 +361,62 @@ impl LayoutEngine {
         if let Some(previous) = previous_selection.filter(|window| *window != resize.window) {
             let _ = tree.select_window(layout, previous);
         }
+        if let Some(display) = display {
+            if own_width.is_some() && !resize.edited {
+                self.apply_remembered_column_width(
+                    memory,
+                    resize.space,
+                    resize.workspace_id,
+                    layout,
+                    resize.window,
+                );
+            } else if let Some(width) =
+                self.workspace_tree(resize.workspace_id).carried_width(layout, resize.window)
+            {
+                memory.affinity.set_window_width(&display, resize.window, width);
+            }
+        }
         self.workspace_layouts
             .mark_last_saved(resize.space, resize.workspace_id, layout);
     }
+}
+
+/// A window seen for the first time, as the rules see it: before it is in the window store.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct NewWindow<'a> {
+    pub(super) id: WindowId,
+    pub(super) space: SpaceId,
+    pub(super) app_id: &'a str,
+    pub(super) title: Option<&'a str>,
+}
+
+/// What a window takes of a launch slot's width: none where its rules set one, and none where the
+/// session has seen the window before, whose width is its own or the default it had.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SlotTaking {
+    pub(super) overrides: SlotOverrides,
+    pub(super) first: bool,
+}
+
+/// Writes `slot`'s home for `window` where it has none, and its width where the window has none of
+/// its own, at its first sighting and where no rule sets one (`taking`): a rule's width is the
+/// window's first, and a window the session has seen may be matched to a sibling's slot.
+pub(super) fn take_slot_home_and_width(
+    memory: &mut DisplayMemory,
+    window: WindowId,
+    slot: &Slot,
+    taking: SlotTaking,
+) {
+    memory.affinity.set_window_home_if_absent(window, &slot.display_uuid);
+    let width = slot.width.filter(|_| taking.first && !taking.overrides.width);
+    if let Some(width) = width {
+        memory.affinity.set_window_width_if_absent(&slot.display_uuid, window, width);
+    }
+    debug!(
+        idx = window.idx.get(),
+        workspace = slot.workspace_index,
+        ?width,
+        ?taking,
+        "placing a relaunched window where it was"
+    );
 }

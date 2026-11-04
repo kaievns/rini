@@ -270,7 +270,8 @@ impl Reactor {
         }
     }
 
-    /// The attached screens replaced, and the launch memory and the cursor warp told of them.
+    /// The attached screens replaced, and the launch memory, the app widths and the cursor warp
+    /// told of them.
     fn replace_screens(&mut self, screens: Vec<ScreenInfo>) {
         self.space_state.screens = screens;
         // The topology the launch memory is keyed by. Set from here because this is the one place the
@@ -282,6 +283,13 @@ impl Reactor {
             .filter_map(|screen| screen.display_uuid_owned())
             .collect();
         self.layout_engine.set_connected_displays(connected);
+        // The shapes an application's width is kept under, from the same authoritative set.
+        self.layout_engine.set_display_shapes(
+            self.space_state
+                .screens
+                .iter()
+                .filter_map(|screen| Some((screen.display_uuid_owned()?, screen.shape()))),
+        );
         // Cursor warping is derived from display geometry, so it has to be told whenever
         // that geometry changes — docking, undocking, or rearranging in System Settings.
         // Pushing it from here rather than having the actor poll CGDisplayBounds keeps one
@@ -567,8 +575,10 @@ impl Reactor {
         if owner != original_window
             && self.affinity().assigned_space_for_window_id(original_window).is_some()
         {
-            *outcome = std::mem::take(outcome)
-                .with_layout_event(LayoutEvent::WindowRemoved(original_window));
+            *outcome = std::mem::take(outcome).with_layout_event(LayoutEvent::WindowRemoved(
+                original_window,
+                crate::workspaces::Removal::OwnedByAnotherId(owner),
+            ));
         }
         *outcome = std::mem::take(outcome).with_app_request(owner.pid, Request::GetVisibleWindows);
         Some(

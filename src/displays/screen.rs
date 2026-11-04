@@ -22,8 +22,8 @@ use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
 use crate::displays::domain::screen::{
-    ASSUMED_SCALE, CoordinateConverter, DockEdge, ScreenInfo, menu_bar_inset, top_inset,
-    usable_frame,
+    ASSUMED_SCALE, CoordinateConverter, DockEdge, PhysicalSize, ScreenInfo, menu_bar_inset,
+    top_inset, usable_frame,
 };
 
 #[derive(Debug, Clone)]
@@ -173,6 +173,7 @@ impl<S: System> ScreenCache<S> {
             space: None,
             is_builtin: self.system.is_builtin(did),
             scale: ns_screen.map_or(ASSUMED_SCALE, |s| s.scale),
+            physical: self.system.physical_size(did),
         }
     }
 
@@ -331,6 +332,7 @@ pub trait System {
     fn current_space(&self, uuid: &CFString) -> Option<SpaceId>;
     fn chrome(&self) -> Chrome;
     fn menu_bar_height(&self, did: u32) -> f64;
+    fn physical_size(&self, did: u32) -> PhysicalSize;
 }
 
 #[derive(Debug, Clone)]
@@ -464,6 +466,16 @@ impl System for Actual {
         unsafe { SLSGetDisplayMenubarHeight(did, &mut height) };
         height as f64
     }
+
+    fn physical_size(&self, did: u32) -> PhysicalSize {
+        // SAFETY: an integer argument only; the size comes back by value.
+        let size = unsafe { rini_skylight_sys::CGDisplayScreenSize(did) };
+        let reported = |mm: f64| if mm.is_finite() && mm > 0.0 { mm } else { 0.0 };
+        PhysicalSize {
+            width_mm: reported(size.width),
+            height_mm: reported(size.height),
+        }
+    }
 }
 
 pub trait NSScreenExt {
@@ -596,8 +608,8 @@ mod test {
     use objc2_core_graphics::CGError;
 
     use super::{
-        CGScreenInfo, Chrome, DisplayUuid, Dock, DockEdge, NSScreenInfo, ScreenCache, ScreenId,
-        SpaceId, System, main_first,
+        CGScreenInfo, Chrome, DisplayUuid, Dock, DockEdge, NSScreenInfo, PhysicalSize, ScreenCache,
+        ScreenId, SpaceId, System, main_first,
     };
 
     /// What a stub machine answers beside its screens: the menu bar hidden, no Dock shown, no
@@ -608,6 +620,16 @@ mod test {
         space: Cell<Option<SpaceId>>,
         chrome: Chrome,
         menu_bar_height: f64,
+        physical: Vec<(u32, PhysicalSize)>,
+    }
+
+    impl Machine {
+        fn physical_size(&self, did: u32) -> PhysicalSize {
+            self.physical
+                .iter()
+                .find_map(|(id, size)| (*id == did).then_some(*size))
+                .unwrap_or_default()
+        }
     }
 
     impl Default for Machine {
@@ -621,6 +643,7 @@ mod test {
                     dock: None,
                 },
                 menu_bar_height: 0.0,
+                physical: Vec::new(),
             }
         }
     }
@@ -650,6 +673,8 @@ mod test {
         fn chrome(&self) -> Chrome { self.machine.chrome }
 
         fn menu_bar_height(&self, _did: u32) -> f64 { self.machine.menu_bar_height }
+
+        fn physical_size(&self, did: u32) -> PhysicalSize { self.machine.physical_size(did) }
     }
 
     struct SequenceSystem {
@@ -701,6 +726,8 @@ mod test {
         fn chrome(&self) -> Chrome { self.machine.chrome }
 
         fn menu_bar_height(&self, _did: u32) -> f64 { self.machine.menu_bar_height }
+
+        fn physical_size(&self, did: u32) -> PhysicalSize { self.machine.physical_size(did) }
     }
 
     fn rect(x: f64, y: f64, width: f64, height: f64) -> CGRect {
@@ -832,6 +859,38 @@ mod test {
         let scale_of = |id: u32| screens.iter().find(|s| s.id == ScreenId::new(id)).unwrap().scale;
         assert_eq!(scale_of(1), 2.0);
         assert_eq!(scale_of(2), 1.0);
+    }
+
+    /// The 16" built-in beside the 32" external, as `CGDisplayScreenSize` reported them: each screen
+    /// carries its own size, and one whose display reports none carries zero.
+    #[test]
+    fn each_screen_carries_the_physical_size_its_display_reports() {
+        let built_in = PhysicalSize {
+            width_mm: 344.7,
+            height_mm: 222.9,
+        };
+        let external = PhysicalSize {
+            width_mm: 697.0,
+            height_mm: 391.0,
+        };
+        let stub = Stub {
+            cg_screens: vec![
+                cg(1, rect(0.0, 0.0, 1728.0, 1117.0)),
+                cg(2, rect(1728.0, 0.0, 3008.0, 1692.0)),
+                cg(3, rect(4736.0, 0.0, 1920.0, 1080.0)),
+            ],
+            ns_screens: vec![],
+            machine: Machine {
+                physical: vec![(1, built_in), (2, external)],
+                ..Machine::default()
+            },
+        };
+        let (screens, _) = ScreenCache::new_with(stub).refresh().unwrap();
+        let size_of =
+            |id: u32| screens.iter().find(|s| s.id == ScreenId::new(id)).unwrap().physical;
+        assert_eq!(size_of(1), built_in);
+        assert_eq!(size_of(2), external);
+        assert_eq!(size_of(3), PhysicalSize::default());
     }
 
     #[test]

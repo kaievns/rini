@@ -117,7 +117,7 @@ take niri's default: off. They were on, and a default-on flag can only be writte
 | `window-rule › open-on-output` | `"internal"` or `"external"`, a ROLE | a UUID differs between the monitor at home and the one at the office; a pin is a default, not a law (`specs/displays.md`) |
 | `window-rule › open-on-workspace` | a name only | as niri |
 | `window-rule › default-floating-position` | logical pixels from that corner of the display | as niri; rini's old form was a fraction of the screen |
-| `window-rule › default-column-width`, `default-window-height` | `fixed` only | a floating window opens at it; a tiled one is resized once |
+| `window-rule › default-column-width`, `default-window-height` | `fixed` only | a floating window opens at it; a tiled one is resized once a value, and a width it has of its own on its display beats the rule's unless the rule's changed since (`specs/displays.md`) |
 | `window-rule › open-focused` | `true` only | rini cannot stop a new window taking focus yet |
 | `window-rule › match` | adds `app-name`, `ax-role`, `ax-subrole`, `is-modal` | macOS's names for what niri reads from Wayland |
 | `window-rule › match` with no matcher | refused | niri matches every window with it; leaving the line out already does that |
