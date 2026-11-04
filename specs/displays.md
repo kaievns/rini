@@ -67,6 +67,11 @@ context is arranged differently depending on what is plugged in, and rini rememb
   MUST each keep them, and a window that leaves native fullscreen under another id MUST hand them to
   that id and be laid at them, though that id joins the strip before the old one leaves it. A width only the layout holds, as a drag's or a rule's, MUST be recorded before such a
   removal, and a launch slot's width MUST NOT replace one the window has of its own.
+- A rule's width is a window's first. A width the window has of its own on a display MUST beat it
+  when the window is laid out again, and the rule MUST NOT size the window again on its app's next
+  report, unless the rule's width changed since it sized the window: an edit to a rule MUST show on
+  the windows it sizes, once. Not yet met: a rule edited while its window was out of every strip, or
+  while rini was not running, is beaten by the window's own width.
 - Every erase of a window's remembered width MUST be logged with why and the window's app and
   title, at a level the running service keeps, because a width that comes back at the default is
   otherwise not traceable to what erased it. A removal that erases nothing MUST log below that
@@ -84,6 +89,10 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > off, pressed back to full 80s after the wake), and 1 to a re-add by the window server 3s before
 > the press. Every removal from the
 > layout erased the window's widths, and a re-added window read a record a drag never wrote.
+
+> **Found 2026-11-04, not reported.** A window an app rule sized went back to the rule's width on
+> every report of its app, a re-add among them: an editor widened to 474pt went back to the rule's
+> 234pt. Kai's config sets no rule width.
 
 - A window's display MUST be written only by intent: an explicit move, a drag, a first sighting, or a
   restore. The forced reassignment that follows an unplug MUST NOT write it, because that record is the

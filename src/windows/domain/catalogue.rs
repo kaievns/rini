@@ -7,6 +7,7 @@ use rini_core::ids::{SpaceId, WindowId, WindowServerId};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::windows::domain::info::WindowServerInfo;
+use crate::windows::domain::rules::AppRuleSize;
 use crate::windows::domain::state::WindowState;
 
 /// The complete reactor-owned state for one AX window identity.
@@ -15,6 +16,8 @@ pub struct WindowRecord {
     state: Option<WindowState>,
     window_server_id: Option<WindowServerId>,
     last_rule_decision: bool,
+    /// The size a tiled rule last gave the window, so the rule gives each value once.
+    last_rule_size: Option<AppRuleSize>,
 }
 
 impl WindowRecord {
@@ -29,8 +32,12 @@ impl WindowRecord {
             state,
             window_server_id,
             last_rule_decision,
+            last_rule_size,
         } = self;
-        state.is_none() && window_server_id.is_none() && !*last_rule_decision
+        state.is_none()
+            && window_server_id.is_none()
+            && !*last_rule_decision
+            && last_rule_size.is_none()
     }
 
     pub fn window_server_id(&self) -> Option<WindowServerId> { self.window_server_id }
@@ -554,15 +561,20 @@ impl WindowCatalogue {
             return;
         }
 
-        let Some(last_rule_decision) = self.windows.get(&from).map(|r| r.last_rule_decision) else {
+        let Some((last_rule_decision, last_rule_size)) =
+            self.windows.get(&from).map(|r| (r.last_rule_decision, r.last_rule_size))
+        else {
             return;
         };
 
-        self.windows.entry(to).or_default().last_rule_decision |= last_rule_decision;
+        let target = self.windows.entry(to).or_default();
+        target.last_rule_decision |= last_rule_decision;
+        target.last_rule_size = target.last_rule_size.or(last_rule_size);
         self.app_windows.entry(to.pid).or_default().insert(to);
 
         if let Some(source) = self.windows.get_mut(&from) {
             source.last_rule_decision = false;
+            source.last_rule_size = None;
         }
 
         if let Some(original_window_id) = self.native_fullscreen_original_window(from)
@@ -587,9 +599,20 @@ impl WindowCatalogue {
         self.windows.get(&window_id).is_some_and(|record| record.last_rule_decision)
     }
 
+    /// The size a tiled rule last gave `window_id`, if one has since it was last removed.
+    pub fn last_rule_size(&self, window_id: WindowId) -> Option<AppRuleSize> {
+        self.windows.get(&window_id).and_then(|record| record.last_rule_size)
+    }
+
+    pub fn set_last_rule_size(&mut self, window_id: WindowId, size: AppRuleSize) {
+        self.windows.entry(window_id).or_default().last_rule_size = Some(size);
+        self.app_windows.entry(window_id.pid).or_default().insert(window_id);
+    }
+
     pub fn clear_rule_metadata(&mut self, window_id: WindowId) {
         if let Some(record) = self.windows.get_mut(&window_id) {
             record.last_rule_decision = false;
+            record.last_rule_size = None;
         }
         self.prune_window_record(window_id);
     }
@@ -930,6 +953,20 @@ mod tests {
 
     // --- what counts as an empty record ------------------------------------------------------
 
+    /// A window rekeyed takes the size its rule last gave it, so the rule does not size it again.
+    #[test]
+    fn a_rekeyed_window_keeps_the_size_its_rule_gave_it() {
+        let mut catalogue = WindowCatalogue::default();
+        let (from, to) = (WindowId::new(1, 1), WindowId::new(1, 2));
+        let size = AppRuleSize { w: Some(234.0), h: None };
+        catalogue.set_last_rule_size(from, size);
+
+        catalogue.transfer_persistent_window_metadata(from, to);
+
+        assert_eq!(catalogue.last_rule_size(to), Some(size));
+        assert_eq!(catalogue.last_rule_size(from), None);
+    }
+
     /// A default record remembers nothing, which is the whole premise: a record that has had nothing
     /// done to it is a record the catalogue can forget.
     #[test]
@@ -942,11 +979,14 @@ mod tests {
     #[test]
     fn any_single_field_is_enough_to_keep_a_window_record() {
         type Holding = (&'static str, fn(&mut WindowRecord));
-        let holding: [Holding; 2] = [
+        let holding: [Holding; 3] = [
             ("window_server_id", |r| {
                 r.window_server_id = Some(WindowServerId::new(1))
             }),
             ("last_rule_decision", |r| r.last_rule_decision = true),
+            ("last_rule_size", |r| {
+                r.last_rule_size = Some(AppRuleSize { w: Some(1.0), h: None })
+            }),
         ];
         for (name, set) in holding {
             let mut record = WindowRecord::default();

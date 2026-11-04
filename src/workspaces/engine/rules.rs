@@ -244,7 +244,10 @@ impl LayoutEngine {
 
         if let Some(placement) = effects.floating_placement(window, space) {
             app_rule_outcome.push_placement(placement);
-        } else if let Some(resize) = effects.tiled_resize(window, space, was_floating) {
+        } else if let Some(resize) =
+            effects.tiled_resize(window, space, was_floating, window_store.last_rule_size(window))
+        {
+            window_store.set_last_rule_size(window, resize.size);
             app_rule_outcome.push_resize(resize);
         }
 
@@ -262,8 +265,9 @@ impl LayoutEngine {
     }
 
     /// The size a rule asks of a tiled window, taken as its column's width and recorded as the
-    /// window's width on this display, as a width command's is, so the window reads it back when it
-    /// is laid out again.
+    /// window's width on this display, so the window reads it back when it is laid out again. A width
+    /// the window has of its own there beats the rule's and keeps its column, unless the rule's size
+    /// was edited since it last sized the window; the rule's height is taken either way.
     pub fn apply_app_rule_resize(
         &mut self,
         memory: &mut DisplayMemory,
@@ -275,6 +279,10 @@ impl LayoutEngine {
         let Some(layout) = self.workspace_layouts.active(resize.space, resize.workspace_id) else {
             return;
         };
+        let display = memory.affinity.display_for_space(resize.space).cloned();
+        let own_width = display
+            .as_ref()
+            .and_then(|display| memory.affinity.window_width(display, resize.window));
         let gaps = self.layout_settings.gaps.effective_for_display(display_uuid);
         let previous_selection = self.workspace_tree(resize.workspace_id).selected_window(layout);
         let border = self.borders.of(resize.window);
@@ -294,13 +302,21 @@ impl LayoutEngine {
         if let Some(previous) = previous_selection.filter(|window| *window != resize.window) {
             let _ = tree.select_window(layout, previous);
         }
-        self.remember_column_width(
-            memory,
-            resize.space,
-            resize.workspace_id,
-            layout,
-            resize.window,
-        );
+        if let Some(display) = display {
+            if own_width.is_some() && !resize.edited {
+                self.apply_remembered_column_width(
+                    memory,
+                    resize.space,
+                    resize.workspace_id,
+                    layout,
+                    resize.window,
+                );
+            } else if let Some(width) =
+                self.workspace_tree(resize.workspace_id).carried_width(layout, resize.window)
+            {
+                memory.affinity.set_window_width(&display, resize.window, width);
+            }
+        }
         self.workspace_layouts
             .mark_last_saved(resize.space, resize.workspace_id, layout);
     }

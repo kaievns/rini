@@ -64,17 +64,23 @@ impl AppRuleEffects {
         )
     }
 
+    /// The resize the rule asks of tiled `window`, given the size it `last_gave` the window: none
+    /// when the window floats, the rule sets no size, or the rule already gave the window this one,
+    /// since an app reports its windows on every refresh and a rule's size is the window's first.
     pub fn tiled_resize(
         self,
         window: WindowId,
         space: SpaceId,
         was_floating: bool,
+        last_gave: Option<AppRuleSize>,
     ) -> Option<AppRuleResize> {
-        (!self.should_float(was_floating)).then_some(AppRuleResize {
+        let size = self.size?;
+        (!self.should_float(was_floating) && last_gave != Some(size)).then_some(AppRuleResize {
             window,
             space,
             workspace_id: self.workspace_id,
-            size: self.size?,
+            size,
+            edited: last_gave.is_some(),
         })
     }
 }
@@ -178,6 +184,9 @@ pub struct AppRuleResize {
     pub space: SpaceId,
     pub workspace_id: VirtualWorkspaceId,
     pub size: AppRuleSize,
+    /// The rule gave the window another size before: its width wins over the window's own, which
+    /// otherwise beats a rule's (`specs/displays.md`).
+    pub edited: bool,
 }
 
 impl AppRuleResize {
@@ -338,11 +347,38 @@ mod tests {
             space: SpaceId::new(1),
             workspace_id: VirtualWorkspaceId::default(),
             size: AppRuleSize { w: Some(500.0), h: None },
+            edited: false,
         };
         let current = CGRect::new(CGPoint::new(10.0, 20.0), CGSize::new(300.0, 400.0));
         let frame = resize.resized_frame(current);
         assert_eq!(frame.origin, current.origin);
         assert_eq!(frame.size, CGSize::new(500.0, 400.0));
+    }
+
+    /// A rule gives a tiled window each size once, and says when it gave another before.
+    #[test]
+    fn a_rule_asks_a_tiled_window_for_each_size_once() {
+        let size = |w| AppRuleSize { w: Some(w), h: None };
+        let effects = AppRuleEffects {
+            workspace_id: VirtualWorkspaceId::default(),
+            floating: RuleFloating::Keep,
+            position: None,
+            size: Some(size(234.0)),
+            focus: false,
+        };
+        let (window, space) = (WindowId::new(1, 1), SpaceId::new(1));
+        let asks = |last_gave| {
+            effects
+                .tiled_resize(window, space, false, last_gave)
+                .map(|resize| (resize.size, resize.edited))
+        };
+
+        assert_eq!(asks(None), Some((size(234.0), false)), "first");
+        assert_eq!(asks(Some(size(234.0))), None, "again");
+        assert_eq!(asks(Some(size(300.0))), Some((size(234.0), true)), "edited");
+        assert_eq!(effects.tiled_resize(window, space, true, None), None, "floating");
+        let no_size = AppRuleEffects { size: None, ..effects };
+        assert_eq!(no_size.tiled_resize(window, space, false, None), None, "no size");
     }
 
     #[test]

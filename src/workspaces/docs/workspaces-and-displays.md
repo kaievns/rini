@@ -68,12 +68,25 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   once written only by explicit width commands, so a window whose width came
   from the layout never appeared in it and relaunched at the default. A width
   command, a drag's end (`events::drag`, `remember_width_as_laid`) and a rule's
-  resize (`apply_app_rule_resize`) each write it now, and so does every removal a
+  resize (`apply_app_rule_resize`, below) each write it now, and so does every removal a
   window can come back from, before the layout lets go of the column: a re-added
   window reads the record, never the layout it left, so a width only the layout
   held (a drag, an app sizing its own window, a restored layout) came back at the
   default. Each writes only a width the column has: a column at the default, or a
   window in no strip, writes nothing and erases nothing.
+- **A window's own width beats a rule's.** A rule's size is a window's first
+  (`AppRuleSize`), and an app reports its windows on every refresh, which once
+  asked for the rule's size each time: a window the user widened went back to the
+  rule's width on its app's next report, and a re-added one had its record
+  overwritten with the rule's. A rule now asks a tiled window for each value once
+  (`AppRuleEffects::tiled_resize`, against the catalogue's `last_rule_size`, which a
+  removal clears). Where the window has a width of its own on the display, the rule's
+  height is taken and its width is not, and the record stands; the rule's width is
+  written only where the window has none, or where the value changed since the rule
+  last sized the window (`AppRuleResize::edited`), and a rule never erases a record.
+  A rule edited while its window was out of every strip, or while rini was not
+  running, finds no size it gave, and is beaten by the window's own width: telling
+  that apart needs the rule's value kept with the record, which is not built.
 - **A window's own width beats a launch slot's.** A window that comes back with
   no workspace looks up a launch slot, and the slot it takes may be another
   window's, so its width is written only where the window has none

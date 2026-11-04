@@ -1414,10 +1414,11 @@ mod tests {
         (fx, space, window, resizes[0])
     }
 
-    /// The rule's resize carried out: the window reports the 234pt the rule asked for.
+    /// The rule's resize carried out, as the reactor carries it out: the window reports its frame
+    /// with the dimensions the rule names.
     fn apply_rule_resize(fx: &mut EngineFixture, space: SpaceId, resize: AppRuleResize) -> CGRect {
         let screen = fx.screens[&space];
-        let new_frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(234.0, 500.0));
+        let new_frame = resize.resized_frame(fx.frame(space, resize.window));
         fx.engine.apply_app_rule_resize(&mut fx.memory, resize, new_frame, screen, None);
         new_frame
     }
@@ -1457,6 +1458,116 @@ mod tests {
             fx.engine.workspace_tree(ws).carried_width(layout, window)
         );
         assert!(recorded.is_some(), "the rule's width");
+    }
+
+    /// `rule_sized_editor` given the rule's width, widened by the user on the display it reports as
+    /// "built-in": the width and the record it was given.
+    fn rule_sized_editor_widened_by_the_user()
+    -> (EngineFixture, SpaceId, WindowId, f64, Option<ColumnWidth>) {
+        let (mut fx, space, window, resize) = rule_sized_editor();
+        let display = DisplayUuid::new("built-in");
+        fx.memory.affinity.set_display_space(&display, space);
+        let _ = apply_rule_resize(&mut fx, space, resize);
+        let _ = fx.event(LayoutEvent::WindowFocused(space, window));
+        let _ = fx.command(space, widen());
+        let widened = fx.frame(space, window).size.width;
+        assert!(widened > 234.0, "{widened} over the rule's 234");
+        let record = fx.memory.affinity.window_width(&display, window);
+        assert!(record.is_some(), "the width command's record");
+        (fx, space, window, widened, record)
+    }
+
+    /// The editor's app reporting its window again, and the rule's resizes that report asks for
+    /// carried out; how many there were.
+    fn report_the_editor_again(fx: &mut EngineFixture, space: SpaceId, window: WindowId) -> usize {
+        let entry = OnScreenEntry::plain(window).sized(500.0, 500.0);
+        let outcome = fx.open_app(space, vec![entry], app("com.example.Editor"));
+        let (_, resizes, _) = outcome.app_rules.into_parts();
+        for resize in &resizes {
+            let _ = apply_rule_resize(fx, space, *resize);
+        }
+        resizes.len()
+    }
+
+    /// A rule's width is the window's first: a width the user gave the window afterwards beats it
+    /// when the window comes back, in the layout and in the record, since the window's own record
+    /// ranks above a rule's default.
+    #[test]
+    fn a_width_the_user_gave_a_rule_sized_window_survives_a_re_add() {
+        let (mut fx, space, window, widened, record) = rule_sized_editor_widened_by_the_user();
+
+        let _ = fx.event(LayoutEvent::WindowRemoved(window, Removal::LeftOutOfSnapshot));
+        let _ = report_the_editor_again(&mut fx, space, window);
+
+        assert_eq!(fx.frame(space, window).size.width, widened);
+        assert_eq!(
+            fx.memory.affinity.window_width(&DisplayUuid::new("built-in"), window),
+            record
+        );
+    }
+
+    /// An app reports its windows on every refresh, and a rule's width it has already given a window
+    /// is not asked for again, so a width the user gave it since stays.
+    #[test]
+    fn a_rule_does_not_size_a_window_again_on_its_app_s_next_report() {
+        let (mut fx, space, window, widened, record) = rule_sized_editor_widened_by_the_user();
+
+        assert_eq!(report_the_editor_again(&mut fx, space, window), 0);
+
+        assert_eq!(fx.frame(space, window).size.width, widened);
+        assert_eq!(
+            fx.memory.affinity.window_width(&DisplayUuid::new("built-in"), window),
+            record
+        );
+    }
+
+    /// A rule's width changed since it sized a window wins over the width the window has, once: an
+    /// edit to a rule shows on the windows it sizes rather than being beaten by what they remember.
+    #[test]
+    fn a_rule_s_width_changed_since_it_sized_a_window_wins_over_the_window_s_own() {
+        let (mut fx, space, window, _, record) = rule_sized_editor_widened_by_the_user();
+        fx.engine.update_virtual_workspace_settings(&VirtualWorkspaceSettings {
+            app_rules: vec![WindowRule {
+                default_column_width: Some(300.0),
+                ..WindowRule::when(RuleMatch::app("com.example.Editor"))
+            }],
+            ..VirtualWorkspaceSettings::default()
+        });
+
+        assert_eq!(report_the_editor_again(&mut fx, space, window), 1);
+
+        assert_eq!(fx.frame(space, window).size.width, 300.0);
+        let edited = fx.memory.affinity.window_width(&DisplayUuid::new("built-in"), window);
+        assert_ne!(edited, record);
+        let ws = fx.engine.active_workspace(space).expect("an active workspace");
+        let layout = fx.engine.workspace_layouts.active(space, ws).expect("a layout");
+        assert_eq!(
+            edited,
+            fx.engine.workspace_tree(ws).carried_width(layout, window)
+        );
+        assert_eq!(report_the_editor_again(&mut fx, space, window), 0, "once");
+    }
+
+    /// A rule edited to set a height alone sets no width, so the width the window has of its own
+    /// stands, in the layout and in the record.
+    #[test]
+    fn a_rule_edited_to_set_no_width_leaves_the_window_s_own() {
+        let (mut fx, space, window, widened, record) = rule_sized_editor_widened_by_the_user();
+        fx.engine.update_virtual_workspace_settings(&VirtualWorkspaceSettings {
+            app_rules: vec![WindowRule {
+                default_window_height: Some(300.0),
+                ..WindowRule::when(RuleMatch::app("com.example.Editor"))
+            }],
+            ..VirtualWorkspaceSettings::default()
+        });
+
+        assert_eq!(report_the_editor_again(&mut fx, space, window), 1);
+
+        assert_eq!(fx.frame(space, window).size.width, widened);
+        assert_eq!(
+            fx.memory.affinity.window_width(&DisplayUuid::new("built-in"), window),
+            record
+        );
     }
 
     #[test]
