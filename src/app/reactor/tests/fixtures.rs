@@ -429,30 +429,44 @@ pub fn strip_movements(
 
 /// The `cmd` field of every event logged while `run` runs, as the log prints it.
 pub fn logged_commands(run: impl FnOnce()) -> Vec<String> {
+    logged("cmd", run).into_iter().map(|(_, value)| value).collect()
+}
+
+/// The level and `field` of every event logged with that field while `run` runs, the field as the
+/// log prints it.
+pub fn logged(field: &'static str, run: impl FnOnce()) -> Vec<(tracing::Level, String)> {
     use std::sync::{Arc, Mutex};
 
     use tracing::field::{Field, Visit};
     use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
-    struct Commands(Arc<Mutex<Vec<String>>>);
-    struct CommandField<'a>(&'a mut Option<String>);
-    impl Visit for CommandField<'_> {
+    struct Fields {
+        name: &'static str,
+        seen: Arc<Mutex<Vec<(tracing::Level, String)>>>,
+    }
+    struct Named<'a>(&'static str, &'a mut Option<String>);
+    impl Visit for Named<'_> {
         fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-            if field.name() == "cmd" {
-                *self.0 = Some(format!("{value:?}"));
+            if field.name() == self.0 {
+                *self.1 = Some(format!("{value:?}"));
             }
         }
     }
-    impl<S: tracing::Subscriber> Layer<S> for Commands {
+    impl<S: tracing::Subscriber> Layer<S> for Fields {
         fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
-            let mut command = None;
-            event.record(&mut CommandField(&mut command));
-            self.0.lock().unwrap().extend(command);
+            let mut value = None;
+            event.record(&mut Named(self.name, &mut value));
+            if let Some(value) = value {
+                self.seen.lock().unwrap().push((*event.metadata().level(), value));
+            }
         }
     }
 
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let subscriber = tracing_subscriber::registry().with(Commands(seen.clone()));
+    let subscriber = tracing_subscriber::registry().with(Fields {
+        name: field,
+        seen: seen.clone(),
+    });
     // A callsite another test thread registers while no subscriber is set caches "never" for every
     // dispatcher; rebuilding the cache under this one makes the run's events reach it.
     tracing::subscriber::with_default(subscriber, || {

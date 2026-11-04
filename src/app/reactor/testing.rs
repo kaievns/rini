@@ -449,6 +449,12 @@ impl Reactor {
         &mut self.state.display_memory.affinity
     }
 
+    pub(crate) fn launch_memory_mut(
+        &mut self,
+    ) -> &mut crate::workspaces::domain::launch_memory::LaunchMemory {
+        &mut self.state.display_memory.launch
+    }
+
     pub(crate) fn config(&self) -> &Config { &self.config }
 
     pub(crate) fn config_mut(&mut self) -> &mut Config { &mut self.config }

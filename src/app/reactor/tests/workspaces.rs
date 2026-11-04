@@ -296,6 +296,95 @@ fn a_layout_command_is_logged_once_by_its_wire_name() {
     assert_eq!(logged, ["MoveFocus(Right)", "SwitchToWorkspace(1)"]);
 }
 
+/// A window that takes no remembered slot says why at `info`, the level the service keeps: logged
+/// at `debug`, no give-up ever reached the service's log (`src/workspaces/docs/launch-memory.md`).
+#[test]
+fn a_window_that_takes_no_remembered_slot_says_why_at_info() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+
+    let logged = logged("gave_up", || {
+        apps.make_app_and_settle_on_screen(
+            &mut reactor,
+            screen,
+            SpaceId::new(1),
+            1,
+            make_windows(1),
+        );
+    });
+
+    assert!(
+        logged.contains(&(tracing::Level::INFO, "NothingRemembered".to_owned())),
+        "{logged:?}"
+    );
+}
+
+/// Why the first window of `com.testapp1` takes no slot, when it left one in workspace
+/// `workspace_index` under the test display and `rules` are in force.
+fn launch_give_ups(
+    workspace_index: usize,
+    rules: Vec<crate::windows::domain::rules::WindowRule>,
+) -> Vec<(tracing::Level, String)> {
+    let (mut apps, mut reactor) = test_context();
+    reactor.set_test_app_rules(rules);
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let display = rini_core::ids::DisplayUuid::new("test-display-0");
+    reactor.launch_memory_mut().remember(
+        "com.testapp1",
+        &crate::workspaces::domain::display_setup::SetupId::of(std::slice::from_ref(&display)),
+        vec![crate::workspaces::domain::launch_memory::ProjectedSlot {
+            title: None,
+            display_uuid: display,
+            workspace_index,
+            width: crate::workspaces::domain::launch_memory::ProjectedWidth::Known(None),
+        }],
+    );
+    logged("gave_up", || {
+        apps.make_app_and_settle_on_screen(
+            &mut reactor,
+            screen,
+            SpaceId::new(1),
+            1,
+            make_windows(1),
+        );
+    })
+}
+
+/// An opening rule that applies to a window is placed over its remembered slot, and the log says
+/// that is why the slot went unread.
+#[test]
+fn a_rule_placed_over_a_remembered_slot_says_so_at_info() {
+    let rule = crate::windows::domain::rules::WindowRule {
+        open_on_output: Some(crate::workspaces::domain::display_pin::DisplayRole::Internal),
+        ..crate::windows::domain::rules::WindowRule::when(
+            crate::windows::domain::rules::RuleMatch::app("com.testapp1"),
+        )
+    };
+    let logged = launch_give_ups(0, vec![rule]);
+    assert!(
+        logged.contains(&(tracing::Level::INFO, "RuleApplies".to_owned())),
+        "{logged:?}"
+    );
+    assert!(
+        !launch_give_ups(0, vec![]).iter().any(|(_, why)| why == "RuleApplies"),
+        "and with no rule it is not said"
+    );
+}
+
+/// A remembered slot whose workspace the window cannot go to says so, rather than leaving the
+/// window at today's defaults in silence.
+#[test]
+fn a_slot_whose_workspace_is_gone_says_so_at_info() {
+    let logged = launch_give_ups(99, vec![]);
+    assert!(
+        logged.contains(&(
+            tracing::Level::INFO,
+            "WorkspaceRefused { workspace_index: 99 }".to_owned()
+        )),
+        "{logged:?}"
+    );
+}
+
 #[test]
 fn workspace_switch_batches_all_window_positions() {
     let (mut apps, mut reactor) = test_context();

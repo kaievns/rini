@@ -16,6 +16,7 @@ use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::{VirtualWorkspaceId, WorkspaceError};
 use crate::workspaces::engine::LayoutEngine;
 use crate::workspaces::engine::discovery::Admitted;
+use crate::workspaces::engine::launch::NoLaunchSlot;
 use crate::workspaces::{AppRuleEffects, AppRuleResult, RuleFloating, WindowStore};
 
 impl LayoutEngine {
@@ -137,48 +138,29 @@ impl LayoutEngine {
         // Where this application's windows were, but only when the config had nothing to say and the
         // window has no assignment already. This is the first sighting of a launching application's
         // window, well before `WindowAdded`, so it is the only place the answer can still be changed.
-        if decision == AppRuleDecision::NoMatch
-            && self
-                .virtual_workspace_manager
-                .workspace_for_window(window_store, space, window_id)
-                .is_none()
-            && let Some(app_id) = app_bundle_id
-            && let Some(slot) = self.launch_slot_for_new_window(
-                window_store,
-                memory,
-                window_id,
-                app_id,
-                window_title,
-            )
-            && let Some(workspace_id) = self
-                .virtual_workspace_manager
-                .list_workspaces(space)
-                .get(slot.workspace_index)
-                .map(|(id, _)| *id)
-            && self.virtual_workspace_manager.assign_window_to_workspace(
-                window_store,
-                space,
-                window_id,
-                workspace_id,
-            )
-        {
-            memory.affinity.set_window_home_if_absent(window_id, &slot.display_uuid);
-            if let Some(width) = slot.width {
-                memory.affinity.set_window_width(&slot.display_uuid, window_id, width);
+        let unassigned = self
+            .virtual_workspace_manager
+            .workspace_for_window(window_store, space, window_id)
+            .is_none();
+        if unassigned && let Some(app_id) = app_bundle_id {
+            match decision {
+                AppRuleDecision::NoMatch => {
+                    if let Some(effects) = self.place_from_launch_slot(
+                        window_store,
+                        memory,
+                        window_id,
+                        space,
+                        app_id,
+                        window_title,
+                    ) {
+                        return Ok(AppRuleResult::Managed(effects));
+                    }
+                }
+                AppRuleDecision::Managed { .. } if self.has_launch_slots(memory, app_id) => {
+                    self.log_no_launch_slot(window_id, app_id, NoLaunchSlot::RuleApplies);
+                }
+                AppRuleDecision::Managed { .. } | AppRuleDecision::Unmanaged => {}
             }
-            debug!(
-                idx = window_id.idx.get(),
-                workspace = slot.workspace_index,
-                width = ?slot.width,
-                "placing a relaunched window where it was"
-            );
-            return Ok(AppRuleResult::Managed(AppRuleEffects {
-                workspace_id,
-                floating: RuleFloating::as_is(self.floating.is_floating(window_id)),
-                position: None,
-                size: None,
-                focus: false,
-            }));
         }
 
         self.virtual_workspace_manager.apply_app_rule_decision(
@@ -187,6 +169,57 @@ impl LayoutEngine {
             space,
             decision,
         )
+    }
+
+    /// Puts `window_id` in the workspace its application's remembered slot names, with the slot's
+    /// home and width, or logs why it cannot.
+    fn place_from_launch_slot(
+        &mut self,
+        window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
+        window_id: WindowId,
+        space: SpaceId,
+        app_id: &str,
+        title: Option<&str>,
+    ) -> Option<AppRuleEffects> {
+        let slot =
+            self.launch_slot_for_new_window(window_store, memory, window_id, app_id, title)?;
+        let placed = self
+            .virtual_workspace_manager
+            .list_workspaces(space)
+            .get(slot.workspace_index)
+            .map(|(id, _)| *id)
+            .filter(|workspace_id| {
+                self.virtual_workspace_manager.assign_window_to_workspace(
+                    window_store,
+                    space,
+                    window_id,
+                    *workspace_id,
+                )
+            });
+        let Some(workspace_id) = placed else {
+            self.log_no_launch_slot(window_id, app_id, NoLaunchSlot::WorkspaceRefused {
+                workspace_index: slot.workspace_index,
+            });
+            return None;
+        };
+        memory.affinity.set_window_home_if_absent(window_id, &slot.display_uuid);
+        if let Some(width) = slot.width {
+            memory.affinity.set_window_width(&slot.display_uuid, window_id, width);
+        }
+        debug!(
+            idx = window_id.idx.get(),
+            workspace = slot.workspace_index,
+            width = ?slot.width,
+            "placing a relaunched window where it was"
+        );
+        Some(AppRuleEffects {
+            workspace_id,
+            floating: RuleFloating::as_is(self.floating.is_floating(window_id)),
+            position: None,
+            size: None,
+            focus: false,
+        })
     }
 
     pub(super) fn apply_app_rule_outcome(

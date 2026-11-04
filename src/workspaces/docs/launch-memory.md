@@ -108,10 +108,15 @@ active display size (`width_from_layouts` over `configurations_for`). A workspac
 strip per display size, so a window made full width on the external is recorded in that
 size's layout, and while the built-in is showing, the active layout knows nothing about it.
 
-Every way the lookup can give up is logged, which it was not: `launch_slot_for_new_window`
-returned `None` for four different reasons in silence, so each time a width went missing
-the reason had to be reconstructed from the layout file. A missing topology is a `warn`,
-because nothing remembered can be found at all until it arrives.
+Every way the lookup can give up is logged, as a `NoLaunchSlot` in the `gave_up` field:
+`launch_slot_for_new_window` returned `None` for four different reasons in silence, so each
+time a width went missing the reason had to be reconstructed from the layout file. They are
+`info`, the lowest level the service keeps (`RUST_LOG=error,warn,info` in the launch agent):
+at `debug`, `grep -c "remembered\|relaunched"` over the service's log on 2026-11-04 found 0.
+A missing topology is a `warn`, because nothing remembered can be found at all until it
+arrives. Two give-ups happen outside the lookup and are logged the same way: a window rule
+applying to a window whose application left slots (`RuleApplies`, the rule placed over the
+slot), and a slot whose workspace the window cannot go to (`WorkspaceRefused`).
 
 Two lookups also have to be right, and both were wrong first time:
 

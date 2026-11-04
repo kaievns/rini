@@ -875,3 +875,77 @@ fn the_layouts_tell_a_carried_width_from_the_default_and_from_a_window_none_hold
         LayoutWidth::Carried(ColumnWidth::FullWidth)
     );
 }
+
+/// A Ghostty window titled `title`, the store's `sys_id`th.
+fn terminal(title: &str, sys_id: u32) -> WindowState {
+    let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
+    WindowState {
+        info: WindowInfo {
+            is_standard: true,
+            is_root: true,
+            is_minimized: false,
+            is_resizable: true,
+            min_size: None,
+            max_size: None,
+            title: title.into(),
+            frame,
+            sys_id: Some(WindowServerId::new(sys_id)),
+            bundle_id: Some("com.mitchellh.ghostty".into()),
+            path: None,
+            ax_role: None,
+            ax_subrole: None,
+            is_modal: false,
+        },
+        frame_monotonic: frame,
+        is_manageable: true,
+        ignore_app_rule: false,
+    }
+}
+
+/// Each way the lookup gives up names itself, so the log says why a window got today's defaults.
+#[test]
+fn the_lookup_says_why_a_window_takes_no_remembered_slot() {
+    use crate::workspaces::domain::display_setup::SetupId;
+    use crate::workspaces::domain::launch_memory::Slot;
+    use crate::workspaces::engine::launch::NoLaunchSlot;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    const GHOSTTY: &str = "com.mitchellh.ghostty";
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let (first, second) = (WindowId::new(700, 1), WindowId::new(700, 2));
+    window_store.insert_window(first, terminal("~/p/rini", 7001));
+    window_store.insert_window(second, terminal("~/w/status", 7002));
+    let find = |engine: &LayoutEngine, memory: &DisplayMemory, window, title| {
+        engine.find_launch_slot(&window_store, memory, window, GHOSTTY, Some(title))
+    };
+
+    assert_eq!(
+        find(&engine, &memory, first, "~/p/rini"),
+        Err(NoLaunchSlot::NoTopology)
+    );
+
+    engine.set_connected_displays(vec![DisplayUuid::new(DISPLAY)]);
+    assert_eq!(
+        find(&engine, &memory, first, "~/p/rini"),
+        Err(NoLaunchSlot::NothingRemembered)
+    );
+
+    let slot = Slot {
+        title: Some("~/p/rini".into()),
+        display_uuid: DisplayUuid::new(DISPLAY),
+        workspace_index: 1,
+        width: None,
+    };
+    let topology = SetupId::of(&[DisplayUuid::new(DISPLAY)]);
+    memory.launch.remember(GHOSTTY, &topology, vec![slot.clone().into()]);
+    assert_eq!(find(&engine, &memory, first, "~/p/rini"), Ok(slot));
+
+    memory.affinity.set_window_home(first, &DisplayUuid::new(DISPLAY));
+    assert_eq!(
+        find(&engine, &memory, second, "~/w/status"),
+        Err(NoLaunchSlot::NoFreeSlot { ordinal: 1, of: 1 }),
+        "the first window, placed, holds the one slot"
+    );
+}

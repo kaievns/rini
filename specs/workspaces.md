@@ -93,6 +93,15 @@ moves along the strip within one workspace.
 - Where an application's windows belong MUST survive the application quitting, keyed so it does not
   depend on a process id: by bundle identifier and display topology.
 - A relaunched window MUST return to its remembered workspace AND its remembered width.
+- A window that takes no remembered place MUST say why in the log, at a level the running service
+  keeps, because a window that comes back at the default width is otherwise not explained by
+  anything the service writes.
+
+> **Found 2026-11-04, not reported.** Looking into Kai's report that day ("everything defaults to
+> 1/2 of my laptop screen, and even though we have the prevous sizes tracking it's buggy as fuck
+> and doesn't work all that well") found every way the lookup gives up logged at `debug`, below
+> the `info` the service keeps: the service's log for the day held no line about a remembered
+> place.
 
 ## Where it lives
 
