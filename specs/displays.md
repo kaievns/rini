@@ -103,8 +103,6 @@ context is arranged differently depending on what is plugged in, and rini rememb
   relaunch: a window can take a sibling's slot by order, its title matched as first seen, before its
   app settles it, and a docked window that opens on another display than its slot's takes the
   default there, inferred from the code (`src/workspaces/docs/launch-memory.md`, failures 5 and 6).
-  Nor under a rule that sets a width: the rule's width wins at a relaunch, changed or not
-  (`specs/workspaces.md`, "Relaunching an application").
 - A window's records MUST NOT outlive it into a window that takes its id. An id is the process id
   and the window server id, both reused after a reboot, and a removal that keeps the widths keeps
   them with no home, so a minimized window's width left in the file would size a different window

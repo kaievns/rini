@@ -98,10 +98,12 @@ moves along the strip within one workspace.
   its remembered workspace. A rule that floats a window or stops managing it MUST take nothing
   from a remembered place: the window opens where it would with none remembered, on the workspace
   on screen. A modal or a settings window has no column to keep, and the place its app left can be
-  on another workspace, where it would open out of view. A rule's width MUST win over the
-  remembered one, as a rule's width is a window's first (`specs/displays.md`). Not yet met: a width
-  the user gave a window a rule sizes is lost at its app's relaunch, though the rule's width has
-  not changed since: telling the two apart needs the rule's value kept with the place.
+  on another workspace, where it would open out of view. A rule's width MUST win over a remembered
+  width written before the rule set that value, as a rule's width is a window's first
+  (`specs/displays.md`). A width the user gave the window since, while the rule's value stayed the
+  same, MUST survive the relaunch. Not yet met: the rule's width wins at a relaunch, changed or
+  not, so a width the user gave a window a rule sizes is lost at its app's relaunch: telling the
+  two apart needs the rule's value kept with the place.
 
 > **Reported 2026-11-04.** "everything defaults to 1/2 of my laptop screen, and even though we
 > have the prevous sizes tracking it's buggy as fuck and doesn't work all that well, so i keep
