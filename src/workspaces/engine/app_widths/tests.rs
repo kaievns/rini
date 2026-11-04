@@ -831,6 +831,18 @@ fn a_minimized_window_still_there_after_rini_restarts_keeps_its_width() {
     assert_eq!(after.width(minimized), two_thirds());
 }
 
+/// After rini restarts a minimized window from the file is in no store until its app reports it,
+/// and a settled topology before that report leaves its width alone.
+#[test]
+fn a_minimized_window_from_the_file_keeps_its_width_through_a_pass_before_its_app_reports_it() {
+    let (mut after, minimized) = a_minimized_terminal_s_width_loaded(true);
+    after.engine.forget_affinity_for_dead_windows(&after.windows, &mut after.memory);
+    assert_eq!(
+        after.memory.affinity.window_width(&after.display, minimized),
+        two_thirds()
+    );
+}
+
 /// A window this session saw that leaves the window store with no close it heard of leaves no
 /// width behind, though it has no home.
 #[test]
