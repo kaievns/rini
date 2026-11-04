@@ -65,7 +65,7 @@ context is arranged differently depending on what is plugged in, and rini rememb
   window's widths. A minimize, a window briefly not manageable, one the window server leaves out of
   a snapshot or moves to another space, a drag to another space and a rule that stops managing it
   MUST each keep them, and a window that leaves native fullscreen under another id MUST hand them to
-  that id. A width only the layout holds, as a drag's or a rule's, MUST be recorded before such a
+  that id and be laid at them, though that id joins the strip before the old one leaves it. A width only the layout holds, as a drag's or a rule's, MUST be recorded before such a
   removal, and a launch slot's width MUST NOT replace one the window has of its own.
 - Every erase of a window's remembered width MUST be logged with why and the window's app and
   title, at a level the running service keeps, because a width that comes back at the default is

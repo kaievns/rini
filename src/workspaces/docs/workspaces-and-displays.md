@@ -126,7 +126,10 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   window left out of an authoritative snapshot, and the two removals in
   `reactor/display_homes.rs` of a window found not `EffectivelyManageable`. An id
   superseded on leaving native fullscreen hands its widths to the id that owns the
-  window now, where that id has none (`hand_widths`), and logs any it drops. Those two
+  window now, where that id has none (`hand_widths`), and logs any it drops. That id
+  is laid out before the old one is removed, at the default, so the removal lays its
+  column at the width handed over (`apply_remembered_width_where_laid`): the record
+  alone left it at the default until the next time it arrived in a strip. Those two
   removals in `reactor/display_homes.rs` log the window's role, title and state, at
   `info` only when the window still had an assignment, a floating place, a home or a
   strip place: one that stays unmanageable is removed again on every authoritative

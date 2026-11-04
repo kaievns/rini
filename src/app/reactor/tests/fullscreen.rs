@@ -682,3 +682,36 @@ fn a_window_back_from_fullscreen_is_still_offered_when_its_fullscreen_space_repo
         .collect();
     assert!(offered.contains(&call), "the switcher offers the window again");
 }
+
+/// Back from native fullscreen with its window-server id tracked under another id, the window the
+/// record names is laid at the width that other id had, not only recorded with it: it is laid out
+/// before the other id is removed, so the width the removal hands over has to reach its column.
+#[test]
+fn a_window_back_from_fullscreen_under_another_id_is_laid_at_the_width_its_old_id_had() {
+    let (mut apps, mut reactor) = test_context();
+    let frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let user_space = SpaceId::new(1);
+    let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
+    let (owner, old) = (WindowId::new(1, 1), WindowId::new(1, 2));
+    reactor.handle_event(space_state_event(vec![frame], vec![Some(user_space)]));
+    make_active_app(&mut apps, &mut reactor, 1, make_windows(2), Some(old));
+    let width = |reactor: &mut Reactor, window| {
+        laid_out_frame(reactor, user_space, frame, window).map(|frame| frame.size.width)
+    };
+    let default = width(&mut reactor, owner).expect("the owner is laid out");
+    reactor.send_layout_event(LayoutEvent::WindowFocused(user_space, old));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
+    apps.simulate_until_quiet(&mut reactor);
+    let widened = width(&mut reactor, old).expect("the old id is laid out");
+    assert!(widened > default, "{widened} over {default}");
+
+    let wsid = reactor.test_window_server_id(owner);
+    reactor.window_server_appeared(wsid, fullscreen_space, SpaceEventKind::Fullscreen);
+    apps.simulate_until_quiet(&mut reactor);
+    assert!(!has_window_in_layout(&mut reactor, user_space, frame, owner));
+    let _ = reactor.windows_mut().track_window_server_id(wsid, old);
+    reactor.window_server_appeared(wsid, user_space, SpaceEventKind::User);
+
+    assert!(!has_window_in_layout(&mut reactor, user_space, frame, old));
+    assert_eq!(width(&mut reactor, owner), Some(widened));
+}

@@ -2299,6 +2299,38 @@ mod tests {
         assert_eq!(fx.memory.affinity.window_width(&display, old), None);
     }
 
+    /// The id that owns a window back from native fullscreen is laid out before its old id goes, at
+    /// the default: the width handed to it reaches its column, not only its record.
+    #[test]
+    fn a_width_handed_to_an_id_already_laid_out_is_the_width_it_is_laid_at() {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(98);
+        let (old, owner) = (WindowId::new(5157, 1), WindowId::new(5157, 2));
+        let display = DisplayUuid::new("built-in");
+        fx.expose(space, CGSize::new(1000.0, 1000.0));
+        fx.memory.affinity.set_display_space(&display, space);
+        let _ = fx.open(space, vec![OnScreenEntry::plain(old).sized(500.0, 500.0)]);
+        let _ = fx.event(LayoutEvent::WindowFocused(space, old));
+        let _ = fx.command(space, LayoutCommand::ToggleFullscreenWithinGaps);
+        let width_of = |fx: &mut EngineFixture, window| {
+            fx.frames(space)
+                .into_iter()
+                .find(|(laid, _)| *laid == window)
+                .map(|(_, frame)| frame.size.width)
+        };
+        let full = width_of(&mut fx, old).expect("the old id is laid out");
+        let _ = fx.open(space, vec![
+            OnScreenEntry::plain(old).sized(500.0, 500.0),
+            OnScreenEntry::plain(owner).sized(500.0, 500.0),
+        ]);
+        let default = width_of(&mut fx, owner).expect("the owner is laid out");
+        assert!(full > default, "{full} over {default}");
+
+        let _ = fx.event(LayoutEvent::WindowRemoved(old, Removal::OwnedByAnotherId(owner)));
+
+        assert_eq!(width_of(&mut fx, owner), Some(full));
+    }
+
     #[test]
     fn removing_unknown_window_does_not_rebalance_layout() {
         let mut fx = EngineFixture::new();

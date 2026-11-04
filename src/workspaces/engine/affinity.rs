@@ -209,6 +209,27 @@ impl LayoutEngine {
         memory.affinity.set_window_width(&display, window, width);
     }
 
+    /// Lay `window`'s column at the width it has recorded on the display it is laid out on, when it
+    /// is in a strip and has one: a window given a width after it joined its strip, as the id that
+    /// owns a window back from native fullscreen is.
+    pub(super) fn apply_remembered_width_where_laid(
+        &mut self,
+        window_store: &WindowStore,
+        memory: &DisplayMemory,
+        window: WindowId,
+    ) {
+        let Some(assignment) = window_store.workspace_info_for_window(window) else {
+            return;
+        };
+        let (space, workspace_id) = (assignment.space, assignment.workspace_id);
+        let Some(layout) = self.workspace_layouts.active(space, workspace_id) else {
+            return;
+        };
+        if self.workspace_tree(workspace_id).contains_window(layout, window) {
+            self.apply_remembered_column_width(memory, space, workspace_id, layout, window);
+        }
+    }
+
     /// Re-apply the width `window` last had on the display owning `space`.
     ///
     /// Called when a window ARRIVES in a strip — a new workspace, or a new display. A fresh
