@@ -8,7 +8,7 @@ use tracing::{debug, info};
 use super::events::EventOutcome;
 use super::{Reactor, ScreenInfo, WindowFilter};
 use crate::windows::domain::rules::AppRuleDecision;
-use crate::workspaces::domain::display_affinity::SetupChange;
+use crate::workspaces::domain::display_affinity::{Erase, SetupChange};
 use crate::workspaces::domain::display_pin::display_for_role;
 use crate::workspaces::{LayoutEvent, Removal};
 
@@ -25,7 +25,8 @@ impl Reactor {
             .iter()
             .filter_map(|screen| screen.display_uuid_owned())
             .collect();
-        let change = self.state.display_memory.affinity.use_setup(attached);
+        let (change, unadopted) = self.state.display_memory.affinity.use_setup(attached);
+        self.layout_engine.log_erased_widths(Erase::Unadopted, &unadopted);
         if !matches!(change, SetupChange::Unchanged | SetupChange::Refused) {
             info!(
                 setup = %self.state.display_memory.affinity.current_setup(),
@@ -431,22 +432,37 @@ impl Reactor {
     }
 
     /// Takes `wid`, found not manageable on `space`, out of every layout, and logs it with why: the
-    /// removal forgets its width records, which nothing but this line otherwise explains.
+    /// removal forgets its width records, which nothing but this line otherwise explains. At `info`
+    /// only when it takes something away, since a window that stays unmanageable comes through here
+    /// on every authoritative snapshot.
     fn remove_unmanageable(&mut self, wid: WindowId, space: SpaceId, why: Removal) {
+        let assigned = self.affinity().assigned_space_for_window_id(wid);
+        let takes_away = assigned.is_some()
+            || self.layout_engine.is_window_floating(wid)
+            || self.state.display_memory.affinity.remembers_window(wid);
         let window = self.state.windows.window(wid);
-        info!(
-            pid = wid.pid,
-            idx = wid.idx.get(),
-            ?space,
-            assigned = ?self.affinity().assigned_space_for_window_id(wid),
-            title = window.map(|window| window.info.title.as_str()),
-            role = window.and_then(|window| window.info.ax_role.as_deref()),
-            subrole = window.and_then(|window| window.info.ax_subrole.as_deref()),
-            minimized = window.map(|window| window.info.is_minimized),
-            manageable = window.map(|window| window.is_manageable),
-            ?why,
-            "taking a window that is not manageable out of every layout"
-        );
+        macro_rules! log_removal {
+            ($level:ident) => {
+                $level!(
+                    pid = wid.pid,
+                    idx = wid.idx.get(),
+                    ?space,
+                    ?assigned,
+                    title = window.map(|window| window.info.title.as_str()),
+                    role = window.and_then(|window| window.info.ax_role.as_deref()),
+                    subrole = window.and_then(|window| window.info.ax_subrole.as_deref()),
+                    minimized = window.map(|window| window.info.is_minimized),
+                    manageable = window.map(|window| window.is_manageable),
+                    ?why,
+                    "taking a window that is not manageable out of every layout"
+                )
+            };
+        }
+        if takes_away {
+            log_removal!(info);
+        } else {
+            log_removal!(debug);
+        }
         self.send_layout_event(LayoutEvent::WindowRemoved(wid, why));
     }
 

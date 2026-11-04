@@ -98,16 +98,23 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   fourteen live windows were homed to the built-in; repatriation reported
   `homed=[3 windows] to_move=[]` and the external came back empty every time.
 - **Every erase of a width record is logged at `info` with why** (`log_erased_widths`,
-  its `Erase`): the window's removal from every layout with its `Removal`, its app
-  quitting, the sweep above, or a width command putting the column back at the default.
-  `WindowRemoved` carries the `Removal`, and forgets every record of the window, so it
-  erases widths on more paths than a close: a minimize, a drag to another native space,
-  a window turning unmanageable on a refresh, a rule that no longer manages it, an id
+  its `Erase`), and with the window's app and title as its persistence fingerprint last
+  recorded them, read before the fingerprint is forgotten: the window's removal from
+  every layout with its `Removal`, its app quitting, the sweep above, a width command
+  putting the column back at the default, or the first arrangement named being one
+  already known, which keeps its own records rather than adopting those written before
+  any was named (`Unadopted`; only a file that names arrangements and none in force gets
+  there). `WindowRemoved` carries the `Removal`, and forgets every record of the window,
+  so it erases widths on more paths than a close: a minimize, a drag to another native
+  space, a window turning unmanageable on a refresh of the window server's facts or on
+  its app reporting it again (one variant each), a rule that no longer manages it, an id
   superseded on leaving native fullscreen, a window left out of an authoritative
   snapshot, and the two removals in `reactor/display_homes.rs` of a window found not
-  `EffectivelyManageable`, which log the window's role, title and state as well. The
-  service's log on 2026-11-04 could not say which path erased a width lost across a
-  sleep, because none of them was logged.
+  `EffectivelyManageable`, which log the window's role, title and state as well, at
+  `info` only when the window still had an assignment, a floating place or a record:
+  one that stays unmanageable is removed again on every authoritative snapshot, and
+  logs those at `debug`. The service's log on 2026-11-04 could not say which path
+  erased a width lost across a sleep, because none of them was logged.
 - **A pin beats an observation and loses to a choice.** A window rule naming
   `open-on-output "internal"` decides where a window belongs when the arrangement has
   not been told otherwise. That needs three levels, not two, so `Setup` records

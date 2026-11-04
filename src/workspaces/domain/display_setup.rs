@@ -135,6 +135,13 @@ impl Setup {
         self.home_by_intent.contains(&window)
     }
 
+    /// Whether this arrangement holds a home, a strip place or a width for `window`.
+    pub fn remembers(&self, window: WindowId) -> bool {
+        self.window_home.contains_key(&window)
+            || self.display_strip.values().any(|strip| strip.contains(&window))
+            || self.window_width.values().any(|widths| widths.contains_key(&window))
+    }
+
     /// Forgets `window`, and says which widths it had here, by display.
     pub fn forget_window(&mut self, window: WindowId) -> Vec<(DisplayUuid, ColumnWidth)> {
         self.window_home.remove(&window);

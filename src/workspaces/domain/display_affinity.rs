@@ -66,6 +66,9 @@ pub enum Erase {
     Gone,
     /// A width command put its column back at the display's default.
     AtDefault,
+    /// Written before any arrangement was named, and the first one named was already known, so it
+    /// kept its own records rather than adopting these.
+    Unadopted,
 }
 
 /// Why the reactor takes a window out of every layout, forgetting its records with it.
@@ -75,8 +78,10 @@ pub enum Removal {
     Closed,
     /// The window was minimized.
     Minimized,
-    /// A refresh found a manageable window turned unmanageable.
-    TurnedUnmanageable,
+    /// A refresh of the window server's facts found a manageable window turned unmanageable.
+    TurnedUnmanageableOnRefresh,
+    /// Its app reporting the window again found a manageable window turned unmanageable.
+    TurnedUnmanageableOnDiscovery,
     /// Reassigning the window to the space the window server has it on found it not manageable.
     UnmanageableWhenReassigned,
     /// Putting the window back in its space's active layout found it not manageable.
@@ -203,14 +208,21 @@ impl DisplayAffinity {
     /// An arrangement of no displays is refused outright — macOS reports an empty screen list
     /// mid-reconfiguration, and switching to it would hand out the empty arrangement's records and
     /// then adopt the evacuation as the layout.
-    pub fn use_setup(&mut self, displays: impl IntoIterator<Item = DisplayUuid>) -> SetupChange {
+    ///
+    /// Says which widths written before any arrangement was named it erased: a known arrangement
+    /// keeps its own records rather than adopting them, which happens only when a file names
+    /// arrangements and none in force.
+    pub fn use_setup(
+        &mut self,
+        displays: impl IntoIterator<Item = DisplayUuid>,
+    ) -> (SetupChange, Vec<ErasedWidth>) {
         let owned: Vec<DisplayUuid> = displays.into_iter().collect();
         let id = SetupId::of(&owned);
         if id.is_empty() {
-            return SetupChange::Refused;
+            return (SetupChange::Refused, Vec::new());
         }
         if id == self.current && self.setups.contains_key(&id) {
-            return SetupChange::Unchanged;
+            return (SetupChange::Unchanged, Vec::new());
         }
 
         let unnamed = self.take_unnamed();
@@ -218,16 +230,27 @@ impl DisplayAffinity {
         let known = matches!(entry, std::collections::hash_map::Entry::Occupied(_));
         let setup = entry.or_default();
         let mut adopted = false;
+        let mut unadopted = Vec::new();
         if !known && setup.is_empty() && !unnamed.is_empty() {
             *setup = unnamed;
             adopted = true;
+        } else {
+            for (display, widths) in unnamed.window_width {
+                unadopted.extend(widths.into_iter().map(|(window, width)| ErasedWidth {
+                    window,
+                    setup: SetupId::default(),
+                    display: display.clone(),
+                    width,
+                }));
+            }
         }
         self.current = id;
-        match (known, adopted) {
+        let change = match (known, adopted) {
             (true, _) => SetupChange::Known,
             (false, true) => SetupChange::Adopted,
             (false, false) => SetupChange::New,
-        }
+        };
+        (change, unadopted)
     }
 
     /// The arrangement in force.
@@ -401,6 +424,11 @@ impl DisplayAffinity {
         windows
     }
 
+    /// Whether any arrangement holds a record of `window`, which `forget_window` would erase.
+    pub fn remembers_window(&self, window: WindowId) -> bool {
+        self.setups.values().any(|setup| setup.remembers(window))
+    }
+
     /// Forget a window in EVERY arrangement, not only the one in force.
     ///
     /// A `WindowId` dies with its window, so a record of it under another arrangement is a record
@@ -560,7 +588,7 @@ mod tests {
         affinity.use_setup(laptop());
         affinity.set_window_home(win(1), &uuid("builtin"));
 
-        let change = affinity.use_setup(vec![uuid("builtin"), uuid("projector")]);
+        let (change, _) = affinity.use_setup(vec![uuid("builtin"), uuid("projector")]);
         assert_eq!(change, SetupChange::New);
         assert!(
             !change.restores_windows(),
@@ -580,7 +608,7 @@ mod tests {
         affinity.set_window_home(win(1), &uuid("studio"));
 
         affinity.use_setup(laptop());
-        let change = affinity.use_setup(docked());
+        let (change, _) = affinity.use_setup(docked());
         assert_eq!(change, SetupChange::Known);
         assert!(change.restores_windows());
         assert_eq!(affinity.windows_homed_to(&uuid("studio")), vec![win(1)]);
@@ -594,7 +622,7 @@ mod tests {
         affinity.use_setup(docked());
         affinity.set_window_home(win(1), &uuid("studio"));
 
-        assert_eq!(affinity.use_setup(Vec::new()), SetupChange::Refused);
+        assert_eq!(affinity.use_setup(Vec::new()).0, SetupChange::Refused);
         assert_eq!(
             affinity.window_home(win(1)),
             Some(&uuid("studio")),
@@ -610,7 +638,7 @@ mod tests {
         affinity.set_window_home(win(1), &uuid("builtin"));
         affinity.set_window_width(&uuid("builtin"), win(1), ColumnWidth::FullWidth);
 
-        let change = affinity.use_setup(laptop());
+        let (change, _) = affinity.use_setup(laptop());
         assert_eq!(change, SetupChange::Adopted);
         assert!(change.restores_windows());
         assert_eq!(affinity.window_home(win(1)), Some(&uuid("builtin")));
@@ -628,8 +656,34 @@ mod tests {
         affinity.set_window_home(win(1), &uuid("builtin"));
         affinity.use_setup(laptop());
 
-        assert_eq!(affinity.use_setup(docked()), SetupChange::New);
+        assert_eq!(affinity.use_setup(docked()).0, SetupChange::New);
         assert_eq!(affinity.window_home(win(1)), None);
+    }
+
+    /// A known arrangement keeps its own records, so the unnamed ones are erased, and it says which
+    /// widths went. Only a file that names arrangements and none in force gets here.
+    #[test]
+    fn a_known_arrangement_says_which_unnamed_widths_it_did_not_adopt() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(laptop());
+        affinity.set_window_home(win(2), &uuid("builtin"));
+        affinity.current = SetupId::default();
+        affinity.set_window_home(win(1), &uuid("builtin"));
+        affinity.set_window_width(&uuid("builtin"), win(1), ColumnWidth::FullWidth);
+
+        let (change, unadopted) = affinity.use_setup(laptop());
+        assert_eq!(change, SetupChange::Known);
+        assert_eq!(unadopted, [ErasedWidth {
+            window: win(1),
+            setup: SetupId::default(),
+            display: uuid("builtin"),
+            width: ColumnWidth::FullWidth,
+        }]);
+        assert_eq!(affinity.window_width(&uuid("builtin"), win(1)), None);
+
+        let mut adopting = DisplayAffinity::default();
+        adopting.set_window_width(&uuid("builtin"), win(1), ColumnWidth::FullWidth);
+        assert_eq!(adopting.use_setup(laptop()), (SetupChange::Adopted, Vec::new()));
     }
 
     /// A dead window's id can never match again, and the arrangement it is recorded under may not be
@@ -675,14 +729,14 @@ mod tests {
     fn naming_the_arrangement_in_force_is_unchanged() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(docked());
-        let change = affinity.use_setup(docked());
+        let (change, _) = affinity.use_setup(docked());
         assert_eq!(change, SetupChange::Unchanged);
         assert!(
             change.restores_windows(),
             "a quick unplug and replug with nothing named in between still restores"
         );
         assert_eq!(
-            affinity.use_setup(vec![uuid("studio"), uuid("builtin")]),
+            affinity.use_setup(vec![uuid("studio"), uuid("builtin")]).0,
             SetupChange::Unchanged,
             "and the order the screens are reported in is not a change"
         );

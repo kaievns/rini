@@ -54,7 +54,7 @@ impl Reactor {
                 if was_manageable && !manageable {
                     self.send_layout_event(LayoutEvent::WindowRemoved(
                         wid,
-                        crate::workspaces::Removal::TurnedUnmanageable,
+                        crate::workspaces::Removal::TurnedUnmanageableOnRefresh,
                     ));
                 }
             }

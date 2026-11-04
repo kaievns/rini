@@ -58,9 +58,11 @@ context is arranged differently depending on what is plugged in, and rini rememb
 - A remembered width MUST be written so a rini from before its kind existed still reads the file. A
   rini that cannot read the file starts with no homes, widths or launch slots, and its next save
   writes that over the file, so going back a version would forget the machine.
-- Every erase of a window's remembered width MUST be logged with why, at a level the running
-  service keeps, because a width that comes back at the default is otherwise not traceable to
-  what erased it.
+- Every erase of a window's remembered width MUST be logged with why and the window's app and
+  title, at a level the running service keeps, because a width that comes back at the default is
+  otherwise not traceable to what erased it. A removal that erases nothing MUST log below that
+  level: a window that stays unmanageable is removed again on every snapshot, and a line per
+  snapshot buries the one removal that erased.
 
 > **Found 2026-11-04, not reported.** Looking into Kai's report that day ("i keep getting everything
 > resetting back to 1/2") found widths lost across a sleep and wake that the service's log could not

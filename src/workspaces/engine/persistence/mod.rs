@@ -13,7 +13,6 @@ use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleEngine;
 use crate::workspaces::domain::display_affinity::Erase;
 use crate::workspaces::domain::display_memory::DisplayMemory;
-use crate::workspaces::engine::affinity::log_erased_widths;
 use crate::workspaces::settings::VirtualWorkspaceSettings;
 use crate::workspaces::{FloatingPositionStore, VirtualWorkspaceId, WindowStore, WorkspaceStore};
 
@@ -173,13 +172,20 @@ impl LayoutEngine {
         window: WindowId,
         why: Erase,
     ) {
+        self.log_erased_widths(why, &memory.affinity.forget_window(window));
         self.persistence.forget_window(window);
-        log_erased_widths(why, &memory.affinity.forget_window(window));
     }
 
     pub(super) fn forget_persisted_app(&mut self, memory: &mut DisplayMemory, pid: pid_t) {
+        self.log_erased_widths(Erase::AppQuit, &memory.affinity.forget_app(pid));
         self.persistence.forget_app(pid);
-        log_erased_widths(Erase::AppQuit, &memory.affinity.forget_app(pid));
+    }
+
+    /// The app and title `window` had when last seen, for a log line about it.
+    pub(super) fn recorded_identity(&self, window: WindowId) -> (Option<&str>, Option<&str>) {
+        self.persistence.fingerprint(window).map_or((None, None), |fingerprint| {
+            (fingerprint.app_id.as_deref(), fingerprint.title.as_deref())
+        })
     }
 
     pub(super) fn transfer_persisted_window_identity(

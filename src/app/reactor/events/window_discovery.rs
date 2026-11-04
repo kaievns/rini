@@ -72,7 +72,10 @@ fn sync_existing_window_state(
             }
             if was_manageable && !manageable {
                 crate::app::reactor::events::EventOutcome::default().with_layout_event(
-                    LayoutEvent::WindowRemoved(wid, crate::workspaces::Removal::TurnedUnmanageable),
+                    LayoutEvent::WindowRemoved(
+                        wid,
+                        crate::workspaces::Removal::TurnedUnmanageableOnDiscovery,
+                    ),
                 )
             } else {
                 crate::app::reactor::events::EventOutcome::default()
