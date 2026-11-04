@@ -444,29 +444,90 @@ mod before_app_widths {
 /// the file (`specs/displays.md`).
 #[test]
 fn a_file_with_app_widths_is_read_whole_by_the_rini_before_them() {
+    for file in [SCHEMA_6_APP_WIDTHS, SCHEMA_6_APP_WIDTHS_FROM_A_LATER_RINI] {
+        let old: before_app_widths::PersistedLayout =
+            ron::from_str(file).expect("the rini before app widths reads it");
+        assert_the_machine_s_memory_is_whole(
+            &old.display_memory.affinity,
+            &old.display_memory.launch,
+        );
+        assert_eq!(old.schema_version, 6);
+        assert_eq!(old.persistence.windows.len(), 6);
+        assert_eq!(old.virtual_workspace_manager.workspace_count(), 4);
+        assert_eq!(old.workspace_layouts.spaces().len(), 1);
+        let (_, _) = (&old.floating, &old.floating_positions);
+    }
+}
+
+/// The homes, a window's width and the launch slots both app-width fixtures hold.
+fn assert_the_machine_s_memory_is_whole(
+    affinity: &crate::workspaces::domain::display_affinity::DisplayAffinity,
+    launch: &crate::workspaces::domain::launch_memory::LaunchMemory,
+) {
     use crate::layout::ColumnWidth;
 
-    let old: before_app_widths::PersistedLayout =
-        ron::from_str(SCHEMA_6_APP_WIDTHS).expect("the rini before app widths reads it");
     let display = DisplayUuid::new("37D8832A-2D66-02CA-B9F7-8F30A301B230");
-    assert_eq!(old.schema_version, 6);
+    assert_eq!(affinity.space_for_display(&display), Some(SpaceId::new(52)));
     assert_eq!(
-        old.display_memory.affinity.space_for_display(&display),
-        Some(SpaceId::new(52))
-    );
-    assert_eq!(
-        old.display_memory.affinity.window_width(&display, WindowId::new(901, 4)),
+        affinity.window_width(&display, WindowId::new(901, 4)),
         Some(ColumnWidth::FullWidth)
     );
     let alone = crate::workspaces::domain::display_setup::SetupId::of([&display]);
-    assert_eq!(
-        old.display_memory.launch.slots("com.mitchellh.ghostty", &alone).len(),
-        6
+    assert_eq!(launch.slots("com.mitchellh.ghostty", &alone).len(), 6);
+}
+
+/// `SCHEMA_6_APP_WIDTHS` as a later rini might write it: fields this rini does not know on a
+/// record, its width and its shape, a width held in points alone, and two widths made under a rule
+/// rather than `default-column-width`.
+const SCHEMA_6_APP_WIDTHS_FROM_A_LATER_RINI: &str =
+    include_str!("layout-schema-6-app-widths-from-a-later-rini.ron");
+
+/// A later rini's file loads whole: a field this rini does not know is skipped, a record it cannot
+/// read is dropped alone, and every other width, home and launch slot is kept, where one unknown
+/// kind of width refused the file and every record in it (`specs/displays.md`).
+#[test]
+fn a_file_from_a_later_rini_loads_every_app_width_it_can_read_and_everything_else() {
+    use crate::displays::domain::screen::DisplayShape;
+    use crate::workspaces::domain::app_widths::{AppWidth, Overrode};
+
+    let loaded = LayoutEngine::deserialize_file(SCHEMA_6_APP_WIDTHS_FROM_A_LATER_RINI)
+        .expect("the bytes parse");
+    let engine = loaded.layout.expect("the layout loads");
+    assert_the_machine_s_memory_is_whole(&loaded.memory.affinity, &loaded.memory.launch);
+    assert_eq!(engine.virtual_workspace_manager.workspace_count(), 4);
+
+    let half = Overrode::DefaultColumnWidth(0.5);
+    let shape = |width_pt, height_pt, width_cm| DisplayShape { width_pt, height_pt, width_cm };
+    let (sixteen, thirty_two, fourteen) = (
+        shape(1728, 1085, 34),
+        shape(3008, 1660, 70),
+        shape(1512, 945, 30),
     );
-    assert_eq!(old.persistence.windows.len(), 6);
-    assert_eq!(old.virtual_workspace_manager.workspace_count(), 4);
-    assert_eq!(old.workspace_layouts.spaces().len(), 1);
-    let (_, _) = (&old.floating, &old.floating_positions);
+    let widths = &loaded.memory.app_widths;
+    let cases = [
+        (
+            "com.mitchellh.ghostty",
+            sixteen,
+            Some(AppWidth::Bounded(0.66667)),
+        ),
+        (
+            "com.mitchellh.ghostty",
+            thirty_two,
+            Some(AppWidth::Bounded(0.33333)),
+        ),
+        ("com.mitchellh.ghostty", fourteen, None),
+        ("com.google.Chrome", sixteen, Some(AppWidth::FullWidth)),
+        ("com.google.Chrome", thirty_two, None),
+        (
+            "com.microsoft.VSCode",
+            sixteen,
+            Some(AppWidth::Unbounded(0.83797)),
+        ),
+        ("com.apple.Safari", sixteen, None),
+    ];
+    for (app, shape, width) in cases {
+        assert_eq!(widths.width(app, shape, half), width, "{app} on {shape:?}");
+    }
 }
 
 /// The widths the file holds are read back as they were written, and written back the same, its

@@ -77,7 +77,8 @@ context is arranged differently depending on what is plugged in, and rini rememb
   it as the same width.
 - A remembered width MUST be written so a rini from before its kind existed still reads the file. A
   rini that cannot read the file starts with no homes, widths or launch slots, and its next save
-  writes that over the file, so going back a version would forget the machine.
+  writes that over the file, so going back a version would forget the machine. An
+  application's width a rini cannot read MUST cost that record alone, not the file.
 - A width the user set, by a command or by dragging an edge, MUST survive the display sleeping and
   waking, the window server removing and re-adding the window, a drag of the window, and its app's
   relaunch under a rule that sets no width (`specs/workspaces.md`, "Relaunching an application").

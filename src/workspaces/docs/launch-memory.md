@@ -144,10 +144,19 @@ it. Kai allowed that on 2026-11-04 ("2. yes"); a window's own records still shar
 - **In the file** as `display_memory.app_widths`, absent while empty, so a file with none is
   written back as it was. A rini from before it skips the key and reads the rest
   (`a_file_with_app_widths_is_read_whole_by_the_rini_before_them`).
+- **Readable past additions.** Each record is a struct of optional fields with no enum in it
+  (`StoredRecord`): a width is `(fraction:Some(0.66667))`, `(fraction:..,unbounded:true)` or
+  `(full:true)`, and its default `(default_column_width:Some(0.5))`. A field a later rini adds is
+  skipped. A record left without a field this rini reads, as a width held only in points or one
+  made under a rule rather than the default, is dropped alone, and the file loads with every
+  other record, home and slot (`a_file_from_a_later_rini_loads_every_app_width_it_can_read_and_everything_else`).
+  A later kind MUST leave those fields empty rather than fill them with a value this rini would
+  misread. The dropped records are not written back by this rini.
 
 Not built: a rule's width per display, an application's width carried as points from a display
 of another shape, and a default per class of application, which the window sizing research names
-Model B. `Overrode` is where a rule's value would be stored for a rule to rank against. Not met
+Model B. `Overrode` is where a rule's value would be stored for a rule to rank against, in a
+field of its own beside `default_column_width`. Not met
 either: an existing window moved onto a display it has no width on takes the default there, not
 its application's.
 

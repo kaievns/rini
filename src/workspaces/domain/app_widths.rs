@@ -20,7 +20,7 @@ pub const APP_WIDTHS_PER_APP: usize = 8;
 
 /// A width as a fraction of the display's usable width, absolute rather than an offset from
 /// `default-column-width`, so a different default on another display reads it as the same width.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AppWidth {
     /// Full width, the mode `Mod+F` enters.
     FullWidth,
@@ -60,7 +60,7 @@ impl AppWidth {
 /// The default a remembered width overrode. A width made under another value is not the user's
 /// answer to this one: an edit to the default MUST show on new windows, not be beaten by a width
 /// chosen against the old one (`specs/displays.md`).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Overrode {
     /// `layout › default-column-width`, as a fraction.
     DefaultColumnWidth(f64),
@@ -77,17 +77,17 @@ impl Overrode {
 }
 
 /// One application's width on one display shape.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AppWidthRecord {
-    pub shape: DisplayShape,
-    pub width: AppWidth,
-    pub overrode: Overrode,
+#[derive(Debug, Clone, PartialEq)]
+struct AppWidthRecord {
+    shape: DisplayShape,
+    width: AppWidth,
+    overrode: Overrode,
 }
 
 /// Every application's widths, by bundle id, each the most recently set first.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(from = "StoredAppWidths", into = "StoredAppWidths")]
 pub struct AppWidths {
-    #[serde(default)]
     apps: HashMap<String, Vec<AppWidthRecord>>,
 }
 
@@ -135,6 +135,123 @@ impl AppWidths {
     }
 
     pub fn is_empty(&self) -> bool { self.apps.is_empty() }
+}
+
+/// `AppWidths` as a file holds it: structs of optional fields and no enum, so a field a later rini
+/// adds is skipped by this one, and a record this one cannot read is dropped alone rather than
+/// refusing the file with every home and slot in it (`specs/displays.md`). A later kind of width or
+/// of default leaves the field this rini reads empty, so this rini drops that record rather than
+/// misreading it.
+#[derive(Default, Serialize, Deserialize)]
+struct StoredAppWidths {
+    #[serde(default)]
+    apps: HashMap<String, Vec<StoredRecord>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredRecord {
+    #[serde(default)]
+    shape: Option<DisplayShape>,
+    #[serde(default)]
+    width: StoredWidth,
+    #[serde(default)]
+    overrode: StoredOverrode,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct StoredWidth {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fraction: Option<f64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    unbounded: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    full: bool,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct StoredOverrode {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    default_column_width: Option<f64>,
+}
+
+impl StoredWidth {
+    fn of(width: AppWidth) -> Self {
+        match width {
+            AppWidth::FullWidth => Self { full: true, ..Self::default() },
+            AppWidth::Bounded(fraction) => Self {
+                fraction: Some(fraction),
+                ..Self::default()
+            },
+            AppWidth::Unbounded(fraction) => Self {
+                fraction: Some(fraction),
+                unbounded: true,
+                ..Self::default()
+            },
+        }
+    }
+
+    fn read(&self) -> Option<AppWidth> {
+        if self.full {
+            return Some(AppWidth::FullWidth);
+        }
+        let fraction = self.fraction.filter(|fraction| fraction.is_finite())?;
+        Some(if self.unbounded {
+            AppWidth::Unbounded(fraction)
+        } else {
+            AppWidth::Bounded(fraction)
+        })
+    }
+}
+
+impl StoredRecord {
+    fn read(&self) -> Option<AppWidthRecord> {
+        Some(AppWidthRecord {
+            shape: self.shape?,
+            width: self.width.read()?,
+            overrode: Overrode::DefaultColumnWidth(self.overrode.default_column_width?),
+        })
+    }
+}
+
+impl From<StoredAppWidths> for AppWidths {
+    fn from(stored: StoredAppWidths) -> Self {
+        let apps = stored
+            .apps
+            .into_iter()
+            .filter_map(|(app, records)| {
+                let mut records: Vec<_> = records.iter().filter_map(StoredRecord::read).collect();
+                records.truncate(APP_WIDTHS_PER_APP);
+                (!records.is_empty()).then_some((app, records))
+            })
+            .collect();
+        Self { apps }
+    }
+}
+
+impl From<AppWidths> for StoredAppWidths {
+    fn from(widths: AppWidths) -> Self {
+        let apps = widths
+            .apps
+            .into_iter()
+            .map(|(app, records)| {
+                let records = records
+                    .into_iter()
+                    .map(|record| {
+                        let Overrode::DefaultColumnWidth(default) = record.overrode;
+                        StoredRecord {
+                            shape: Some(record.shape),
+                            width: StoredWidth::of(record.width),
+                            overrode: StoredOverrode {
+                                default_column_width: Some(default),
+                            },
+                        }
+                    })
+                    .collect();
+                (app, records)
+            })
+            .collect();
+        Self { apps }
+    }
 }
 
 #[cfg(test)]
