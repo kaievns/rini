@@ -1,0 +1,12 @@
+window,pid_idx,reset_local,err_log_line,last_wake_local,preceding_event,failure
+Slack,904/30,2026-11-03 13:42:37,39,reboot 13:38,Slack launched 13:39:57; layout loaded 13:40:38 (err.log:1),2 (inferred)
+unidentified,,2026-11-04 09:27:46,182,09:26:44,,8 (timing)
+VS Code,894/2402,2026-11-04 09:58:27,286,09:26:44,MainWindowChanged on unknown window pid 894 09:58:12 (err.log:257),1 (inferred)
+Outlook,935/104,2026-11-04 10:01:18,363,09:26:44,,open
+Zen,1274/80,2026-11-04 12:49:20,650,12:38:30,re-add from=None 12:49:17 (err.log:646),3 (measured)
+Outlook,935/104,2026-11-04 13:25:43,683,13:22:02,,8 (timing)
+Slack,904/30,2026-11-04 14:12:20,751,14:11:35,860 at 13:32:54 display-off pass (err.log:727),open
+VS Code,894/2402,2026-11-04 14:13:18,859,14:11:35,,8 (timing)
+Zen,1274/80,2026-11-04 14:23:32,952,14:11:35,re-add from=None 13:00:55 (err.log:662 666); 860 at 13:32:54 (err.log:727),open
+VS Code,894/2891,2026-11-04 14:59:45,1100,14:11:35,MainWindowChanged on unknown window pid 894 14:59:18 (err.log:1086),1 (inferred)
+VS Code,894/2891,2026-11-04 15:12:44,1259,15:11:24,1722 at 15:08:52 display-off pass (err.log:1216),8 (measured)

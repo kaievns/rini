@@ -1,0 +1,79 @@
+== displays
+14in     1512x982  V=1506  column height=944  127.0 pt/in  [assumed default mode; 3024px at 254ppi]
+16in     1728x1117  V=1722  column height=1079  127.6 pt/in  [measured: CGDisplayScreenSize 344x222mm]
+27in 4K  2560x1440  V=2554  column height=1402  108.8 pt/in  [assumed looks-like 2560x1440]
+32in 4K  3008x1692  V=3002  column height=1654  109.6 pt/in  [measured: window server plist mode; 697mm wide]
+5K2K     3360x1418  V=3354  column height=1380  pt/in unknown  [Kai 2026-11-04: runs at 3360x1418; physical size unknown]
+5K2K if a 34in panel (796mm wide): 107.3 pt/in
+5K2K if a 40in panel (936mm wide): 91.2 pt/in
+
+== presets per display, pt
+14in     1/2=752  2/3=1003  1=1506
+16in     1/3=572  1/2=860  2/3=1147  1=1722
+27in 4K  1/4=636  1/3=849  1/2=1276  2/3=1702  1=2554
+32in 4K  1/4=748  1/3=999  1/2=1500  2/3=2000  1=3002
+5K2K     1/4=836  1/3=1116  1/2=1676  2/3=2235  1=3354
+
+== point widths Kai's fractions imply
+editor    14in 1=1506; 16in 1=1722; 32in 4K 1/2=1500; 5K2K 1/3=1116  spread x1.54
+browser   14in 1=1506; 16in 2/3=1147; 32in 4K 1/2=1500; 5K2K 1/3=1116  spread x1.35
+chat      14in 1=1506; 16in 1=1722; 32in 4K 1/2=1500  spread x1.15
+terminal  14in 1=1506; 16in 2/3=1147; 27in 4K 1/2=1276; 32in 4K 1/3=999; 5K2K 1/3=1116  spread x1.51
+narrow    14in 1/2=752; 16in 1/2=860; 32in 4K 1/4=748; 5K2K 1/4=836  spread x1.15
+
+== snap test: one target per stated class (geometric mean), nearest preset by log distance
+points                       in sample 18/20  leave one out 15/20  misses: editor@16in:2/3!=1, editor@5K2K:1/2!=1/3, browser@5K2K:1/2!=1/3, terminal@14in:2/3!=1, terminal@32in 4K:1/2!=1/3
+millimetres, 5K2K 34in       in sample 18/20  leave one out 16/20  misses: editor@5K2K:1/2!=1/3, browser@16in:1!=2/3, browser@32in 4K:1/3!=1/2, narrow@14in:2/3!=1/2
+millimetres, 5K2K 40in       in sample 18/20  leave one out 15/20  misses: browser@16in:1!=2/3, browser@32in 4K:1/3!=1/2, terminal@16in:1!=2/3, terminal@5K2K:1/4!=1/3, narrow@14in:2/3!=1/2
+
+== Model B, built-in targets {'wide': 1500, 'terminal': 1230, 'narrow': 830}
+16/20  misses: editor@5K2K:1/2!=1/3, browser@16in:1!=2/3, browser@5K2K:1/2!=1/3, terminal@32in 4K:1/2!=1/3
+wide      14in=1  16in=1  27in 4K=2/3  32in 4K=1/2  5K2K=1/2
+terminal  14in=1  16in=2/3  27in 4K=1/2  32in 4K=1/2  5K2K=1/3
+narrow    14in=1/2  16in=1/2  27in 4K=1/3  32in 4K=1/4  5K2K=1/4
+narrow height on 14in: 1 (944pt)
+narrow height on 16in: 1 (1079pt)
+narrow height on 27in 4K: 1/2 (700pt)
+narrow height on 32in 4K: 1/2 (826pt)
+narrow height on 5K2K: 1/2 (688pt)
+
+== best targets, 10pt grid 500..2000
+three numbers (wide, terminal, narrow)
+  narrow    4/4 for targets 710..860 (first run of the best score)
+  terminal  4/5 for targets 1050..1360 (first run of the best score)
+  wide      9/11 for targets 1230..1360 (first run of the best score)
+  total 17/20
+four numbers (browser apart)
+  browser   4/4 for targets 1230..1360 (first run of the best score)
+  narrow    4/4 for targets 710..860 (first run of the best score)
+  terminal  4/5 for targets 1050..1360 (first run of the best score)
+  wide      6/7 for targets 1410..1730 (first run of the best score)
+  total 18/20
+
+== Model B with display rules: browser 1/3 on displays at least 3200pt wide, Ghostty 1/3 on displays at least 2800pt wide
+18/20  misses: editor@5K2K:1/2!=1/3, browser@16in:1!=2/3
+
+== moving under B: a width carried as points to another display and back
+  14in 2/3 -> 27in 4K 1/3 -> 14in 1/2
+  16in 1/3 -> 14in 1/2 -> 16in 1/2
+  16in 1/3 -> 32in 4K 1/4 -> 16in 1/2
+  16in 1/3 -> 5K2K 1/4 -> 16in 1/2
+  27in 4K 1/4 -> 14in 1/2 -> 27in 4K 1/3
+  27in 4K 1/2 -> 14in 1 -> 27in 4K 2/3
+  27in 4K 1 -> 14in 1 -> 27in 4K 2/3
+  27in 4K 1 -> 16in 1 -> 27in 4K 2/3
+  27in 4K 1/4 -> 32in 4K 1/4 -> 27in 4K 1/3
+  27in 4K 1/2 -> 32in 4K 1/2 -> 27in 4K 2/3
+  27in 4K 1/4 -> 5K2K 1/4 -> 27in 4K 1/3
+  32in 4K 2/3 -> 14in 1 -> 32in 4K 1/2
+  32in 4K 1 -> 14in 1 -> 32in 4K 1/2
+  32in 4K 2/3 -> 16in 1 -> 32in 4K 1/2
+  32in 4K 1 -> 16in 1 -> 32in 4K 1/2
+  32in 4K 1/3 -> 27in 4K 1/3 -> 32in 4K 1/4
+  32in 4K 2/3 -> 27in 4K 2/3 -> 32in 4K 1/2
+  5K2K 2/3 -> 14in 1 -> 5K2K 1/2
+  5K2K 1 -> 14in 1 -> 5K2K 1/2
+  5K2K 2/3 -> 16in 1 -> 5K2K 1/2
+  5K2K 1 -> 16in 1 -> 5K2K 1/2
+  5K2K 1 -> 27in 4K 1 -> 5K2K 2/3
+trips that do not return: 22 of 88

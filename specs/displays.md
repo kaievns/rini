@@ -40,13 +40,18 @@ context is arranged differently depending on what is plugged in, and rini rememb
   its place in that display's strip order. An arrangement is the SET of attached displays, named by
   their UUIDs, so plugging a monitor in spreads the workspace and unplugging it gathers the windows
   back, each to a place remembered for that arrangement.
-- Arrangements MUST NOT share records. Rearranging while docked MUST NOT change how the laptop looks
-  alone, and the reverse. One record per window cannot express this: the last deliberate move won
-  everywhere, so moving a window onto the laptop while undocked silently cancelled its place at the
-  desk.
+- Arrangements MUST NOT share a window's records. Rearranging while docked MUST NOT change how the
+  laptop looks alone, and the reverse. One record per window cannot express this: the last
+  deliberate move won everywhere, so moving a window onto the laptop while undocked silently
+  cancelled its place at the desk.
+- An application's width MAY carry across arrangements, below the window's own record. A window
+  with no width recorded for this arrangement and no launch slot MAY take the width the user last
+  gave that application on the same display, or on one of the same size, in another arrangement.
+  It MUST NOT override a width the window has recorded here, so rearranging at one desk still
+  changes nothing at another.
 - An arrangement is identified by WHICH displays are attached, not how many. An external at home, one
   at the office and a meeting-room projector are three arrangements, and none inherits another's
-  layout.
+  layout beyond an application's width as above.
 - A display that has never held a window MUST take none when it is attached. Every window stays where
   it is and waits to be told, and the arrangement learns from where the user puts them.
 - Width MUST be remembered per (window, display), not per window. Half of 2338pt is comfortable and
@@ -55,6 +60,12 @@ context is arranged differently depending on what is plugged in, and rini rememb
 - Width MUST be remembered as the layout means it — a mode, a bounded ratio, or an unbounded ratio,
   which no display's width bounds hold, as a drag or `Mod+R`'s 100% gives — never in points, because the record is consulted exactly when the
   display size differs.
+- A width the user set, by a command or by dragging an edge, MUST survive the display sleeping and
+  waking, the window server removing and re-adding the window, a drag of the window, and a relaunch
+  of an application an opening rule matches. Each is a moment the width is read again, and a width
+  read back as the default undoes the user's choice with nothing the user did to explain it. Not yet
+  met: a wake, a re-add and a relaunch under a rule each reset a width to the default on 2026-11-03
+  and 2026-11-04, and a width set by dragging an edge is not what a re-added window reads back.
 - A remembered width MUST be written so a rini from before its kind existed still reads the file. A
   rini that cannot read the file starts with no homes, widths or launch slots, and its next save
   writes that over the file, so going back a version would forget the machine.
@@ -83,6 +94,20 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > Records moved from one key per display to one per arrangement. The case that could not be expressed
 > before — a window on the SAME display in two arrangements wanting a different width in each — is the
 > one this answers.
+
+> **Reported 2026-11-04.** "everything defaults to 1/2 of my laptop screen, and even though we have
+> the prevous sizes tracking it's buggy as fuck and doesn't work all that well, so i keep getting
+> everything resetting back to 1/2 which is annoying". 11 resets on 2026-11-03 and 2026-11-04 were
+> tied to the service log: 4 after a wake (1 measured at both ends, 3 by timing alone), 1 at a
+> re-add, 1 at Slack's relaunch, which an opening rule matches, 2 at a new window of a running app,
+> and 3 unexplained (`docs/window-sizing-research.md`, "Why sizes reset today, ranked").
+
+> **Reported 2026-11-04, same session.** Asked whether an application's width may carry across
+> arrangements, below the per-window record, Kai answered "2. yes". The rule this amends said
+> "Arrangements MUST NOT share records", so that rearranging at one desk could not change another.
+> That reason holds for a window's own records, which still share nothing. Applied to every record,
+> it meant each desk or meeting room not seen before opened every window at the default width, one
+> of the paths behind the report above.
 
 > **Found 2026-10-15, not reported.** The explicit move and the return on replug placed a window with
 > two copies of one rule that disagreed on a window larger than the display: the move kept its
@@ -192,4 +217,5 @@ lifecycle holds, churn and refresh it keeps, `src/displays/domain/topology.rs`,
 `an_application_too_busy_to_answer_is_asked_again_until_it_answers` and
 `an_application_that_never_answers_is_given_up_on_at_the_deadline` in
 `src/windows/platform/ax/ask_again.rs` hold its asking again. Measurements are in
-`src/displays/docs/topology.md` and `src/workspaces/docs/workspaces-and-displays.md`.
+`src/displays/docs/topology.md` and `src/workspaces/docs/workspaces-and-displays.md`; why widths
+reset, and the evidence for the width requirements of 2026-11-04, in `docs/window-sizing-research.md`.

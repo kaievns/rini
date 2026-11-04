@@ -1,0 +1,23 @@
+width by day [('10-06', 3), ('10-07', 4), ('10-08', 14), ('10-09', 98), ('10-10', 133), ('10-11', 83), ('10-19', 1), ('11-02', 8), ('11-03', 1), ('11-04', 14)] 359
+('10-06', 'cycle_preset_column_width') 2
+('10-06', 'toggle_fullscreen_within_gaps') 1
+('10-07', 'cycle_preset_column_width') 3
+('10-07', 'toggle_fullscreen_within_gaps') 1
+('10-08', 'cycle_preset_column_width') 6
+('10-08', 'resize_window_by') 5
+('10-08', 'toggle_fullscreen_within_gaps') 3
+('10-09', 'cycle_preset_column_width') 23
+('10-09', 'toggle_fullscreen_within_gaps') 75
+('10-10', 'cycle_preset_column_width') 123
+('10-10', 'toggle_fullscreen_within_gaps') 10
+('10-11', 'cycle_preset_column_width') 73
+('10-11', 'toggle_fullscreen_within_gaps') 10
+('10-19', 'toggle_fullscreen_within_gaps') 1
+('11-02', 'cycle_preset_column_width') 3
+('11-02', 'toggle_fullscreen_within_gaps') 5
+('11-03', 'toggle_fullscreen_within_gaps') 1
+('11-04', 'cycle_preset_column_width') 3
+('11-04', 'toggle_fullscreen_within_gaps') 11
+births Counter({'windows_discovered': 259, 'application_launched': 229, 'window_created': 76})
+mouse_up 233 [('10-05', 3), ('10-06', 76), ('10-07', 67), ('10-08', 14), ('10-09', 15), ('10-10', 12), ('10-12', 5), ('10-15', 3), ('11-02', 23), ('11-03', 8), ('11-04', 7)]
+top whats [('move_focus', 6368), ('prev_workspace', 601), ('next_workspace', 579), ('application_activated', 444), ('toggle_fold', 394), ('switch', 346), ('window_server_focus_changed', 345), ('windows_discovered', 259), ('cycle_preset_column_width', 236), ('mouse_up', 233), ('application_launched', 229), ('toggle_fullscreen_within_gaps', 118), ('window_destroyed', 111), ('focus_window', 110), ('space_state_changed', 107), ('window_created', 76), ('move_node', 55), ('window_frame_changed', 44), ('window_server_destroyed', 35), ('scroll_strip', 31), ('config_updated', 23), ('move_window_to_workspace', 7), ('switch_picked', 6), ('resize_window_by', 5), ('application_thread_terminated', 4), ('move_focus_to_end', 4), ('mission_control_native_exited', 2), ('switch_to_workspace', 1), ('move_node_or_to_workspace', 1), ('move_node_to_end', 1)]

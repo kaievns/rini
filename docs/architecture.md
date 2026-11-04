@@ -278,7 +278,7 @@ What is left at the top of the tree is cross-cutting: this file, `testing.md`,
 `signing.md`, `permissions-and-the-launch-agent.md`, `config.md` (the config format's
 decisions), `pictures-motion-transitions.md` (how four features share drawing a moving
 window), `window-sizing-research.md` (default and remembered window sizes across apps and
-displays, researched before any spec), the implementation audit, `cleanup-round-1.md`, and
+displays, researched before any code), the implementation audit, `cleanup-round-1.md`, and
 `data/`, the measured runs the docs cite.
 Anything that names one feature belongs inside it.
 
