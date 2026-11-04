@@ -576,7 +576,7 @@ impl LayoutEngine {
                 self.add_window_to_layout(window_store, memory, space, wid);
             }
             LayoutEvent::WindowRemoved(wid, why) => {
-                self.remove_window_internal(window_store, memory, wid, Keeping::Nothing(why));
+                self.remove_window_internal(window_store, memory, wid, Keeping::Removed(why));
             }
             LayoutEvent::WindowRemovedPreserveFloating(wid) => {
                 self.remove_window_internal(window_store, memory, wid, Keeping::Records);
@@ -1030,8 +1030,9 @@ mod tests {
     use super::*;
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::settings::LayoutSettings;
-    use crate::layout::{ResizeOrientation, StripEnd};
+    use crate::layout::{ColumnWidth, ResizeOrientation, StripEnd};
     use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RuleMatch, WindowRule};
+    use crate::workspaces::domain::app_rules::AppRuleResize;
     use crate::workspaces::settings::VirtualWorkspaceSettings;
 
     impl OnScreenEntry {
@@ -1387,8 +1388,8 @@ mod tests {
         assert!(fx.engine.is_window_floating(window));
     }
 
-    #[test]
-    fn tiled_app_rule_size_sets_scrolling_column_width() {
+    /// An editor a rule gives 234pt opened on a 1200pt screen, and the resize the rule asks for.
+    fn rule_sized_editor() -> (EngineFixture, SpaceId, WindowId, AppRuleResize) {
         let settings = VirtualWorkspaceSettings {
             app_rules: vec![WindowRule {
                 default_column_width: Some(234.0),
@@ -1402,7 +1403,6 @@ mod tests {
         let space = SpaceId::new(91);
         let window = WindowId::new(8, 1);
         fx.expose(space, CGSize::new(1200.0, 800.0));
-        let screen = fx.screens[&space];
         let entry = OnScreenEntry::plain(window).sized(500.0, 500.0);
         let outcome = fx.open_app(space, vec![entry], app("com.example.Editor"));
 
@@ -1411,9 +1411,22 @@ mod tests {
         assert_eq!(workspace_focus, None);
         assert_eq!(resizes.len(), 1);
         assert_eq!((resizes[0].size.w, resizes[0].size.h), (Some(234.0), None));
-        let old_frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(500.0, 500.0));
-        let new_frame = CGRect::new(old_frame.origin, CGSize::new(234.0, 500.0));
-        fx.engine.apply_app_rule_resize(resizes[0], new_frame, screen, None);
+        (fx, space, window, resizes[0])
+    }
+
+    /// The rule's resize carried out: the window reports the 234pt the rule asked for.
+    fn apply_rule_resize(fx: &mut EngineFixture, space: SpaceId, resize: AppRuleResize) -> CGRect {
+        let screen = fx.screens[&space];
+        let new_frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(234.0, 500.0));
+        fx.engine.apply_app_rule_resize(&mut fx.memory, resize, new_frame, screen, None);
+        new_frame
+    }
+
+    #[test]
+    fn tiled_app_rule_size_sets_scrolling_column_width() {
+        let (mut fx, space, window, resize) = rule_sized_editor();
+        let screen = fx.screens[&space];
+        let new_frame = apply_rule_resize(&mut fx, space, resize);
         assert_eq!(fx.frame(space, window).size.width, 234.0);
 
         let user_frame = CGRect::new(new_frame.origin, CGSize::new(400.0, new_frame.size.height));
@@ -1424,6 +1437,26 @@ mod tests {
             screens: vec![(space, screen, None)],
         });
         assert_eq!(fx.frame(space, window).size.width, 400.0);
+    }
+
+    /// The width a rule gives a tiled window is recorded as the window's width on its display, as a
+    /// width command's is, so the window reads it back wherever it is laid out again.
+    #[test]
+    fn a_rule_s_width_is_recorded_as_the_window_s_width_on_its_display() {
+        let (mut fx, space, window, resize) = rule_sized_editor();
+        let display = DisplayUuid::new("built-in");
+        fx.memory.affinity.set_display_space(&display, space);
+        assert_eq!(fx.memory.affinity.window_width(&display, window), None);
+
+        let _ = apply_rule_resize(&mut fx, space, resize);
+        let recorded = fx.memory.affinity.window_width(&display, window);
+        let ws = fx.engine.active_workspace(space).expect("an active workspace");
+        let layout = fx.engine.workspace_layouts.active(space, ws).expect("a layout");
+        assert_eq!(
+            recorded,
+            fx.engine.workspace_tree(ws).carried_width(layout, window)
+        );
+        assert!(recorded.is_some(), "the rule's width");
     }
 
     #[test]
@@ -2242,6 +2275,28 @@ mod tests {
             before,
             "removing a window must not rebalance layouts in other workspaces"
         );
+    }
+
+    /// Leaving native fullscreen under another id, the window's widths go to that id: it is the
+    /// same window, so it keeps the width it had.
+    #[test]
+    fn a_window_owned_by_another_id_hands_its_width_to_that_id() {
+        let mut fx = EngineFixture::new();
+        let space = SpaceId::new(97);
+        let (old, owner) = (WindowId::new(5156, 1), WindowId::new(5156, 2));
+        let display = DisplayUuid::new("built-in");
+        fx.expose(space, CGSize::new(1000.0, 1000.0));
+        fx.memory.affinity.set_display_space(&display, space);
+        let _ = fx.open(space, vec![OnScreenEntry::plain(old).sized(500.0, 500.0)]);
+        fx.memory.affinity.set_window_width(&display, old, ColumnWidth::FullWidth);
+
+        let _ = fx.event(LayoutEvent::WindowRemoved(old, Removal::OwnedByAnotherId(owner)));
+
+        assert_eq!(
+            fx.memory.affinity.window_width(&display, owner),
+            Some(ColumnWidth::FullWidth)
+        );
+        assert_eq!(fx.memory.affinity.window_width(&display, old), None);
     }
 
     #[test]

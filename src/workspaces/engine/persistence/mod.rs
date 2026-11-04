@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::{FloatingManager, LayoutEngine, OnScreenEntry, WorkspaceLayouts};
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleEngine;
-use crate::workspaces::domain::display_affinity::Erase;
+use crate::workspaces::domain::display_affinity::{Erase, Removal, RemovedWidths};
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::settings::VirtualWorkspaceSettings;
 use crate::workspaces::{FloatingPositionStore, VirtualWorkspaceId, WindowStore, WorkspaceStore};
@@ -166,13 +166,25 @@ impl LayoutEngine {
         self.note_window_display_home(memory, window, space);
     }
 
+    /// Forgets what `window`'s removal for `why` takes with it: its widths only when it closed, given
+    /// to the id that owns it now when another does, and kept otherwise.
     pub(super) fn forget_persisted_window(
         &mut self,
         memory: &mut DisplayMemory,
         window: WindowId,
-        why: Erase,
+        why: Removal,
     ) {
-        self.log_erased_widths(why, &memory.affinity.forget_window(window));
+        let erase = Erase::Removed(why);
+        match why.widths() {
+            RemovedWidths::Kept => memory.affinity.forget_place(window),
+            RemovedWidths::HandedTo(owner) => {
+                self.log_erased_widths(erase, &memory.affinity.hand_widths(window, owner));
+                self.log_erased_widths(erase, &memory.affinity.forget_window(window));
+            }
+            RemovedWidths::Erased => {
+                self.log_erased_widths(erase, &memory.affinity.forget_window(window));
+            }
+        }
         self.persistence.forget_window(window);
     }
 

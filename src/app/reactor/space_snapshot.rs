@@ -569,7 +569,7 @@ impl Reactor {
         {
             *outcome = std::mem::take(outcome).with_layout_event(LayoutEvent::WindowRemoved(
                 original_window,
-                crate::workspaces::Removal::OwnedByAnotherId,
+                crate::workspaces::Removal::OwnedByAnotherId(owner),
             ));
         }
         *outcome = std::mem::take(outcome).with_app_request(owner.pid, Request::GetVisibleWindows);

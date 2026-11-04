@@ -140,6 +140,7 @@ impl Reactor {
             };
             let new_frame = resize.resized_frame(window.frame_monotonic);
             self.layout_engine.apply_app_rule_resize(
+                &mut self.state.display_memory,
                 resize,
                 new_frame,
                 screen.frame,

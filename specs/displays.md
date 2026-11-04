@@ -58,6 +58,15 @@ context is arranged differently depending on what is plugged in, and rini rememb
 - A remembered width MUST be written so a rini from before its kind existed still reads the file. A
   rini that cannot read the file starts with no homes, widths or launch slots, and its next save
   writes that over the file, so going back a version would forget the machine.
+- A width the user set, by a command or by dragging an edge, MUST survive the display sleeping and
+  waking, the window server removing and re-adding the window, and a drag of the window. Each is a
+  moment the width is read again, and a width read back as the default undoes the user's choice
+  with nothing the user did to explain it. So only a close or the application quitting MAY erase a
+  window's widths. A minimize, a window briefly not manageable, one the window server leaves out of
+  a snapshot or moves to another space, a drag to another space and a rule that stops managing it
+  MUST each keep them, and a window that leaves native fullscreen under another id MUST hand them to
+  that id. A width only the layout holds, as a drag's or a rule's, MUST be recorded before such a
+  removal, and a launch slot's width MUST NOT replace one the window has of its own.
 - Every erase of a window's remembered width MUST be logged with why and the window's app and
   title, at a level the running service keeps, because a width that comes back at the default is
   otherwise not traceable to what erased it. A removal that erases nothing MUST log below that
@@ -67,6 +76,14 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > **Found 2026-11-04, not reported.** Looking into Kai's report that day ("i keep getting everything
 > resetting back to 1/2") found widths lost across a sleep and wake that the service's log could not
 > explain: neither the window's removal from the layout nor the erase of its width was logged.
+
+> **Reported 2026-11-04.** "everything defaults to 1/2 of my laptop screen, and even though we have
+> the prevous sizes tracking it's buggy as fuck and doesn't work all that well, so i keep getting
+> everything resetting back to 1/2 which is annoying". The service's log that day tied 4 resets to a
+> wake, 3 by timing alone and 1 measured at both ends (the window laid full as the display turned
+> off, pressed back to full 80s after the wake), and 1 to a re-add by the window server 3s before
+> the press. Every removal from the
+> layout erased the window's widths, and a re-added window read a record a drag never wrote.
 
 - A window's display MUST be written only by intent: an explicit move, a drag, a first sighting, or a
   restore. The forced reassignment that follows an unplug MUST NOT write it, because that record is the
@@ -201,5 +218,7 @@ lifecycle holds, churn and refresh it keeps, `src/displays/domain/topology.rs`,
 `a_subscription_the_dock_is_too_busy_to_answer_is_left_for_the_next_ask` there and
 `an_application_too_busy_to_answer_is_asked_again_until_it_answers` and
 `an_application_that_never_answers_is_given_up_on_at_the_deadline` in
-`src/windows/platform/ax/ask_again.rs` hold its asking again. Measurements are in
+`src/windows/platform/ax/ask_again.rs` hold its asking again. `Removal::widths` in
+`src/workspaces/domain/display_affinity.rs` says which removals keep a width, and
+`src/app/reactor/tests/widths.rs` holds a width across a wake, a re-add and a drag. Measurements are in
 `src/displays/docs/topology.md` and `src/workspaces/docs/workspaces-and-displays.md`.

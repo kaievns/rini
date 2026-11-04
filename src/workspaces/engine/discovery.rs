@@ -10,7 +10,7 @@ use crate::layout::WindowLayoutConstraints;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{RuleState, WindowRuleContext};
 use crate::workspaces::domain::app_rules::{AppRuleOutcome, AppRuleWorkspaceFocus};
-use crate::workspaces::domain::display_affinity::{Erase, Removal};
+use crate::workspaces::domain::display_affinity::{Removal, RemovedWidths};
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
 use crate::workspaces::engine::{AppWindows, EventResponse, LayoutEngine, OnScreenEntry};
@@ -53,8 +53,19 @@ pub(super) struct Admitted {
 pub(super) enum Keeping {
     /// Its floating state, workspace and records, as a window coming straight back needs.
     Records,
-    /// Nothing: every record of it is forgotten, for the reason given.
-    Nothing(Removal),
+    /// What the removal given keeps: its widths, unless it closed (`Removal::widths`). Its floating
+    /// state, workspace, home and place in the strip are forgotten.
+    Removed(Removal),
+}
+
+impl Keeping {
+    /// Whether the window's widths outlive the removal, under its id or the one that owns it now.
+    fn keeps_widths(self) -> bool {
+        match self {
+            Self::Records => true,
+            Self::Removed(why) => why.widths() != RemovedWidths::Erased,
+        }
+    }
 }
 
 impl LayoutEngine {
@@ -359,7 +370,7 @@ impl LayoutEngine {
             }
             memory.affinity.set_window_home_if_absent(wid, &slot.display_uuid);
             if let Some(width) = slot.width {
-                memory.affinity.set_window_width(&slot.display_uuid, wid, width);
+                memory.affinity.set_window_width_if_absent(&slot.display_uuid, wid, width);
             }
         }
 
@@ -423,15 +434,20 @@ impl LayoutEngine {
         wid: WindowId,
         keeping: Keeping,
     ) {
+        // A width only the layout holds, from a drag or a rule, is written down before the layout
+        // lets go of it, since what comes back reads the record.
+        if keeping.keeps_widths() {
+            self.remember_width_as_laid(window_store, memory, wid);
+        }
         self.remove_window_layout_membership(window_store, wid);
 
         match keeping {
             Keeping::Records => self.floating.remove_active_for_window(wid),
-            Keeping::Nothing(why) => {
+            Keeping::Removed(why) => {
                 self.floating.remove_floating(wid);
                 self.virtual_workspace_manager.remove_window(window_store, wid);
                 self.floating_positions.remove_window(wid);
-                self.forget_persisted_window(memory, wid, Erase::Removed(why));
+                self.forget_persisted_window(memory, wid, why);
             }
         }
 

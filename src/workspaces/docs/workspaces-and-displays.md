@@ -66,7 +66,18 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   affinity alone changed nothing.
 - **Width comes from the layout, not only from commands.** The affinity map was
   once written only by explicit width commands, so a window whose width came
-  from the layout never appeared in it and relaunched at the default.
+  from the layout never appeared in it and relaunched at the default. A width
+  command, a drag's end (`events::drag`, `remember_width_as_laid`) and a rule's
+  resize (`apply_app_rule_resize`) each write it now, and so does every removal a
+  window can come back from, before the layout lets go of the column: a re-added
+  window reads the record, never the layout it left, so a width only the layout
+  held (a drag, an app sizing its own window, a restored layout) came back at the
+  default. Each writes only a width the column has: a column at the default, or a
+  window in no strip, writes nothing and erases nothing.
+- **A window's own width beats a launch slot's.** A window that comes back with
+  no workspace looks up a launch slot, and the slot it takes may be another
+  window's, so its width is written only where the window has none
+  (`set_window_width_if_absent`).
 - **A home is written once, on first sighting or an explicit move.** The forced
   reassignment after an unplug must not write it: an unplug evacuates windows
   onto the remaining display, and recording that as home destroys the record
@@ -104,17 +115,29 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   putting the column back at the default, or the first arrangement named being one
   already known, which keeps its own records rather than adopting those written before
   any was named (`Unadopted`; only a file that names arrangements and none in force gets
-  there). `WindowRemoved` carries the `Removal`, and forgets every record of the window,
-  so it erases widths on more paths than a close: a minimize, a drag to another native
+  there). The service's log on 2026-11-04 could not say which path erased a width lost
+  across a sleep, because none of them was logged.
+- **Only a close erases a window's widths** (`Removal::widths`). `WindowRemoved`
+  carries the `Removal`, and every removal forgets the window's workspace, floating
+  state, home and place in the strip (`forget_place`). Its widths it keeps, for a
+  window that still exists and can come back: a minimize, a drag to another native
   space, a window turning unmanageable on a refresh of the window server's facts or on
-  its app reporting it again (one variant each), a rule that no longer manages it, an id
-  superseded on leaving native fullscreen, a window left out of an authoritative
-  snapshot, and the two removals in `reactor/display_homes.rs` of a window found not
-  `EffectivelyManageable`, which log the window's role, title and state as well, at
-  `info` only when the window still had an assignment, a floating place or a record:
-  one that stays unmanageable is removed again on every authoritative snapshot, and
-  logs those at `debug`. The service's log on 2026-11-04 could not say which path
-  erased a width lost across a sleep, because none of them was logged.
+  its app reporting it again (one variant each), a rule that no longer manages it, a
+  window left out of an authoritative snapshot, and the two removals in
+  `reactor/display_homes.rs` of a window found not `EffectivelyManageable`. An id
+  superseded on leaving native fullscreen hands its widths to the id that owns the
+  window now, where that id has none (`hand_widths`), and logs any it drops. Those two
+  removals in `reactor/display_homes.rs` log the window's role, title and state, at
+  `info` only when the window still had an assignment, a floating place, a home or a
+  strip place: one that stays unmanageable is removed again on every authoritative
+  snapshot, and logs those at `debug`. Every removal erased every width until
+  2026-11-04, and a window briefly not manageable as the display turned off, or left
+  out of one snapshot, came back at the default: reproduced by
+  `a_full_width_window_keeps_its_width_across_the_display_sleeping_and_waking` and
+  `a_window_the_window_server_removes_and_re_adds_keeps_its_width`, the shape of the
+  service's log that day (a width laid full as the display turned off, the user's
+  full-width press 80s after the wake; a re-add with no workspace 3s before another).
+  Which removal ran that day is not verified: none was logged then.
 - **A pin beats an observation and loses to a choice.** A window rule naming
   `open-on-output "internal"` decides where a window belongs when the arrangement has
   not been told otherwise. That needs three levels, not two, so `Setup` records

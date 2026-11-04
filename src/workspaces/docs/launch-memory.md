@@ -78,7 +78,9 @@ and its default letters, so retitling the lab windows there fails it.
 Explicit configuration wins over anything learned:
 
 1. A `window-rule` from the config file that applies to the window.
-2. A remembered slot for this topology.
+2. A remembered slot for this topology. Its width is written only where the window has none of
+   its own on that display: a window the window server took away and gives back has no workspace,
+   so it looks up a slot too, and the slot it takes may be another window's.
 3. Today's default: active workspace, display under the cursor, configured column width.
 
 ## Recording
@@ -169,9 +171,10 @@ something the user has just changed.
 
 Two things follow from this that are easy to get wrong again:
 
-- A width is read from the window's own layout, not from the affinity record. That record is
-  only written by explicit width COMMANDS, so a window whose width came from the layout never
-  appeared in it — the file read `window_width:{}` while every window on screen had a width.
+- A width is read from the window's own layout, not from the affinity record. That record
+  holds a width only where something recorded one (a width command, a drag's end, a rule's
+  resize, a removal; `workspaces-and-displays.md`), and when it was written by width commands
+  alone the file read `window_width:{}` while every window on screen had a width.
 - `is_window_full_width` and the tree's `is_fullscreen_within_gaps` are the same flag under
   two names. `ColumnWidth::FullWidth` is that flag, not a ratio.
 

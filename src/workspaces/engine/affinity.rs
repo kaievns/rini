@@ -183,6 +183,32 @@ impl LayoutEngine {
         self.remember_column_width(memory, space, workspace_id, layout, window);
     }
 
+    /// Record the width `window`'s column has where it is laid out, when it has one: at a drag's end,
+    /// and before a removal the window can come back from, so a width only the layout held is the
+    /// one read back. A column at the default, or a window in no strip, writes nothing and erases
+    /// nothing, since the record may hold a width the layout has not been given yet.
+    pub fn remember_width_as_laid(
+        &mut self,
+        window_store: &WindowStore,
+        memory: &mut DisplayMemory,
+        window: WindowId,
+    ) {
+        let Some(assignment) = window_store.workspace_info_for_window(window) else {
+            return;
+        };
+        let (space, workspace_id) = (assignment.space, assignment.workspace_id);
+        let Some(layout) = self.workspace_layouts.active(space, workspace_id) else {
+            return;
+        };
+        let Some(width) = self.workspace_tree(workspace_id).carried_width(layout, window) else {
+            return;
+        };
+        let Some(display) = memory.affinity.display_for_space(space).cloned() else {
+            return;
+        };
+        memory.affinity.set_window_width(&display, window, width);
+    }
+
     /// Re-apply the width `window` last had on the display owning `space`.
     ///
     /// Called when a window ARRIVES in a strip — a new workspace, or a new display. A fresh

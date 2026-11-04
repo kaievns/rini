@@ -20,5 +20,6 @@ mod overview;
 mod reads;
 mod spaces;
 mod tiling;
+mod widths;
 mod windows;
 mod workspaces;

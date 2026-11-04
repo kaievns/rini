@@ -205,7 +205,7 @@ impl LayoutEngine {
         };
         memory.affinity.set_window_home_if_absent(window_id, &slot.display_uuid);
         if let Some(width) = slot.width {
-            memory.affinity.set_window_width(&slot.display_uuid, window_id, width);
+            memory.affinity.set_window_width_if_absent(&slot.display_uuid, window_id, width);
         }
         debug!(
             idx = window_id.idx.get(),
@@ -261,8 +261,12 @@ impl LayoutEngine {
         effects.focus.then_some((window, effects.workspace_id))
     }
 
+    /// The size a rule asks of a tiled window, taken as its column's width and recorded as the
+    /// window's width on this display, as a width command's is, so the window reads it back when it
+    /// is laid out again.
     pub fn apply_app_rule_resize(
         &mut self,
+        memory: &mut DisplayMemory,
         resize: AppRuleResize,
         new_frame: CGRect,
         screen_frame: CGRect,
@@ -290,6 +294,13 @@ impl LayoutEngine {
         if let Some(previous) = previous_selection.filter(|window| *window != resize.window) {
             let _ = tree.select_window(layout, previous);
         }
+        self.remember_column_width(
+            memory,
+            resize.space,
+            resize.workspace_id,
+            layout,
+            resize.window,
+        );
         self.workspace_layouts
             .mark_last_saved(resize.space, resize.workspace_id, layout);
     }

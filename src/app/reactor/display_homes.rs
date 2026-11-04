@@ -432,14 +432,14 @@ impl Reactor {
     }
 
     /// Takes `wid`, found not manageable on `space`, out of every layout, and logs it with why: the
-    /// removal forgets its width records, which nothing but this line otherwise explains. At `info`
-    /// only when it takes something away, since a window that stays unmanageable comes through here
-    /// on every authoritative snapshot.
+    /// removal forgets its workspace, home and place in the strip, which nothing but this line
+    /// otherwise explains. At `info` only when it takes something away, since a window that stays
+    /// unmanageable comes through here on every authoritative snapshot.
     fn remove_unmanageable(&mut self, wid: WindowId, space: SpaceId, why: Removal) {
         let assigned = self.affinity().assigned_space_for_window_id(wid);
         let takes_away = assigned.is_some()
             || self.layout_engine.is_window_floating(wid)
-            || self.state.display_memory.affinity.remembers_window(wid);
+            || self.state.display_memory.affinity.remembers_place(wid);
         let window = self.state.windows.window(wid);
         macro_rules! log_removal {
             ($level:ident) => {
