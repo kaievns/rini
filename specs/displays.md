@@ -54,7 +54,8 @@ context is arranged differently depending on what is plugged in, and rini rememb
   nearest 10mm, so the same panel docked and alone, and one model of monitor at two desks, are one
   shape. A width command and the end of a drag of an edge MUST record the application's width; a
   rule's resize, a width given to a window a rule sized and a focuslab window MUST NOT, since a
-  rule's width written as the application's would size its other windows. A window the session has
+  rule's width written as the application's would size its other windows, and neither MUST a
+  resize that changes only a window's height. A window the session has
   seen before MUST NOT take the application's width when it comes back: a window the window server
   removes and re-adds keeps its own width, or the default it had, not a sibling's. Not yet met: an
   existing window moved onto a display it has no width on takes the default there.

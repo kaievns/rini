@@ -375,6 +375,40 @@ fn a_width_the_resize_keys_give_is_its_app_s_last_width() {
     assert_eq!(desk.width(second), widened);
 }
 
+/// A height key changes no width, so it leaves the app's width as it was: a stacked column at the
+/// default had written the default as the app's, and the next window opened at a half.
+#[test]
+fn a_height_key_in_a_column_at_the_default_leaves_its_app_s_width() {
+    use crate::layout::{Direction, ResizeOrientation};
+
+    for orientation in [ResizeOrientation::Vertical, ResizeOrientation::Smart] {
+        let mut desk = Desk::new(BUILT_IN, SIXTEEN);
+        let (top, bottom, widened) = (
+            WindowId::new(400, 1),
+            WindowId::new(400, 2),
+            WindowId::new(400, 3),
+        );
+        desk.open(top, GHOSTTY, "~");
+        desk.open(bottom, GHOSTTY, "~/notes");
+        desk.cycle(bottom, 0);
+        desk.command(LayoutCommand::ToggleFold(Direction::Left));
+        desk.open(widened, GHOSTTY, "~/projects/rini");
+        desk.cycle(widened, 1);
+        assert_eq!(
+            desk.width(bottom),
+            None,
+            "{orientation:?}: the stack is at the default"
+        );
+
+        desk.cycle(bottom, 0);
+        desk.command(LayoutCommand::ResizeWindowBy { amount: 0.125, orientation });
+        assert_eq!(desk.width(bottom), None, "{orientation:?}");
+        let next = WindowId::new(400, 4);
+        desk.open(next, GHOSTTY, "~");
+        assert_eq!(desk.width(next), two_thirds(), "{orientation:?}");
+    }
+}
+
 /// A width set by dragging an edge is the app's, as a key's is.
 #[test]
 fn a_dragged_width_is_its_app_s_last_width() {

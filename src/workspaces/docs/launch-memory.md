@@ -122,6 +122,8 @@ it. Kai allowed that on 2026-11-04 ("2. yes"); a window's own records still shar
 - **Written** by a width command (the preset cycle, resize-by, the full-width toggle and a title
   bar's zoom, through `remember_given_width`) and a drag's end (`remember_dragged_width`). A
   width back at the default forgets the shape's width, so the next window opens at the default.
+  Resize-by writes only when the column's width changed: a height key, or `Smart` in a stack,
+  changes a row's height, and writing the column's default would forget the app's width.
   Not by a rule's resize, nor by a width given to a window a rule sized (`last_rule_size` holds a
   width): a rule's width is the rule's, and written as the app's it would size the app's other
   windows. Not by a focuslab window. Not before a removal or a move to another workspace, which

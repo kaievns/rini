@@ -29,12 +29,21 @@ impl LayoutEngine {
                 }
 
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
+                let selected = self.workspace_tree(workspace_id).selected_window(layout);
+                let width_of = |engine: &Self, window| {
+                    engine.workspace_tree(workspace_id).carried_width(layout, window)
+                };
+                let before = selected.map(|window| width_of(self, window));
                 self.workspace_tree_mut(workspace_id).resize_selection_by(
                     layout,
                     amount,
                     orientation,
                 );
-                if let Some(window) = self.workspace_tree(workspace_id).selected_window(layout) {
+                // A height key, or `Smart` in a stack, changes no width, so it writes none: at the
+                // default, writing would forget the app's width.
+                if let Some(window) = selected
+                    && before != Some(width_of(self, window))
+                {
                     self.remember_given_width(window_store, memory, target, window);
                 }
                 EventResponse::default()
