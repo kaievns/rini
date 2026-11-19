@@ -95,7 +95,7 @@ impl Reactor {
         &mut self,
         selector: DisplaySelector,
     ) -> anyhow::Result<EventOutcome> {
-        command::handle_focus_display(self.resolve_display_focus(&selector))
+        command::handle_focus_display(self.resolve_display_focus(&selector), &self.apps)
     }
 
     pub(super) fn on_layout_command(
