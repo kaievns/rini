@@ -215,7 +215,10 @@ pub fn handle_move_mouse_to_display(payload: DisplayFocusPayload) -> anyhow::Res
     Ok(outcome)
 }
 
-pub fn handle_focus_display(payload: DisplayFocusPayload) -> anyhow::Result<EventOutcome> {
+pub fn handle_focus_display(
+    payload: DisplayFocusPayload,
+    apps: &HashMap<pid_t, AppState>,
+) -> anyhow::Result<EventOutcome> {
     let Some(screen) = payload.screen else {
         return Ok(EventOutcome::no_change());
     };
@@ -225,9 +228,25 @@ pub fn handle_focus_display(payload: DisplayFocusPayload) -> anyhow::Result<Even
     }
     if let (Some(space), Some(window)) = (screen.space, payload.focus_window) {
         return Ok(EventOutcome::focus_changed(None, false)
-            .with_layout_event(LayoutEvent::WindowFocused(space, window)));
+            .with_layout_event(LayoutEvent::WindowFocused(space, window))
+            .with_raise_request(raise_focus(window, apps)));
     }
     Ok(EventOutcome::focus_changed(None, false).with_mouse_warp(screen.frame.mid()))
+}
+
+/// The raise that makes `window` the focused one: without it rini's layout names the window while
+/// macOS keeps the front window where it was.
+fn raise_focus(window: WindowId, apps: &HashMap<pid_t, AppState>) -> raise::Event {
+    let mut app_handles: HashMap<i32, AppThreadHandle> = HashMap::default();
+    if let Some(app) = apps.get(&window.pid) {
+        app_handles.insert(window.pid, app.handle.clone());
+    }
+    raise::Event::RaiseRequest(raise::RaiseRequest {
+        raise_windows: Vec::new(),
+        focus_window: Some((window, None)),
+        app_handles,
+        focus_quiet: Quiet::No,
+    })
 }
 
 pub fn handle_command_reactor_focus_window(
@@ -252,18 +271,7 @@ pub fn handle_command_reactor_focus_window(
             return Ok(outcome);
         }
         outcome = outcome.with_layout_event(LayoutEvent::WindowFocused(space, window_id));
-
-        let mut app_handles: HashMap<i32, AppThreadHandle> = HashMap::default();
-        if let Some(app) = apps.get(&window_id.pid) {
-            app_handles.insert(window_id.pid, app.handle.clone());
-        }
-        let request = raise::Event::RaiseRequest(raise::RaiseRequest {
-            raise_windows: Vec::new(),
-            focus_window: Some((window_id, None)),
-            app_handles,
-            focus_quiet: Quiet::No,
-        });
-        outcome = outcome.with_raise_request(request);
+        outcome = outcome.with_raise_request(raise_focus(window_id, apps));
     } else if let Some(wsid) = window_server_id {
         outcome = outcome.with_make_key_window(window_id.pid, wsid);
     }
@@ -328,8 +336,10 @@ mod tests {
     use rini_core::ids::ScreenId;
 
     use super::*;
+    use crate::app::channels;
     use crate::app::reactor::state::RiniState;
     use crate::app::reactor::testing::make_window_info;
+    use crate::windows::domain::info::AppInfo;
     use crate::windows::domain::state::WindowState;
 
     fn wid() -> WindowId { WindowId::new(1, 1) }
@@ -376,7 +386,7 @@ mod tests {
         };
         for outcome in [
             handle_move_mouse_to_display(none.clone()).unwrap(),
-            handle_focus_display(none).unwrap(),
+            handle_focus_display(none, &HashMap::default()).unwrap(),
         ] {
             assert!(outcome.layout_events.is_empty());
             assert_eq!(outcome.mouse_warps, Vec::new());
@@ -390,10 +400,11 @@ mod tests {
         let payload = display_payload(Some(SpaceId::new(2)), false, Some(wid()));
         for outcome in [
             handle_move_mouse_to_display(payload.clone()).unwrap(),
-            handle_focus_display(payload).unwrap(),
+            handle_focus_display(payload, &HashMap::default()).unwrap(),
         ] {
             assert_eq!(outcome.mouse_warps, Vec::new());
             assert_eq!(focused_window(&outcome), None);
+            assert!(outcome.raise_requests.is_empty());
         }
     }
 
@@ -407,7 +418,7 @@ mod tests {
         assert_eq!(moved.mouse_warps, vec![screen(None).frame.mid()]);
         assert_eq!(focused_window(&moved), Some((SpaceId::new(2), wid())));
 
-        let focused = handle_focus_display(payload).unwrap();
+        let focused = handle_focus_display(payload, &HashMap::default()).unwrap();
         assert_eq!(
             focused.mouse_warps,
             Vec::new(),
@@ -418,10 +429,41 @@ mod tests {
 
     #[test]
     fn focusing_a_display_with_no_window_on_it_warps_the_cursor_instead() {
-        let outcome =
-            handle_focus_display(display_payload(Some(SpaceId::new(2)), true, None)).unwrap();
+        let outcome = handle_focus_display(
+            display_payload(Some(SpaceId::new(2)), true, None),
+            &HashMap::default(),
+        )
+        .unwrap();
         assert_eq!(outcome.mouse_warps, vec![screen(None).frame.mid()]);
         assert_eq!(focused_window(&outcome), None);
+    }
+
+    // Focusing a display names its window to the layout, and macOS must be asked to raise it too.
+    // Without the raise, the window in front stays where it was.
+    #[test]
+    fn focusing_a_display_raises_the_window_it_focuses() {
+        let (app_tx, _app_rx) = channels::channel();
+        let mut apps = HashMap::default();
+        apps.insert(wid().pid, AppState {
+            info: AppInfo {
+                bundle_id: None,
+                localized_name: None,
+            },
+            handle: AppThreadHandle::from_sender(app_tx),
+        });
+        let focused =
+            handle_focus_display(display_payload(Some(SpaceId::new(2)), true, Some(wid())), &apps)
+                .unwrap();
+        let request = focused.raise_requests.iter().find_map(|request| match request {
+            raise::Event::RaiseRequest(request) => Some(request),
+            _ => None,
+        });
+        let request = request.expect("a raise request");
+        assert_eq!(
+            request.focus_window.as_ref().map(|(window, _)| *window),
+            Some(wid())
+        );
+        assert!(request.app_handles.contains_key(&wid().pid));
     }
 
     fn state_with_window() -> RiniState {

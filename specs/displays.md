@@ -267,6 +267,18 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > written but not enforced: the guard declined, and the next step assigned the window anyway because it
 > asked a resolver that knew nothing about user spaces. Reachable whenever the screen locks.
 
+## Focusing another display
+
+- `focus-display` MUST leave the window it focuses on that display in front, as focusing a window
+  does. rini MUST ask macOS to raise that window, and MUST NOT only name it the focused one in its
+  own layout, or the window in front stays where it was. Where the display has no window to focus,
+  the cursor MUST move to its centre instead. `move-mouse-to-display` is not covered by this
+  bullet: it warps the cursor and names the window without raising it.
+
+> **Reported 2026-11-20.** The key bound to `focus-monitor-next` left the window in front where it
+> was, while rini named a window on the next display as focused. `rini-cli execute display focus`
+> with an index did the same, so the key was not at fault. The raise was missing.
+
 ## Native Spaces
 
 - rini MUST offer no action, wire command or CLI subcommand that switches the native macOS Space;
